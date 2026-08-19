@@ -18,6 +18,7 @@ import {
   COMPOSE_DB_CREDENTIALS,
   defaultMasterKeyPath,
   envSchema,
+  expandHomePrefix,
   instanceDefaults,
   loadConfig,
 } from './schema.js';
@@ -178,6 +179,18 @@ describe('loadConfig', () => {
 });
 
 describe('helpers', () => {
+  /**
+   * `~/` in `MASTER_KEY_PATH` (the shell convention used by .env.example) expands to the home
+   * directory; absolute paths pass through unchanged.
+   */
+  it('expands a leading ~/ in MASTER_KEY_PATH', () => {
+    expect(loadConfig({ MASTER_KEY_PATH: '~/.agent-hangar/master.key' }).MASTER_KEY_PATH).toBe(
+      join(homedir(), '.agent-hangar', 'master.key'),
+    );
+    expect(loadConfig({ MASTER_KEY_PATH: '/keys/k' }).MASTER_KEY_PATH).toBe('/keys/k');
+    expect(expandHomePrefix('~')).toBe('~');
+  });
+
   /**
    * `defaultMasterKeyPath` points into the user's home directory (outside the repository).
    */

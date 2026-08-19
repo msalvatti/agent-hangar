@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W0 (single agent, sequential — critical path) |
 | **Status** | 🟦 running |
-| **Progress** | 5/8 tasks |
+| **Progress** | 6/8 tasks |
 | **Branch** | `feat/w0-foundation` |
 | **Owned paths** | everything (only lane in this wave) |
 | **Depends on** | — |
@@ -46,7 +46,7 @@ Quality bar that applies to every file created here and in every later lane: Typ
 | 0.3 | Frozen core contracts: types, Zod, NDJSON codec, errors, config | ✅ | P0 | L | 0.2 |
 | 0.4 | Test doubles and canaries (`packages/core/src/testing`) | ✅ | P0 | M | 0.3 |
 | 0.5 | Prisma 7 schema, migration, client factory | ✅ | P0 | M | 0.2 |
-| 0.6 | Infra skeleton: compose, workspace Dockerfile base, env.sh, scripts, .env.example | 📋 | P0 | M | 0.1 |
+| 0.6 | Infra skeleton: compose, workspace Dockerfile base, env.sh, scripts, .env.example | ✅ | P0 | M | 0.1 |
 | 0.7 | Apps skeleton: Next.js shell with tokens + shadcn, worker boot, test configs | 📋 | P0 | L | 0.3, 0.5, 0.6 |
 | 0.8 | CI workflow, README skeleton, plan dashboard, close-out PR | 📋 | P0 | S | 0.1–0.7 |
 
@@ -386,17 +386,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 
 ## Task 0.6 — Infra skeleton: compose, workspace Dockerfile base, env.sh, scripts, .env.example
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 0.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 0.1
 
 **Description.** Create the parameterised local infrastructure: docker-compose (Postgres 18, Redis 8), the workspace image base Dockerfile, the instance/port derivation shell helper, `.env.example`, and stub scripts that W1-I completes.
 
 **Acceptance criteria**
-- [ ] `infra/docker-compose.yml` matches spec 05 §5 (name from `COMPOSE_PROJECT_NAME`, ports bound to `127.0.0.1:${POSTGRES_PORT}` / `${REDIS_PORT}`, healthchecks, named volumes)
-- [ ] `infra/scripts/env.sh` derives the same values as `packages/core/src/config/instance.ts` (instance, ports, db, compose project, prefix) and writes `.env.local` if absent (`--force` to overwrite; `--print` to echo)
-- [ ] `infra/workspace/Dockerfile` builds a base image (node:24-bookworm-slim + git, ca-certificates, ripgrep, jq, python3, build-essential; user `agent` uid 1001; `/workspace`; `ENTRYPOINT ["sleep","infinity"]`); contains a clearly marked placeholder comment where W1-D's runtime `COPY` lines go; `infra/workspace/askpass.sh` present
-- [ ] `.env.example` lists every variable from spec 05 §3 with comments
-- [ ] Stub scripts `infra/scripts/{setup,run,archive,doctor}.sh` exist, are executable, print "not implemented yet (W1-I)" and exit 1 — except `setup.sh`, which already performs: `pnpm install`, `env.sh`, master key creation (`~/.agent-hangar/master.key`, 0600, `openssl rand -hex 32`), `docker compose up -d --wait`, `pnpm db:generate && pnpm db:migrate`, `docker build` of the workspace image
-- [ ] `pnpm setup` succeeds on a machine with Docker Desktop; `pnpm infra:down` stops the instance
+- [x] `infra/docker-compose.yml` matches spec 05 §5 (name from `COMPOSE_PROJECT_NAME`, ports bound to `127.0.0.1:${POSTGRES_PORT}` / `${REDIS_PORT}`, healthchecks, named volumes)
+- [x] `infra/scripts/env.sh` derives the same values as `packages/core/src/config/instance.ts` (instance, ports, db, compose project, prefix) and writes `.env.local` if absent (`--force` to overwrite; `--print` to echo)
+- [x] `infra/workspace/Dockerfile` builds a base image (node:24-bookworm-slim + git, ca-certificates, ripgrep, jq, python3, build-essential; user `agent` uid 1001; `/workspace`; `ENTRYPOINT ["sleep","infinity"]`); contains a clearly marked placeholder comment where W1-D's runtime `COPY` lines go; `infra/workspace/askpass.sh` present
+- [x] `.env.example` lists every variable from spec 05 §3 with comments
+- [x] Stub scripts `infra/scripts/{setup,run,archive,doctor}.sh` exist, are executable, print "not implemented yet (W1-I)" and exit 1 — except `setup.sh`, which already performs: `pnpm install`, `env.sh`, master key creation (`~/.agent-hangar/master.key`, 0600, `openssl rand -hex 32`), `docker compose up -d --wait`, `pnpm db:generate && pnpm db:migrate`, `docker build` of the workspace image
+- [x] `pnpm setup` succeeds on a machine with Docker Desktop; `pnpm infra:down` stops the instance
 
 **Files to create**
 `infra/docker-compose.yml`, `infra/scripts/{env,setup,run,archive,doctor}.sh`, `infra/workspace/{Dockerfile,askpass.sh,.dockerignore}`, `.env.example`; root `package.json` scripts wired (`setup` → `infra/scripts/setup.sh`, `infra:*`, `doctor`).
@@ -592,3 +592,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 - 0.3 ✅ 2026-08-19 — frozen contracts in packages/core (runner, model, agent protocol with Zod + NDJSON codec, secrets, scheduling, workspace, persistence ports and entities, API and queue contracts, config/instance, typed errors) with 100 % coverage
 - 0.4 ✅ 2026-08-19 — FakeWorkspaceRunner, FakeAgentModelProvider, in-memory repositories for all eight ports, FakeClock and runtime-assembled canaries under @agent-hangar/core/testing, 100 % coverage
 - 0.5 ✅ 2026-08-19 — Prisma 7 schema, 0001_init migration with the partial unique index, prisma.config.ts over core config, adapter-pg client factory with fail-fast SELECT 1, test DB helpers, @db integration test
+- 0.6 ✅ 2026-08-19 — parameterised compose (Postgres 18 + Redis 8), env.sh mirroring resolveInstance (contract-tested), workspace image base with non-root agent user and askpass helper, idempotent setup.sh, .env.example, stub scripts

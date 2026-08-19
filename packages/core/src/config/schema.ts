@@ -35,6 +35,16 @@ export const DEFAULT_OPENAI_MODEL = 'gpt-5.6-sol';
  */
 export const COMPOSE_DB_CREDENTIALS = 'ah:ah';
 
+/**
+ * Expands a leading `~/` to the home directory so `.env` files may use the shell convention.
+ *
+ * @param value - A filesystem path.
+ * @returns The path with `~` expanded.
+ */
+export function expandHomePrefix(value: string): string {
+  return value.startsWith('~/') ? join(homedir(), value.slice(2)) : value;
+}
+
 const port = z.coerce.number().int().min(1).max(65_535);
 const positiveInt = z.coerce.number().int().positive();
 
@@ -53,7 +63,7 @@ export const envSchema = z.object({
   DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
   REDIS_URL: z.url({ protocol: /^rediss?$/ }),
   COMPOSE_PROJECT_NAME: z.string().min(1),
-  MASTER_KEY_PATH: z.string().min(1),
+  MASTER_KEY_PATH: z.string().min(1).transform(expandHomePrefix),
   WORKSPACE_IMAGE: z.string().min(1).default(DEFAULT_WORKSPACE_IMAGE),
   WORKSPACE_NAME_PREFIX: z.string().min(1),
   WORKSPACE_IDLE_TTL_MIN: positiveInt.default(30),
