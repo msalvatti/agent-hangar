@@ -9,7 +9,7 @@
 import { z } from 'zod';
 
 import type { AgentEventType } from '../agent-protocol/types.js';
-import { repoUrl } from '../repo-url.js';
+import { credentialFreeUrl, repoUrl } from '../repo-url.js';
 
 // ────────────────────────────── shared ──────────────────────────────
 
@@ -66,7 +66,10 @@ export const listReposQuery = z.object({ query: z.string().max(MAX_TITLE_LENGTH)
 /** One repository the PAT can access. */
 export const repoSummary = z.object({
   fullName: z.string().min(1),
-  url: repoUrl,
+  // Credential-free rather than GitHub-only: this URL is whatever the configured forge returned,
+  // and which forges are allowed is the host's policy (`ALLOWED_REPO_HOSTS`), not this schema's.
+  // Pinning it to github.com here would reject the local git server the end-to-end suite serves.
+  url: credentialFreeUrl,
   defaultBranch: z.string().min(1),
   private: z.boolean(),
   description: z.string().nullable(),
