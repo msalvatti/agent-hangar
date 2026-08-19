@@ -305,8 +305,8 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | W1-G | 🟦 running | `feat/w1g-web-chats` | — | 1G.1–1G.3 done, 1G.4 in progress; `shared/transcript` pushed, so W1-H is unblocked |
 | W1-H | 🟦 running | `feat/w1h-web-scheduled-settings` | — | close-out waits for W1-G to merge; builds on `TEMP-STUB(W1-H)` until then |
 | W1-I | 🟦 running | `feat/w1i-infra-conductor` | — | started once W1-A, W1-C and W1-E were merged |
-| W2-A | ⬜ | — | — | gate is W1-A, W1-E and W1-F merged — all three are, so the lane can start |
-| W2-B 🐳 | ⬜ | — | — | gate is W1-A…W1-F merged — all six are, so the lane can start |
+| W2-A | 🟦 running | `feat/w2a-web-api-sse` | — | started once W1-A, W1-E and W1-F were merged |
+| W2-B 🐳 | 🟦 running | `feat/w2b-worker` | — | started once W1-A…W1-F were merged; its 🐳 suite needs the runtime bundled into the image (PR #16) |
 | W2-C | ⬜ | — | — | gate is W1-G and W1-H merged — both are still running |
 | W3-A 🐳 | ⬜ | — | — | success criteria S1–S6, S8 |
 | W3-B | ⬜ | — | — | |
@@ -320,7 +320,9 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | #9 | 🟩 merged | The `e2e` job installed a browser to run an empty suite, taking 111–1367 s and gating every merge |
 | #5 | 🟩 merged | `@agent-hangar/core` was unresolvable from source, so a fresh worktree could not run the worker; repository URLs hardened |
 | #13 | 🟩 merged | A connection failure repeated the driver message and attached the driver error as `cause`, leaking the database password twice over |
-| #14 | 🟨 PR open | The destructive-test guard printed the password back when the connection URL had no authority |
+| #14 | 🟩 merged | The destructive-test guard printed the password back when the connection URL had no authority |
+| #15 | 🟩 merged | This dashboard had drifted six merges behind reality |
+| #16 | 🟨 PR open | The workspace image had no agent runtime in it: the bundle was described in a pull request body and never applied |
 
 Legend: ⬜ not started · 🟦 running (branch) · 🟨 PR open · 🟩 merged · 🟥 blocked.
 

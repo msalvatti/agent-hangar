@@ -190,6 +190,29 @@ orchestrator performs them; implementers only describe them in PR bodies.
 
 ### Dashboard policy (because `main` is PR-only)
 
+**The routine, in the order it must happen — this is part of the merge, not a separate errand.**
+It slipped three times before being written down here: the board sat six merges behind reality
+once, and went stale again within an hour of being fixed, because each flip was treated as its own
+task to be scheduled later rather than as the last step of the merge in front of it.
+
+Immediately after every `gh pr merge`, before picking the next lane:
+
+1. `git switch docs/dashboard-rolling` (create it from `origin/main` if it does not exist) and
+   flip the row that just changed — in `docs/plan.md` §12 and in `docs/tasks/README.md`.
+2. Flip a lane to 🟦 in the same branch the moment it is spawned, so a running lane is never
+   invisible.
+3. Push. If the rolling pull request is already open, the push is the whole update. If not, open
+   it. It merges under the ordinary gate like any other pull request.
+4. Rebase the rolling branch after each lane merge; it edits the same two files every lane's
+   close-out edits, so it conflicts by design and the resolution is always to keep the newer
+   status.
+
+**Read the state from `gh`, never from memory.** Three separate accuracy errors were caught by
+doing that — a lane published as PR-open after it had merged, a note claiming Dockerfile lines had
+landed when the file held one `COPY`, a progress note a whole task behind. The board is read by
+people deciding what to start next, so a stale row is worse than an absent one.
+
+
 The org ruleset forbids direct pushes to `main`, so `docs(plan): mark
 <lane> merged` can never be pushed directly. Instead:
 
