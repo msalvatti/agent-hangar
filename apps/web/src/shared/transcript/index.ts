@@ -47,6 +47,7 @@ export {
   relativeTime,
   shortSha,
 } from './lib/format';
+export { assertPresent } from './lib/assert';
 export { maskSecretShapes, toDisplayJson } from './lib/redact-display';
 export { summarizeArgs } from './lib/summarize-args';
 
