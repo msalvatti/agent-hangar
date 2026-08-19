@@ -15,7 +15,7 @@ import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/shared/ui
 
 import { useElapsed } from '../hooks/useElapsed';
 import { formatBytes, formatDuration } from '../lib/format';
-import { toDisplayJson } from '../lib/redact-display';
+import { maskSecretShapes, toDisplayJson } from '../lib/redact-display';
 import { summarizeArgs } from '../lib/summarize-args';
 import type { ToolTranscriptItem } from '../types';
 
@@ -72,7 +72,12 @@ export function ToolCallRow({ item, defaultOpen = false, onStop, className }: To
   const [open, setOpen] = useState(defaultOpen);
   const elapsed = useElapsed(item.startedAt, item.status === 'running');
   const summary = summarizeArgs(item.name, item.args);
-  const outputText = item.stdout + item.stderr;
+  // Defence in depth (rule: the transcript masks secret shapes before rendering, even though the
+  // worker has already redacted): masked once here so both the display blocks and the copy
+  // button's clipboard value see the same scrubbed text.
+  const maskedStdout = maskSecretShapes(item.stdout);
+  const maskedStderr = maskSecretShapes(item.stderr);
+  const outputText = maskedStdout + maskedStderr;
   const isTruncated = item.totalBytes !== null && item.totalBytes > item.shownBytes;
 
   return (
@@ -134,12 +139,12 @@ export function ToolCallRow({ item, defaultOpen = false, onStop, className }: To
                   aria-live="polite"
                   className="bg-muted max-h-104 overflow-y-auto rounded p-2 font-mono text-[13px] leading-[1.6]"
                 >
-                  {item.stdout.length > 0 && (
-                    <pre className="whitespace-pre-wrap">{item.stdout}</pre>
+                  {maskedStdout.length > 0 && (
+                    <pre className="whitespace-pre-wrap">{maskedStdout}</pre>
                   )}
-                  {item.stderr.length > 0 && (
+                  {maskedStderr.length > 0 && (
                     <pre className="border-destructive border-l-2 pl-2 whitespace-pre-wrap">
-                      {item.stderr}
+                      {maskedStderr}
                     </pre>
                   )}
                 </div>

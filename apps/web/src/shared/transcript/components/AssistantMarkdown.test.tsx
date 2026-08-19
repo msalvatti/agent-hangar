@@ -2,6 +2,7 @@
  * Tests for assistant Markdown rendering, including the safe-URL pin required by the operator:
  * removing react-markdown's default `urlTransform` protection must fail these tests.
  */
+import { GITHUB_CANARY } from '@agent-hangar/core/testing';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -63,6 +64,14 @@ describe('AssistantMarkdown', () => {
       expect(writeText).toHaveBeenCalled();
     });
     expect(writeText.mock.calls[0]?.[0]).toEqual(expect.any(String));
+  });
+
+  // A secret shape in the assistant text is masked before parsing — defence in depth even though
+  // the worker has already redacted the message.
+  it('masks a secret shape in the text', () => {
+    render(<AssistantMarkdown text={`token=${GITHUB_CANARY}`} />);
+    expect(screen.queryByText(GITHUB_CANARY, { exact: false })).toBeNull();
+    expect(screen.getByText('token=[REDACTED]')).toBeInTheDocument();
   });
 
   // Inline code renders with the muted mono styling, distinct from a fenced block.

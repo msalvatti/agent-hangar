@@ -1,6 +1,7 @@
 /**
  * Tests for the system notice line: tones, duration and role.
  */
+import { GITHUB_CANARY } from '@agent-hangar/core/testing';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
@@ -37,5 +38,13 @@ describe('SystemNotice', () => {
   it('omits the duration when not provided', () => {
     render(<SystemNotice tone="info" text="Cloning…" />);
     expect(screen.queryByText(/\ds$/)).toBeNull();
+  });
+
+  // A secret shape in the text (a raw prepare.progress message from the workspace agent) is
+  // masked before rendering, defence in depth on top of the worker's own redaction.
+  it('masks a secret shape in the text', () => {
+    render(<SystemNotice tone="info" text={`token=${GITHUB_CANARY}`} />);
+    expect(screen.queryByText(GITHUB_CANARY, { exact: false })).toBeNull();
+    expect(screen.getByText('token=[REDACTED]')).toBeInTheDocument();
   });
 });

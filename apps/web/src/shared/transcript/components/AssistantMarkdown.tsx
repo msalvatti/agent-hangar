@@ -17,6 +17,8 @@ import remarkGfm from 'remark-gfm';
 
 import { cn } from '@/shared/lib/cn';
 
+import { maskSecretShapes } from '../lib/redact-display';
+
 import '../styles/highlight.css';
 
 import { CopyButton } from './CopyButton';
@@ -121,7 +123,8 @@ const MARKDOWN_COMPONENTS: Components = {
 /**
  * Renders assistant text as Markdown (GFM tables/task lists, headings, lists, fenced code with a
  * copy button). No raw HTML is ever rendered — no raw-HTML rehype plugin is enabled, so any
- * literal HTML in the text is shown as escaped text rather than executed.
+ * literal HTML in the text is shown as escaped text rather than executed. `text` is masked for
+ * secret shapes before parsing: defence in depth alongside the worker's own redaction.
  *
  * @param props - Text, streaming flag and className.
  */
@@ -141,7 +144,7 @@ export function AssistantMarkdown({ text, streaming = false, className }: Assist
         rehypePlugins={[rehypeHighlight]}
         components={MARKDOWN_COMPONENTS}
       >
-        {text}
+        {maskSecretShapes(text)}
       </ReactMarkdown>
       {streaming && <StreamCursor />}
     </div>

@@ -2,7 +2,7 @@
  * Tests for the tool-call row: collapsed summaries per tool, redaction, running/succeeded/failed/
  * timed-out meta, keyboard toggling, expanded arguments/output, copy, and truncation.
  */
-import { GITHUB_CANARY } from '@agent-hangar/core/testing';
+import { GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -70,6 +70,33 @@ describe('ToolCallRow', () => {
     );
     await user.click(screen.getByRole('button'));
     expect(document.body.textContent).not.toContain(GITHUB_CANARY);
+  });
+
+  // A secret shape embedded in tool output (stdout/stderr) is masked in the expanded view and in
+  // the value the copy button writes — defence in depth even though the worker already redacts.
+  it('never renders a canary secret from stdout/stderr, and masks the copied value', async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(
+      <ToolCallRow
+        item={makeItem({
+          stdout: `token=${GITHUB_CANARY}\n`,
+          stderr: `leaked ${OPENAI_CANARY}\n`,
+        })}
+      />,
+    );
+    await user.click(screen.getByRole('button'));
+    expect(document.body.textContent).not.toContain(GITHUB_CANARY);
+    expect(document.body.textContent).not.toContain(OPENAI_CANARY);
+
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    fireEvent.click(screen.getByRole('button', { name: 'Copy output' }));
+    await waitFor(() => {
+      expect(writeText).toHaveBeenCalledTimes(1);
+    });
+    const copied = writeText.mock.calls[0]?.[0] as string;
+    expect(copied).not.toContain(GITHUB_CANARY);
+    expect(copied).not.toContain(OPENAI_CANARY);
   });
 
   // Running: pulsing dot, live elapsed time, and a Stop button that fires onStop.
