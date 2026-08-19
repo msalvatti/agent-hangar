@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W0 (single agent, sequential — critical path) |
 | **Status** | 🟦 running |
-| **Progress** | 6/8 tasks |
+| **Progress** | 7/8 tasks |
 | **Branch** | `feat/w0-foundation` |
 | **Owned paths** | everything (only lane in this wave) |
 | **Depends on** | — |
@@ -47,7 +47,7 @@ Quality bar that applies to every file created here and in every later lane: Typ
 | 0.4 | Test doubles and canaries (`packages/core/src/testing`) | ✅ | P0 | M | 0.3 |
 | 0.5 | Prisma 7 schema, migration, client factory | ✅ | P0 | M | 0.2 |
 | 0.6 | Infra skeleton: compose, workspace Dockerfile base, env.sh, scripts, .env.example | ✅ | P0 | M | 0.1 |
-| 0.7 | Apps skeleton: Next.js shell with tokens + shadcn, worker boot, test configs | 📋 | P0 | L | 0.3, 0.5, 0.6 |
+| 0.7 | Apps skeleton: Next.js shell with tokens + shadcn, worker boot, test configs | ✅ | P0 | L | 0.3, 0.5, 0.6 |
 | 0.8 | CI workflow, README skeleton, plan dashboard, close-out PR | 📋 | P0 | S | 0.1–0.7 |
 
 ---
@@ -451,18 +451,18 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 
 ## Task 0.7 — Apps skeleton: Next.js shell with tokens + shadcn, worker boot, test configs
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 0.3, 0.5, 0.6
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 0.3, 0.5, 0.6
 
 **Description.** Stand up `apps/web` (Next 16 App Router, Tailwind v4 tokens from spec 10, shadcn components generated into `src/shared/ui`, fonts, route placeholders, typed API client, Vitest + Playwright configs) and `apps/worker` (boot: config, DB round-trip, Redis ping, graceful shutdown) with 100 % coverage on what exists.
 
 **Acceptance criteria**
-- [ ] `pnpm --filter web dev` serves `/chats/new`, `/chats/[id]`, `/scheduled`, `/scheduled/[id]`, `/settings` placeholders inside `(app)/layout.tsx` that has a 260 px sidebar slot and a header slot (empty components W1-G fills)
-- [ ] `app/globals.css` defines every token of spec 10 §2 for light and dark via `@theme` + `:root`/`.dark` variables, `next/font` Inter + JetBrains Mono wired as CSS variables
-- [ ] shadcn initialised (Base UI, new-york) with components from spec 10 §5 generated into `apps/web/src/shared/ui/` (Button, Input, Textarea, Dialog, AlertDialog, Sheet, Command, DropdownMenu, Tooltip, Switch, Table, Badge, Card, Separator, ScrollArea, Sonner, Skeleton, Collapsible, Tabs); `components.json` points aliases to `@/shared/ui`
-- [ ] `src/shared/api/client.ts`: typed `apiFetch(route, input)` using `@agent-hangar/core` api contracts (Zod parse of responses), plus `createEventSource(url, lastEventId?)` wrapper; unit-tested
-- [ ] `apps/web/vitest.config.ts` (jsdom, `@vitejs/plugin-react`, setup file with jest-dom, thresholds 100/100/100/100, `coverage.include: ['src/shared/api/**']` for now) and `playwright.config.ts` (baseURL from `WEB_PORT`, chromium, `webServer` disabled — harness in W2-C)
-- [ ] `apps/worker/src/main.ts` boots: `loadConfig`, `createPrismaClient` + `assertDatabaseReachable`, Redis ping via ioredis, pino logger, SIGINT/SIGTERM graceful shutdown, exits non-zero with a clear message if infra is down; `apps/worker/vitest.config.ts` 100 % on `src/**` with the boot wiring tested via injected fakes
-- [ ] `pnpm dev` runs web + worker concurrently with `.env.local`
+- [x] `pnpm --filter web dev` serves `/chats/new`, `/chats/[id]`, `/scheduled`, `/scheduled/[id]`, `/settings` placeholders inside `(app)/layout.tsx` that has a 260 px sidebar slot and a header slot (empty components W1-G fills)
+- [x] `app/globals.css` defines every token of spec 10 §2 for light and dark via `@theme` + `:root`/`.dark` variables, `next/font` Inter + JetBrains Mono wired as CSS variables
+- [x] shadcn initialised (Base UI, new-york) with components from spec 10 §5 generated into `apps/web/src/shared/ui/` (Button, Input, Textarea, Dialog, AlertDialog, Sheet, Command, DropdownMenu, Tooltip, Switch, Table, Badge, Card, Separator, ScrollArea, Sonner, Skeleton, Collapsible, Tabs); `components.json` points aliases to `@/shared/ui`
+- [x] `src/shared/api/client.ts`: typed `apiFetch(route, input)` using `@agent-hangar/core` api contracts (Zod parse of responses), plus `createEventSource(url, lastEventId?)` wrapper; unit-tested
+- [x] `apps/web/vitest.config.ts` (jsdom, `@vitejs/plugin-react`, setup file with jest-dom, thresholds 100/100/100/100, `coverage.include: ['src/shared/api/**']` for now) and `playwright.config.ts` (baseURL from `WEB_PORT`, chromium, `webServer` disabled — harness in W2-C)
+- [x] `apps/worker/src/main.ts` boots: `loadConfig`, `createPrismaClient` + `assertDatabaseReachable`, Redis ping via ioredis, pino logger, SIGINT/SIGTERM graceful shutdown, exits non-zero with a clear message if infra is down; `apps/worker/vitest.config.ts` 100 % on `src/**` with the boot wiring tested via injected fakes
+- [x] `pnpm dev` runs web + worker concurrently with `.env.local`
 
 **Files to create**
 `apps/web/{next.config.ts,postcss.config.mjs,components.json,app/layout.tsx,app/globals.css,app/(app)/layout.tsx,app/(app)/chats/new/page.tsx,app/(app)/chats/[id]/page.tsx,app/(app)/scheduled/page.tsx,app/(app)/scheduled/[id]/page.tsx,app/(app)/settings/page.tsx,app/page.tsx (redirect → /chats/new),src/shared/ui/**,src/shared/api/{client,client.test}.ts,src/shared/lib/cn.ts,src/test/setup.ts,vitest.config.ts,playwright.config.ts}`, `apps/worker/src/{main.ts,boot.ts,boot.test.ts,logger.ts}`, `apps/worker/vitest.config.ts`, root `dev` script.
@@ -593,3 +593,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 - 0.4 ✅ 2026-08-19 — FakeWorkspaceRunner, FakeAgentModelProvider, in-memory repositories for all eight ports, FakeClock and runtime-assembled canaries under @agent-hangar/core/testing, 100 % coverage
 - 0.5 ✅ 2026-08-19 — Prisma 7 schema, 0001_init migration with the partial unique index, prisma.config.ts over core config, adapter-pg client factory with fail-fast SELECT 1, test DB helpers, @db integration test
 - 0.6 ✅ 2026-08-19 — parameterised compose (Postgres 18 + Redis 8), env.sh mirroring resolveInstance (contract-tested), workspace image base with non-root agent user and askpass helper, idempotent setup.sh, .env.example, stub scripts
+- 0.7 ✅ 2026-08-19 — Next 16 shell (tokens, fonts, theme bootstrap, shadcn base-nova components, security headers, loopback bind, placeholder routes, typed apiFetch) and worker boot with fail-fast DB/Redis checks; web and worker at 100 % coverage

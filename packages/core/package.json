@@ -4,6 +4,7 @@
   "private": true,
   "description": "Framework-free domain core: contracts, protocol codec, config, persistence, runner and model provider ports.",
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",

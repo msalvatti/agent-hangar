@@ -394,20 +394,24 @@ export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
 
 /** Describes one operation: method, path template and the schemas of its boundary data. */
 export interface ApiOperation<
-  TQuery extends z.ZodType = z.ZodType,
-  TBody extends z.ZodType = z.ZodType,
+  TQuery extends z.ZodType | undefined = undefined,
+  TBody extends z.ZodType | undefined = undefined,
   TResponse extends z.ZodType = z.ZodType,
 > {
   method: HttpMethod;
   path: (typeof routes)[RouteKey];
+  /** Query-string schema; absent when the operation takes no query parameters. */
   query?: TQuery;
+  /** JSON body schema; absent when the operation takes no body. */
   body?: TBody;
   response: TResponse;
 }
 
-function op<TQuery extends z.ZodType, TBody extends z.ZodType, TResponse extends z.ZodType>(
-  operation: ApiOperation<TQuery, TBody, TResponse>,
-): ApiOperation<TQuery, TBody, TResponse> {
+function op<
+  TQuery extends z.ZodType | undefined = undefined,
+  TBody extends z.ZodType | undefined = undefined,
+  TResponse extends z.ZodType = z.ZodType,
+>(operation: ApiOperation<TQuery, TBody, TResponse>): ApiOperation<TQuery, TBody, TResponse> {
   return operation;
 }
 
@@ -484,3 +488,22 @@ export const apiOperations = {
 
 /** Operation names. */
 export type ApiOperationName = keyof typeof apiOperations;
+
+/** Parsed query parameters accepted by an operation (`never` when it has none). */
+export type ApiQueryInput<K extends ApiOperationName> = [
+  NonNullable<(typeof apiOperations)[K]['query']>,
+] extends [z.ZodType]
+  ? z.input<NonNullable<(typeof apiOperations)[K]['query']>>
+  : never;
+
+/** JSON body accepted by an operation (`never` when it has none). */
+export type ApiBodyInput<K extends ApiOperationName> = [
+  NonNullable<(typeof apiOperations)[K]['body']>,
+] extends [z.ZodType]
+  ? z.input<NonNullable<(typeof apiOperations)[K]['body']>>
+  : never;
+
+/** Parsed response of an operation. */
+export type ApiResponse<K extends ApiOperationName> = z.output<
+  (typeof apiOperations)[K]['response']
+>;

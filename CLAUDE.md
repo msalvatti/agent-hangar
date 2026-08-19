@@ -75,6 +75,11 @@ Shared files are append-only, one line per lane: each package's `vitest.config.t
 `packages/core/src/index.ts` (the root barrel itself is frozen), `apps/web/src/mocks/handlers.ts`.
 Contracts in `packages/core` are frozen after W0; changes are additive, one-file PRs.
 
+`packages/core` is published with `sideEffects: false`: client components import the contracts
+from `@agent-hangar/core` and the bundler prunes the Node-only modules (Prisma, pg, pino,
+BullMQ, dockerode, OpenAI) because nothing runs at import time. Keep it that way — no module in
+`packages/core/src` may open connections, register listeners or touch `process` at the top level.
+
 ## Gates before any PR
 
 1. `pnpm lint && pnpm format:check && pnpm typecheck` — exit 0.

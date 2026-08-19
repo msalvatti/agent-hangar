@@ -57,7 +57,7 @@ export default defineConfig([
         projectService: {
           // Tool config files live outside every package `src/` (and thus outside the
           // project references); they are type-checked against the base compiler options.
-          allowDefaultProject: ['*.config.ts', '*/*/*.config.ts'],
+          allowDefaultProject: ['*.config.ts', 'packages/*/*.config.ts', 'apps/worker/*.config.ts'],
           defaultProject: 'tsconfig.base.json',
         },
         tsconfigRootDir: import.meta.dirname,
@@ -182,6 +182,7 @@ export default defineConfig([
       '@typescript-eslint/no-unnecessary-type-parameters': 'off',
       '@typescript-eslint/prefer-nullish-coalescing': 'off',
       'react-hooks/refs': 'off',
+      'import-x/order': 'off',
     },
   },
 
