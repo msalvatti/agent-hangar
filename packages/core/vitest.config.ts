@@ -49,6 +49,7 @@ export default defineConfig({
         'src/testing/**',
         'src/persistence/client.ts',
         'src/persistence/testing/**',
+        'src/persistence/repositories/**',
         'src/repo-url.ts',
         'src/secrets/**',
         'src/redaction/**',

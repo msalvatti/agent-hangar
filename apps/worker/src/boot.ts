@@ -9,7 +9,7 @@
  * message when the compose instance is down.
  */
 import type { AppConfig } from '@agent-hangar/core';
-import { ConfigError } from '@agent-hangar/core';
+import { ConfigError, describeClientFailure } from '@agent-hangar/core';
 import type { Logger } from 'pino';
 
 /** The part of the Prisma client the boot needs. */
@@ -47,20 +47,35 @@ export interface BootResult<
   shutdown: () => Promise<void>;
 }
 
+/** Stands in for a URL that cannot be named without risking a credential. */
+export const REDACTED_URL = '(redacted url)';
+
 /**
- * Returns a URL with any credentials removed, safe for error messages and logs.
+ * Reduces a connection URL to the parts that are safe to print: scheme, host and path.
  *
- * @param url - Connection URL (may carry `user:password@`).
- * @returns The URL without userinfo, or the input unchanged when it is not a valid URL.
+ * Rebuilding from those three is deliberate. Removing the components known to be dangerous would
+ * mean keeping up with every place a credential can hide, and each of them is reachable here,
+ * because the environment schema only asks `URL` to parse the value:
+ *
+ * - userinfo, as in `redis://ah:pw@cache:6379`;
+ * - the query, as in `redis://cache:6379?password=pw` — ioredis reads query parameters as
+ *   connection options, so that is a supported way to spell the password, not a typo;
+ * - the fragment, which `repo-url.ts` already treats as credential-bearing for the same reason.
+ *
+ * An authority-less URL such as `redis:/ah:pw@cache` parses with an empty host and the whole of
+ * `ah:pw@cache` as its path, so nothing safe is left to name; it and an outright unparseable value
+ * are both reported as {@link REDACTED_URL}. Losing the target from one boot message costs a
+ * little diagnosis; repeating a password costs more.
+ *
+ * @param url - Connection URL (may carry credentials in userinfo, query or fragment).
+ * @returns `scheme//host/path`, or {@link REDACTED_URL} when no host can be isolated.
  */
 export function describeUrl(url: string): string {
   const parsed = URL.parse(url);
-  if (parsed === null) {
-    return url;
+  if (parsed === null || parsed.host === '') {
+    return REDACTED_URL;
   }
-  parsed.username = '';
-  parsed.password = '';
-  return parsed.toString();
+  return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
 }
 
 async function assertRedisReachable(redis: BootRedis, url: string): Promise<void> {
@@ -69,8 +84,9 @@ async function assertRedisReachable(redis: BootRedis, url: string): Promise<void
   try {
     reply = await redis.ping();
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new ConfigError(`redis unreachable at ${target}: ${detail}`, { cause: error });
+    // The driver's message and the error itself both carry the connection string, password
+    // included, and `cause` republishes it to anything walking the chain.
+    throw new ConfigError(`redis unreachable at ${target} (${describeClientFailure(error)})`);
   }
   if (reply !== 'PONG') {
     throw new ConfigError(`redis unreachable at ${target}: unexpected PING reply "${reply}"`);

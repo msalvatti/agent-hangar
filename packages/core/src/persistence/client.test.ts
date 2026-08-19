@@ -7,6 +7,8 @@
  * client.
  * Mocks: `@prisma/adapter-pg` and the generated client (no database); fake timers for the timeout.
  */
+import { inspect } from 'node:util';
+
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ConfigError } from '../errors.js';
@@ -80,26 +82,58 @@ describe('assertDatabaseReachable', () => {
   });
 
   /**
-   * Failure path: a driver error becomes a `ConfigError` with the driver message and the original
-   * error as `cause`, so boot logs stay readable.
+   * Failure path: a driver error becomes a `ConfigError` carrying only the driver's own code.
+   * The driver's message holds the connection string, password included, and attaching the error
+   * as `cause` would republish it to anything that walks the chain, so neither may travel.
    */
-  it('wraps query failures in ConfigError', async () => {
-    const failure = new Error('ECONNREFUSED 127.0.0.1:3001');
+  it('reports a query failure by its driver code and keeps the connection string out', async () => {
+    const secret = 'SUPERSECRETPW';
+    const failure = Object.assign(
+      new Error(`connect ECONNREFUSED postgresql://ah:${secret}@127.0.0.1:3001/db`),
+      { code: 'ECONNREFUSED' },
+    );
     const client = { $queryRaw: vi.fn().mockRejectedValue(failure) };
     const attempt = assertDatabaseReachable(client);
     await expect(attempt).rejects.toThrow(ConfigError);
-    await expect(attempt).rejects.toThrow('database unreachable: ECONNREFUSED 127.0.0.1:3001');
+    await expect(attempt).rejects.toThrow('database unreachable (ECONNREFUSED)');
     await attempt.catch((error: unknown) => {
-      expect((error as ConfigError).cause).toBe(failure);
+      expect((error as ConfigError).cause).toBeUndefined();
+      expect(inspect(error, { depth: null })).not.toContain(secret);
     });
   });
 
   /**
-   * Non-Error rejections (drivers occasionally reject with strings) are stringified.
+   * Non-Error rejections (drivers occasionally reject with strings) still classify, and still
+   * repeat nothing of what was rejected.
    */
-  it('stringifies non-Error rejections', async () => {
-    const client = { $queryRaw: vi.fn().mockRejectedValue('boom') };
-    await expect(assertDatabaseReachable(client)).rejects.toThrow('database unreachable: boom');
+  it('reports a non-Error rejection without repeating it', async () => {
+    const client = { $queryRaw: vi.fn().mockRejectedValue('postgresql://ah:SUPERSECRETPW@h/db') };
+    const attempt = assertDatabaseReachable(client);
+    await expect(attempt).rejects.toThrow('database unreachable (unknown)');
+    await expect(attempt).rejects.not.toThrow(/SUPERSECRETPW/u);
+  });
+
+  /**
+   * `client` is an injectable interface, so the sanitising branch cannot be skipped on the strength
+   * of the rejection's type: a wrapper rejecting a `ConfigError` of its own — built from the
+   * connection string and carrying the driver error as `cause` — would otherwise travel through
+   * untouched. Only the timeout error this function raises itself is passed through, and it is
+   * recognised by identity.
+   */
+  it('sanitizes a ConfigError raised by the client instead of passing it through', async () => {
+    const secret = 'SUPERSECRETPW';
+    const driverError = new Error(`connect ECONNREFUSED postgresql://ah:${secret}@127.0.0.1/db`);
+    const impostor = new ConfigError(`postgresql://ah:${secret}@127.0.0.1/db`, {
+      cause: driverError,
+    });
+    const client = { $queryRaw: vi.fn().mockRejectedValue(impostor) };
+    const attempt = assertDatabaseReachable(client);
+    await expect(attempt).rejects.toThrow('database unreachable (unknown)');
+    await attempt.catch((error: unknown) => {
+      expect(error).not.toBe(impostor);
+      expect((error as ConfigError).cause).toBeUndefined();
+      expect(inspect(error, { depth: null })).not.toContain(secret);
+    });
   });
 
   /**

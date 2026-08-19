@@ -14,9 +14,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ConfigError } from '../../errors.js';
 
 import {
+  CI_ENV,
   connectTestDb,
+  countRows,
+  describeDb,
   DESTRUCTIVE_TESTS_ENV,
   MIGRATIONS_TABLE,
+  rawSelect,
+  seedChat,
+  shouldRunDbSuite,
+  sqlTemplate,
   truncateAll,
   withTestDb,
 } from './db.js';
@@ -277,5 +284,174 @@ describe('withTestDb', () => {
     onDatabase('agent_hangar_test', 'Chat');
     await withTestDb(() => Promise.resolve('ok'));
     expect(fakeClient.$disconnect).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('shouldRunDbSuite', () => {
+  /** `DATABASE_URL` present is enough on its own: the suite is meant to run. */
+  it('returns run: true when DATABASE_URL is set', () => {
+    const decision = shouldRunDbSuite({ DATABASE_URL: TEST_URL });
+    expect(decision.run).toBe(true);
+    expect(decision.reason).toContain('DATABASE_URL');
+  });
+
+  /**
+   * Locally, without a database, the suite is skipped rather than failed — the reason names how
+   * to start one so the skip is actionable, not just silent.
+   */
+  it('returns run: false with an actionable reason when DATABASE_URL and CI are both unset', () => {
+    const decision = shouldRunDbSuite({});
+    expect(decision.run).toBe(false);
+    expect(decision.reason).toContain('DATABASE_URL not set');
+    expect(decision.reason).toContain('AH_INSTANCE=test');
+  });
+
+  /**
+   * In CI, silently skipping would report green without the suite ever touching a database, so
+   * this throws instead of returning a decision a caller could ignore.
+   */
+  it('throws ConfigError when DATABASE_URL is unset and CI is truthy', () => {
+    expect(() => shouldRunDbSuite({ [CI_ENV]: '1' })).toThrow(ConfigError);
+    expect(() => shouldRunDbSuite({ [CI_ENV]: 'true' })).toThrow(/DATABASE_URL is required in CI/);
+  });
+
+  /** Default env source is `process.env`. */
+  it('reads process.env by default', () => {
+    vi.stubEnv('DATABASE_URL', TEST_URL);
+    expect(shouldRunDbSuite().run).toBe(true);
+  });
+});
+
+describe('describeDb', () => {
+  /**
+   * Registered directly at collection time (describe bodies run synchronously, `it` bodies run
+   * later), with the environment pinned around each call so the outcome does not depend on
+   * whatever is exported in the shell actually running this suite.
+   */
+  const savedDatabaseUrl = process.env.DATABASE_URL;
+  const savedCi = process.env[CI_ENV];
+
+  process.env.DATABASE_URL = TEST_URL;
+  Reflect.deleteProperty(process.env, CI_ENV);
+  let ranWhenDatabaseUrlSet = false;
+  describeDb('probe suite (DATABASE_URL set)', () => {
+    it('runs for real', () => {
+      ranWhenDatabaseUrlSet = true;
+      expect(true).toBe(true);
+    });
+  });
+
+  delete process.env.DATABASE_URL;
+  Reflect.deleteProperty(process.env, CI_ENV);
+  describeDb('probe suite (DATABASE_URL unset)', () => {
+    it('never actually runs', () => {
+      throw new Error('a skipped @db suite must not execute its body');
+    });
+  });
+
+  if (savedDatabaseUrl === undefined) {
+    delete process.env.DATABASE_URL;
+  } else {
+    process.env.DATABASE_URL = savedDatabaseUrl;
+  }
+  if (savedCi === undefined) {
+    Reflect.deleteProperty(process.env, CI_ENV);
+  } else {
+    process.env[CI_ENV] = savedCi;
+  }
+
+  /** The non-skipped probe above actually executed its `it`. */
+  it('runs the wrapped suite when DATABASE_URL was set at registration time', () => {
+    expect(ranWhenDatabaseUrlSet).toBe(true);
+  });
+});
+
+describe('seedChat', () => {
+  /** Defaults fill every field the caller does not override. */
+  it('inserts a Chat with sensible defaults and returns its id', async () => {
+    const create = vi.fn(() => Promise.resolve({ id: 'chat-1' }));
+    const id = await seedChat({ chat: { create } });
+    expect(id).toBe('chat-1');
+    expect(create).toHaveBeenCalledWith({
+      data: {
+        title: 'Test chat',
+        repoUrl: 'https://github.com/agent-hangar/example',
+        baseBranch: 'main',
+        status: 'ACTIVE',
+      },
+    });
+  });
+
+  /** Overrides replace only the fields they name. */
+  it('applies overrides on top of the defaults', async () => {
+    const create = vi.fn(() => Promise.resolve({ id: 'chat-2' }));
+    await seedChat({ chat: { create } }, { title: 'Custom', status: 'ARCHIVED' });
+    expect(create).toHaveBeenCalledWith({
+      data: {
+        title: 'Custom',
+        repoUrl: 'https://github.com/agent-hangar/example',
+        baseBranch: 'main',
+        status: 'ARCHIVED',
+      },
+    });
+  });
+});
+
+describe('rawSelect', () => {
+  /** Thin pass-through: the tagged template and its values reach `$queryRaw` unchanged. */
+  it('forwards the tagged template and values to $queryRaw', async () => {
+    const queryRaw = vi.fn(() => Promise.resolve([{ content: '[REDACTED]' }]));
+    const client = { $queryRaw: queryRaw } as unknown as Parameters<typeof rawSelect>[0];
+    const rows = await rawSelect<{ content: string }>(
+      client,
+      sqlTemplate('SELECT content FROM "Message" WHERE id = '),
+      'msg-1',
+    );
+    expect(rows).toEqual([{ content: '[REDACTED]' }]);
+    expect(queryRaw).toHaveBeenCalledWith(expect.anything(), 'msg-1');
+  });
+});
+
+describe('sqlTemplate', () => {
+  /** The wrapped array has both a text part and a matching `raw` part, as a real tag expects. */
+  it('wraps a SQL string as a two-part TemplateStringsArray ending in a placeholder', () => {
+    const template = sqlTemplate('SELECT id FROM "Chat" WHERE id = ');
+    expect(Array.from(template)).toEqual(['SELECT id FROM "Chat" WHERE id = ', '']);
+    expect(Array.from(template.raw)).toEqual(['SELECT id FROM "Chat" WHERE id = ', '']);
+  });
+});
+
+describe('countRows', () => {
+  /** Builds a whitelisted, quoted COUNT query and converts the bigint result to a number. */
+  it('counts the rows of a whitelisted table', async () => {
+    const queryRawUnsafe = vi.fn(() => Promise.resolve([{ count: 5n }]));
+    const client = { $queryRawUnsafe: queryRawUnsafe } as unknown as Parameters<
+      typeof countRows
+    >[0];
+    const count = await countRows(client, 'Message');
+    expect(count).toBe(5);
+    expect(queryRawUnsafe).toHaveBeenCalledWith('SELECT COUNT(*)::bigint AS count FROM "Message"');
+  });
+
+  /** An empty table (no rows, or the aggregate returning no row at all) counts as zero. */
+  it('returns 0 when the aggregate yields no row', async () => {
+    const queryRawUnsafe = vi.fn(() => Promise.resolve<{ count: bigint }[]>([]));
+    const client = { $queryRawUnsafe: queryRawUnsafe } as unknown as Parameters<
+      typeof countRows
+    >[0];
+    const count = await countRows(client, 'Secret');
+    expect(count).toBe(0);
+  });
+
+  /** A table outside the whitelist is refused before any query is built. */
+  it('refuses a table name outside the whitelist', async () => {
+    const queryRawUnsafe = vi.fn(() => Promise.resolve([{ count: 0n }]));
+    const client = { $queryRawUnsafe: queryRawUnsafe } as unknown as Parameters<
+      typeof countRows
+    >[0];
+    await expect(
+      countRows(client, 'Users; DROP TABLE "Chat"' as unknown as Parameters<typeof countRows>[1]),
+    ).rejects.toThrow(ConfigError);
+    expect(queryRawUnsafe).not.toHaveBeenCalled();
   });
 });
