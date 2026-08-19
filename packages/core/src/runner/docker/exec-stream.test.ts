@@ -332,6 +332,32 @@ describe('writeStdin', () => {
   });
 
   /**
+   * Backpressure is the other door to the same hang. A stream destroyed while its buffer is full
+   * never emits `'drain'`, so a write parked on that event would never settle — and the runner
+   * awaits this writer before an exec is considered over, so the caller would never receive a
+   * terminal event. The wait has to end when the exec does.
+   */
+  it('abandons a write parked on backpressure once aborted, and still closes stdin', async () => {
+    // A stream that always reports a full buffer and never drains, standing in for the hijacked
+    // stream after a timeout destroyed it.
+    const stream = {
+      write: () => false,
+      once: () => undefined,
+      end: () => {
+        ended = true;
+      },
+    };
+    let ended = false;
+    const controller = new AbortController();
+
+    const written = writeStdin(stream, 'payload that cannot be flushed', controller.signal);
+    controller.abort();
+
+    await expect(written).resolves.toBeUndefined();
+    expect(ended).toBe(true);
+  });
+
+  /**
    * The hang that makes the timeout and the abort meaningless. A source whose `next()` never
    * settles cannot be caught by checking `signal.aborted` between chunks — the check is never
    * reached. The runner awaits this writer before an exec is considered over, so a pending `next()`

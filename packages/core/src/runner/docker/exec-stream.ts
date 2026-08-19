@@ -187,18 +187,29 @@ export function createDockerDemuxer(): DockerDemuxer {
 /**
  * Writes one chunk, awaiting `'drain'` when the stream signals backpressure.
  *
+ * The wait is bounded by `signal`, because `'drain'` is not guaranteed to arrive: a timeout or an
+ * abort destroys the hijacked stream, and a stream destroyed while its buffer is full never emits
+ * the event. Without the race this promise would never settle, the awaited stdin writer would stay
+ * pending, and no terminal event would reach the caller — the same hang the iterator race prevents
+ * on the other side of the pump. Every path that destroys the stream aborts this signal too.
+ *
  * @param stream - Writable half of the exec stream.
  * @param chunk - Bytes to write.
- * @returns A promise that resolves once the chunk has been accepted.
+ * @param signal - Cancellation; aborting abandons a wait for backpressure to clear.
+ * @returns A promise that resolves once the chunk has been accepted, or the write was abandoned.
  */
-function writeChunk(stream: ExecStdinStream, chunk: Uint8Array): Promise<void> {
-  return new Promise((resolve) => {
-    if (stream.write(chunk)) {
-      resolve();
-      return;
-    }
+async function writeChunk(
+  stream: ExecStdinStream,
+  chunk: Uint8Array,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (stream.write(chunk)) {
+    return;
+  }
+  const drained = new Promise<void>((resolve) => {
     stream.once('drain', resolve);
   });
+  await raceAbort(drained, signal);
 }
 
 /** Accepted stdin payloads, mirroring the `ExecSpec` contract. */
@@ -223,11 +234,11 @@ export async function writeStdin(
 ): Promise<void> {
   try {
     if (typeof stdin === 'string') {
-      await writeChunk(stream, encoder.encode(stdin));
+      await writeChunk(stream, encoder.encode(stdin), signal);
       return;
     }
     if (stdin instanceof Uint8Array) {
-      await writeChunk(stream, stdin);
+      await writeChunk(stream, stdin, signal);
       return;
     }
     if (stdin === undefined) {
@@ -264,7 +275,7 @@ async function drainIterable(
       if (next === ABORTED || next.done === true) {
         return;
       }
-      await writeChunk(stream, next.value);
+      await writeChunk(stream, next.value, signal);
     }
   } finally {
     await Promise.resolve(iterator.return?.()).catch(() => undefined);
