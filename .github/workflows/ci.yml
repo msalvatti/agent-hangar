@@ -39,6 +39,11 @@ jobs:
       - run: pnpm db:generate
       - run: pnpm lint
       - run: pnpm format:check
+      # ESLint reports neither a directive that actually suppresses a rule, nor a coverage-ignore
+      # comment, nor anything in a shell file, so the ban is only real if this runs over every
+      # tracked source and shell file.
+      - name: suppression ban
+        run: bash scripts/check-suppressions.sh
 
   typecheck:
     name: typecheck
