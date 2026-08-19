@@ -51,6 +51,9 @@ export default defineConfig({
         'src/persistence/testing/**',
         'src/persistence/repositories/**',
         'src/repo-url.ts',
+        'src/secrets/**',
+        'src/redaction/**',
+        'src/logging/**',
       ],
       exclude: ['**/*.test.ts', 'src/**/types.ts', 'src/index.ts', 'src/persistence/generated/**'],
       thresholds: {
