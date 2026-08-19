@@ -63,11 +63,18 @@ describe('archivedNotice', () => {
    * When work was discarded the count is recorded, so the transcript shows what the archive cost.
    */
   it('reports discarded changes', () => {
-    expect(archivedNotice({ uncommittedChanges: 1 })).toBe(
-      'Workspace archived; 1 uncommitted changes discarded.',
-    );
     expect(archivedNotice({ uncommittedChanges: 5 })).toBe(
       'Workspace archived; 5 uncommitted changes discarded.',
+    );
+  });
+
+  /**
+   * The notice is shown verbatim in the transcript, so the noun agrees with the count: a single
+   * discarded change reads "1 uncommitted change discarded", not "1 uncommitted changes".
+   */
+  it('agrees the noun with a count of one', () => {
+    expect(archivedNotice({ uncommittedChanges: 1 })).toBe(
+      'Workspace archived; 1 uncommitted change discarded.',
     );
   });
 });

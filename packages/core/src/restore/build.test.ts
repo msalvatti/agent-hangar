@@ -20,7 +20,7 @@ import { buildJobTurnRequest, buildRestoreContext, buildTurnRequest } from './bu
 import type { ChatRestoreSource } from './build.js';
 import type { HistoryMessage } from './history.js';
 import { DEFAULT_CHAT_TURN_LIMITS, DEFAULT_JOB_TURN_LIMITS } from './limits.js';
-import { restorationNotice } from './notice.js';
+import { RESTORATION_NOTICE_PREFIX, restorationNotice } from './notice.js';
 
 /** Instant every builder call is anchored to. */
 const NOW = new FakeClock().now();
@@ -154,6 +154,51 @@ describe('buildTurnRequest', () => {
     });
     expect(request.prepare).toEqual({ clone: true });
     expect(request.repo.expectedHeadSha).toBe('abc1234def5678');
+    expect(request.items.at(-1)).toEqual({
+      role: 'system',
+      content: restorationNotice({ at: NOW, workBranch: 'agent/018f3a2b' }),
+    });
+  });
+
+  /**
+   * The very first turn of a chat also takes the `create` branch — there is no live workspace
+   * because there never was one — but nothing was lost, so it must not be told that "uncommitted
+   * changes from the previous workspace are gone". Spec 04 flow (a) creates the initial workspace
+   * without a restoration notice; the clone still happens, because a fresh container has no repo.
+   */
+  it('does not announce a recreation on the first turn of a chat', () => {
+    const messages: HistoryMessage[] = [{ seq: 1, role: 'USER', content: 'add auth' }];
+    const request = buildTurnRequest({
+      turnId: 'turn-1',
+      model: 'gpt-5',
+      instructions: '',
+      chat: FRESH_CHAT,
+      messages,
+      decision: createDecision(FRESH_CHAT, messages),
+    });
+    expect(request.prepare).toEqual({ clone: true });
+    expect(request.items).toEqual([{ role: 'user', content: 'add auth' }]);
+    expect(JSON.stringify(request.items)).not.toContain(RESTORATION_NOTICE_PREFIX);
+  });
+
+  /**
+   * Anything beyond the opening user message means a turn already ran in a container, so the
+   * recreation after it does earn the notice — a tool summary counts just as an assistant reply
+   * does. This is the other half of the "did a workspace exist?" branch.
+   */
+  it('announces a recreation when the history carries more than the opening message', () => {
+    const messages: HistoryMessage[] = [
+      { seq: 1, role: 'USER', content: 'add auth' },
+      { seq: 2, role: 'TOOL_SUMMARY', content: 'ran `ls` → exit 0 (1 s)' },
+    ];
+    const request = buildTurnRequest({
+      turnId: 'turn-1',
+      model: 'gpt-5',
+      instructions: '',
+      chat: PUSHED_CHAT,
+      messages,
+      decision: createDecision(PUSHED_CHAT, messages),
+    });
     expect(request.items.at(-1)).toEqual({
       role: 'system',
       content: restorationNotice({ at: NOW, workBranch: 'agent/018f3a2b' }),

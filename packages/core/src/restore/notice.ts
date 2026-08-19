@@ -37,10 +37,13 @@ export function restorationNotice(input: { at: Date; workBranch: string | null }
  * Builds the notice recorded when a chat is archived and its workspace destroyed.
  *
  * @param input - How many uncommitted changes the snapshot found.
- * @returns The SYSTEM message text.
+ * @returns The SYSTEM message text, with the noun agreeing with the count; this is shown verbatim
+ *   in the transcript, so `1 uncommitted changes` would be read as a bug by the user.
  */
 export function archivedNotice(input: { uncommittedChanges: number }): string {
-  return input.uncommittedChanges === 0
-    ? 'Workspace archived; no uncommitted changes.'
-    : `Workspace archived; ${input.uncommittedChanges} uncommitted changes discarded.`;
+  if (input.uncommittedChanges === 0) {
+    return 'Workspace archived; no uncommitted changes.';
+  }
+  const noun = input.uncommittedChanges === 1 ? 'change' : 'changes';
+  return `Workspace archived; ${input.uncommittedChanges} uncommitted ${noun} discarded.`;
 }

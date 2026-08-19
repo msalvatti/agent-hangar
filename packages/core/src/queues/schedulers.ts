@@ -15,7 +15,7 @@ import { GC_CRON, GC_SCHEDULER_KEY, toSchedulerKey } from '../scheduling/keys.js
 import type { ExistingScheduler } from '../scheduling/reconcile.js';
 import type { ReconcilePlan } from '../scheduling/types.js';
 
-import { JOB_NAMES, runScheduledJobPayload } from './contracts.js';
+import { JOB_NAMES, reapIdlePayload, runScheduledJobPayload } from './contracts.js';
 
 /** What a scheduler wrapper needs from a queue; BullMQ's `Queue` satisfies it. */
 export interface SchedulerQueue {
@@ -119,12 +119,18 @@ export async function applyReconcilePlan(
 /**
  * Creates or updates the scheduler that drives idle-workspace collection.
  *
+ * The empty payload goes through {@link reapIdlePayload} like every other producer: enqueuing is a
+ * process boundary, so a later change to the contract must fail here rather than register a
+ * template that produces jobs the worker rejects.
+ *
  * @param queue - The `workspace-gc` queue.
+ * @throws ZodError When the empty payload no longer satisfies the contract.
  */
 export async function upsertGcScheduler(queue: SchedulerQueue): Promise<void> {
+  const data = reapIdlePayload.parse({});
   await queue.upsertJobScheduler(
     GC_SCHEDULER_KEY,
     { pattern: GC_CRON },
-    { name: JOB_NAMES.reapIdle, data: {} },
+    { name: JOB_NAMES.reapIdle, data },
   );
 }

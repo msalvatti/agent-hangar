@@ -46,6 +46,20 @@ describe('humanDuration', () => {
     expect(humanDuration(123_000)).toBe('2 min 3 s');
     expect(humanDuration(3_600_000)).toBe('60 min');
   });
+
+  /**
+   * The total is rounded before it is split into minutes and seconds. Rounding the remainder on
+   * its own lets the carry escape and renders a duration no clock can show: 119_999 ms came out as
+   * "1 min 60 s", and 59_999 ms as "60 s" one branch earlier.
+   */
+  it('carries a rounded-up remainder instead of rendering 60 seconds', () => {
+    expect(humanDuration(119_999)).toBe('2 min');
+    expect(humanDuration(119_500)).toBe('2 min');
+    expect(humanDuration(59_999)).toBe('1 min');
+    expect(humanDuration(59_500)).toBe('1 min');
+    expect(humanDuration(3_599_999)).toBe('60 min');
+    expect(humanDuration(179_500)).toBe('3 min');
+  });
 });
 
 describe('toolSummaryText', () => {

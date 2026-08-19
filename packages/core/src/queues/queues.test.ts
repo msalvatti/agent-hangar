@@ -28,6 +28,7 @@ import {
   KEEP_COMPLETED_JOBS,
   KEEP_FAILED_JOBS,
 } from './queues.js';
+import type { WorkerReliabilityOptions } from './queues.js';
 
 const mocks = vi.hoisted(() => ({
   redisCtor: vi.fn<(url: string, options?: Record<string, unknown>) => void>(),
@@ -72,6 +73,9 @@ vi.mock('bullmq', () => ({
 
 /** Retention options every producer applies. */
 const RETENTION = { removeOnComplete: KEEP_COMPLETED_JOBS, removeOnFail: KEEP_FAILED_JOBS };
+
+/** Retention of the teardown job, which keeps no history so its derived id is released. */
+const DESTROY_RETENTION = { removeOnComplete: true, removeOnFail: true };
 
 /** A queue whose `add` is the shared spy. */
 const fakeQueue = (): Queue => createQueue(QUEUE_NAMES.chatTurns, { connection: {} as Redis });
@@ -201,6 +205,40 @@ describe('createWorker', () => {
   });
 
   /**
+   * The worker application must set BullMQ's stalled-job settings itself — a turn holds its job
+   * far longer than the default lock — so the factory forwards all three rather than fixing them.
+   */
+  it('forwards the stalled-job settings', () => {
+    const connection = createWorkerConnection('redis://127.0.0.1:6379');
+    createWorker(QUEUE_NAMES.chatTurns, vi.fn(), {
+      connection,
+      lockDuration: 60_000,
+      stalledInterval: 30_000,
+      maxStalledCount: 1,
+    });
+    expect(mocks.workerCtor).toHaveBeenCalledWith('chat-turns', expect.anything(), {
+      connection,
+      concurrency: DEFAULT_WORKER_CONCURRENCY,
+      lockDuration: 60_000,
+      stalledInterval: 30_000,
+      maxStalledCount: 1,
+    });
+  });
+
+  /**
+   * A setting the caller omitted is left out of the options object rather than passed as
+   * `undefined`, which BullMQ would read as an explicit override of its own default.
+   */
+  it('omits a stalled-job setting that was not given', () => {
+    const connection = createWorkerConnection('redis://127.0.0.1:6379');
+    createWorker(QUEUE_NAMES.chatTurns, vi.fn(), { connection, lockDuration: 60_000 });
+    const options = mocks.workerCtor.mock.calls[0]?.[2] as WorkerReliabilityOptions;
+    expect(options.lockDuration).toBe(60_000);
+    expect(Object.hasOwn(options, 'stalledInterval')).toBe(false);
+    expect(Object.hasOwn(options, 'maxStalledCount')).toBe(false);
+  });
+
+  /**
    * A worker on a producer connection loses its blocking reads under load, and the failure is
    * silent, so the wrong connection is refused before BullMQ is constructed at all.
    */
@@ -281,8 +319,26 @@ describe('producers', () => {
     expect(mocks.add).toHaveBeenCalledWith(
       JOB_NAMES.destroyChatWorkspace,
       { chatId: 'chat-1' },
-      { jobId: 'destroy-chat-1', ...RETENTION },
+      { jobId: 'destroy-chat-1', ...DESTROY_RETENTION },
     );
+  });
+
+  /**
+   * The teardown job must not be retained. BullMQ answers an `add` for a job id it still holds by
+   * returning the existing job instead of enqueuing, so a retained teardown would make the archive
+   * that follows a restore a silent no-op and leave the new container running. Keeping the shared
+   * retention here is exactly the regression this pins against.
+   */
+  it('keeps no history of a teardown, so a later archive can enqueue again', async () => {
+    await enqueueDestroyChatWorkspace(fakeQueue(), { chatId: 'chat-1' });
+    const options = mocks.add.mock.calls[0]?.[2] as {
+      removeOnComplete?: number | boolean;
+      removeOnFail?: number | boolean;
+    };
+    expect(options.removeOnComplete).toBe(true);
+    expect(options.removeOnFail).toBe(true);
+    expect(options.removeOnComplete).not.toBe(KEEP_COMPLETED_JOBS);
+    expect(options.removeOnFail).not.toBe(KEEP_FAILED_JOBS);
   });
 
   /**

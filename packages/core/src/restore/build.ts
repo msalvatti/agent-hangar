@@ -130,11 +130,33 @@ function hasRestorationNotice(retained: readonly HistoryMessage[]): boolean {
 }
 
 /**
+ * Reports whether anything preceded this turn in the chat.
+ *
+ * A `create` decision covers two different situations and {@link EnsureWorkspaceDecision} does not
+ * distinguish them: the very first turn of a chat, which has no live workspace because it never
+ * had one, and a recreation after archive, idle collection or a crash. Only the second lost a
+ * filesystem, so only the second earns the notice — telling a brand-new chat that "uncommitted
+ * changes from the previous workspace are gone" describes a workspace that never existed.
+ *
+ * The first turn is the one whose chat holds nothing but the opening user message: the API writes
+ * that message and the turn together, so anything beyond it — an assistant reply, a tool summary,
+ * an archive note — is the record of a turn or a lifecycle event that already ran in a container.
+ *
+ * @param retained - The messages the window kept.
+ * @returns `true` when the history carries more than the opening user message.
+ */
+function hadPreviousTurn(retained: readonly HistoryMessage[]): boolean {
+  return retained.length > 1;
+}
+
+/**
  * Builds the request for a chat turn.
  *
- * A `create` decision clones and appends the restoration notice; the archive-then-restore flow
- * already inserted one as a stored message, so it is not repeated, while a workspace recreated by
- * the idle collector has none and gets one here.
+ * A `create` decision always clones, and appends the restoration notice when the history shows an
+ * earlier turn already ran in a workspace: the archive-then-restore flow inserted one as a stored
+ * message, so it is not repeated, while a workspace recreated by the idle collector has none and
+ * gets one here. The first turn of a chat also takes the `create` branch and must NOT get a
+ * notice — it never had a workspace to lose (spec 04 flow (a)).
  *
  * @param input - Turn identity, chat, history, workspace decision and optional overrides.
  * @returns The validated turn request.
@@ -145,7 +167,8 @@ export function buildTurnRequest(input: BuildTurnRequestInput): TurnRequest {
   const items = [...window.items];
   const decision = input.decision;
   const restoreContext = decision.action === 'create' ? decision.restore : null;
-  if (restoreContext !== null && !hasRestorationNotice(window.retained)) {
+  const isRecreation = restoreContext !== null && hadPreviousTurn(window.retained);
+  if (isRecreation && !hasRestorationNotice(window.retained)) {
     items.push({
       role: 'system',
       content: restorationNotice({

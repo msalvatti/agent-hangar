@@ -48,6 +48,22 @@ export interface QueueConnectionOptions {
 }
 
 /**
+ * BullMQ stalled-job settings a worker may override.
+ *
+ * A turn holds its job far longer than the default lock, so the worker application sets all three
+ * (`lockDuration` 60 s, `stalledInterval` 30 s, `maxStalledCount` 1). They are forwarded rather
+ * than fixed here because only the caller knows how long its processors run.
+ */
+export interface WorkerReliabilityOptions {
+  /** How long a job's lock survives without renewal before BullMQ treats the worker as dead. */
+  lockDuration?: number;
+  /** How often the worker scans for jobs whose lock expired. */
+  stalledInterval?: number;
+  /** How many times a stalled job may be recovered before it is failed. */
+  maxStalledCount?: number;
+}
+
+/**
  * Opens a connection for producing jobs.
  *
  * Keeps ioredis' default retry budget, so an `add` against an unreachable Redis fails instead of
@@ -132,7 +148,8 @@ export function createQueues(
  *
  * @param name - Queue to consume.
  * @param processor - Handler invoked per job.
- * @param opts - Connection, optional concurrency and optional key prefix.
+ * @param opts - Connection, optional concurrency, optional key prefix and optional stalled-job
+ *   settings, each forwarded to BullMQ only when it was given.
  * @returns The worker, already running.
  * @throws ConfigError When the connection is not one {@link createWorkerConnection} produced; a
  *   worker on a producer connection drops its blocking reads under load.
@@ -140,7 +157,8 @@ export function createQueues(
 export function createWorker<TData = unknown>(
   name: QueueName,
   processor: Processor<TData>,
-  opts: { connection: Redis; concurrency?: number } & QueueConnectionOptions,
+  opts: { connection: Redis; concurrency?: number } & QueueConnectionOptions &
+    WorkerReliabilityOptions,
 ): Worker<TData> {
   if (opts.connection.options.maxRetriesPerRequest !== null) {
     throw new ConfigError(
@@ -151,6 +169,7 @@ export function createWorker<TData = unknown>(
     connection: opts.connection,
     concurrency: opts.concurrency ?? DEFAULT_WORKER_CONCURRENCY,
     ...prefixOption(opts),
+    ...reliabilityOptions(opts),
   });
 }
 
@@ -164,10 +183,43 @@ function prefixOption(opts: QueueConnectionOptions): { prefix?: string } {
   return opts.prefix === undefined ? {} : { prefix: opts.prefix };
 }
 
+/**
+ * Narrows the optional stalled-job settings the same way, so an absent field is omitted rather
+ * than passed as `undefined`, which BullMQ would take as an explicit override of its default.
+ *
+ * @param opts - Options that may carry stalled-job settings.
+ * @returns Only the settings that were given.
+ */
+function reliabilityOptions(opts: WorkerReliabilityOptions): WorkerReliabilityOptions {
+  return {
+    ...(opts.lockDuration === undefined ? {} : { lockDuration: opts.lockDuration }),
+    ...(opts.stalledInterval === undefined ? {} : { stalledInterval: opts.stalledInterval }),
+    ...(opts.maxStalledCount === undefined ? {} : { maxStalledCount: opts.maxStalledCount }),
+  };
+}
+
 /** Job options shared by every producer: deterministic id plus bounded retention. */
 const RETENTION = {
   removeOnComplete: KEEP_COMPLETED_JOBS,
   removeOnFail: KEEP_FAILED_JOBS,
+} as const;
+
+/**
+ * Retention of the workspace teardown job, which keeps no history on purpose.
+ *
+ * Its job id is derived from the chat so that a double archive tears down once. A *retained* job
+ * keeps that id taken, though, and BullMQ answers an `add` for an id it still holds by returning
+ * the existing job instead of enqueuing a new one — silently, without throwing. A chat can be
+ * archived, restored into a fresh workspace and archived again, so an id that outlived its
+ * teardown would drop the second request and leave the new container running with the repository
+ * and its credentials still mounted. Releasing the job as soon as it resolves scopes the
+ * deduplication to the window that actually races — two archives before the first teardown ran —
+ * while the durable record of a failed teardown is the `FAILED` workspace row the worker writes,
+ * not the Redis job.
+ */
+const DESTROY_RETENTION = {
+  removeOnComplete: true,
+  removeOnFail: true,
 } as const;
 
 /**
@@ -213,7 +265,9 @@ export async function enqueueManualJobRun(
 /**
  * Enqueues the destruction of a chat's workspace, as archiving does.
  *
- * The job id is derived from the chat, so archiving twice destroys once.
+ * The job id is derived from the chat, so archiving twice destroys once. The job is not retained
+ * after it resolves: see {@link DESTROY_RETENTION} for why holding the id would make the archive
+ * that follows a restore a no-op.
  *
  * @param queue - The `workspace-gc` queue.
  * @param payload - `{ chatId }`.
@@ -226,6 +280,6 @@ export async function enqueueDestroyChatWorkspace(
 ): Promise<string> {
   const data = destroyChatWorkspacePayload.parse(payload);
   const jobId = `destroy-${data.chatId}`;
-  await queue.add(JOB_NAMES.destroyChatWorkspace, data, { jobId, ...RETENTION });
+  await queue.add(JOB_NAMES.destroyChatWorkspace, data, { jobId, ...DESTROY_RETENTION });
   return jobId;
 }

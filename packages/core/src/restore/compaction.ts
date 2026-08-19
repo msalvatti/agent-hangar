@@ -25,8 +25,8 @@ export const UNKNOWN_ARGUMENT = '?';
 /** Milliseconds in a second. */
 const SECOND_MS = 1000;
 
-/** Milliseconds in a minute. */
-const MINUTE_MS = 60_000;
+/** Seconds in a minute. */
+const SECONDS_PER_MINUTE = 60;
 
 /** What the summariser needs from one `ToolCallLog` row. */
 export interface ToolCallSummaryInput {
@@ -45,6 +45,8 @@ export interface ToolCallSummaryInput {
  *
  * @param ms - Duration in milliseconds, or `null` when it was not recorded.
  * @returns `n/a`, `<n> ms`, `<n> s` or `<m> min <s> s`, dropping a zero seconds remainder.
+ *   The total is rounded before it is split, so a rounded-up remainder carries into the minutes
+ *   instead of rendering an impossible `60 s`.
  */
 export function humanDuration(ms: number | null): string {
   if (ms === null) {
@@ -53,11 +55,14 @@ export function humanDuration(ms: number | null): string {
   if (ms < SECOND_MS) {
     return `${ms} ms`;
   }
-  if (ms < MINUTE_MS) {
-    return `${Math.round(ms / SECOND_MS)} s`;
+  // Rounding happens once, on the total, before the split into minutes and seconds. Rounding a
+  // remainder instead lets the carry escape: 119_999 ms would render as "1 min 60 s".
+  const totalSeconds = Math.round(ms / SECOND_MS);
+  if (totalSeconds < SECONDS_PER_MINUTE) {
+    return `${totalSeconds} s`;
   }
-  const minutes = Math.floor(ms / MINUTE_MS);
-  const seconds = Math.round((ms % MINUTE_MS) / SECOND_MS);
+  const minutes = Math.floor(totalSeconds / SECONDS_PER_MINUTE);
+  const seconds = totalSeconds % SECONDS_PER_MINUTE;
   return seconds === 0 ? `${minutes} min` : `${minutes} min ${seconds} s`;
 }
 
