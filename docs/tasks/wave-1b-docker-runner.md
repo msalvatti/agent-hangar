@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-B 🐳 (Docker-integration lane — the orchestrator runs at most one 🐳 lane at a time) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/5 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1b-docker-runner` |
 | **Owned paths** | `packages/core/src/runner/docker/**`, `infra/workspace/**` (Dockerfile, askpass.sh, .dockerignore, README.md, .gitignore) · additive-only edits allowed in `packages/core/vitest.config.ts` (`coverage.include`) and `packages/core/package.json` (`exports` subpath `./runner/docker`) |
 | **Depends on** | W0 merged to `main` |
@@ -42,25 +42,25 @@ Quality bar (same as every lane): TypeScript strict, zero `any`, zero suppressio
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1B.1 | Docker socket resolution + container spec builder (pure) | 📋 | P0 | M | — |
-| 1B.2 | Exec stream: demux, stdin pump, timeout/abort kill path (pure) | 📋 | P0 | M | 1B.1 |
-| 1B.3 | `DockerWorkspaceRunner` class + factory + unit tests with a faked Docker API | 📋 | P0 | L | 1B.1, 1B.2 |
-| 1B.4 | Workspace image hardening/verification, askpass token-file support, README, `@docker` integration suite | 📋 | P0 | M | 1B.3 |
-| 1B.5 | Close-out: gates, code review, plan dashboard, PR | 📋 | P0 | S | 1B.1–1B.4 |
+| 1B.1 | Docker socket resolution + container spec builder (pure) | ✅ | P0 | M | — |
+| 1B.2 | Exec stream: demux, stdin pump, timeout/abort kill path (pure) | ✅ | P0 | M | 1B.1 |
+| 1B.3 | `DockerWorkspaceRunner` class + factory + unit tests with a faked Docker API | ✅ | P0 | L | 1B.1, 1B.2 |
+| 1B.4 | Workspace image hardening/verification, askpass token-file support, README, `@docker` integration suite | ✅ | P0 | M | 1B.3 |
+| 1B.5 | Close-out: gates, code review, plan dashboard, PR | ✅ | P0 | S | 1B.1–1B.4 |
 
 ---
 
 ## Task 1B.1 — Docker socket resolution + container spec builder (pure)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Implement the two pure modules the runner is built on: `docker-socket.ts` (resolve where the Docker daemon is, in the order spec 03 §1 mandates, returning dockerode constructor options) and `container-spec.ts` (translate a `WorkspaceSpec` into dockerode `createContainer` options with the hardening flags, limits and labels). Both are 100 % unit-tested without Docker.
 
 **Acceptance criteria**
-- [ ] `resolveDockerSocket()` honours `DOCKER_HOST` (`unix://` and `tcp://`), then `~/.docker/run/docker.sock`, then `/var/run/docker.sock`; reports which source won; rejects `DOCKER_TLS_VERIFY=1` with a typed error
-- [ ] `buildContainerCreateOptions()` produces: `name = prefix + workspaceId`, `Image`, `Env` as `KEY=VALUE[]`, `User: 'agent'`, `WorkingDir: '/workspace'`, `HostConfig { Memory, NanoCpus, PidsLimit, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges'], Tmpfs: { '/tmp': '' }, NetworkMode: 'bridge' }`, **no** `Binds`/`Mounts`, `Labels` with `ah.instance`, `ah.workspace`, `ah.kind` always set and the caller's labels (`ah.chat` or `ah.jobRun`) passed through
-- [ ] `DockerRunnerError` (code `DOCKER_RUNNER`) exists in `runner/docker/errors.ts` extending `AgentHangarError`
-- [ ] `packages/core/vitest.config.ts` `coverage.include` extended with `src/runner/docker/**`; 100 % on the two modules
+- [x] `resolveDockerSocket()` honours `DOCKER_HOST` (`unix://` and `tcp://`), then `~/.docker/run/docker.sock`, then `/var/run/docker.sock`; reports which source won; rejects `DOCKER_TLS_VERIFY=1` with a typed error
+- [x] `buildContainerCreateOptions()` produces: `name = prefix + workspaceId`, `Image`, `Env` as `KEY=VALUE[]`, `User: 'agent'`, `WorkingDir: '/workspace'`, `HostConfig { Memory, NanoCpus, PidsLimit, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges'], Tmpfs: { '/tmp': '' }, NetworkMode: 'bridge' }`, **no** `Binds`/`Mounts`, `Labels` with `ah.instance`, `ah.workspace`, `ah.kind` always set and the caller's labels (`ah.chat` or `ah.jobRun`) passed through
+- [x] `DockerRunnerError` (code `DOCKER_RUNNER`) exists in `runner/docker/errors.ts` extending `AgentHangarError`
+- [x] `packages/core/vitest.config.ts` `coverage.include` extended with `src/runner/docker/**`; 100 % on the two modules
 
 **Files to create**
 `packages/core/src/runner/docker/{docker-socket.ts, docker-socket.test.ts, container-spec.ts, container-spec.test.ts, errors.ts, errors.test.ts}`; delete `packages/core/src/runner/docker/.gitkeep`; modify `packages/core/vitest.config.ts` (coverage.include only).
@@ -155,15 +155,15 @@ Completion Protocol (after you finish):
 
 ## Task 1B.2 — Exec stream: demux, stdin pump, timeout/abort kill path (pure)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1B.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1B.1
 
 **Description.** Implement `exec-stream.ts`: a demuxer for Docker's multiplexed attach stream (8-byte frame headers), a stdin writer that accepts `string | Uint8Array | AsyncIterable<Uint8Array>` and always closes stdin, and the async generator that pumps a hijacked exec stream into `ExecEvent`s while honouring `timeoutMs` and `AbortSignal` by invoking an injected `kill()` and yielding `exit { code: null, signal: 'TIMEOUT' | 'ABORTED' }`. Pure: tested with in-memory duplex streams and fake timers.
 
 **Acceptance criteria**
-- [ ] `createDockerDemuxer()` handles frames split across chunks (header split, payload split), several frames per chunk, stream types 0/1 → stdout, 2 → stderr, unknown type → `ProtocolError`
-- [ ] `writeStdin(stream, stdin)` writes the three input shapes, respects backpressure (`await drain`), always calls `stream.end()` (also when `stdin` is undefined), and ends early when the abort signal fires
-- [ ] `pumpExecStream(params)` yields stdout/stderr events in order, then `exit { code }` from `inspectExitCode()`; on timeout calls `kill('TIMEOUT')` once and yields `exit { code: null, signal: 'TIMEOUT' }`; on abort yields `exit { code: null, signal: 'ABORTED' }`; never throws on non-zero exit; stream `error` → `DockerRunnerError`
-- [ ] 100 % coverage on `exec-stream.ts`
+- [x] `createDockerDemuxer()` handles frames split across chunks (header split, payload split), several frames per chunk, stream types 0/1 → stdout, 2 → stderr, unknown type → `ProtocolError`
+- [x] `writeStdin(stream, stdin)` writes the three input shapes, respects backpressure (`await drain`), always calls `stream.end()` (also when `stdin` is undefined), and ends early when the abort signal fires
+- [x] `pumpExecStream(params)` yields stdout/stderr events in order, then `exit { code }` from `inspectExitCode()`; on timeout calls `kill('TIMEOUT')` once and yields `exit { code: null, signal: 'TIMEOUT' }`; on abort yields `exit { code: null, signal: 'ABORTED' }`; never throws on non-zero exit; stream `error` → `DockerRunnerError`
+- [x] 100 % coverage on `exec-stream.ts`
 
 **Files to create**
 `packages/core/src/runner/docker/{exec-stream.ts, exec-stream.test.ts}`.
@@ -227,16 +227,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1b-docker-runn
 
 ## Task 1B.3 — `DockerWorkspaceRunner` class + factory + unit tests with a faked Docker API
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 1B.1, 1B.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 1B.1, 1B.2
 
 **Description.** Implement the runner itself: `create` (image check → createContainer → start → readiness probe), `exec` (started event first, wrapper command with pid file, hijacked stream, stdin, timeout/abort), `signal` (kill via pid file), `snapshot` (git state of `/workspace`), `destroy` (stop + remove, 404 = success), `health` (inspect → healthy/unhealthy/gone), `list` (by labels scoped to the instance). The class depends on a narrow `DockerApi` interface so unit tests drive it with an in-memory fake; `createDockerWorkspaceRunner()` builds the real dockerode client. Public subpath export `@agent-hangar/core/runner/docker`.
 
 **Acceptance criteria**
-- [ ] `DockerWorkspaceRunner implements WorkspaceRunner` with `kind = 'docker'`; all seven methods behave as spec 03 §1 + "DockerWorkspaceRunner behaviour"
-- [ ] `create` throws `WorkspaceImageMissing` (message contains `pnpm infra:image`) when the image is absent; cleans up the container if the readiness probe fails or the signal aborts
-- [ ] `exec` yields `{ type: 'started', execRef }` first, then stdout/stderr, then exactly one `exit`; timeout → `exit { code: null, signal: 'TIMEOUT' }` after a `kill -KILL` through the pid file, falling back to `container.kill()` if the kill exec itself fails
-- [ ] `destroy` is idempotent (404 and 304 swallowed); `health` maps inspect states; `list` filters by `ah.instance` + given labels
-- [ ] No env value ever appears in error messages or in `JSON.stringify(runner)`; `packages/core/package.json` exports `./runner/docker`; 100 % coverage on `docker-workspace-runner.ts` and `index.ts` from unit tests
+- [x] `DockerWorkspaceRunner implements WorkspaceRunner` with `kind = 'docker'`; all seven methods behave as spec 03 §1 + "DockerWorkspaceRunner behaviour"
+- [x] `create` throws `WorkspaceImageMissing` (message contains `pnpm infra:image`) when the image is absent; cleans up the container if the readiness probe fails or the signal aborts
+- [x] `exec` yields `{ type: 'started', execRef }` first, then stdout/stderr, then exactly one `exit`; timeout → `exit { code: null, signal: 'TIMEOUT' }` after a `kill -KILL` through the pid file, falling back to `container.kill()` if the kill exec itself fails
+- [x] `destroy` is idempotent (404 and 304 swallowed); `health` maps inspect states; `list` filters by `ah.instance` + given labels
+- [x] No env value ever appears in error messages or in `JSON.stringify(runner)`; `packages/core/package.json` exports `./runner/docker`; 100 % coverage on `docker-workspace-runner.ts` and `index.ts` from unit tests
 
 **Files to create/modify**
 `packages/core/src/runner/docker/{docker-api.ts, docker-workspace-runner.ts, docker-workspace-runner.test.ts, index.ts, testing/fake-docker-api.ts}`; modify `packages/core/package.json` (`exports` → add `./runner/docker`).
@@ -349,16 +349,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1b-docker-runn
 
 ## Task 1B.4 — Workspace image hardening/verification, askpass token-file support, README, `@docker` integration suite
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1B.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1B.3
 
 **Description.** Verify and finish the workspace image W0 started (build time, non-root, tools present, no secrets in image config, placeholder intact), extend `askpass.sh` to read the token from `AH_GIT_TOKEN_FILE` when set (so W1-D's runtime can keep `GITHUB_TOKEN` out of the agent's shell env), prepare `.dockerignore`/`.gitignore` for the runtime bundle W1-D will drop into `infra/workspace/runtime/`, write `infra/workspace/README.md`, and add the `@docker` integration suite covering every behaviour listed in spec 06 §3 for the runner.
 
 **Acceptance criteria**
-- [ ] `docker build -t agent-hangar/workspace:dev infra/workspace` succeeds in < 3 min on a warm cache; `docker run --rm agent-hangar/workspace:dev id -u` → `1001`; `git`, `rg`, `jq`, `python3`, `node`, `pnpm` (corepack) resolve; `docker image inspect` shows `Config.User=agent`, `WorkingDir=/workspace`, `Entrypoint=["sleep","infinity"]`, and no `Env` entry matching `TOKEN|KEY|SECRET`
-- [ ] The placeholder `# --- AGENT RUNTIME BUNDLE (added by W1-D) ---` is present and untouched; `.dockerignore` allows `runtime/`; `infra/workspace/.gitignore` ignores `runtime/`
-- [ ] `askpass.sh`: Username prompt → `x-access-token`; otherwise prints the content of `$AH_GIT_TOKEN_FILE` when that variable is set and the file is readable, else `$GITHUB_TOKEN`; never echoes the prompt; exit 0
-- [ ] `infra/workspace/README.md` documents contents, build command, security properties, the W1-D COPY lines that will be added, and the `infra:image` flow
-- [ ] `packages/core/src/runner/docker/docker-workspace-runner.integration.test.ts` (describe tagged `@docker`) green locally with `DOCKER_AVAILABLE=1`; fails loudly with `CI=1` and no Docker; skips with a printed instruction otherwise
+- [x] `docker build -t agent-hangar/workspace:dev infra/workspace` succeeds in < 3 min on a warm cache; `docker run --rm agent-hangar/workspace:dev id -u` → `1001`; `git`, `rg`, `jq`, `python3`, `node`, `pnpm` (corepack) resolve; `docker image inspect` shows `Config.User=agent`, `WorkingDir=/workspace`, `Cmd=["sleep","infinity"]` (the image sets `CMD`, not `ENTRYPOINT`; `Entrypoint` stays the base image's `docker-entrypoint.sh`), and no `Env` entry matching `TOKEN|KEY|SECRET`
+- [x] The placeholder `# --- AGENT RUNTIME BUNDLE (added by W1-D) ---` is present and untouched; `.dockerignore` allows `runtime/`; `infra/workspace/.gitignore` ignores `runtime/`
+- [x] `askpass.sh`: Username prompt → `x-access-token`; otherwise prints the content of `$AH_GIT_TOKEN_FILE` when that variable is set and the file is readable, else `$GITHUB_TOKEN`; never echoes the prompt; exit 0
+- [x] `infra/workspace/README.md` documents contents, build command, security properties, the W1-D COPY lines that will be added, and the `infra:image` flow
+- [x] `packages/core/src/runner/docker/docker-workspace-runner.integration.test.ts` (describe tagged `@docker`) green locally with `DOCKER_AVAILABLE=1`; fails loudly with `CI=1` and no Docker; skips with a printed instruction otherwise
 
 **Files to create/modify**
 `infra/workspace/{Dockerfile (minimal hardening only), askpass.sh, .dockerignore, .gitignore, README.md}`, `packages/core/src/runner/docker/docker-workspace-runner.integration.test.ts`, `packages/core/src/runner/docker/testing/docker-available.ts` (gate helper).
@@ -391,7 +391,7 @@ Verify and finish the workspace image, make askpass.sh support a token file, pre
 
 DELIVERABLES
 
-1. `infra/workspace/Dockerfile` — keep W0's structure. Allowed changes only: (a) add `LABEL org.opencontainers.image.title="agent-hangar-workspace"` and `LABEL ah.image="workspace"` near the top; (b) make sure `/tmp` is not baked with content; (c) ensure `chmod 755 /opt/agent-runtime/askpass.sh` and `mkdir -p /opt/agent-runtime && chown -R agent:agent /opt/agent-runtime`; (d) `ENV GIT_TERMINAL_PROMPT=0`. Do NOT add the runtime COPY lines and do NOT move/rename the placeholder comment `# --- AGENT RUNTIME BUNDLE (added by W1-D) ---`. No secrets, no `.env`, no repo sources.
+1. `infra/workspace/Dockerfile` — keep W0's structure. Allowed changes only: (a) add `LABEL org.opencontainers.image.title="agent-hangar-workspace"` and `LABEL ah.image="workspace"` near the top; (b) make sure `/tmp` is not baked with content; (c) ensure `chmod 755 /opt/agent-runtime/askpass.sh` and `mkdir -p /opt/agent-runtime` — the directory MUST stay root-owned so `agent` cannot unlink and replace the GIT_ASKPASS helper; (d) `ENV GIT_TERMINAL_PROMPT=0`. Do NOT add the runtime COPY lines and do NOT move/rename the placeholder comment `# --- AGENT RUNTIME BUNDLE (added by W1-D) ---`. No secrets, no `.env`, no repo sources.
 2. `infra/workspace/askpass.sh` — POSIX sh:
    ```sh
    #!/bin/sh
@@ -405,8 +405,9 @@ DELIVERABLES
    Test it in the integration suite (see 6) by exec'ing it inside a container with a token file and with the env var.
 3. `infra/workspace/.dockerignore` — keep "ignore everything" and explicitly allow `!Dockerfile`, `!askpass.sh`, `!runtime/` (the folder W1-D's bundle is copied into by `pnpm infra:image`). `infra/workspace/.gitignore` with a single line `runtime/` (the copied bundle is a build artifact).
 4. `infra/workspace/README.md` (English) — sections: What is in the image (base, tools, user, dirs, entrypoint) · Build (`pnpm infra:image` and the raw `docker build -t agent-hangar/workspace:dev infra/workspace`) · Runtime bundle (explain the placeholder; the exact two lines W1-D's PR asks the orchestrator to add:
-   `COPY --chown=agent:agent runtime/cli.js /opt/agent-runtime/cli.js`
-   `COPY --chown=agent:agent runtime/cli.js.map /opt/agent-runtime/cli.js.map`
+   `COPY runtime/cli.js /opt/agent-runtime/cli.js`
+   `COPY runtime/cli.js.map /opt/agent-runtime/cli.js.map`
+   (no `--chown`: the bundle is executed by `agent` and must not be writable by it)
    and that `pnpm infra:image` first builds `@agent-hangar/agent-runtime` and copies `dist/cli.js*` into `infra/workspace/runtime/` — see W1-D's task file) · askpass and the token file contract (`AH_GIT_TOKEN_FILE` → `GITHUB_TOKEN` fallback; Username → `x-access-token`) · Security properties (non-root, cap-drop ALL, no-new-privileges, tmpfs /tmp, no mounts, bridge egress only — enforced by the runner, listed here for readers) · How to verify (`docker image inspect` commands) · Troubleshooting (image missing → `WorkspaceImageMissing`, socket resolution order).
 5. `packages/core/src/runner/docker/testing/docker-available.ts` — `export function dockerGate(): { run: boolean; reason: string }`: `process.env.DOCKER_AVAILABLE === '1'` → run; else if `process.env.CI` → **throw** `new Error('Integration suite requires DOCKER_AVAILABLE=1 in CI (Docker daemon + workspace image). Refusing to skip silently.')`; else run=false with reason `'set DOCKER_AVAILABLE=1 (and build the image with pnpm infra:image) to run the @docker suite'`. Unit-test all three branches (include this file in coverage).
 6. `packages/core/src/runner/docker/docker-workspace-runner.integration.test.ts` — `const gate = dockerGate(); (gate.run ? describe : describe.skip)('@docker DockerWorkspaceRunner', …)` with `console.warn(gate.reason)` when skipping. Setup: `createDockerWorkspaceRunner({ instance: 'test', namePrefix: 'ah-ws-test-' })`, image = `process.env.WORKSPACE_IMAGE ?? 'agent-hangar/workspace:dev'`, helper `spec(id, extra?)` building a WorkspaceSpec with limits `{ cpus: 1, memoryBytes: 512 MiB, pids: 256 }`, labels `{ 'ah.chat': 'chat-test' }`, env `{ AH_TEST_VAR: 'visible', GITHUB_TOKEN: GITHUB_CANARY }`; `afterEach` destroys created handles; `afterAll` `list({})` and destroys leftovers; `testTimeout` 60 s. Helper `collect(runner.exec(...))` → `{ execRef, stdout, stderr, exit }`. it() list (every bullet of spec 06 §3 for the runner):
@@ -447,15 +448,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1b-docker-runn
 
 ## Task 1B.5 — Close-out: gates, code review, plan dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1B.1–1B.4
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1B.1–1B.4
 
 **Description.** Run every gate, take `/bymax-quality:code-review` to zero findings, update the plan dashboard and the task index, open the PR with the structured summary from plan §11 (including the coordination notes for the orchestrator), and return the result object.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck && pnpm --filter @agent-hangar/core test -- --coverage` green; coverage 100/100/100/100 on `src/runner/docker/**`
-- [ ] `DOCKER_AVAILABLE=1 pnpm --filter @agent-hangar/core test:integration` green locally (evidence pasted in the PR)
-- [ ] `/bymax-quality:code-review` run on the branch with zero open findings (no suppressions)
-- [ ] `docs/plan.md` §12 row W1-B → 🟨 with branch/PR; `docs/tasks/README.md` row updated; PR opened; result object returned
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck && pnpm --filter @agent-hangar/core test -- --coverage` green; coverage 100/100/100/100 on `src/runner/docker/**`
+- [x] `DOCKER_AVAILABLE=1 pnpm --filter @agent-hangar/core test:integration` green locally (evidence pasted in the PR)
+- [x] `/bymax-quality:code-review` run on the branch with zero open findings (no suppressions)
+- [x] `docs/plan.md` §12 row W1-B → 🟨 with branch/PR; `docs/tasks/README.md` row updated; PR opened; result object returned
 
 **Files to create/modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (W1-B row only), this file (header + log).
@@ -506,3 +507,9 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1b-docker-runn
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 1B.1 ✅ 2026-08-19 — socket resolution order, hardened container-spec builder with compose grouping labels, typed DockerRunnerError; 100 % unit coverage
+- 1B.2 ✅ 2026-08-19 — frame demuxer, stdin pump with backpressure and EOF, timeout/abort termination path and the pid-file exec wrappers; 100 % unit coverage
+- 1B.3 ✅ 2026-08-19 — DockerWorkspaceRunner over an injectable Docker API, factory, in-memory fake and the `@agent-hangar/core/runner/docker` subpath export; 100 % unit coverage
+- 1B.4 ✅ 2026-08-19 — image labels and runtime-dir ownership, askpass token file, image README, `@docker` suite (15 tests, 6.4 s) and the `--init` fix that cut teardown from 10 s to 0.1 s per workspace
+- 1B.5 ✅ 2026-08-19 — gates green, code review and security review to zero findings, dashboards updated, PR #7 opened

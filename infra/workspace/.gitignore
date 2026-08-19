@@ -1,0 +1,2 @@
+# Build artefact: `pnpm infra:image` copies the agent-runtime bundle in before building.
+runtime/

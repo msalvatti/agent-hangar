@@ -4,6 +4,9 @@
 # GIT_ASKPASS. The agent runtime bundle is copied in by a later build step (see placeholder).
 FROM node:24-bookworm-slim
 
+LABEL org.opencontainers.image.title="agent-hangar-workspace"
+LABEL ah.image="workspace"
+
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     GIT_TERMINAL_PROMPT=0 \
@@ -18,6 +21,11 @@ RUN apt-get update \
     && mkdir -p /workspace /opt/agent-runtime \
     && chown agent:agent /workspace
 
+# /opt/agent-runtime stays root-owned and world-readable: `agent` must execute what is in it but
+# must never be able to replace it. GIT_ASKPASS points here, so a writable directory would let
+# repository-controlled commands unlink askpass.sh (directory write permission governs unlink and
+# create, regardless of the file's own owner) and substitute a helper that exfiltrates the PAT the
+# next time git asks for credentials. Mutable per-exec state lives on the tmpfs /tmp instead.
 COPY --chmod=755 askpass.sh /opt/agent-runtime/askpass.sh
 
 USER agent

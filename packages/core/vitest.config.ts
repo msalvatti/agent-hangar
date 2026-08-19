@@ -56,6 +56,7 @@ export default defineConfig({
         'src/logging/**',
         'src/model/openai/**',
         'src/model/registry.ts',
+        'src/runner/docker/**',
       ],
       exclude: ['**/*.test.ts', 'src/**/types.ts', 'src/index.ts', 'src/persistence/generated/**'],
       thresholds: {
