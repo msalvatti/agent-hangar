@@ -15,7 +15,7 @@ export const metadata: Metadata = { title: 'Chat' };
 export default async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   return (
-    <section className="mx-auto max-w-[840px] px-6 py-10">
+    <section className="mx-auto max-w-210 px-6 py-10">
       <h1 className="text-[28px] font-semibold tracking-tight" data-testid="placeholder-chats-id">
         Chat
       </h1>

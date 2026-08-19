@@ -27,6 +27,21 @@ export const apiError = z.object({
 /** Generic acknowledgement body. */
 export const okResponse = z.object({ ok: z.literal(true) });
 
+/** Maximum length of a prompt (chat message or scheduled-job prompt). */
+export const MAX_PROMPT_LENGTH = 20_000;
+
+/** Maximum length of a chat title, job name or search query. */
+export const MAX_TITLE_LENGTH = 200;
+
+/** Maximum length of a git branch name accepted by the API. */
+export const MAX_BRANCH_LENGTH = 255;
+
+/** Maximum length of a cron expression. */
+export const MAX_CRON_LENGTH = 100;
+
+/** Maximum length of an IANA timezone name. */
+export const MAX_TIMEZONE_LENGTH = 64;
+
 /** Repository URL accepted by the API: credential-free https GitHub URL. */
 export const repoUrl = z.url({ protocol: /^https$/, hostname: /^github\.com$/ }).refine(
   (value) => {
@@ -39,7 +54,7 @@ export const repoUrl = z.url({ protocol: /^https$/, hostname: /^github\.com$/ })
 // ──────────────────────────────── repos ─────────────────────────────
 
 /** `GET /api/repos?query=` */
-export const listReposQuery = z.object({ query: z.string().max(200).optional() });
+export const listReposQuery = z.object({ query: z.string().max(MAX_TITLE_LENGTH).optional() });
 
 /** One repository the PAT can access. */
 export const repoSummary = z.object({
@@ -100,8 +115,8 @@ export const workspaceStatus = z.enum([
 /** `POST /api/chats` body. */
 export const createChatRequest = z.object({
   repoUrl,
-  baseBranch: z.string().min(1).max(255),
-  prompt: z.string().min(1).max(20_000),
+  baseBranch: z.string().min(1).max(MAX_BRANCH_LENGTH),
+  prompt: z.string().min(1).max(MAX_PROMPT_LENGTH),
 });
 
 /** `POST /api/chats` response. */
@@ -199,10 +214,12 @@ export const chatDetail = z.object({
 });
 
 /** `PATCH /api/chats/:id` body. */
-export const renameChatRequest = z.object({ title: z.string().trim().min(1).max(200) });
+export const renameChatRequest = z.object({
+  title: z.string().trim().min(1).max(MAX_TITLE_LENGTH),
+});
 
 /** `POST /api/chats/:id/messages` body. */
-export const postMessageRequest = z.object({ prompt: z.string().min(1).max(20_000) });
+export const postMessageRequest = z.object({ prompt: z.string().min(1).max(MAX_PROMPT_LENGTH) });
 
 /** `POST /api/chats/:id/messages` response. */
 export const postMessageResponse = z.object({ turnId: z.string().min(1) });
@@ -220,12 +237,12 @@ export const jobRunTrigger = z.enum(['SCHEDULE', 'MANUAL']);
 
 /** `POST /api/jobs` body and `PATCH /api/jobs/:id` body (all fields optional on PATCH). */
 export const jobUpsertRequest = z.object({
-  name: z.string().trim().min(1).max(120),
-  cron: z.string().trim().min(1).max(100),
-  timezone: z.string().trim().min(1).max(64),
-  prompt: z.string().min(1).max(20_000),
+  name: z.string().trim().min(1).max(MAX_TITLE_LENGTH),
+  cron: z.string().trim().min(1).max(MAX_CRON_LENGTH),
+  timezone: z.string().trim().min(1).max(MAX_TIMEZONE_LENGTH),
+  prompt: z.string().min(1).max(MAX_PROMPT_LENGTH),
   repoUrl,
-  branch: z.string().min(1).max(255),
+  branch: z.string().min(1).max(MAX_BRANCH_LENGTH),
   enabled: z.boolean(),
 });
 

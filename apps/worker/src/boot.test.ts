@@ -9,21 +9,17 @@
  */
 import { ConfigError, loadConfig } from '@agent-hangar/core';
 import type { AppConfig } from '@agent-hangar/core';
+import pino from 'pino';
 import type { Logger } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 
-import { boot } from './boot.js';
+import { boot, describeUrl } from './boot.js';
 import type { BootDeps } from './boot.js';
 
 const config: AppConfig = loadConfig({ AH_INSTANCE: 'test', AH_PORT_BASE: '4100' });
 
 function fakeLogger(): Logger {
-  return {
-    info: vi.fn(),
-    debug: vi.fn(),
-    error: vi.fn(),
-    warn: vi.fn(),
-  } as unknown as Logger;
+  return pino({ level: 'silent' });
 }
 
 function makeDeps(overrides: Partial<BootDeps> = {}) {
@@ -57,6 +53,18 @@ function makeDeps(overrides: Partial<BootDeps> = {}) {
   };
   return { deps, prisma, redis, order };
 }
+
+describe('describeUrl', () => {
+  /**
+   * Credentials embedded in a connection URL never reach error messages or logs; non-URL
+   * strings pass through unchanged.
+   */
+  it('strips userinfo and tolerates non-URLs', () => {
+    expect(describeUrl('redis://user:secret@cache:6379/0')).toBe('redis://cache:6379/0');
+    expect(describeUrl('redis://127.0.0.1:6379')).toBe('redis://127.0.0.1:6379');
+    expect(describeUrl('not a url')).toBe('not a url');
+  });
+});
 
 describe('boot', () => {
   /**

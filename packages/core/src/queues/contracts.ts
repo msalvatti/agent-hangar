@@ -44,9 +44,13 @@ export const reapIdlePayload = z.object({});
 /** `workspace-gc` / `destroy-chat-workspace` payload (archive destroys the live workspace). */
 export const destroyChatWorkspacePayload = z.object({ chatId: z.string().min(1) });
 
+/** Payload of `run-turn`. */
 export type RunTurnPayload = z.infer<typeof runTurnPayload>;
+/** Payload of `run-scheduled-job`. */
 export type RunScheduledJobPayload = z.infer<typeof runScheduledJobPayload>;
+/** Payload of `reap-idle`. */
 export type ReapIdlePayload = z.infer<typeof reapIdlePayload>;
+/** Payload of `destroy-chat-workspace`. */
 export type DestroyChatWorkspacePayload = z.infer<typeof destroyChatWorkspacePayload>;
 
 /** Interval of the idle-workspace GC scheduler. */
@@ -79,4 +83,5 @@ export function turnCommandChannel(turnId: string): string {
 /** Commands published on {@link turnCommandChannel}. */
 export const turnCommand = z.object({ type: z.literal('cancel') });
 
+/** A command published on the turn command channel. */
 export type TurnCommand = z.infer<typeof turnCommand>;

@@ -45,6 +45,9 @@ export function expandHomePrefix(value: string): string {
   return value.startsWith('~/') ? join(homedir(), value.slice(2)) : value;
 }
 
+/** Upper bound of `WORKER_TURN_CONCURRENCY` (one container per turn; more would starve a laptop). */
+export const MAX_WORKER_TURN_CONCURRENCY = 32;
+
 const port = z.coerce.number().int().min(1).max(65_535);
 const positiveInt = z.coerce.number().int().positive();
 
@@ -67,7 +70,7 @@ export const envSchema = z.object({
   WORKSPACE_IMAGE: z.string().min(1).default(DEFAULT_WORKSPACE_IMAGE),
   WORKSPACE_NAME_PREFIX: z.string().min(1),
   WORKSPACE_IDLE_TTL_MIN: positiveInt.default(30),
-  WORKER_TURN_CONCURRENCY: positiveInt.max(32).default(2),
+  WORKER_TURN_CONCURRENCY: positiveInt.max(MAX_WORKER_TURN_CONCURRENCY).default(2),
   OPENAI_MODEL: z.string().min(1).default(DEFAULT_OPENAI_MODEL),
   OPENAI_BASE_URL: z.url().optional(),
   AGENT_MODEL_PROVIDER: z.enum(MODEL_PROVIDERS).default('openai'),

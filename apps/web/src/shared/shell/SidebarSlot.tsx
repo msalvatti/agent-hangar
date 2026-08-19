@@ -18,7 +18,7 @@ export interface SidebarSlotProps {
 export function SidebarSlot({ children }: SidebarSlotProps) {
   return (
     <aside
-      className="bg-sidebar text-sidebar-foreground flex h-dvh w-[260px] flex-col border-r"
+      className="bg-sidebar text-sidebar-foreground flex h-dvh w-65 flex-col border-r"
       data-testid="sidebar-slot"
     >
       {children ?? <nav aria-label="Primary" className="flex-1" />}

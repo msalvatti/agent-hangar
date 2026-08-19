@@ -27,9 +27,9 @@ function printEnv(env: Record<string, string>): Record<string, string> {
   });
   const result: Record<string, string> = {};
   for (const line of output.split('\n')) {
-    const match = /^export ([A-Z_]+)=(.*)$/.exec(line);
+    const match = /^export ([A-Z_]+)="(.*)"$/.exec(line);
     if (match?.[1] !== undefined && match[2] !== undefined) {
-      result[match[1]] = match[2];
+      result[match[1]] = match[2].replaceAll(/\\(.)/g, '$1');
     }
   }
   return result;
@@ -87,6 +87,22 @@ describe('infra/scripts/env.sh', () => {
       LOG_LEVEL: 'info',
     });
     expect(printed.MASTER_KEY_PATH).toMatch(/\/\.agent-hangar\/master\.key$/);
+  });
+
+  /**
+   * Values are double-quoted and shell-escaped so `eval "$(env.sh --print)"` and `.env.local`
+   * survive paths with spaces or special characters (e.g. a home directory with a space).
+   */
+  it('quotes values safely for eval and .env files', () => {
+    const printed = printEnv({ HOME: '/Users/John Doe', OPENAI_MODEL: 'gpt "x" $y `z`' });
+    expect(printed.MASTER_KEY_PATH).toBe('/Users/John Doe/.agent-hangar/master.key');
+    expect(printed.OPENAI_MODEL).toBe('gpt "x" $y `z`');
+    const evaluated = execFileSync(
+      bash,
+      ['-c', `eval "$(${bash} ${scriptPath} --print)"; printf '%s' "$MASTER_KEY_PATH"`],
+      { env: { PATH: process.env.PATH ?? '', HOME: '/Users/John Doe' }, encoding: 'utf8' },
+    );
+    expect(evaluated).toBe('/Users/John Doe/.agent-hangar/master.key');
   });
 
   /**

@@ -64,7 +64,7 @@ log "7/7 Workspace image ($WORKSPACE_IMAGE)"
 docker build -t "$WORKSPACE_IMAGE" infra/workspace
 
 log "Doctor"
-bash infra/scripts/doctor.sh || true
+bash infra/scripts/doctor.sh || echo "doctor reported problems (see above); setup itself completed"
 
 echo
 echo "Setup complete for instance \"$AH_INSTANCE\". Next: pnpm dev  →  http://127.0.0.1:$WEB_PORT"

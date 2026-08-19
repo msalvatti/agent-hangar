@@ -259,13 +259,10 @@ export class FakeWorkspaceRunner implements WorkspaceRunner {
     controller: AbortController,
     external: AbortSignal | undefined,
   ): AsyncIterable<ExecEvent> {
-    external?.addEventListener(
-      'abort',
-      () => {
-        controller.abort();
-      },
-      { once: true },
-    );
+    const forwardAbort = (): void => {
+      controller.abort();
+    };
+    external?.addEventListener('abort', forwardAbort, { once: true });
     if (external?.aborted === true) {
       controller.abort();
     }
@@ -285,6 +282,7 @@ export class FakeWorkspaceRunner implements WorkspaceRunner {
         yield next.value;
       }
     } finally {
+      external?.removeEventListener('abort', forwardAbort);
       // Not awaited: an async generator suspended in an `await` only honours `return()` after
       // that await settles, which a long-running script may never do unless it watches `signal`.
       const closing = iterator.return?.();

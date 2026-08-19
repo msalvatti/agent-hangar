@@ -10,6 +10,7 @@ import type { Metadata } from 'next';
 import { Inter, JetBrains_Mono } from 'next/font/google';
 import type { ReactNode } from 'react';
 
+import { cn } from '@/shared/lib/cn';
 import { Toaster } from '@/shared/ui/sonner';
 
 import './globals.css';
@@ -37,11 +38,7 @@ export const metadata: Metadata = {
  */
 export default function RootLayout({ children }: { children: ReactNode }) {
   return (
-    <html
-      lang="en"
-      suppressHydrationWarning
-      className={`${inter.variable} ${jetBrainsMono.variable}`}
-    >
+    <html lang="en" suppressHydrationWarning className={cn(inter.variable, jetBrainsMono.variable)}>
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
       </head>

@@ -47,16 +47,33 @@ export interface BootResult<
   shutdown: () => Promise<void>;
 }
 
+/**
+ * Returns a URL with any credentials removed, safe for error messages and logs.
+ *
+ * @param url - Connection URL (may carry `user:password@`).
+ * @returns The URL without userinfo, or the input unchanged when it is not a valid URL.
+ */
+export function describeUrl(url: string): string {
+  const parsed = URL.parse(url);
+  if (parsed === null) {
+    return url;
+  }
+  parsed.username = '';
+  parsed.password = '';
+  return parsed.toString();
+}
+
 async function assertRedisReachable(redis: BootRedis, url: string): Promise<void> {
+  const target = describeUrl(url);
   let reply: string;
   try {
     reply = await redis.ping();
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
-    throw new ConfigError(`redis unreachable at ${url}: ${detail}`, { cause: error });
+    throw new ConfigError(`redis unreachable at ${target}: ${detail}`, { cause: error });
   }
   if (reply !== 'PONG') {
-    throw new ConfigError(`redis unreachable at ${url}: unexpected PING reply "${reply}"`);
+    throw new ConfigError(`redis unreachable at ${target}: unexpected PING reply "${reply}"`);
   }
 }
 

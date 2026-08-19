@@ -20,6 +20,12 @@ export interface TruncatableClient {
 /** Table kept across truncations. */
 export const MIGRATIONS_TABLE = '_prisma_migrations';
 
+/** Pool size of the test client (tests run with at most three workers). */
+export const TEST_POOL_MAX = 4;
+
+/** Connection timeout of the test client, in ms. */
+export const TEST_CONNECTION_TIMEOUT_MS = 5000;
+
 /**
  * Creates a client for `DATABASE_URL`.
  *
@@ -36,7 +42,11 @@ export function connectTestDb(
       'DATABASE_URL is not set; start the compose instance (pnpm infra:up) and export .env.local',
     );
   }
-  return createPrismaClient({ connectionString, max: 4, connectionTimeoutMillis: 5000 });
+  return createPrismaClient({
+    connectionString,
+    max: TEST_POOL_MAX,
+    connectionTimeoutMillis: TEST_CONNECTION_TIMEOUT_MS,
+  });
 }
 
 /**

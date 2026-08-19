@@ -87,11 +87,17 @@ ah_resolve_env() {
 
 AH_ENV_KEYS="AH_INSTANCE AH_PORT_BASE WEB_PORT POSTGRES_PORT REDIS_PORT POSTGRES_DB DATABASE_URL REDIS_URL COMPOSE_PROJECT_NAME WORKSPACE_NAME_PREFIX WORKSPACE_IMAGE MASTER_KEY_PATH WORKSPACE_IDLE_TTL_MIN WORKER_TURN_CONCURRENCY OPENAI_MODEL AGENT_MODEL_PROVIDER LOG_LEVEL"
 
-# Prints KEY=value lines (optionally prefixed, e.g. "export ").
+# Double-quotes a value for both `bash` (eval / source) and docker compose `--env-file`:
+# backslash, double quote, dollar and backtick are escaped.
+ah_quote() {
+  printf '%s' "$1" | sed -e 's/[\\"$`]/\\&/g' -e 's/^/"/' -e 's/$/"/'
+}
+
+# Prints KEY="value" lines (optionally prefixed, e.g. "export ").
 ah_print_env() {
   local prefix="${1:-}" key
   for key in $AH_ENV_KEYS; do
-    printf '%s%s=%s\n' "$prefix" "$key" "${!key}"
+    printf '%s%s=%s\n' "$prefix" "$key" "$(ah_quote "${!key}")"
   done
 }
 

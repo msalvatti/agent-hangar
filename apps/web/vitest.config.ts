@@ -33,12 +33,7 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary'],
       reportsDirectory: './coverage',
-      // One path per line so each lane appends exactly one line (kept expanded on purpose).
-      // prettier-ignore
-      include: [
-        'src/shared/api/**',
-        'src/shared/lib/**',
-      ],
+      include: ['src/shared/api/**', 'src/shared/lib/**'],
       exclude: ['**/*.test.{ts,tsx}', 'src/shared/ui/**', 'src/test/**'],
       thresholds: {
         lines: 100,
