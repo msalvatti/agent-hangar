@@ -476,4 +476,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1c-openai-prov
 - 1C.2 ✅ 2026-08-19 — Seven synthetic NDJSON streams built from the SDK types, plus the fixture loader, the replaying fake client and the redacting record script.
 - 1C.3 ✅ 2026-08-19 — `OpenAIModelProvider` over `responses.stream`, `ModelProviderError`, and the real client factory with `maxRetries: 0`.
 - 1C.4 ✅ 2026-08-19 — `createModelProvider(name, deps)` reusing the config `MODEL_PROVIDERS` list; folder barrel exports the provider, the registry and the fixtures.
-- 1C.5 ✅ 2026-08-19 — Gates green (lint, format, typecheck, 100/100/100/100 on the owned paths); review findings resolved; PR opened.
+- 1C.5 ✅ 2026-08-19 — Gates green (lint, format, typecheck, 100/100/100/100 on the owned paths); review findings resolved; PR #10 opened.
