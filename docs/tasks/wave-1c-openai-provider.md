@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-C (Wave 1, parallel with W1-A … W1-I) |
 | **Status** | 🟦 running |
-| **Progress** | 2/5 tasks |
+| **Progress** | 3/5 tasks |
 | **Branch** | `feat/w1c-openai-provider` |
 | **Owned paths** | `packages/core/src/model/openai/**`, `packages/core/src/model/registry.ts` (+ `registry.test.ts`), `packages/core/fixtures/openai/**`, `packages/core/scripts/record-fixtures.ts` — plus three append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only), (the root `packages/core/src/index.ts` is frozen — it already re-exports `./model/index.js`; this lane adds exports only to `packages/core/src/model/index.ts` and `model/openai/index.ts`), `packages/core/package.json` (one script `fixtures:record` only) |
 | **Depends on** | W0 merged to `main` |
@@ -43,7 +43,7 @@ Spec 03 §2 lists the event mapping. The SDK's event names must be **verified at
 |---|---|---|---|---|---|
 | 1C.1 | Pure mapping: request params, stream events → `ModelEvent`, SDK errors → `ModelEvent.error` (verified against SDK types) | ✅ | P0 | M | — |
 | 1C.2 | Fixtures (`fixtures/openai/*.ndjson`), fixture loader, fake SDK client, record script | ✅ | P0 | M | 1C.1 |
-| 1C.3 | `OpenAIModelProvider` (`stream`, `listModels`) + SDK client factory | 📋 | P0 | M | 1C.1, 1C.2 |
+| 1C.3 | `OpenAIModelProvider` (`stream`, `listModels`) + SDK client factory | ✅ | P0 | M | 1C.1, 1C.2 |
 | 1C.4 | Registry `createModelProvider(name, deps)` → openai \| fake; barrel exports | 📋 | P0 | S | 1C.3 |
 | 1C.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1C.1–1C.4 |
 
@@ -245,17 +245,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1c-openai-prov
 
 ## Task 1C.3 — `OpenAIModelProvider` (`stream`, `listModels`) + SDK client factory
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1C.1, 1C.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1C.1, 1C.2
 
 **Description.** Implement `OpenAIModelProvider implements AgentModelProvider` over an injected `OpenAIResponsesClient`: `stream()` builds params via `toResponseParams`, iterates `client.responses.stream(params, { signal })`, maps events, guarantees exactly one terminal event (`response.done` or `error`) unless aborted, and `listModels()` returns sorted ids or throws `ModelProviderError`. Plus `createOpenAIClient({ apiKey, baseURL })` wrapping the real SDK with `maxRetries: 0`.
 
 **Acceptance criteria**
-- [ ] `createOpenAIModelProvider({ client })` / `class OpenAIModelProvider` with `name = 'openai'`; `stream` yields mapped events for every fixture (`text`, `tool-call`, `text-and-tool-call`, `refusal`, `failed`, `incomplete`, `error-event`) matching exact expected `ModelEvent[]` sequences
-- [ ] `store: false` is in every request; `model` equals `input.model`; no `previous_response_id` key ever; `signal` forwarded to the SDK call
-- [ ] Thrown SDK errors before/mid-stream become one `error` event (mapped) and the iterable ends; a stream that ends without a terminal event yields `error { code: 'unknown', message: 'stream ended without completion', retryable: true }`; abort ends the stream silently (no error event)
-- [ ] `listModels()` → ids sorted ascending; SDK error → `ModelProviderError` (`code: 'MODEL_PROVIDER_ERROR'`, `modelErrorCode`, `retryable`)
-- [ ] `createOpenAIClient({ apiKey, baseURL? })` returns `new OpenAI({ apiKey, baseURL, maxRetries: 0 })` (retries belong to the agent-runtime per spec 04) and is assignable to `OpenAIResponsesClient` (type-level test); unit test mocks the `openai` module with `vi.mock` and asserts the constructor options
-- [ ] 100 % coverage on `provider.ts`, `client.ts`, `errors.ts`
+- [x] `createOpenAIModelProvider({ client })` / `class OpenAIModelProvider` with `name = 'openai'`; `stream` yields mapped events for every fixture (`text`, `tool-call`, `text-and-tool-call`, `refusal`, `failed`, `incomplete`, `error-event`) matching exact expected `ModelEvent[]` sequences
+- [x] `store: false` is in every request; `model` equals `input.model`; no `previous_response_id` key ever; `signal` forwarded to the SDK call
+- [x] Thrown SDK errors before/mid-stream become one `error` event (mapped) and the iterable ends; a stream that ends without a terminal event yields `error { code: 'unknown', message: 'stream ended without completion', retryable: true }`; abort ends the stream silently (no error event)
+- [x] `listModels()` → ids sorted ascending; SDK error → `ModelProviderError` (`code: 'MODEL_PROVIDER_ERROR'`, `modelErrorCode`, `retryable`)
+- [x] `createOpenAIClient({ apiKey, baseURL? })` returns `new OpenAI({ apiKey, baseURL, maxRetries: 0 })` (retries belong to the agent-runtime per spec 04) and is assignable to `OpenAIResponsesClient` (type-level test); unit test mocks the `openai` module with `vi.mock` and asserts the constructor options
+- [x] 100 % coverage on `provider.ts`, `client.ts`, `errors.ts`
 
 **Files to create**
 `packages/core/src/model/openai/provider.ts`, `packages/core/src/model/openai/provider.test.ts`, `packages/core/src/model/openai/errors.ts`, `packages/core/src/model/openai/client.test.ts`, `packages/core/src/model/openai/index.ts`; modify `packages/core/src/model/openai/client.ts` (add `createOpenAIClient`).
@@ -474,3 +474,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1c-openai-prov
 
 - 1C.1 ✅ 2026-08-19 — Responses mapping layer verified against `openai@7.5.0`; every consumed event name matches the shipped `ResponseStreamEvent` union.
 - 1C.2 ✅ 2026-08-19 — Seven synthetic NDJSON streams built from the SDK types, plus the fixture loader, the replaying fake client and the redacting record script.
+- 1C.3 ✅ 2026-08-19 — `OpenAIModelProvider` over `responses.stream`, `ModelProviderError`, and the real client factory with `maxRetries: 0`.

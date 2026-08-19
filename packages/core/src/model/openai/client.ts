@@ -6,7 +6,10 @@
  * Declaring the dependency structurally keeps the provider testable without the SDK: the real
  * client satisfies this interface, and so does the fixture-replaying fake. A type-level test
  * asserts the real client stays assignable, so the interface cannot silently drift from the SDK.
+ *
+ * This is the only module that loads the `openai` package at runtime.
  */
+import OpenAI from 'openai';
 import type {
   ResponseCreateParamsStreaming,
   ResponseStreamEvent,
@@ -49,4 +52,30 @@ export interface OpenAIResponsesClient {
      */
     list(): AsyncIterable<OpenAIModelSummary>;
   };
+}
+
+/** Credential and endpoint the real client is built from. */
+export interface CreateOpenAIClientOptions {
+  /** API key, revealed per turn by the worker; never logged and never persisted in plaintext. */
+  apiKey: string;
+  /** Alternative endpoint, for a compatible gateway. */
+  baseURL?: string;
+}
+
+/**
+ * Builds the real SDK client.
+ *
+ * Retries are disabled: the agent runtime owns the backoff policy (up to three attempts on a rate
+ * limit), and a second retry loop underneath it would multiply the wait and hide the failure the
+ * runtime is supposed to see.
+ *
+ * @param options - Credential and optional endpoint.
+ * @returns A client narrowed to the surface the provider uses.
+ */
+export function createOpenAIClient(options: CreateOpenAIClientOptions): OpenAIResponsesClient {
+  return new OpenAI({
+    apiKey: options.apiKey,
+    maxRetries: 0,
+    ...(options.baseURL === undefined ? {} : { baseURL: options.baseURL }),
+  });
 }
