@@ -59,14 +59,32 @@ describe('resolveDockerSocket', () => {
    * manage. Connecting in plaintext anyway would silently downgrade the transport, so the whole
    * resolution must fail instead.
    */
-  it('rejects DOCKER_TLS_VERIFY=1', () => {
+  it.each(['1', 'true', 'yes', '0'])('rejects DOCKER_TLS_VERIFY=%s', (value) => {
     expect(() =>
       resolveDockerSocket({
-        env: { DOCKER_HOST: 'tcp://docker.internal:2376', DOCKER_TLS_VERIFY: '1' },
+        env: { DOCKER_HOST: 'tcp://docker.internal:2376', DOCKER_TLS_VERIFY: value },
         homedir: () => HOME,
         exists: () => false,
       }),
     ).toThrow(DockerRunnerError);
+  });
+
+  /**
+   * Docker reads this variable as "any non-empty value enables verification", so matching only
+   * `'1'` left `DOCKER_TLS_VERIFY=true` resolving to a plaintext `http` client. That is not a
+   * cosmetic gap: the first request over that transport is `createContainer`, whose body carries
+   * the workspace environment — the GitHub PAT and the OpenAI key — so the downgrade would put
+   * them on the wire in clear. Empty and unset are the only values that mean "no TLS".
+   */
+  it.each(['', undefined])('resolves normally when DOCKER_TLS_VERIFY is %p', (value) => {
+    const resolution = resolveDockerSocket({
+      env: { DOCKER_HOST: 'tcp://docker.internal:2375', DOCKER_TLS_VERIFY: value },
+      homedir: () => HOME,
+      exists: () => false,
+    });
+
+    expect(resolution.source).toBe('DOCKER_HOST');
+    expect(resolution.options).toEqual({ host: 'docker.internal', port: 2375, protocol: 'http' });
   });
 
   /**

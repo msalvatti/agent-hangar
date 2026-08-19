@@ -121,7 +121,13 @@ export function resolveDockerSocket(deps: ResolveDockerSocketDeps = {}): DockerS
   if (dockerHost !== undefined && dockerHost.length > 0) {
     // A TLS daemon needs a CA, a client certificate and a key that this runner does not manage;
     // connecting in plaintext instead would be a silent downgrade, so refuse loudly.
-    if (env.DOCKER_TLS_VERIFY === '1') {
+    //
+    // Any non-empty value counts, which is how Docker itself reads this variable — `true` and even
+    // `0` enable verification, only unset or empty disables it. Matching just `'1'` would let
+    // `DOCKER_TLS_VERIFY=true` through and hand back a plaintext `http` client, and the request
+    // this runner then sends over it is `createContainer`, whose body carries the workspace
+    // environment: the GitHub PAT and the OpenAI key, in clear, over the network.
+    if ((env.DOCKER_TLS_VERIFY ?? '') !== '') {
       throw new DockerRunnerError(
         'DOCKER_TLS_VERIFY is not supported by this runner; use a unix socket or plain tcp',
       );
