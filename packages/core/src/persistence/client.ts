@@ -9,7 +9,7 @@
  */
 import { PrismaPg } from '@prisma/adapter-pg';
 
-import { ConfigError } from '../errors.js';
+import { ConfigError, describeClientFailure } from '../errors.js';
 
 import { PrismaClient } from './generated/client.js';
 
@@ -76,8 +76,9 @@ export async function assertDatabaseReachable(
     if (error instanceof ConfigError) {
       throw error;
     }
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new ConfigError(`database unreachable: ${detail}`, { cause: error });
+    // Neither the driver's message nor the error itself may travel: both carry the connection
+    // string, password included, and `cause` republishes it to anything walking the chain.
+    throw new ConfigError(`database unreachable (${describeClientFailure(error)})`);
   } finally {
     clearTimeout(timer);
   }

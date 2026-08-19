@@ -7,6 +7,8 @@
  * reply) surfaces as a `ConfigError` and releases what was already opened.
  * Mocks: injected fakes for every collaborator; no I/O.
  */
+import { inspect } from 'node:util';
+
 import { ConfigError, loadConfig } from '@agent-hangar/core';
 import type { AppConfig } from '@agent-hangar/core';
 import pino from 'pino';
@@ -202,15 +204,27 @@ describe('boot', () => {
   });
 
   /**
-   * Redis down: a rejected PING becomes a `ConfigError` naming the URL, and both clients are
-   * released; a successful PING with an unexpected reply is treated the same way.
+   * Redis down: a rejected PING becomes a `ConfigError` naming the URL with its password blanked
+   * and the driver's own code, and both clients are released. The driver's message is deliberately
+   * absent — ioredis puts the connection string in it — so a password planted there must not
+   * appear anywhere in the reported error; a successful PING with an unexpected reply is treated
+   * the same way.
    */
   it('fails and releases both clients when Redis does not answer PONG', async () => {
+    const secret = 'SUPERSECRETPW';
     const down = makeDeps();
-    down.redis.ping.mockRejectedValueOnce(new Error('ECONNREFUSED'));
-    await expect(boot(down.deps)).rejects.toMatchObject({
+    down.redis.ping.mockRejectedValueOnce(
+      Object.assign(new Error(`connect ECONNREFUSED redis://u:${secret}@127.0.0.1:6379`), {
+        code: 'ECONNREFUSED',
+      }),
+    );
+    const failure = boot(down.deps);
+    await expect(failure).rejects.toMatchObject({
       code: 'CONFIG_ERROR',
-      message: `redis unreachable at ${config.REDIS_URL}: ECONNREFUSED`,
+      message: `redis unreachable at ${describeUrl(config.REDIS_URL)} (ECONNREFUSED)`,
+    });
+    await failure.catch((error: unknown) => {
+      expect(inspect(error, { depth: null })).not.toContain(secret);
     });
     expect(down.redis.quit).toHaveBeenCalledTimes(1);
     expect(down.prisma.$disconnect).toHaveBeenCalledTimes(1);
@@ -220,8 +234,10 @@ describe('boot', () => {
     await expect(boot(odd.deps)).rejects.toThrow('unexpected PING reply "NOPE"');
 
     const weird = makeDeps();
-    weird.redis.ping.mockRejectedValueOnce('string failure');
-    await expect(boot(weird.deps)).rejects.toThrow('string failure');
+    weird.redis.ping.mockRejectedValueOnce(`redis://u:${secret}@h:6379`);
+    const weirdFailure = boot(weird.deps);
+    await expect(weirdFailure).rejects.toThrow('(unknown)');
+    await expect(weirdFailure).rejects.not.toThrow(new RegExp(secret, 'u'));
   });
 
   /**

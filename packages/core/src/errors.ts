@@ -204,3 +204,29 @@ export class ConfigError extends AgentHangarError {
 export function isAgentHangarError(value: unknown): value is AgentHangarError {
   return value instanceof AgentHangarError;
 }
+
+/**
+ * Describes why an infrastructure client failed, using nothing the client was configured with.
+ *
+ * A driver error is not safe to repeat. Postgres and Redis clients put the connection string —
+ * password included — into the message of a connection failure, and attaching the error as `cause`
+ * republishes it to anything that walks the chain, which `util.inspect`, a structured logger and a
+ * test reporter all do. Only a driver-generated classification is returned: the `code` a driver
+ * sets (`ECONNREFUSED`, `28P01`, …) or, failing that, the error's constructor name. Neither can
+ * carry a credential, because neither is built from configuration.
+ *
+ * @param error - The value a client rejected with.
+ * @returns A short classification safe to put in a message and to persist.
+ */
+export function describeClientFailure(error: unknown): string {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    const { code } = error;
+    if (typeof code === 'string' && code.length > 0) {
+      return code;
+    }
+  }
+  if (error instanceof Error && error.constructor.name !== 'Error') {
+    return error.constructor.name;
+  }
+  return 'unknown';
+}

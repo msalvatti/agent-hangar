@@ -9,7 +9,7 @@
  * message when the compose instance is down.
  */
 import type { AppConfig } from '@agent-hangar/core';
-import { ConfigError } from '@agent-hangar/core';
+import { ConfigError, describeClientFailure } from '@agent-hangar/core';
 import type { Logger } from 'pino';
 
 /** The part of the Prisma client the boot needs. */
@@ -69,8 +69,9 @@ async function assertRedisReachable(redis: BootRedis, url: string): Promise<void
   try {
     reply = await redis.ping();
   } catch (error) {
-    const detail = error instanceof Error ? error.message : String(error);
-    throw new ConfigError(`redis unreachable at ${target}: ${detail}`, { cause: error });
+    // The driver's message and the error itself both carry the connection string, password
+    // included, and `cause` republishes it to anything walking the chain.
+    throw new ConfigError(`redis unreachable at ${target} (${describeClientFailure(error)})`);
   }
   if (reply !== 'PONG') {
     throw new ConfigError(`redis unreachable at ${target}: unexpected PING reply "${reply}"`);
