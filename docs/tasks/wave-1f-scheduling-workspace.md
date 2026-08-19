@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-F (Wave 1, parallel with W1-A … W1-I) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/5 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1f-scheduling-workspace` |
 | **Owned paths** | `packages/core/src/scheduling/**` (except the frozen `types.ts`), `packages/core/src/workspace/**` (except the frozen `types.ts`), `packages/core/src/restore/**`, `packages/core/src/queues/queues.ts`, `packages/core/src/queues/schedulers.ts` (+ their `*.test.ts` / `*.integration.test.ts`; `queues/contracts.ts` is frozen) — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./scheduling/index.js`, `./workspace/index.js`, `./restore/index.js`, `./queues/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
@@ -43,28 +43,28 @@ This lane fills in the pure domain logic that W2-A (API) and W2-B (worker) orche
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1F.1 | Scheduling: cron validation, `nextRunAt` (tz/DST), `describeCron`, overlap policy, reconcile diff, scheduler keys | 📋 | P0 | M | — |
-| 1F.2 | Workspace lifecycle: transition tables + `assertTransition`, `ensureWorkspaceDecision`, idle-TTL selection, orphan reconcile | 📋 | P0 | M | — |
-| 1F.3 | Restore context: history window, `TOOL_SUMMARY` compaction text, restoration notice, `buildRestoreContext`, `buildTurnRequest` | 📋 | P0 | M | 1F.2 |
-| 1F.4 | BullMQ factories: queues, worker connection, Job Scheduler wrappers, `@redis` integration tests | 📋 | P0 | M | 1F.1 |
-| 1F.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1F.1–1F.4 |
+| 1F.1 | Scheduling: cron validation, `nextRunAt` (tz/DST), `describeCron`, overlap policy, reconcile diff, scheduler keys | ✅ | P0 | M | — |
+| 1F.2 | Workspace lifecycle: transition tables + `assertTransition`, `ensureWorkspaceDecision`, idle-TTL selection, orphan reconcile | ✅ | P0 | M | — |
+| 1F.3 | Restore context: history window, `TOOL_SUMMARY` compaction text, restoration notice, `buildRestoreContext`, `buildTurnRequest` | ✅ | P0 | M | 1F.2 |
+| 1F.4 | BullMQ factories: queues, worker connection, Job Scheduler wrappers, `@redis` integration tests | ✅ | P0 | M | 1F.1 |
+| 1F.5 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 1F.1–1F.4 |
 
 ---
 
 ## Task 1F.1 — Scheduling: cron validation, `nextRunAt`, `describeCron`, overlap, reconcile, keys
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Pure scheduling helpers over `cron-parser`: validate a 5-field cron + IANA timezone (`InvalidCronError`), compute `nextRunAt`/`nextRuns` with timezone and DST correctness, produce the human-readable description the UI preview shows, decide the overlap policy (`skip`), diff DB jobs against existing schedulers into a `ReconcilePlan`, and centralise the scheduler-key convention (key = `ScheduledJob.id`).
 
 **Acceptance criteria**
-- [ ] `validateCronSpec(spec)` accepts exactly 5 whitespace-separated fields parsable by `cron-parser`, rejects 6-field/seconds, `@macros`, empty, unparsable, and invalid/unknown IANA timezones — always `InvalidCronError` with the offending value and reason in the message
-- [ ] `nextRunAt(spec, from)` returns the first instant strictly after `from`; `nextRuns(spec, from, count)` strictly increasing; DST tests: `0 12 * * *` in `Europe/Berlin` across 2026-03-29 → consecutive runs 23 h apart in UTC, across 2026-10-25 → 25 h apart; `30 2 * * *` in `America/New_York` on 2026-03-08 (non-existent wall time) yields an instant after the gap and the run on 2026-03-09 is at 02:30 local; results identical for `UTC` vs `Etc/UTC`
-- [ ] `describeCron(spec)` covers: every minute; every N minutes; every hour at :MM; every day at HH:MM; every weekday at HH:MM; specific weekdays (`Mon, Wed`); day-of-month; fallback ``on schedule `<cron>` ``; always suffixed by the timezone (e.g. `every day at 02:00 UTC`)
-- [ ] `decideOverlap({ runningRun })` → `{ action: 'run' }` or `{ action: 'skip', reason: OVERLAP_SKIP_REASON }` with `OVERLAP_SKIP_REASON === 'previous run still running'`
-- [ ] `reconcile(dbJobs, schedulers)` → `ReconcilePlan`: `upsert` = enabled jobs whose scheduler is missing or differs in `pattern`/`tz`; `remove` = scheduler keys with no enabled job; deterministic order (by id/key); unchanged schedulers untouched
-- [ ] `toSchedulerKey(jobId)` / `jobIdFromSchedulerKey(key)` identity helpers with JSDoc explaining why (spec 03 §5)
-- [ ] 100 % coverage on `src/scheduling/**` (types.ts excluded by config)
+- [x] `validateCronSpec(spec)` accepts exactly 5 whitespace-separated fields parsable by `cron-parser`, rejects 6-field/seconds, `@macros`, empty, unparsable, and invalid/unknown IANA timezones — always `InvalidCronError` with the offending value and reason in the message
+- [x] `nextRunAt(spec, from)` returns the first instant strictly after `from`; `nextRuns(spec, from, count)` strictly increasing; DST tests: `0 12 * * *` in `Europe/Berlin` across 2026-03-29 → consecutive runs 23 h apart in UTC, across 2026-10-25 → 25 h apart; `30 2 * * *` in `America/New_York` on 2026-03-08 (non-existent wall time) yields an instant after the gap and the run on 2026-03-09 is at 02:30 local; results identical for `UTC` vs `Etc/UTC`
+- [x] `describeCron(spec)` covers: every minute; every N minutes; every hour at :MM; every day at HH:MM; every weekday at HH:MM; specific weekdays (`Mon, Wed`); day-of-month; fallback ``on schedule `<cron>` ``; always suffixed by the timezone (e.g. `every day at 02:00 UTC`)
+- [x] `decideOverlap({ runningRun })` → `{ action: 'run' }` or `{ action: 'skip', reason: OVERLAP_SKIP_REASON }` with `OVERLAP_SKIP_REASON === 'previous run still running'`
+- [x] `reconcile(dbJobs, schedulers)` → `ReconcilePlan`: `upsert` = enabled jobs whose scheduler is missing or differs in `pattern`/`tz`; `remove` = scheduler keys with no enabled job; deterministic order (by id/key); unchanged schedulers untouched
+- [x] `toSchedulerKey(jobId)` / `jobIdFromSchedulerKey(key)` identity helpers with JSDoc explaining why (spec 03 §5)
+- [x] 100 % coverage on `src/scheduling/**` (types.ts excluded by config)
 
 **Files to create**
 `packages/core/src/scheduling/cron.ts`, `cron.test.ts`, `describe.ts`, `describe.test.ts`, `overlap.ts`, `overlap.test.ts`, `reconcile.ts`, `reconcile.test.ts`, `keys.ts`, `keys.test.ts`, `index.ts`; modify `packages/core/vitest.config.ts` (+ the owned folder `index.ts`).
@@ -163,17 +163,17 @@ Completion Protocol (after you finish):
 
 ## Task 1F.2 — Workspace lifecycle: transitions, `ensureWorkspaceDecision`, idle-TTL, orphan reconcile
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Pure workspace domain logic: the allowed-transition tables for `WorkspaceStatus` (and the shared `TurnStatus`/`JobRunStatus` run lifecycle) with `IllegalTransitionError`, the "ensure workspace" decision (reuse live READY → `reuse`; none → `create` + restore; image missing → `WorkspaceImageMissing`; CREATING/BUSY/STOPPING → `WorkspaceBusyError` so the worker runs stalled recovery first), idle-TTL selection for GC, and the orphan reconcile plan from `runner.list()` vs DB live rows.
 
 **Acceptance criteria**
-- [ ] `WORKSPACE_TRANSITIONS` table exactly: CREATING→{READY, FAILED, DESTROYED}; READY→{BUSY, STOPPING, DESTROYED, FAILED}; BUSY→{READY, STOPPING, FAILED, DESTROYED}; STOPPING→{DESTROYED, FAILED}; FAILED→{DESTROYED}; DESTROYED→{} ; `RUN_TRANSITIONS` (Turn/JobRun): QUEUED→{PREPARING, FAILED, CANCELLED}; PREPARING→{RUNNING, FAILED, CANCELLED}; RUNNING→{SUCCEEDED, FAILED, CANCELLED}; terminal→{}
-- [ ] `canTransition`, `assertTransition` (throws `IllegalTransitionError` naming subject, from, to), `LIVE_WORKSPACE_STATUSES` = CREATING/READY/BUSY/STOPPING (mirrors the partial unique index), `isLiveWorkspaceStatus`, `isTerminalRunStatus`
-- [ ] `ensureWorkspaceDecision({ liveWorkspace, imagePresent, restore })` returns `EnsureWorkspaceDecision` exactly as typed in W0; `imagePresent === false` → throws `WorkspaceImageMissing` before anything else; READY → `{ action: 'reuse', workspaceId }`; `null`/DESTROYED/FAILED → `{ action: 'create', clone: true, restore }`; CREATING/BUSY/STOPPING → `WorkspaceBusyError` (local `AgentHangarError` subclass, code `WORKSPACE_BUSY`)
-- [ ] `selectIdleWorkspaces(candidates, { now, idleTtlMin })` → ids of READY workspaces with `now − lastActiveAt > ttl` (strict), any kind; stable order by `lastActiveAt` asc
-- [ ] `planOrphanReconcile({ runnerHandles, dbLive })` → `{ destroyOrphans: WorkspaceHandle[] (runner has it, DB has no live row for workspaceId), markGone: string[] (DB live row, runner does not list it) }`, sorted deterministically
-- [ ] 100 % coverage on `src/workspace/**` (types.ts excluded)
+- [x] `WORKSPACE_TRANSITIONS` table exactly: CREATING→{READY, FAILED, DESTROYED}; READY→{BUSY, STOPPING, DESTROYED, FAILED}; BUSY→{READY, STOPPING, FAILED, DESTROYED}; STOPPING→{DESTROYED, FAILED}; FAILED→{DESTROYED}; DESTROYED→{} ; `RUN_TRANSITIONS` (Turn/JobRun): QUEUED→{PREPARING, FAILED, CANCELLED}; PREPARING→{RUNNING, FAILED, CANCELLED}; RUNNING→{SUCCEEDED, FAILED, CANCELLED}; terminal→{}
+- [x] `canTransition`, `assertTransition` (throws `IllegalTransitionError` naming subject, from, to), `LIVE_WORKSPACE_STATUSES` = CREATING/READY/BUSY/STOPPING (mirrors the partial unique index), `isLiveWorkspaceStatus`, `isTerminalRunStatus`
+- [x] `ensureWorkspaceDecision({ liveWorkspace, imagePresent, restore })` returns `EnsureWorkspaceDecision` exactly as typed in W0; `imagePresent === false` → throws `WorkspaceImageMissing` before anything else; READY → `{ action: 'reuse', workspaceId }`; `null`/DESTROYED/FAILED → `{ action: 'create', clone: true, restore }`; CREATING/BUSY/STOPPING → `WorkspaceBusyError` (local `AgentHangarError` subclass, code `WORKSPACE_BUSY`)
+- [x] `selectIdleWorkspaces(candidates, { now, idleTtlMin })` → ids of READY workspaces with `now − lastActiveAt > ttl` (strict), any kind; stable order by `lastActiveAt` asc
+- [x] `planOrphanReconcile({ runnerHandles, dbLive })` → `{ destroyOrphans: WorkspaceHandle[] (runner has it, DB has no live row for workspaceId), markGone: string[] (DB live row, runner does not list it) }`, sorted deterministically
+- [x] 100 % coverage on `src/workspace/**` (types.ts excluded)
 
 **Files to create**
 `packages/core/src/workspace/lifecycle.ts`, `lifecycle.test.ts`, `errors.ts`, `errors.test.ts`, `ensure.ts`, `ensure.test.ts`, `idle.ts`, `idle.test.ts`, `orphans.ts`, `orphans.test.ts`, `index.ts`; modify `packages/core/vitest.config.ts` (+ the owned folder `index.ts`).
@@ -269,17 +269,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1f-scheduling-
 
 ## Task 1F.3 — Restore context: history window, compaction, notice, `buildRestoreContext`, `buildTurnRequest`
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1F.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1F.2
 
 **Description.** Implement `packages/core/src/restore/**`: the history window (last N messages within a char budget, always keeping the first USER message, with a compaction item when messages are dropped), the exact `TOOL_SUMMARY` text format, the exact restoration notice text from spec 02 §4, `buildRestoreContext` (chat + ordered messages → `RestoreContext` with `expectedHeadSha` when `workBranch` + `lastPushedSha` exist), and `buildTurnRequest` (→ a Zod-validated `TurnRequest` with default limits for chats and jobs).
 
 **Acceptance criteria**
-- [ ] `buildHistoryWindow(messages, budget)` returns `ConversationItem[]` in seq order; roles mapped USER→user, ASSISTANT→assistant, SYSTEM/TOOL_SUMMARY→system; honours `maxMessages` and `maxChars` (counting content length, newest first); always keeps the first USER message; when anything is dropped, inserts one `system` compaction item right after the anchor: `"<N> earlier messages omitted to fit the context window.\nEarlier tool activity:\n- <TOOL_SUMMARY lines of dropped messages, max 20, oldest first>"` (second part only when any were tool summaries)
-- [ ] `toolSummaryText(entry)` formats exactly: run_shell → ``ran `<command ≤ 80 chars, "…" when cut>` → exit <code> (<duration>)``, TIMED_OUT → ``ran `<cmd>` → timed out after <duration>``, FAILED with null exit → ``ran `<cmd>` → failed (<duration>)``; write_file → `wrote <path> (<bytes> bytes)`; read_file → `read <path>`; list_dir → `listed <path or "/">`; duration humanised `350 ms` / `12 s` / `2 min 3 s`
-- [ ] `restorationNotice({ at, workBranch })` with workBranch → exactly `` Workspace recreated from history at <ISO>. Uncommitted changes from the previous workspace are gone; pushed work on `<workBranch>` is checked out. ``; without → `Workspace recreated from history at <ISO>. Uncommitted changes from the previous workspace are gone; no pushed work was found, so the base branch is checked out.`
-- [ ] `buildRestoreContext({ chat, messages, now, budget? })` fills every field of W0's `RestoreContext`; `expectedHeadSha` is set only when `workBranch` and `lastPushedSha` are both present
-- [ ] `buildTurnRequest(input)` returns `turnRequestSchema.parse(...)` output; `prepare.clone` is `true` for `create` decisions and `false` for `reuse`; `repo.expectedHeadSha` only on create with a sha; `repo.workBranch` = `chat.workBranch ?? defaultWorkBranch(chat.id)`; limits default `DEFAULT_CHAT_TURN_LIMITS` (40 steps, 20 min, 5 min tool, 32 KiB) / `DEFAULT_JOB_TURN_LIMITS` (30 min) with per-call overrides; `buildJobTurnRequest` builds the single-user-item request for scheduled runs
-- [ ] 100 % coverage on `src/restore/**`
+- [x] `buildHistoryWindow(messages, budget)` returns `ConversationItem[]` in seq order; roles mapped USER→user, ASSISTANT→assistant, SYSTEM/TOOL_SUMMARY→system; honours `maxMessages` and `maxChars` (counting content length, newest first); always keeps the first USER message; when anything is dropped, inserts one `system` compaction item right after the anchor: `"<N> earlier messages omitted to fit the context window.\nEarlier tool activity:\n- <TOOL_SUMMARY lines of dropped messages, max 20, oldest first>"` (second part only when any were tool summaries)
+- [x] `toolSummaryText(entry)` formats exactly: run_shell → ``ran `<command ≤ 80 chars, "…" when cut>` → exit <code> (<duration>)``, TIMED_OUT → ``ran `<cmd>` → timed out after <duration>``, FAILED with null exit → ``ran `<cmd>` → failed (<duration>)``; write_file → `wrote <path> (<bytes> bytes)`; read_file → `read <path>`; list_dir → `listed <path or "/">`; duration humanised `350 ms` / `12 s` / `2 min 3 s`
+- [x] `restorationNotice({ at, workBranch })` with workBranch → exactly `` Workspace recreated from history at <ISO>. Uncommitted changes from the previous workspace are gone; pushed work on `<workBranch>` is checked out. ``; without → `Workspace recreated from history at <ISO>. Uncommitted changes from the previous workspace are gone; no pushed work was found, so the base branch is checked out.`
+- [x] `buildRestoreContext({ chat, messages, now, budget? })` fills every field of W0's `RestoreContext`; `expectedHeadSha` is set only when `workBranch` and `lastPushedSha` are both present
+- [x] `buildTurnRequest(input)` returns `turnRequestSchema.parse(...)` output; `prepare.clone` is `true` for `create` decisions and `false` for `reuse`; `repo.expectedHeadSha` only on create with a sha; `repo.workBranch` = `chat.workBranch ?? defaultWorkBranch(chat.id)`; limits default `DEFAULT_CHAT_TURN_LIMITS` (40 steps, 20 min, 5 min tool, 32 KiB) / `DEFAULT_JOB_TURN_LIMITS` (30 min) with per-call overrides; `buildJobTurnRequest` builds the single-user-item request for scheduled runs
+- [x] 100 % coverage on `src/restore/**`
 
 **Files to create**
 `packages/core/src/restore/history.ts`, `history.test.ts`, `compaction.ts`, `compaction.test.ts`, `notice.ts`, `notice.test.ts`, `build.ts`, `build.test.ts`, `limits.ts`, `limits.test.ts`, `index.ts`; modify `packages/core/vitest.config.ts` (+ the owned folder `index.ts`).
@@ -380,17 +380,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1f-scheduling-
 
 ## Task 1F.4 — BullMQ factories: queues, worker connection, Job Scheduler wrappers, `@redis` integration
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1F.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1F.1
 
 **Description.** Thin, typed BullMQ wrappers in `packages/core/src/queues/{queues,schedulers}.ts`: connection factories with the per-role `maxRetriesPerRequest` policy (null on worker/blocking connections only), `Queue` factories per `QUEUE_NAMES`, a `Worker` factory, Job Scheduler wrappers (`upsertJobScheduler(jobId, { pattern, tz }, { name, data })`, `removeJobScheduler`, `getJobSchedulers` → `ExistingScheduler[]`), `applyReconcilePlan`, and the GC scheduler; unit-tested to 100 % with duck-typed fakes and proven against real Redis in a `@redis` integration suite.
 
 **Acceptance criteria**
-- [ ] `createQueueConnection(redisUrl)` → ioredis with default retry policy; `createWorkerConnection(redisUrl)` → ioredis with `maxRetriesPerRequest: null`; both `lazyConnect: false`, `enableReadyCheck` default; `closeConnection(conn)` quits safely
-- [ ] `createQueue(name, { connection, prefix? })` → `Queue` for a `QueueName`; `createQueues({ connection, prefix? })` → `{ chatTurns, scheduledJobs, workspaceGc }`; `createWorker(name, processor, { connection, concurrency?, prefix? })` → `Worker` (throws `ConfigError` if the connection's `maxRetriesPerRequest !== null`)
-- [ ] `enqueueRunTurn(queue, { turnId })` uses `jobId: turnId`; `enqueueManualJobRun(queue, { jobId })` adds `run-scheduled-job` with `trigger: 'MANUAL'`; `enqueueDestroyChatWorkspace(queue, { chatId })`; payloads validated with the W0 Zod schemas before `add`
-- [ ] `upsertScheduledJob(queue, { id, cron, timezone })` → `queue.upsertJobScheduler(id, { pattern: cron, tz: timezone }, { name: JOB_NAMES.runScheduledJob, data: { jobId: id, trigger: 'SCHEDULE' } })`; `removeScheduledJob(queue, jobId)`; `listSchedulers(queue)` → `ExistingScheduler[]` (`{ key, pattern, tz }`) sorted by key; `applyReconcilePlan(queue, plan)` → `{ upserted: string[]; removed: string[] }`; `upsertGcScheduler(queue)` key `reap-idle`, pattern `*/5 * * * *`, job `reap-idle`, data `{}`
-- [ ] `@redis` integration (`schedulers.integration.test.ts`, `queues.integration.test.ts`): upsert creates exactly one scheduler per job; re-upsert with a new pattern → still one, pattern updated; remove deletes; `applyReconcilePlan` twice converges (second run no-ops and `listSchedulers` equals the enabled set); worker connection `maxRetriesPerRequest === null` and queue connection not; a `Worker` from the factory processes one `run-turn` job end-to-end; suite FAILS with instructions when `CI=1` and Redis is unreachable
-- [ ] 100 % coverage on `queues.ts` and `schedulers.ts` from unit tests alone
+- [x] `createQueueConnection(redisUrl)` → ioredis with default retry policy; `createWorkerConnection(redisUrl)` → ioredis with `maxRetriesPerRequest: null`; both `lazyConnect: false`, `enableReadyCheck` default; `closeConnection(conn)` quits safely
+- [x] `createQueue(name, { connection, prefix? })` → `Queue` for a `QueueName`; `createQueues({ connection, prefix? })` → `{ chatTurns, scheduledJobs, workspaceGc }`; `createWorker(name, processor, { connection, concurrency?, prefix? })` → `Worker` (throws `ConfigError` if the connection's `maxRetriesPerRequest !== null`)
+- [x] `enqueueRunTurn(queue, { turnId })` uses `jobId: turnId`; `enqueueManualJobRun(queue, { jobId })` adds `run-scheduled-job` with `trigger: 'MANUAL'`; `enqueueDestroyChatWorkspace(queue, { chatId })`; payloads validated with the W0 Zod schemas before `add`
+- [x] `upsertScheduledJob(queue, { id, cron, timezone })` → `queue.upsertJobScheduler(id, { pattern: cron, tz: timezone }, { name: JOB_NAMES.runScheduledJob, data: { jobId: id, trigger: 'SCHEDULE' } })`; `removeScheduledJob(queue, jobId)`; `listSchedulers(queue)` → `ExistingScheduler[]` (`{ key, pattern, tz }`) sorted by key; `applyReconcilePlan(queue, plan)` → `{ upserted: string[]; removed: string[] }`; `upsertGcScheduler(queue)` key `reap-idle`, pattern `*/5 * * * *`, job `reap-idle`, data `{}`
+- [x] `@redis` integration (`schedulers.integration.test.ts`, `queues.integration.test.ts`): upsert creates exactly one scheduler per job; re-upsert with a new pattern → still one, pattern updated; remove deletes; `applyReconcilePlan` twice converges (second run no-ops and `listSchedulers` equals the enabled set); worker connection `maxRetriesPerRequest === null` and queue connection not; a `Worker` from the factory processes one `run-turn` job end-to-end; suite FAILS with instructions when `CI=1` and Redis is unreachable
+- [x] 100 % coverage on `queues.ts` and `schedulers.ts` from unit tests alone
 
 **Files to create**
 `packages/core/src/queues/queues.ts`, `queues.test.ts`, `queues.integration.test.ts`, `schedulers.ts`, `schedulers.test.ts`, `schedulers.integration.test.ts`, `redis.integration-helper.ts` (shared Redis env/ping helper for the two integration files; excluded from coverage by the `*.integration-helper.ts` name); modify `packages/core/vitest.config.ts` (+ the owned folder `index.ts`).
@@ -485,15 +485,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1f-scheduling-
 
 ## Task 1F.5 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1F.1–1F.4
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1F.1–1F.4
 
 **Description.** Run every gate for the lane's owned paths (unit + `@redis` integration), run the code review to zero findings, update the plan dashboard and tasks index, open the PR and return the structured summary.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter @agent-hangar/core test -- --coverage` green with 100 % ×4 on `src/scheduling/**`, `src/workspace/**`, `src/restore/**`, `src/queues/queues.ts`, `src/queues/schedulers.ts`; `pnpm --filter @agent-hangar/core test:integration` green against the test-instance Redis
-- [ ] `/bymax-quality:code-review` zero open findings
-- [ ] `docs/plan.md` §12 row W1-F → 🟨 with branch/PR/coverage; `docs/tasks/README.md` row updated
-- [ ] PR opened; structured summary returned
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter @agent-hangar/core test -- --coverage` green with 100 % ×4 on `src/scheduling/**`, `src/workspace/**`, `src/restore/**`, `src/queues/queues.ts`, `src/queues/schedulers.ts`; `pnpm --filter @agent-hangar/core test:integration` green against the test-instance Redis
+- [x] `/bymax-quality:code-review` zero open findings
+- [x] `docs/plan.md` §12 row W1-F → 🟨 with branch/PR/coverage; `docs/tasks/README.md` row updated
+- [x] PR opened; structured summary returned
 
 **Files to modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (lane row only), `docs/tasks/wave-1f-scheduling-workspace.md` (header + log).
@@ -548,3 +548,8 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1f-scheduling-
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+- 1F.1 ✅ 2026-08-19 — cron validation/description/next-run over cron-parser 5.10.0, overlap policy, scheduler keys and reconcile plan; 46 unit tests, 100 % on `src/scheduling/**`
+- 1F.2 ✅ 2026-08-19 — workspace and run transition tables, ensure-workspace decision with `WorkspaceBusyError`, idle-TTL selection and orphan reconcile; 33 unit tests, 100 % on `src/workspace/**`
+- 1F.3 ✅ 2026-08-19 — history window with anchor and compaction item, TOOL_SUMMARY text, workspace notices, restore-context and turn-request builders; schema failures report field paths only, proven with canaries; 57 unit tests, 100 % on `src/restore/**`
+- 1F.4 ✅ 2026-08-19 — BullMQ 6.1.2 / ioredis 6.0.0 connection, queue, worker and Job Scheduler factories; 30 unit tests reach 100 % without Redis, 7 `@redis` tests pass against compose Redis 8.10.0
+- 1F.5 ✅ 2026-08-19 — PR #12 opened; gates green, code review and security review at zero findings
