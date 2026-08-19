@@ -88,13 +88,18 @@ export async function pingOrFail(connection: PingableConnection, url: string): P
 /**
  * Declares a suite that needs Redis.
  *
+ * The resolved URL is handed to the suite body, so a suite never has to re-read the environment
+ * or carry a fallback for the case the wrapper already ruled out.
+ *
  * @param name - Suite name; the `@redis` tag belongs at its start.
- * @param fn - Suite body.
+ * @param fn - Suite body, receiving the configured URL.
  */
-export function describeRedis(name: string, fn: () => void): void {
+export function describeRedis(name: string, fn: (redisUrl: string) => void): void {
   const url = requireRedisUrl();
   if (url !== null) {
-    describe(name, fn);
+    describe(name, () => {
+      fn(url);
+    });
     return;
   }
   if (process.env.CI !== undefined) {
@@ -116,5 +121,7 @@ export function describeRedis(name: string, fn: () => void): void {
     `[skip] ${name}: set ${REDIS_URL_ENV} to run it. Start the instance stack with ` +
       '"pnpm infra:up" and export the URL that "infra/scripts/env.sh --print" reports.',
   );
-  describe.skip(name, fn);
+  describe.skip(name, () => {
+    fn('');
+  });
 }

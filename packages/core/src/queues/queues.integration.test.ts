@@ -22,18 +22,12 @@ import {
   createWorkerConnection,
   enqueueRunTurn,
 } from './queues.js';
-import {
-  describeRedis,
-  pingOrFail,
-  requireRedisUrl,
-  uniquePrefix,
-} from './redis.integration-helper.js';
+import { describeRedis, pingOrFail, uniquePrefix } from './redis.integration-helper.js';
 
 /** Wall-clock limit per test; a Redis round trip is fast, a broken one must not hang the run. */
 const TEST_TIMEOUT_MS = 30_000;
 
-describeRedis('@redis queue factories', () => {
-  const url = requireRedisUrl() ?? '';
+describeRedis('@redis queue factories', (url) => {
   const prefix = uniquePrefix();
   let producer: Redis;
   let consumer: Redis;
