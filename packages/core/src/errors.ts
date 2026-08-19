@@ -204,3 +204,113 @@ export class ConfigError extends AgentHangarError {
 export function isAgentHangarError(value: unknown): value is AgentHangarError {
   return value instanceof AgentHangarError;
 }
+
+/**
+ * Every classification {@link describeClientFailure} is allowed to report.
+ *
+ * Membership, not shape, is what makes the guarantee hold. No pattern can separate a driver code
+ * from a credential — `SUPERSECRETPW` is as much a bare identifier as `ECONNREFUSED`, and a class
+ * name is forgeable — so a value is echoed only when it is byte-identical to one of the literals
+ * below. What comes back is therefore always a string written in this file, never text derived
+ * from the input.
+ *
+ * The entries are the failures the two connection paths actually produce: Node socket and DNS
+ * errnos, the Postgres SQLSTATEs for authentication, missing database and refused connection, the
+ * Prisma initialisation codes, and the error classes the drivers raise when they set no code.
+ * Anything absent reports `unknown`, which is already what the Redis path reports for a refused
+ * connection today — ioredis sets no `code` at all — so the cost of an unlisted code is a
+ * diagnosis this module already lives without. Add to the list when a real failure is seen
+ * reported as `unknown`.
+ */
+const REPORTABLE_FAILURES: ReadonlySet<string> = new Set([
+  // Node socket and DNS errnos, from both drivers.
+  'EACCES',
+  'EAI_AGAIN',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ENOTFOUND',
+  'EPIPE',
+  'ETIMEDOUT',
+  // Postgres SQLSTATEs reachable while opening a connection.
+  '08001',
+  '08004',
+  '08006',
+  '28000',
+  '28P01',
+  '3D000',
+  '53300',
+  '57P03',
+  // Prisma initialisation and connection codes.
+  'P1000',
+  'P1001',
+  'P1002',
+  'P1003',
+  'P1008',
+  'P1010',
+  'P1017',
+  // Error classes the drivers raise when they set no code.
+  'AggregateError',
+  'MaxRetriesPerRequestError',
+  'PrismaClientInitializationError',
+  'PrismaClientKnownRequestError',
+  'PrismaClientUnknownRequestError',
+  'ReplyError',
+  'TimeoutError',
+]);
+
+/**
+ * Reads the classification a rejected value offers, or `undefined` when it offers none.
+ *
+ * Introspection is guarded because the value is `unknown`: a `code` getter or a `Proxy` trap may
+ * throw, and whatever it throws could itself be the driver error this function exists to keep out
+ * of the report. Swallowing it and falling back is the safe direction.
+ *
+ * @param error - The value a client rejected with.
+ * @returns The driver code, else the error's class name, else `undefined`.
+ */
+function readClassification(error: unknown): string | undefined {
+  try {
+    if (typeof error === 'object' && error !== null && 'code' in error) {
+      const { code } = error;
+      if (typeof code === 'string' && code.length > 0) {
+        return code;
+      }
+    }
+    if (error instanceof Error && error.constructor.name !== 'Error') {
+      return error.constructor.name;
+    }
+  } catch {
+    // Deliberately swallowed rather than rethrown: what a hostile getter or trap throws can
+    // itself carry the connection string, so letting it out would defeat the whole function.
+    // Falling through to `undefined` — reported as `unknown` — is the handling.
+  }
+  return undefined;
+}
+
+/**
+ * Describes why an infrastructure client failed, using nothing the client was configured with.
+ *
+ * A driver error is not safe to repeat. Postgres and Redis clients put the connection string —
+ * password included — into the message of a connection failure, and attaching the error as `cause`
+ * republishes it to anything that walks the chain, which `util.inspect`, a structured logger and a
+ * test reporter all do. So the failure is reported by the `code` a driver sets (`ECONNREFUSED`,
+ * `28P01`, …) or, failing that, by the error's constructor name.
+ *
+ * The guarantee does not rest on the caller passing a real driver error, which it cannot: this is
+ * an exported function over `unknown`. The classification is echoed only when it is one of
+ * {@link REPORTABLE_FAILURES}, so the return value is always a literal from this module and never
+ * text carried in by the argument. Everything else — a `code` that is a connection string, a bare
+ * password, a forged class name — reports `unknown`.
+ *
+ * @param error - The value a client rejected with.
+ * @returns A recognised failure classification, or `unknown`. Safe to log and to persist.
+ */
+export function describeClientFailure(error: unknown): string {
+  const classification = readClassification(error);
+  if (classification !== undefined && REPORTABLE_FAILURES.has(classification)) {
+    return classification;
+  }
+  return 'unknown';
+}
