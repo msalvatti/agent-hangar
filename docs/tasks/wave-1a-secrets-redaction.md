@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-A (Wave 1, parallel with W1-B … W1-I) |
 | **Status** | 🟦 running |
-| **Progress** | 2/5 tasks |
+| **Progress** | 3/5 tasks |
 | **Branch** | `feat/w1a-secrets-redaction` |
 | **Owned paths** | `packages/core/src/secrets/**` (except the frozen `types.ts`), `packages/core/src/redaction/**`, `packages/core/src/logging/**` — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./secrets/index.js`, `./redaction/index.js`, `./logging/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
@@ -43,7 +43,7 @@ Plaintext secrets exist only in memory inside `set()`/`reveal()` and in the work
 |---|---|---|---|---|---|
 | 1A.1 | Master key provider: `MasterKeyFile` (0600 create/verify) + `StaticMasterKey` | ✅ | P0 | S | — |
 | 1A.2 | AES-256-GCM envelope crypto + `SecretsService` over `SecretRepository` | ✅ | P0 | M | 1A.1 |
-| 1A.3 | `Redactor`: exact registered values + shape patterns, `redactJson`, idempotent | 📋 | P0 | M | — |
+| 1A.3 | `Redactor`: exact registered values + shape patterns, `redactJson`, idempotent | ✅ | P0 | M | — |
 | 1A.4 | pino logger factory with redact paths + `Redactor` serializer/hook | 📋 | P0 | S | 1A.3 |
 | 1A.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1A.1–1A.4 |
 
@@ -230,17 +230,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1a-secrets-red
 
 ## Task 1A.3 — `Redactor`: exact registered values + shape patterns, `redactJson`, idempotent
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Implement the `Redactor` from spec 03 §6: replaces registered live secret values (exact substring, plus their URL-encoded form) and every `SECRET_SHAPE_PATTERNS` match with `[REDACTED]`, in strings and deep inside JSON-like values; idempotent; no false positives on ordinary hex.
 
 **Acceptance criteria**
-- [ ] `createRedactor(options?)` returns a `RegisteringRedactor` (`Redactor` + `register(values)` + `clear()`), exported from `packages/core/src/redaction/redactor.ts`
-- [ ] Exact values: registered values (and `encodeURIComponent(value)` when different) are replaced everywhere, longest first; values shorter than `MIN_REGISTERED_LENGTH` (4) are ignored with no error
-- [ ] Shape patterns: every regex in `SECRET_SHAPE_PATTERNS` is applied globally (fresh `RegExp` with the `g` flag built from `source`/`flags`; never a shared stateful instance); the Bearer token value is gone from the output
-- [ ] `redactJson` walks plain objects/arrays recursively (keys and string values), leaves numbers/booleans/null untouched, returns a new structure (input not mutated), tolerates cycles (`'[Circular]'`)
-- [ ] `redact(redact(x)) === redact(x)`; `[REDACTED]` never matches a pattern
-- [ ] 100 % coverage on `src/redaction/**`
+- [x] `createRedactor(options?)` returns a `RegisteringRedactor` (`Redactor` + `register(values)` + `clear()`), exported from `packages/core/src/redaction/redactor.ts`
+- [x] Exact values: registered values (and `encodeURIComponent(value)` when different) are replaced everywhere, longest first; values shorter than `MIN_REGISTERED_LENGTH` (4) are ignored with no error
+- [x] Shape patterns: every regex in `SECRET_SHAPE_PATTERNS` is applied globally (fresh `RegExp` with the `g` flag built from `source`/`flags`; never a shared stateful instance); the Bearer token value is gone from the output
+- [x] `redactJson` walks plain objects/arrays recursively (keys and string values), leaves numbers/booleans/null untouched, returns a new structure (input not mutated), tolerates cycles (`'[Circular]'`)
+- [x] `redact(redact(x)) === redact(x)`; `[REDACTED]` never matches a pattern
+- [x] 100 % coverage on `src/redaction/**`
 
 **Files to create**
 `packages/core/src/redaction/redactor.ts`, `packages/core/src/redaction/redactor.test.ts`, `packages/core/src/redaction/index.ts`; modify `packages/core/vitest.config.ts` (`coverage.include` += `src/redaction/**`), (folder barrel only — root `src/index.ts` is frozen).
@@ -472,3 +472,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1a-secrets-red
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 - 1A.1 ✅ 2026-08-19 — master key providers: 0600 atomic key file with owner-only enforcement, hex validation and caching, plus StaticMasterKey.
 - 1A.2 ✅ 2026-08-19 — AES-256-GCM envelope crypto with fail-closed integrity checks and the SecretsService over the SecretRepository port.
+- 1A.3 ✅ 2026-08-19 — redactor over registered values (raw, percent-encoded and JSON-escaped) plus the contract shape patterns, with cycle-safe redactJson.
