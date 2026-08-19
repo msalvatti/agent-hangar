@@ -501,6 +501,7 @@ export const apiOperations = {
   }),
   cancelTurn: op({ method: 'POST', path: routes.turnCancel, response: okResponse }),
   listJobs: op({ method: 'GET', path: routes.jobs, response: listJobsResponse }),
+  getJob: op({ method: 'GET', path: routes.job, response: jobSummary }),
   createJob: op({
     method: 'POST',
     path: routes.jobs,

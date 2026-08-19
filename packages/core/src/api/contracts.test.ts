@@ -161,6 +161,16 @@ describe('no-content operations', () => {
     expect(apiOperations.cancelTurn.noContent).toBeUndefined();
     expect(apiOperations.cancelTurn.response.safeParse({ ok: true }).success).toBe(true);
   });
+
+  /**
+   * Reading one scheduled job is its own operation: the edit form loads a single row, and
+   * without it a client would have to list every job to render one.
+   */
+  it('exposes a single-job read on the job route', () => {
+    expect(apiOperations.getJob.method).toBe('GET');
+    expect(apiOperations.getJob.path).toBe(routes.job);
+    expect(apiOperations.getJob.response).toBe(jobSummary);
+  });
 });
 
 describe('chat schemas', () => {

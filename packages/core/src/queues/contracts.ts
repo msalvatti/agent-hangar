@@ -8,6 +8,9 @@
  */
 import { z } from 'zod';
 
+import { agentEventSchema } from '../agent-protocol/schemas.ts';
+import type { AgentEvent } from '../agent-protocol/types.ts';
+
 /** BullMQ queue names. */
 export const QUEUE_NAMES = {
   chatTurns: 'chat-turns',
@@ -85,3 +88,95 @@ export const turnCommand = z.object({ type: z.literal('cancel') });
 
 /** A command published on the turn command channel. */
 export type TurnCommand = z.infer<typeof turnCommand>;
+
+/**
+ * Redis key holding the worker's health heartbeat for one instance.
+ *
+ * `GET /api/health` reports Docker reachability and workspace-image presence from this key rather
+ * than opening a Docker connection of its own: only the worker owns one, and the health route is
+ * polled by the UI, so it must stay cheap.
+ *
+ * @param instance - `AH_INSTANCE`.
+ * @returns The Redis key.
+ */
+export function workerHeartbeatKey(instance: string): string {
+  return `health:worker:${instance}`;
+}
+
+/**
+ * Lifetime of the heartbeat key, in seconds.
+ *
+ * Three writes fit in the window, so one slow cycle does not report a healthy worker as down. A
+ * reader still compares `at` against the same window: a key can be present and stale while Redis
+ * has not evicted it yet.
+ */
+export const WORKER_HEARTBEAT_TTL_SEC = 90;
+
+/** How often the worker rewrites {@link workerHeartbeatKey}, in seconds. */
+export const WORKER_HEARTBEAT_INTERVAL_SEC = 30;
+
+/** Payload the worker stores under {@link workerHeartbeatKey}, JSON-encoded. */
+export const workerHeartbeatSchema = z.object({
+  /** When the worker took these readings. */
+  at: z.iso.datetime(),
+  /** Whether the Docker daemon answered. */
+  dockerOk: z.boolean(),
+  /** Whether the workspace image is present on the Docker host. */
+  imagePresent: z.boolean(),
+  /** Workspace containers the instance owned at that moment. */
+  containers: z.number().int().nonnegative(),
+});
+
+/** A worker heartbeat. */
+export type WorkerHeartbeat = z.infer<typeof workerHeartbeatSchema>;
+
+/**
+ * Name of the Redis Stream field carrying one JSON-encoded `AgentEvent`.
+ *
+ * The worker writes every entry of {@link turnEventsStreamKey} as the flat field list
+ * `['event', '<JSON AgentEvent>']`; the web app reads it back with {@link parseTurnEventEntry}.
+ */
+export const TURN_EVENT_FIELD = 'event';
+
+/**
+ * Reads the `AgentEvent` out of one Redis Stream entry.
+ *
+ * The entry arrives as ioredis reports it: a flat `[name, value, name, value, …]` list. Anything
+ * that does not decode to a valid event yields `null` rather than throwing, because the stream is
+ * written by another process and one malformed entry must not end a live SSE stream.
+ *
+ * @param fields - Flat field list of one stream entry.
+ * @returns The event, or `null` when the entry carries no valid one.
+ */
+export function parseTurnEventEntry(fields: readonly string[]): AgentEvent | null {
+  // Stepping two at a time is what keeps names and values apart: a *value* that happens to read
+  // `event` never lands on an even index, so it can never be mistaken for the field name.
+  for (let index = 0; index < fields.length; index += 2) {
+    if (fields[index] !== TURN_EVENT_FIELD) {
+      continue;
+    }
+    const raw = fields[index + 1];
+    if (raw === undefined) {
+      return null;
+    }
+    const parsed = agentEventSchema.safeParse(parseJson(raw));
+    return parsed.success ? parsed.data : null;
+  }
+  return null;
+}
+
+/**
+ * Parses JSON without throwing.
+ *
+ * @param raw - Text read from a stream entry.
+ * @returns The parsed value, or `undefined` when the text is not JSON.
+ */
+function parseJson(raw: string): unknown {
+  try {
+    return JSON.parse(raw);
+  } catch {
+    // A malformed entry is data, not a fault: `undefined` fails the schema check like any other
+    // invalid payload, and the caller reports it as one unreadable entry.
+    return undefined;
+  }
+}

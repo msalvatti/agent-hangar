@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Lane** | W2-A (one agent; runs in parallel with W2-B 🐳 and W2-C) |
-| **Status** | 📋 ToDo |
+| **Status** | 🟦 running |
 | **Progress** | 0/6 tasks |
 | **Branch** | `feat/w2a-web-api-sse` |
 | **Owned paths** | `apps/web/app/api/**`, `apps/web/src/server/**` · plus, by explicit exception: `apps/web/vitest.config.ts` (`coverage.include` + test `include` globs only), `apps/web/package.json` (`scripts.test:integration` only), and **additive** lines in `packages/core/src/queues/contracts.ts`, `packages/core/src/api/contracts.ts`, `packages/core/src/config/schema.ts` (listed in Task 2A.1; every such addition is reported under `contractChangeRequests`) |
