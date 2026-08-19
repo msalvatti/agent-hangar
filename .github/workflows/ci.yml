@@ -200,15 +200,27 @@ jobs:
             echo 'present=false' >> "$GITHUB_OUTPUT"
             echo 'No end-to-end specs yet; skipping the browser install.' >> "$GITHUB_STEP_SUMMARY"
           fi
-      # Cached on the Playwright version rather than the whole lockfile, so an unrelated dependency
-      # bump does not throw the browsers away.
+      # Keyed on the INSTALLED Playwright version, read after the install: hashing the manifest
+      # would hash the caret range instead, so a lockfile-only upgrade would keep the same key,
+      # hit the cache, skip the install, and leave Playwright looking for a browser revision that
+      # was never downloaded. An unrelated dependency bump still leaves the browsers alone.
+      - name: Resolve the installed Playwright version
+        if: steps.e2e-specs.outputs.present == 'true'
+        id: playwright-version
+        run: |
+          version="$(pnpm --filter web exec playwright --version | tr -d '\r' | awk '{print $NF}')"
+          if [ -z "$version" ]; then
+            echo 'Could not read the installed Playwright version' >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Cache Playwright browsers
         if: steps.e2e-specs.outputs.present == 'true'
         id: playwright-cache
         uses: actions/cache@v6
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('apps/web/package.json') }}
+          key: playwright-${{ runner.os }}-${{ steps.playwright-version.outputs.version }}
       # `--with-deps` is deliberately absent: it runs apt-get on a fresh runner every time, which
       # measurements showed dominating this job (over two minutes on the mirror alone, and one run
       # at twenty-three), and OS packages cannot be cached. The ubuntu-latest image already ships
