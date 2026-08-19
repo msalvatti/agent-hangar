@@ -309,6 +309,9 @@ for f in $(grep -rlE "export async function (POST|PUT|PATCH|DELETE)" apps/web/ap
 # 4. the Markdown renderer keeps its unsafe-URL tests and never gains rehype-raw (owner: W1-G)
 [ -d apps/web/src/shared/transcript ] && { grep -rq "javascript:" apps/web/src/shared/transcript/**/AssistantMarkdown.test.tsx 2>/dev/null || echo "MISSING: unsafe-href tests for AssistantMarkdown"; }
 grep -rn "rehype-raw" apps packages --include='*.ts' --include='*.tsx' --include='*.json' 2>/dev/null
+# 5. workspace containers still grouped AND still in their own compose project (owner: W1-B)
+F=packages/core/src/runner/docker/container-spec.ts
+[ -f "$F" ] && { grep -q "com.docker.compose.project" "$F" || echo "MISSING: compose project label on workspace containers"; grep -q "com.docker.compose.service" "$F" || echo "MISSING: compose service label on workspace containers"; grep -q -- "-ws" "$F" || echo "MISSING: -ws suffix — workspaces would share the stack compose project and become --remove-orphans targets"; grep -q -- "-ws" "${F%.ts}.test.ts" 2>/dev/null || echo "MISSING: unit test pinning the -ws project value"; }
 ```
 
 (The "every `it()` carries a block comment" and "JSDoc on every export"
@@ -404,6 +407,49 @@ files moves between lanes (W1-I takes the root scripts block, W2-A and W2-C
 edit keys in `apps/web/package.json`, W3-A may touch any path), remembering is
 not a control — the presence checks below are, and they run in **every** lane's
 STEP 2 from W0 onward.
+
+### Docker resource grouping (added 2026-08-19, operator request)
+
+Docker Desktop groups containers by the `com.docker.compose.project` label.
+The stack already groups: `infra/docker-compose.yml` sets
+`name: ${COMPOSE_PROJECT_NAME}` (`agent-hangar-<instance>`), so Postgres,
+Redis, their volumes and networks appear as one tree entry per instance, and
+the workspace image is namespaced by its repository (`agent-hangar/workspace`).
+
+What did **not** group: the disposable workspace containers
+(`ah-ws-<instance>-<id>`) are created through dockerode, not compose, so they
+carried only the `ah.*` labels and were listed loose at the top level — and
+they are the ones that multiply, one per chat and one per scheduled run.
+
+**Requirement (W1-B, `buildContainerCreateOptions`):** every workspace
+container also carries
+
+| Label | Value |
+|---|---|
+| `com.docker.compose.project` | `agent-hangar-<instance>-ws` |
+| `com.docker.compose.service` | the workspace kind, lowercased (`chat`, `job`) |
+
+**What actually guarantees the value is a test, not the grep.** A grep can
+assert that a label key is present; it cannot pin the value it is set to, and
+the value is the whole point here. W1-B therefore ships a unit test asserting
+that the project label (a) ends with `-ws` and (b) is **not** equal to
+`agent-hangar-<instance>`, alongside the container-spec snapshots that pin both
+labels for the CHAT and JOB cases. Presence check 5 is a tripwire for the
+obvious regressions — key deleted, suffix deleted, test deleted — and the test
+is the real contract.
+
+**The `-ws` suffix is load-bearing, not cosmetic.** Reusing the stack's own
+project name would group them, but `infra/scripts/archive.sh` runs
+`docker compose down -v --remove-orphans`, and compose deletes every container
+carrying its project label that is not in the compose file. Sharing the name
+would let any stray `--remove-orphans` destroy a live chat container in the
+middle of a turn. A distinct project name gives the same tree grouping (it
+sorts adjacent to the stack) while keeping the containers outside every
+compose command's blast radius. Reaping stays label-based on `ah.instance`.
+
+Images cannot be grouped: Docker Desktop lists images by repository and has no
+per-project grouping, so the `agent-hangar/` repository prefix is the whole of
+what is available and it is already in place.
 
 **Per-lane review focus** (the lanes the model policy marks
 security-sensitive): W1-A (crypto correctness: iv uniqueness, tamper →
