@@ -3,13 +3,21 @@
  *
  * Layer: entry point (composition root; excluded from unit coverage as pure wiring).
  */
-import { assertDatabaseReachable, createPrismaClient, loadConfig } from '@agent-hangar/core';
+import {
+  assertDatabaseReachable,
+  createPrismaClient,
+  createRedactor,
+  loadConfig,
+} from '@agent-hangar/core';
 import { Redis } from 'ioredis';
 
 import { boot } from './boot.js';
 import { createLogger } from './logger.js';
 
-const logger = createLogger(process.env.LOG_LEVEL ?? 'info');
+const logger = createLogger({
+  level: process.env.LOG_LEVEL ?? 'info',
+  redactor: createRedactor(),
+});
 
 try {
   const booted = await boot({

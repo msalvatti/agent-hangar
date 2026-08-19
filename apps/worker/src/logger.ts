@@ -3,45 +3,43 @@
  *
  * Layer: utility.
  *
- * Pretty output only in development on a TTY; JSON otherwise. The redaction serializer from the
- * core logging module is wired in by the secrets lane; until then the logger never receives
- * secret material because nothing in the boot path handles any.
+ * Delegates to the redacting factory in the core logging module, which scrubs the message, the
+ * merge object, every child binding, serialised errors and the finished line. The worker is the
+ * one process that holds credentials in memory, so it is the one that must not be able to print
+ * them.
+ *
+ * That rules out pretty printing: a pino transport serialises records in a worker thread where
+ * none of those hooks run, so a pretty logger would bypass the whole defence for the sake of
+ * colour. Development output is therefore JSON, like production.
  */
-import pino from 'pino';
-import type { Logger, LoggerOptions } from 'pino';
+import { createLogger as createRedactingLogger } from '@agent-hangar/core';
+import type { LoggerRedactor } from '@agent-hangar/core';
+import type { DestinationStream, Logger } from 'pino';
+
+/** Name attached to every record this process writes. */
+export const WORKER_LOGGER_NAME = 'worker';
 
 /** Options of {@link createLogger}. */
-export interface CreateLoggerOptions {
-  /** pino level name. */
+export interface CreateWorkerLoggerOptions {
+  /** pino level name; `silent` disables output entirely. */
   level: string;
-  /** `NODE_ENV` (defaults to `process.env.NODE_ENV`). */
-  nodeEnv?: string | undefined;
-  /** Whether stdout is a TTY (defaults to `process.stdout.isTTY`). */
-  isTty?: boolean | undefined;
-}
-
-/**
- * Builds the pino options for the given environment.
- *
- * @param options - Level and environment hints.
- * @returns pino options (with the pretty transport in interactive development).
- */
-export function buildLoggerOptions(options: CreateLoggerOptions): LoggerOptions {
-  const nodeEnv = options.nodeEnv ?? process.env.NODE_ENV;
-  const isTty = options.isTty ?? process.stdout.isTTY;
-  const base: LoggerOptions = { level: options.level, name: 'worker' };
-  if (nodeEnv !== 'production' && isTty) {
-    return { ...base, transport: { target: 'pino-pretty', options: { colorize: true } } };
-  }
-  return base;
+  /** Redactor applied to everything that is logged. */
+  redactor: LoggerRedactor;
+  /** Where records are written; defaults to pino's standard output stream. */
+  destination?: DestinationStream | undefined;
 }
 
 /**
  * Creates the worker logger.
  *
- * @param level - pino level name.
- * @returns A pino logger.
+ * @param options - Level, redactor and optional destination.
+ * @returns A pino logger that cannot print a registered credential or a credential-shaped value.
  */
-export function createLogger(level: string): Logger {
-  return pino(buildLoggerOptions({ level }));
+export function createLogger(options: CreateWorkerLoggerOptions): Logger {
+  return createRedactingLogger({
+    level: options.level,
+    redactor: options.redactor,
+    name: WORKER_LOGGER_NAME,
+    ...(options.destination === undefined ? {} : { destination: options.destination }),
+  });
 }

@@ -10,7 +10,8 @@
     "start": "node dist/main.js",
     "lint": "eslint .",
     "typecheck": "tsc -b && pnpm --filter @agent-hangar/core declarations:rewrite",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "DOCKER_AVAILABLE=1 vitest run --project integration --coverage.enabled=false"
   },
   "dependencies": {
     "@agent-hangar/core": "workspace:*",
