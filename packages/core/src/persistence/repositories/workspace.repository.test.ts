@@ -272,6 +272,23 @@ describe('PrismaWorkspaceRepository', () => {
     expect((caught as LiveWorkspaceExistsError).chatId).toBe('ws-1');
   });
 
+  /** A failing chat lookup must not mask the write failure that is already being reported. */
+  it('setStatus() reports the original failure when the chat lookup itself fails', async () => {
+    const { client, workspace } = fakePrisma({
+      update: vi.fn(() => Promise.reject(p2002LiveWorkspace())),
+    });
+    workspace.findUnique = vi.fn(() => Promise.reject(new Error('connection terminated')));
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+    let caught: unknown;
+    try {
+      await repo.setStatus('ws-1', 'READY');
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(LiveWorkspaceExistsError);
+    expect((caught as LiveWorkspaceExistsError).chatId).toBe('ws-1');
+  });
+
   /** markActive() bumps lastActiveAt. */
   it('markActive() bumps lastActiveAt', async () => {
     const { client, workspace } = fakePrisma();

@@ -113,15 +113,25 @@ export class PrismaWorkspaceRepository implements WorkspaceRepository {
    * violated partial unique index reports neither; the row itself is the only place the chat can
    * be recovered from, and reading it lazily keeps the successful path at one round trip.
    *
+   * The lookup is best-effort on purpose: its only job is to name an error that is already being
+   * thrown, so a failure here (a connection lost at the same moment as the write) must not
+   * replace the real failure with a second one. It answers `null` instead, and the caller falls
+   * back to the workspace id.
+   *
    * @param id - Workspace whose owning chat is needed.
-   * @returns The chat id, or `null` for a job workspace or a row that no longer exists.
+   * @returns The chat id, or `null` for a job workspace, a row that no longer exists, or a lookup
+   *   that failed.
    */
   private async chatIdOf(id: string): Promise<string | null> {
-    const row = await this.prisma.workspace.findUnique({
-      where: { id },
-      select: { chatId: true },
-    });
-    return row?.chatId ?? null;
+    try {
+      const row = await this.prisma.workspace.findUnique({
+        where: { id },
+        select: { chatId: true },
+      });
+      return row?.chatId ?? null;
+    } catch {
+      return null;
+    }
   }
 
   /** @inheritDoc */
