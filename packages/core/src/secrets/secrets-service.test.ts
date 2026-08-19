@@ -171,10 +171,11 @@ describe('createSecretsService', () => {
    */
   it('refuses to reveal a row sealed with another key version', async () => {
     const { service, repos } = createHarness();
-    const foreign = encryptSecret(GITHUB_CANARY, {
-      key: Buffer.alloc(MASTER_KEY_BYTES, 9),
-      version: 2,
-    });
+    const foreign = encryptSecret(
+      GITHUB_CANARY,
+      { key: Buffer.alloc(MASTER_KEY_BYTES, 9), version: 2 },
+      'agent-hangar:secret:GITHUB_PAT',
+    );
     await repos.secrets.upsert('GITHUB_PAT', { ...foreign, last4: 'aaaa' });
 
     await expect(service.reveal('GITHUB_PAT')).rejects.toThrow(SecretIntegrityError);
@@ -199,6 +200,25 @@ describe('createSecretsService', () => {
     });
 
     await expect(service.reveal('GITHUB_PAT')).rejects.toThrow(SecretIntegrityError);
+  });
+
+  /**
+   * Both rows are sealed under the same master key, so authentication alone cannot tell them
+   * apart: only the per-row binding does. Swapping the two complete envelopes in the database must
+   * make `reveal` fail rather than hand the GitHub token to whoever asked for the OpenAI key.
+   */
+  it('refuses to reveal a row whose envelope was swapped with the other key', async () => {
+    const { service, repos } = createHarness();
+    await service.set('GITHUB_PAT', GITHUB_CANARY);
+    await service.set('OPENAI_API_KEY', OPENAI_CANARY);
+    const github = (await repos.secrets.get('GITHUB_PAT'))!;
+    const openai = (await repos.secrets.get('OPENAI_API_KEY'))!;
+
+    await repos.secrets.upsert('GITHUB_PAT', { ...openai, last4: github.last4 });
+    await repos.secrets.upsert('OPENAI_API_KEY', { ...github, last4: openai.last4 });
+
+    await expect(service.reveal('GITHUB_PAT')).rejects.toThrow(SecretIntegrityError);
+    await expect(service.reveal('OPENAI_API_KEY')).rejects.toThrow(SecretIntegrityError);
   });
 
   /**

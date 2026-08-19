@@ -57,9 +57,9 @@ Plaintext secrets exist only in memory inside `set()`/`reveal()` and in the work
 
 **Acceptance criteria**
 - [x] `MasterKeyProvider` interface and `MasterKey { key: Buffer (32 bytes); version: number }` exported from `packages/core/src/secrets/master-key.ts`
-- [x] `MasterKeyFile.load()` creates the parent dir (0700) and the file (0600, `randomBytes(32).toString('hex') + '\n'`) when missing; loads and caches when present
+- [x] `MasterKeyFile.load()` creates the parent dir (0700) and the file (0600, `randomBytes(32).toString('hex') + '\n'`) when missing; loads and caches when present. An existing parent directory reachable by group/other is refused, and the file is opened once with `O_NOFOLLOW` and then checked and read through that same handle, so neither a symlink nor a swap between check and read can substitute key material
 - [x] Refuses with `ConfigError` (message contains `chmod 600 <path>`) when the file mode has any group/world bits (`mode & 0o077 !== 0`)
-- [x] Refuses with `ConfigError` when content is not exactly 64 hex chars (trailing newline allowed)
+- [x] Refuses with `ConfigError` when content is not exactly 64 hex chars (a single trailing newline allowed; surrounding whitespace is refused, not trimmed)
 - [x] `StaticMasterKey` returns a caller-supplied 32-byte key and version (used by tests and by `FakeKeyFile`-style usage in other lanes)
 - [x] 100 % coverage on `src/secrets/master-key.ts` and `src/secrets/master-key-file.ts`
 
@@ -145,8 +145,8 @@ Completion Protocol (after you finish):
 **Description.** Implement the pure encrypt/decrypt functions (AES-256-GCM, 12-byte random iv, 16-byte auth tag, `keyVersion`) and the `SecretsService` from spec 03 §6 over the `SecretRepository` port: `set` → encrypt + upsert + return `last4`; `remove`; `status()` for both keys; `reveal` (worker-only, documented) → decrypt with auth-tag verification.
 
 **Acceptance criteria**
-- [x] `encryptSecret(plaintext, masterKey)` returns `{ ciphertext, iv (12 bytes), authTag (16 bytes), keyVersion }`; two calls with the same input produce different `iv` and `ciphertext`
-- [x] `decryptSecret(envelope, masterKey)` round-trips; tampered ciphertext, tampered authTag, wrong key, wrong iv length, and `keyVersion !== masterKey.version` all throw `SecretIntegrityError` (never the raw `node:crypto` error)
+- [x] `encryptSecret(plaintext, masterKey, context)` returns `{ ciphertext, iv (12 bytes), authTag (16 bytes), keyVersion }`; two calls with the same input produce different `iv` and `ciphertext`. `context` is the `SecretKey` the envelope is stored under, passed to GCM as additional authenticated data, so an envelope moved to another row fails authentication
+- [x] `decryptSecret(envelope, masterKey, context)` round-trips; tampered ciphertext, tampered authTag, wrong key, wrong iv length, a mismatched `context` and `keyVersion !== masterKey.version` all throw `SecretIntegrityError` (never the raw `node:crypto` error)
 - [x] `createSecretsService({ repository, masterKey })` implements `SecretsService` exactly as declared in `secrets/types.ts`; `set` rejects empty plaintext with `InvalidSecretError` (local `AgentHangarError` subclass, code `SECRET_INVALID`); `last4` = last `min(4, length)` characters
 - [x] `reveal` returns `null` when no row exists; `status()` always returns an entry for every `SecretKey` (`{ set: false }` or `{ set: true, last4, updatedAt }`)
 - [x] The repository never sees plaintext (test serialises the in-memory repository state and runs `assertNoCanary`)
@@ -237,7 +237,7 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1a-secrets-red
 **Acceptance criteria**
 - [x] `createRedactor(options?)` returns a `RegisteringRedactor` (`Redactor` + `register(values)` + `clear()`), exported from `packages/core/src/redaction/redactor.ts`
 - [x] Exact values: registered values (and `encodeURIComponent(value)` when different) are replaced everywhere, longest first; values shorter than `MIN_REGISTERED_LENGTH` (4) are ignored with no error
-- [x] Shape patterns: every regex in `SECRET_SHAPE_PATTERNS` is applied globally (fresh `RegExp` with the `g` flag built from `source`/`flags`; never a shared stateful instance); the Bearer token value is gone from the output
+- [x] Shape patterns: every regex in `SECRET_SHAPE_PATTERNS` is applied globally, against the whole input so anchors and lookarounds keep their meaning, and never as a shared stateful instance. Implemented with `String.prototype.split` (which matches globally on its own and leaves `lastIndex` alone) rather than a recompiled `RegExp`, because `security/detect-non-literal-regexp` rejects building a pattern from a non-literal source and the lane forbids suppressions; the captures `split` returns are dropped so a grouped pattern cannot write matched text back out. The Bearer token value is gone from the output
 - [x] `redactJson` walks plain objects/arrays recursively (keys and string values), leaves numbers/booleans/null untouched, returns a new structure (input not mutated), tolerates cycles (`'[Circular]'`)
 - [x] `redact(redact(x)) === redact(x)`; `[REDACTED]` never matches a pattern
 - [x] 100 % coverage on `src/redaction/**`

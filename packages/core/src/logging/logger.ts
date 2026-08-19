@@ -11,7 +11,7 @@
  *    before pino formats them, so a credential cannot reach `msg` through `%s` or `%o`.
  * 3. `formatters.log` and `formatters.bindings` scrub the merged record and every child binding.
  * 4. `serializers.err` scrubs the message and stack of a logged error, which routinely quote the
- *    input that caused them.
+ *    input that caused them, and scrubs a non-`Error` `err` value without mangling it.
  * 5. `hooks.streamWrite` scrubs the finished line as a last resort, covering anything the earlier
  *    layers could not walk. A line that redaction would leave as invalid JSON is dropped rather
  *    than written, because a malformed line is recoverable and a leaked credential is not.
@@ -74,20 +74,31 @@ export interface CreateLoggerOptions {
 }
 
 /**
- * Scrubs a serialised error.
+ * Scrubs whatever was logged under `err`.
  *
  * A message and a stack routinely quote the input that failed, and libraries attach whole request
- * objects as extra properties, so every property is walked rather than only the top-level strings.
- * Serialisation runs before the record formatter, so this is the only pass over an error's fields.
+ * objects as extra properties, so every property of a real error is walked rather than only the
+ * top-level strings. Serialisation runs before the record formatter, so this is the only pass over
+ * an error's fields.
  *
- * @param serialized - Output of pino's standard error serializer.
+ * pino applies this serializer to the `err` key whatever its value is, so the declared parameter
+ * type is the contract rather than a guarantee, and the value is treated as untrusted. pino's own
+ * standard serializer hands anything it does not recognise as an error straight back; that value
+ * is scrubbed and passed through unchanged instead of being walked as an error record, which would
+ * throw on `null`, spread a string into one entry per character, and flatten a number to `{}`. A
+ * rejection with a non-`Error` reason, logged as `{ err: reason }`, is exactly that case.
+ *
+ * @param error - Value logged under the `err` key; despite the type, not necessarily an `Error`.
  * @param redactor - Redactor applied to keys and values.
- * @returns A new record with every reachable string scrubbed.
+ * @returns A scrubbed error record, or the scrubbed value itself when it is not an error.
  */
-function redactSerializedError(
-  serialized: Record<string, unknown>,
-  redactor: LoggerRedactor,
-): Record<string, unknown> {
+function redactSerializedError(error: Error, redactor: LoggerRedactor): unknown {
+  const serialized: unknown = pino.stdSerializers.err(error);
+  // A new record means pino recognised an error and rebuilt it; anything else is the original
+  // value, which is scrubbed but keeps its own shape.
+  if (serialized === error || typeof serialized !== 'object' || serialized === null) {
+    return redactor.redactJson(error);
+  }
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(serialized)) {
     result[redactor.redact(key)] = redactor.redactJson(value);
@@ -135,7 +146,7 @@ function buildLoggerOptions(options: CreateLoggerOptions): LoggerOptions {
       bindings: (bindings) => redactor.redactJson(bindings) as Record<string, unknown>,
     },
     serializers: {
-      err: (error: Error) => redactSerializedError(pino.stdSerializers.err(error), redactor),
+      err: (error: Error) => redactSerializedError(error, redactor),
     },
     hooks: {
       logMethod(args, method) {

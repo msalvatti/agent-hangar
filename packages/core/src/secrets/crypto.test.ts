@@ -20,6 +20,8 @@ import { MASTER_KEY_BYTES } from './master-key.js';
 import type { MasterKey } from './master-key.js';
 
 const masterKey: MasterKey = { key: Buffer.alloc(MASTER_KEY_BYTES, 1), version: 1 };
+const CONTEXT = 'agent-hangar:secret:GITHUB_PAT';
+const OTHER_CONTEXT = 'agent-hangar:secret:OPENAI_API_KEY';
 const otherKey: MasterKey = { key: Buffer.alloc(MASTER_KEY_BYTES, 2), version: 1 };
 
 /**
@@ -43,7 +45,9 @@ describe('encryptSecret', () => {
    * credentials the app actually stores.
    */
   it.each([GITHUB_CANARY, OPENAI_CANARY])('round-trips a stored credential', (plaintext) => {
-    expect(decryptSecret(encryptSecret(plaintext, masterKey), masterKey)).toBe(plaintext);
+    expect(decryptSecret(encryptSecret(plaintext, masterKey, CONTEXT), masterKey, CONTEXT)).toBe(
+      plaintext,
+    );
   });
 
   /**
@@ -53,7 +57,9 @@ describe('encryptSecret', () => {
   it('round-trips a value with multi-byte characters', () => {
     const plaintext = 'clé-de-sécurité-🔐-記号';
 
-    expect(decryptSecret(encryptSecret(plaintext, masterKey), masterKey)).toBe(plaintext);
+    expect(decryptSecret(encryptSecret(plaintext, masterKey, CONTEXT), masterKey, CONTEXT)).toBe(
+      plaintext,
+    );
   });
 
   /**
@@ -61,8 +67,8 @@ describe('encryptSecret', () => {
    * the same value must share nothing but their length.
    */
   it('uses a fresh initialisation vector for every write', () => {
-    const first = encryptSecret(GITHUB_CANARY, masterKey);
-    const second = encryptSecret(GITHUB_CANARY, masterKey);
+    const first = encryptSecret(GITHUB_CANARY, masterKey, CONTEXT);
+    const second = encryptSecret(GITHUB_CANARY, masterKey, CONTEXT);
 
     expect(Buffer.from(first.iv).equals(second.iv)).toBe(false);
     expect(Buffer.from(first.ciphertext).equals(second.ciphertext)).toBe(false);
@@ -74,7 +80,7 @@ describe('encryptSecret', () => {
    * has to be recorded so a rotated key can be recognised.
    */
   it('produces a 12-byte vector, a 16-byte tag and the key version', () => {
-    const sealed = encryptSecret(GITHUB_CANARY, { ...masterKey, version: 3 });
+    const sealed = encryptSecret(GITHUB_CANARY, { ...masterKey, version: 3 }, CONTEXT);
 
     expect(sealed.iv).toHaveLength(IV_BYTES);
     expect(sealed.authTag).toHaveLength(AUTH_TAG_BYTES);
@@ -86,7 +92,7 @@ describe('encryptSecret', () => {
    * inspection the whole envelope would be pointless.
    */
   it('leaves no trace of the plaintext in the ciphertext', () => {
-    const sealed = encryptSecret(GITHUB_CANARY, masterKey);
+    const sealed = encryptSecret(GITHUB_CANARY, masterKey, CONTEXT);
 
     assertNoCanary(Buffer.from(sealed.ciphertext).toString('utf8'));
     assertNoCanary(Buffer.from(sealed.ciphertext).toString('hex'));
@@ -99,9 +105,9 @@ describe('decryptSecret', () => {
    * a corrupted credential the worker would then inject into a container.
    */
   it('rejects a tampered ciphertext', () => {
-    const sealed = withFlippedByte(encryptSecret(GITHUB_CANARY, masterKey), 'ciphertext');
+    const sealed = withFlippedByte(encryptSecret(GITHUB_CANARY, masterKey, CONTEXT), 'ciphertext');
 
-    expect(() => decryptSecret(sealed, masterKey)).toThrow(SecretIntegrityError);
+    expect(() => decryptSecret(sealed, masterKey, CONTEXT)).toThrow(SecretIntegrityError);
   });
 
   /**
@@ -109,9 +115,9 @@ describe('decryptSecret', () => {
    * credential, so a damaged tag has to fail too.
    */
   it('rejects a tampered authentication tag', () => {
-    const sealed = withFlippedByte(encryptSecret(GITHUB_CANARY, masterKey), 'authTag');
+    const sealed = withFlippedByte(encryptSecret(GITHUB_CANARY, masterKey, CONTEXT), 'authTag');
 
-    expect(() => decryptSecret(sealed, masterKey)).toThrow(SecretIntegrityError);
+    expect(() => decryptSecret(sealed, masterKey, CONTEXT)).toThrow(SecretIntegrityError);
   });
 
   /**
@@ -119,9 +125,9 @@ describe('decryptSecret', () => {
    * instead of returning noise.
    */
   it('rejects an envelope opened with a foreign key', () => {
-    const sealed = encryptSecret(GITHUB_CANARY, masterKey);
+    const sealed = encryptSecret(GITHUB_CANARY, masterKey, CONTEXT);
 
-    expect(() => decryptSecret(sealed, otherKey)).toThrow(SecretIntegrityError);
+    expect(() => decryptSecret(sealed, otherKey, CONTEXT)).toThrow(SecretIntegrityError);
   });
 
   /**
@@ -129,9 +135,12 @@ describe('decryptSecret', () => {
    * it is caught by an explicit guard so the caller always sees the domain error.
    */
   it('rejects an initialisation vector of the wrong length', () => {
-    const sealed = { ...encryptSecret(GITHUB_CANARY, masterKey), iv: randomBytes(IV_BYTES - 1) };
+    const sealed = {
+      ...encryptSecret(GITHUB_CANARY, masterKey, CONTEXT),
+      iv: randomBytes(IV_BYTES - 1),
+    };
 
-    expect(() => decryptSecret(sealed, masterKey)).toThrow(SecretIntegrityError);
+    expect(() => decryptSecret(sealed, masterKey, CONTEXT)).toThrow(SecretIntegrityError);
   });
 
   /**
@@ -139,11 +148,11 @@ describe('decryptSecret', () => {
    */
   it('rejects an authentication tag of the wrong length', () => {
     const sealed = {
-      ...encryptSecret(GITHUB_CANARY, masterKey),
+      ...encryptSecret(GITHUB_CANARY, masterKey, CONTEXT),
       authTag: randomBytes(AUTH_TAG_BYTES - 1),
     };
 
-    expect(() => decryptSecret(sealed, masterKey)).toThrow(SecretIntegrityError);
+    expect(() => decryptSecret(sealed, masterKey, CONTEXT)).toThrow(SecretIntegrityError);
   });
 
   /**
@@ -151,10 +160,10 @@ describe('decryptSecret', () => {
    * both versions, rather than fail as generic corruption.
    */
   it('rejects an envelope written under another key version', () => {
-    const sealed = { ...encryptSecret(GITHUB_CANARY, masterKey), keyVersion: 2 };
+    const sealed = { ...encryptSecret(GITHUB_CANARY, masterKey, CONTEXT), keyVersion: 2 };
 
-    expect(() => decryptSecret(sealed, masterKey)).toThrow(/version 2.*version 1/);
-    expect(() => decryptSecret(sealed, masterKey)).toThrow(SecretIntegrityError);
+    expect(() => decryptSecret(sealed, masterKey, CONTEXT)).toThrow(/version 2.*version 1/);
+    expect(() => decryptSecret(sealed, masterKey, CONTEXT)).toThrow(SecretIntegrityError);
   });
 
   /**
@@ -162,11 +171,11 @@ describe('decryptSecret', () => {
    * is a fixed string: neither the credential nor the envelope may appear in it.
    */
   it('reports a fixed message and the shared error code', () => {
-    const sealed = withFlippedByte(encryptSecret(OPENAI_CANARY, masterKey), 'ciphertext');
+    const sealed = withFlippedByte(encryptSecret(OPENAI_CANARY, masterKey, CONTEXT), 'ciphertext');
     let caught: unknown;
 
     try {
-      decryptSecret(sealed, masterKey);
+      decryptSecret(sealed, masterKey, CONTEXT);
     } catch (error) {
       caught = error;
     }
@@ -178,6 +187,26 @@ describe('decryptSecret', () => {
     );
     expect((caught as SecretIntegrityError).cause).toBeInstanceOf(Error);
     assertNoCanary(String((caught as SecretIntegrityError).stack));
+  });
+  /**
+   * The context is authenticated, not encrypted: an envelope lifted out of one row and dropped
+   * into another still authenticates under the same master key, so only this binding stops
+   * `reveal` from handing back the wrong credential.
+   */
+  it('refuses an envelope opened under another context', () => {
+    const sealed = encryptSecret(GITHUB_CANARY, masterKey, CONTEXT);
+
+    expect(() => decryptSecret(sealed, masterKey, OTHER_CONTEXT)).toThrow(SecretIntegrityError);
+  });
+
+  /**
+   * The binding must be exact rather than a prefix check, or a row name that extends another
+   * would open its neighbour's envelope.
+   */
+  it('refuses an envelope opened under a context that merely extends the original', () => {
+    const sealed = encryptSecret(GITHUB_CANARY, masterKey, CONTEXT);
+
+    expect(() => decryptSecret(sealed, masterKey, `${CONTEXT}_2`)).toThrow(SecretIntegrityError);
   });
 });
 

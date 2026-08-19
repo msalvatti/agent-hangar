@@ -200,6 +200,50 @@ describe('createRedactor shape patterns', () => {
   });
 
   /**
+   * A pattern without the global flag must still be applied to every occurrence, and the anchors
+   * inside it must be judged against the real input. Scanning a progressively shortened copy would
+   * re-satisfy `^` at each step and redact the second occurrence, which the pattern never matched.
+   */
+  it('applies an anchored pattern globally without re-anchoring on the remainder', () => {
+    const redactor = createRedactor({ patterns: [/^token/] });
+
+    expect(redactor.redact('tokentoken')).toBe(`${REDACTED_TOKEN}token`);
+  });
+
+  /**
+   * `$` is the mirror case: only the occurrence at the very end of the input matches, and the
+   * earlier one has to survive untouched.
+   */
+  it('honours an end anchor against the whole input', () => {
+    const redactor = createRedactor({ patterns: [/token$/] });
+
+    expect(redactor.redact('tokentoken')).toBe(`token${REDACTED_TOKEN}`);
+  });
+
+  /**
+   * A lookbehind needs the text that precedes the match; a scan over a shortened copy would have
+   * thrown that context away, so the second, unqualified occurrence must stay readable.
+   */
+  it('keeps the context a lookbehind depends on', () => {
+    const redactor = createRedactor({ patterns: [/(?<=key=)[a-z]{6}/] });
+
+    expect(redactor.redact('key=abcdef and abcdef')).toBe(`key=${REDACTED_TOKEN} and abcdef`);
+  });
+
+  /**
+   * A pattern whose secret sits inside a capture group must still be replaced whole. Splitting on
+   * a pattern hands back its captures between the surrounding pieces, and writing those back out
+   * would print the very text the pattern was there to remove.
+   */
+  it('drops the captures of a pattern that groups the value it matches', () => {
+    const redactor = createRedactor({ patterns: [/(secret)=(\d+)/] });
+
+    expect(redactor.redact('a secret=42 b secret=99 c')).toBe(
+      `a ${REDACTED_TOKEN} b ${REDACTED_TOKEN} c`,
+    );
+  });
+
+  /**
    * The contract patterns are shared, frozen state; compiling copies must not leave `lastIndex`
    * behind on them, or the second call would start matching halfway through the input.
    */

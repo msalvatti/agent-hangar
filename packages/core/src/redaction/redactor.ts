@@ -54,33 +54,43 @@ export function escapeRegExp(value: string): string {
 }
 
 /**
- * Replaces every match of a pattern in a string.
+ * Replaces every match of a pattern in a string, whether or not the pattern carries `g`.
  *
- * The patterns come from a frozen contract and carry no flags, so they are used as they are:
- * nothing is recompiled from a non-literal source, and a pattern that does carry `g` or `y` has
- * its cursor reset before each search instead of leaking position state between calls. A pattern
- * that can match the empty string would never advance, so the search stops there and returns the
- * rest of the input untouched.
+ * `String.prototype.split` finds every match itself, against the whole input and independently of
+ * the pattern's own flags and cursor. That is what makes this equivalent to a global replace:
+ * anchors and lookarounds are evaluated against the real input, not against a progressively
+ * shortened copy of it, so `/^token/` matches only at the start of the input as it should.
+ * Scanning a substring instead would re-satisfy `^` at every step and redact text that the
+ * pattern never actually matched. Nothing is recompiled from a non-literal source.
+ *
+ * `split` also emits the capture groups of each match between the surrounding pieces. Joining
+ * those back in would write captured — possibly secret — text into the output, so only every
+ * `1 + groups`-th piece is kept and the captures are dropped.
+ *
+ * A pattern that can match the empty string would match between every pair of characters and turn
+ * the whole input into replacement tokens, so it is refused and the input is returned untouched.
  *
  * @param input - Text to scan.
- * @param pattern - Pattern to look for.
+ * @param pattern - Pattern to look for; its `lastIndex` is left untouched by `split`.
  * @param replacement - Token written in place of each match.
  * @returns The text with every match replaced.
  */
 function replaceEvery(input: string, pattern: RegExp, replacement: string): string {
-  let output = '';
-  let rest = input;
-  for (;;) {
-    if (pattern.global || pattern.sticky) {
-      pattern.lastIndex = 0;
-    }
-    const match = pattern.exec(rest);
-    if (match === null || match[0].length === 0) {
-      return output + rest;
-    }
-    output += rest.slice(0, match.index) + replacement;
-    rest = rest.slice(match.index + match[0].length);
+  if (pattern.global || pattern.sticky) {
+    pattern.lastIndex = 0;
   }
+  const probe = pattern.exec(input);
+  if (probe === null || probe[0].length === 0) {
+    return input;
+  }
+  // `exec` returns the whole match plus one entry per capture group, which is exactly the stride
+  // `split` uses between the pieces that surround each match: every stride-th piece is text that
+  // was not matched, and everything between them is a capture to drop.
+  const stride = probe.length;
+  return input
+    .split(pattern)
+    .filter((_piece, index) => index % stride === 0)
+    .join(replacement);
 }
 
 /**

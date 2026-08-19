@@ -3,11 +3,12 @@
  *
  * Layer: unit.
  * Goal: the key file is created 0600 with 32 random bytes, refused when group or other can reach
- * it, refused when malformed, cached after the first load, and tolerant of a lost creation race.
+ * it or its directory, refused when it is a symbolic link, refused when malformed, cached after
+ * the first load, and tolerant of a lost creation race.
  * Mocks: the happy paths run against a real temporary directory; the write failure paths use a
  * {@link KeyFileSystem} stub so no permission tricks are needed.
  */
-import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { chmod, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -172,15 +173,102 @@ describe('MasterKeyFile', () => {
   });
 
   /**
+   * `mkdir` applies its mode only when it creates the directory, so a directory that already
+   * exists keeps whatever permissions it had. Anyone who can write there can replace the key file
+   * regardless of the file's own mode, so a reachable directory is refused before anything is
+   * written or read.
+   */
+  it.each([0o755, 0o750, 0o705, 0o770])('refuses a key directory with mode %s', async (mode) => {
+    const root = await makeRoot();
+    const directory = join(root, 'keys');
+    await mkdir(directory);
+    await chmod(directory, mode);
+    const path = join(directory, 'master.key');
+
+    const load = new MasterKeyFile({ path }).load();
+
+    await expect(load).rejects.toThrow(ConfigError);
+    await expect(load).rejects.toThrow(`chmod 700 ${directory}`);
+  });
+
+  /**
+   * A symbolic link in the key file's place would redirect the read to material another account
+   * controls, and `stat` follows links so the mode check would pass. `O_NOFOLLOW` refuses the open
+   * outright, and nothing is created because the link already occupies the path.
+   */
+  it('refuses a key file that is a symbolic link', async () => {
+    const root = await makeRoot();
+    const target = join(root, 'planted.key');
+    await writeFile(target, `${OTHER_KEY_HEX}\n`, { mode: 0o600 });
+    const path = join(root, 'master.key');
+    await symlink(target, path);
+
+    const load = new MasterKeyFile({ path }).load();
+
+    await expect(load).rejects.toThrow(ConfigError);
+    await expect(load).rejects.toThrow('is a symbolic link');
+  });
+
+  /**
+   * The permission check and the read run against one open handle, so a file swapped between the
+   * two cannot slip through. Verified by making the port hand back a handle whose `stat` reports a
+   * 0600 file while its content is the key that is actually returned.
+   */
+  it('reads the key from the same handle it checked the permissions of', async () => {
+    const path = join(await makeRoot(), 'master.key');
+    await writeFile(path, `${KEY_HEX}\n`, { mode: 0o600 });
+    const opened: string[] = [];
+    const fileSystem: KeyFileSystem = {
+      ...nodeKeyFileSystem,
+      open: async (target, flags) => {
+        opened.push(target);
+        return nodeKeyFileSystem.open(target, flags);
+      },
+    };
+
+    const masterKey = await new MasterKeyFile({ path, fileSystem }).load();
+
+    expect(masterKey.key.toString('hex')).toBe(KEY_HEX);
+    expect(opened).toEqual([path]);
+  });
+
+  /**
+   * An open failure that is not a refused symbolic link — a deleted file, a denied read — is a
+   * real problem the operator has to see, so it propagates untouched.
+   */
+  it('rethrows an open failure that is not a symbolic link', async () => {
+    const path = join(await makeRoot(), 'master.key');
+    const denied = Object.assign(new Error('permission denied'), { code: 'EACCES' });
+    const fileSystem: KeyFileSystem = {
+      ...nodeKeyFileSystem,
+      open: async (): Promise<never> => {
+        await Promise.resolve();
+        throw denied;
+      },
+    };
+
+    const load = new MasterKeyFile({ path, fileSystem }).load();
+
+    await expect(load).rejects.toBe(denied);
+  });
+
+  /**
    * Content that is not exactly 32 bytes of hex would silently produce a shorter AES key or throw
    * deep inside `node:crypto`; it is rejected with a message that names the file but never quotes
-   * its content.
+   * its content. Surrounding whitespace is refused rather than trimmed away: a file that a half
+   * finished write left padded is not a key file, and only the single newline this provider writes
+   * itself is tolerated.
    */
   it.each([
     ['too short', 'a'.repeat(63)],
     ['too long', 'a'.repeat(65)],
     ['not hex', 'z'.repeat(64)],
     ['empty', ''],
+    ['leading whitespace', ` ${'a'.repeat(64)}`],
+    ['leading newline', `\n${'a'.repeat(64)}`],
+    ['tab padded', `\t${'a'.repeat(64)}\t`],
+    ['two trailing newlines', `${'a'.repeat(64)}\n\n`],
+    ['carriage return', `${'a'.repeat(64)}\r\n`],
   ])('refuses key file content that is %s', async (_label, content) => {
     const path = join(await makeRoot(), 'master.key');
     await writeFile(path, content, { mode: 0o600 });

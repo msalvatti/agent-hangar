@@ -172,6 +172,61 @@ describe('createLogger', () => {
   });
 
   /**
+   * pino runs the `err` serializer on whatever sits under that key, and a rejection reason is not
+   * always an `Error` — a worker logging an unknown rejection as `{ err: reason }` is the ordinary
+   * case. `null` used to abort the whole logging call, which would have silenced the record that
+   * was meant to report the failure.
+   */
+  it('logs a null err instead of throwing', () => {
+    const sink = capture();
+
+    expect(() => {
+      sink.logger.error({ err: null }, 'unknown rejection');
+    }).not.toThrow();
+    const record = sink.records()[0];
+    expect(record?.msg).toBe('unknown rejection');
+    expect(record?.err).toBeNull();
+  });
+
+  /**
+   * A string reason must stay readable. Walking it as an error record spread it into one entry per
+   * character, which destroys the only diagnostic the record carried.
+   */
+  it('keeps a string err readable and scrubs it', () => {
+    const sink = capture();
+
+    sink.logger.error({ err: `clone failed for ${GITHUB_CANARY}` }, 'failed');
+
+    assertNoCanary(sink.text());
+    expect(sink.records()[0]?.err).toBe(`clone failed for ${REDACTED_TOKEN}`);
+  });
+
+  /**
+   * A number reason used to be flattened to `{}`, losing the value entirely; it has to survive as
+   * itself.
+   */
+  it('keeps a numeric err intact', () => {
+    const sink = capture();
+
+    sink.logger.error({ err: 42 }, 'failed');
+
+    expect(sink.records()[0]?.err).toBe(42);
+  });
+
+  /**
+   * A plain object reason is not an error either, so it is scrubbed and passed through with its
+   * own shape rather than being rebuilt as an error record.
+   */
+  it('scrubs a plain-object err without reshaping it', () => {
+    const sink = capture();
+
+    sink.logger.error({ err: { reason: OPENAI_CANARY, code: 7 } }, 'failed');
+
+    assertNoCanary(sink.text());
+    expect(sink.records()[0]?.err).toEqual({ reason: REDACTED_TOKEN, code: 7 });
+  });
+
+  /**
    * A credential parked on a class instance is invisible to the structural walk, but pino still
    * serialises the instance's own fields; the final scrub of the written line closes that gap.
    */

@@ -11,6 +11,12 @@
  * No secret is ever compared here, so `crypto.timingSafeEqual` has nothing to guard: the tag
  * verification that decides authenticity happens in constant time inside OpenSSL.
  *
+ * Every envelope is additionally bound to the row it belongs to. The caller passes a context
+ * string — the {@link SecretKey} the envelope is stored under — as GCM additional authenticated
+ * data. It is not stored in the envelope and does not encrypt anything; it takes part in the
+ * authentication tag, so an envelope moved to another row no longer authenticates and `reveal`
+ * fails closed instead of handing back the wrong credential.
+ *
  * Failures never quote the envelope, the key or the plaintext — the message is a fixed string and
  * the underlying `node:crypto` error is attached as `cause`.
  */
@@ -40,15 +46,22 @@ export const LAST4_LENGTH = 4;
 export type SealedSecret = Omit<SecretEnvelope, 'last4'>;
 
 /**
- * Seals a credential under the master key.
+ * Seals a credential under the master key, bound to the row it will be stored in.
  *
  * @param plaintext - Credential to encrypt; never logged, never returned.
  * @param masterKey - Key and version to seal with.
+ * @param context - Identifier of the row this envelope belongs to, authenticated but not
+ * encrypted; {@link decryptSecret} must be given the same value.
  * @returns A fresh envelope whose initialisation vector is unique to this call.
  */
-export function encryptSecret(plaintext: string, masterKey: MasterKey): SealedSecret {
+export function encryptSecret(
+  plaintext: string,
+  masterKey: MasterKey,
+  context: string,
+): SealedSecret {
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv(ALGORITHM, masterKey.key, iv);
+  cipher.setAAD(Buffer.from(context, 'utf8'));
   const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   return { ciphertext, iv, authTag: cipher.getAuthTag(), keyVersion: masterKey.version };
 }
@@ -58,11 +71,13 @@ export function encryptSecret(plaintext: string, masterKey: MasterKey): SealedSe
  *
  * @param sealed - Envelope as stored, in any `Uint8Array` representation.
  * @param masterKey - Key the envelope was sealed with.
+ * @param context - The value {@link encryptSecret} was given; an envelope read from another row
+ * carries a different one and therefore fails authentication.
  * @returns The credential in plaintext.
- * @throws SecretIntegrityError when the envelope was written with another key version, is
- * malformed, or fails authentication.
+ * @throws SecretIntegrityError when the envelope was written with another key version, was moved
+ * to another row, is malformed, or fails authentication.
  */
-export function decryptSecret(sealed: SealedSecret, masterKey: MasterKey): string {
+export function decryptSecret(sealed: SealedSecret, masterKey: MasterKey, context: string): string {
   if (sealed.keyVersion !== masterKey.version) {
     throw new SecretIntegrityError(
       `Stored secret was sealed with master key version ${sealed.keyVersion}, but the current key is version ${masterKey.version}.`,
@@ -75,6 +90,7 @@ export function decryptSecret(sealed: SealedSecret, masterKey: MasterKey): strin
   }
   try {
     const decipher = createDecipheriv(ALGORITHM, masterKey.key, sealed.iv);
+    decipher.setAAD(Buffer.from(context, 'utf8'));
     decipher.setAuthTag(sealed.authTag);
     return Buffer.concat([decipher.update(sealed.ciphertext), decipher.final()]).toString('utf8');
   } catch (cause) {
