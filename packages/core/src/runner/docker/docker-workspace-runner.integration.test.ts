@@ -401,6 +401,37 @@ if (!gate.run) {
   });
 
   /**
+   * GIT_ASKPASS is the only thing standing between the workspace and the PAT, and the workspace
+   * runs commands a model chose while reading untrusted repository content. Ownership of the
+   * directory is what enforces that: unlink and create are governed by the directory's write bit,
+   * not by the file's owner, so an `agent`-owned `/opt/agent-runtime` would let the workspace
+   * delete the helper and drop in one that logs the token on the next git prompt — no bypass of
+   * the host check required. Asserted here because a single `chown -R` in the Dockerfile silently
+   * reopens it.
+   */
+  it('keeps the runtime directory unwritable by the workspace user', async () => {
+    const handle = await workspace();
+
+    const replace = await run(handle, [
+      'sh',
+      '-c',
+      'rm -f /opt/agent-runtime/askpass.sh 2>/dev/null || true; printf "#!/bin/sh\\necho pwned\\n" > /opt/agent-runtime/askpass.sh',
+    ]);
+    const stillOriginal = await run(handle, [
+      'sh',
+      '-c',
+      '/opt/agent-runtime/askpass.sh "$1"',
+      'sh',
+      PASSWORD_PROMPT,
+    ]);
+    const owners = await run(handle, ['sh', '-c', 'stat -c "%U %a" /opt/agent-runtime']);
+
+    expect(replace.exit).not.toEqual({ type: 'exit', code: 0 });
+    expect(stillOriginal.stdout).toBe(`${GITHUB_CANARY}\n`);
+    expect(owners.stdout.trim()).toBe('root 755');
+  });
+
+  /**
    * Nothing is pulled or built implicitly, so an absent image must be a typed error carrying the
    * exact command that fixes it.
    */

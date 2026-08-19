@@ -330,6 +330,59 @@ describe('writeStdin', () => {
     expect(pulled).toBe(2);
     expect(stream.writableEnded).toBe(true);
   });
+
+  /**
+   * The hang that makes the timeout and the abort meaningless. A source whose `next()` never
+   * settles cannot be caught by checking `signal.aborted` between chunks — the check is never
+   * reached. The runner awaits this writer before an exec is considered over, so a pending `next()`
+   * would hold that await open for good and no terminal event would ever reach the caller. The
+   * abort has to win the race against the pending pull, and stdin must still be closed.
+   */
+  it('abandons a source whose next() never settles once aborted, and still closes stdin', async () => {
+    const stream = new PassThrough();
+    const controller = new AbortController();
+    let returned = false;
+
+    const source: AsyncIterable<Uint8Array> = {
+      [Symbol.asyncIterator]: () => ({
+        next: async () => new Promise<IteratorResult<Uint8Array>>(() => undefined),
+        return: () => {
+          returned = true;
+          return Promise.resolve({ done: true as const, value: undefined });
+        },
+      }),
+    };
+
+    const written = writeStdin(stream, source, controller.signal);
+    controller.abort();
+
+    await expect(written).resolves.toBeUndefined();
+    expect(stream.writableEnded).toBe(true);
+    expect(returned).toBe(true);
+  });
+
+  /**
+   * Closing the abandoned source is a courtesy to it, not a step the exec depends on. A source that
+   * throws on `return()` must not turn a finished write into a failure, and stdin must still be
+   * closed — the container-side process is waiting on that EOF.
+   */
+  it('ignores a source that throws while being closed', async () => {
+    const stream = new PassThrough();
+    const controller = new AbortController();
+
+    const source: AsyncIterable<Uint8Array> = {
+      [Symbol.asyncIterator]: () => ({
+        next: async () => new Promise<IteratorResult<Uint8Array>>(() => undefined),
+        return: () => Promise.reject(new Error('source refused to close')),
+      }),
+    };
+
+    const written = writeStdin(stream, source, controller.signal);
+    controller.abort();
+
+    await expect(written).resolves.toBeUndefined();
+    expect(stream.writableEnded).toBe(true);
+  });
 });
 
 describe('pumpExecStream', () => {
@@ -383,18 +436,23 @@ describe('pumpExecStream', () => {
   });
 
   /**
-   * A kill that itself fails must not become the exec's outcome: the caller's implementation has
-   * its own container-level fallback, and the stream is destroyed regardless.
+   * A rejected kill is not a cosmetic failure. The caller's implementation already falls back to
+   * killing the container and only rejects when that failed too, so the process is still running:
+   * yielding `exit ... TIMEOUT` there would tell the caller the command stopped when it did not,
+   * and the workspace would be reused with a runaway process in it. The failure must surface.
    */
-  it('still reports TIMEOUT when the kill rejects', async () => {
+  it('propagates a kill that could not stop the process, instead of reporting TIMEOUT', async () => {
     vi.useFakeTimers();
     const { params, kill } = pumpFixture({ timeoutMs: 500 });
-    kill.mockRejectedValue(new Error('exec create failed'));
+    kill.mockRejectedValue(new Error('cannot terminate exec (TIMEOUT)'));
 
     const pending = collect(pumpExecStream(params));
+    // The assertion is attached before the clock moves so the rejection is never momentarily
+    // unhandled; advancing first would surface it as an unhandled rejection.
+    const rejects = expect(pending).rejects.toThrow('cannot terminate exec (TIMEOUT)');
     await vi.advanceTimersByTimeAsync(501);
 
-    expect(await pending).toEqual([{ type: 'exit', code: null, signal: 'TIMEOUT' }]);
+    await rejects;
   });
 
   /**

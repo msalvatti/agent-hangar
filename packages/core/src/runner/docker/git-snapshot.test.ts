@@ -71,6 +71,26 @@ describe('truncateSummary', () => {
     expect(Buffer.byteLength(truncated, 'utf8')).toBeLessThanOrEqual(16_384);
     expect(truncated.endsWith('\n[truncated]')).toBe(true);
   });
+
+  /**
+   * Cutting the byte buffer at a fixed offset is not enough. When the cut falls inside a multi-byte
+   * sequence the leftover bytes decode to U+FFFD, which re-encodes to three bytes — so a head of
+   * `keep` bytes can come back as `keep + 2` and the finished summary overshoots the very cap it
+   * was meant to enforce. The offsets below place the cut one and two bytes into a three-byte
+   * character; both produced 16,386 and 16,385 bytes before the boundary walk-back.
+   */
+  it('stays within the budget when the cut falls inside a multi-byte character', () => {
+    const keep = 16_384 - Buffer.byteLength('\n[truncated]', 'utf8');
+
+    for (const offset of [0, 1, 2]) {
+      const summary = `${'a'.repeat(keep - offset)}${'中'.repeat(200)}`;
+
+      const truncated = truncateSummary(summary);
+
+      expect(Buffer.byteLength(truncated, 'utf8')).toBeLessThanOrEqual(16_384);
+      expect(truncated.endsWith('\n[truncated]')).toBe(true);
+    }
+  });
 });
 
 describe('parseAheadBehind', () => {

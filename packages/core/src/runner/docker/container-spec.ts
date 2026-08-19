@@ -94,7 +94,11 @@ export function toEnvArray(env: Readonly<Record<string, string>>): string[] {
  * Rejects a spec Docker would either refuse or accept with no ceiling at all.
  *
  * A zero or negative limit is the dangerous case: Docker reads it as "unlimited", so a typo would
- * silently hand a workspace the whole host instead of failing.
+ * silently hand a workspace the whole host instead of failing. `NaN` and `Infinity` are rejected
+ * explicitly because every relational test against them is false — `NaN <= 0` does not catch
+ * `NaN` — and both serialize to a limit Docker treats as absent. `cpus` is checked again after
+ * encoding: a positive value below one nano-CPU rounds to `NanoCpus: 0`, which is Docker's
+ * spelling of "unlimited", so the ceiling has to survive the conversion, not just the input.
  *
  * @param spec - Workspace to validate.
  * @throws DockerRunnerError when the id is not a legal container-name segment or a limit is not
@@ -106,11 +110,34 @@ function assertSpecIsUsable(spec: WorkspaceSpec): void {
   }
 
   const { cpus, memoryBytes, pids } = spec.limits;
-  if (cpus <= 0 || memoryBytes <= 0 || pids <= 0) {
+  if (
+    !Number.isFinite(cpus) ||
+    !Number.isFinite(memoryBytes) ||
+    !Number.isFinite(pids) ||
+    cpus <= 0 ||
+    memoryBytes <= 0 ||
+    pids <= 0
+  ) {
     throw new DockerRunnerError(
-      `workspace ${spec.workspaceId} must have positive cpus, memoryBytes and pids limits`,
+      `workspace ${spec.workspaceId} must have finite positive cpus, memoryBytes and pids limits`,
     );
   }
+
+  if (toNanoCpus(cpus) <= 0) {
+    throw new DockerRunnerError(
+      `workspace ${spec.workspaceId} cpus limit ${cpus} rounds to an unlimited NanoCpus value`,
+    );
+  }
+}
+
+/**
+ * Encodes a CPU count as Docker's integer `NanoCpus`.
+ *
+ * @param cpus - Fractional CPU count from the spec.
+ * @returns The value Docker expects; `0` means unlimited, which the caller must reject.
+ */
+function toNanoCpus(cpus: number): number {
+  return Math.round(cpus * NANO_CPUS_PER_CPU);
 }
 
 /**
@@ -152,7 +179,7 @@ export function buildContainerCreateOptions(
     },
     HostConfig: {
       Memory: spec.limits.memoryBytes,
-      NanoCpus: Math.round(spec.limits.cpus * NANO_CPUS_PER_CPU),
+      NanoCpus: toNanoCpus(spec.limits.cpus),
       PidsLimit: spec.limits.pids,
       CapDrop: ['ALL'],
       SecurityOpt: ['no-new-privileges'],

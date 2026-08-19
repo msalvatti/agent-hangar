@@ -209,10 +209,15 @@ class FakeExec implements DockerExecApi {
   /**
    * Reports the scripted exit status.
    *
+   * Only `undefined` — "the script did not say" — becomes `0`. An explicit `null` is kept, because
+   * that is how Docker reports an exec with no exit code yet, and a fake that cannot produce it
+   * cannot exercise the runner's handling of it.
+   *
    * @returns Exit code and running flag.
    */
   inspect(): Promise<{ ExitCode: number | null; Running: boolean }> {
-    return Promise.resolve({ ExitCode: this.#script.exitCode ?? 0, Running: false });
+    const { exitCode } = this.#script;
+    return Promise.resolve({ ExitCode: exitCode === undefined ? 0 : exitCode, Running: false });
   }
 }
 

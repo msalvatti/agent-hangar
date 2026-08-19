@@ -220,6 +220,36 @@ describe('buildContainerCreateOptions', () => {
   });
 
   /**
+   * `NaN` slips through every relational test — `NaN <= 0` is false — and `Infinity` passes a
+   * positivity check while meaning "no ceiling". Both serialize to a limit Docker treats as absent,
+   * which is the same unbounded workspace the check above exists to prevent.
+   */
+  it.each([
+    ['NaN cpus', { cpus: Number.NaN, memoryBytes: 1024, pids: 8 }],
+    ['NaN memoryBytes', { cpus: 1, memoryBytes: Number.NaN, pids: 8 }],
+    ['NaN pids', { cpus: 1, memoryBytes: 1024, pids: Number.NaN }],
+    ['infinite cpus', { cpus: Number.POSITIVE_INFINITY, memoryBytes: 1024, pids: 8 }],
+    ['infinite memoryBytes', { cpus: 1, memoryBytes: Number.POSITIVE_INFINITY, pids: 8 }],
+    ['infinite pids', { cpus: 1, memoryBytes: 1024, pids: Number.POSITIVE_INFINITY }],
+  ])('rejects a %s limit', (_case, limits) => {
+    expect(() => buildContainerCreateOptions(spec({ limits }), OPTIONS)).toThrow(DockerRunnerError);
+  });
+
+  /**
+   * The ceiling has to survive the conversion, not just the input. A positive `cpus` below one
+   * nano-CPU rounds to `NanoCpus: 0`, and zero is exactly how Docker spells "unlimited" — so a
+   * value that looks like the tightest possible limit would in fact remove it.
+   */
+  it('rejects a cpus limit that rounds away to an unlimited NanoCpus', () => {
+    expect(() =>
+      buildContainerCreateOptions(
+        spec({ limits: { cpus: 1e-12, memoryBytes: 1024, pids: 8 } }),
+        OPTIONS,
+      ),
+    ).toThrow(/rounds to an unlimited/);
+  });
+
+  /**
    * The environment key check runs through the builder too, and the resulting message must stay
    * free of the credential the value carries.
    */

@@ -19,9 +19,13 @@ RUN apt-get update \
     && corepack enable \
     && useradd -m -u 1001 -s /bin/bash agent \
     && mkdir -p /workspace /opt/agent-runtime \
-    && chown agent:agent /workspace \
-    && chown -R agent:agent /opt/agent-runtime
+    && chown agent:agent /workspace
 
+# /opt/agent-runtime stays root-owned and world-readable: `agent` must execute what is in it but
+# must never be able to replace it. GIT_ASKPASS points here, so a writable directory would let
+# repository-controlled commands unlink askpass.sh (directory write permission governs unlink and
+# create, regardless of the file's own owner) and substitute a helper that exfiltrates the PAT the
+# next time git asks for credentials. Mutable per-exec state lives on the tmpfs /tmp instead.
 COPY --chmod=755 askpass.sh /opt/agent-runtime/askpass.sh
 
 USER agent

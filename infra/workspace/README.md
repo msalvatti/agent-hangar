@@ -12,7 +12,7 @@ destroyed together with everything written into it.
 | Tools             | `git`, `ca-certificates`, `ripgrep`, `jq`, `python3`, `build-essential`, `curl`, `corepack` (pnpm, yarn)                                                      |
 | User              | `agent`, uid 1001, non-root                                                                                                                                   |
 | Working directory | `/workspace`, owned by `agent` — where the repository is cloned                                                                                               |
-| Runtime directory | `/opt/agent-runtime`, owned by `agent` — holds `askpass.sh` and, later, the agent runtime bundle                                                              |
+| Runtime directory | `/opt/agent-runtime`, **root-owned and read-only to `agent`** — holds `askpass.sh` and, later, the agent runtime bundle                                       |
 | Git configuration | `credential.helper=""`, `GIT_ASKPASS=/opt/agent-runtime/askpass.sh`, `GIT_TERMINAL_PROMPT=0`, `init.defaultBranch=main`, `/workspace` marked a safe directory |
 | Idle command      | `CMD ["sleep", "infinity"]` — the container idles and the worker `exec`s turns into it                                                                        |
 
@@ -44,9 +44,12 @@ carries a placeholder for it:
 Two `COPY` lines are added under that marker when the agent-runtime package lands:
 
 ```dockerfile
-COPY --chown=agent:agent runtime/cli.js /opt/agent-runtime/cli.js
-COPY --chown=agent:agent runtime/cli.js.map /opt/agent-runtime/cli.js.map
+COPY runtime/cli.js /opt/agent-runtime/cli.js
+COPY runtime/cli.js.map /opt/agent-runtime/cli.js.map
 ```
+
+No `--chown`: the bundle is executed by `agent` and must not be writable by it. `/opt/agent-runtime`
+is root-owned for the same reason — see [Security properties](#security-properties).
 
 `pnpm infra:image` then builds `@agent-hangar/agent-runtime` first and copies its `dist/cli.js*` into
 `infra/workspace/runtime/` before the `docker build`. That folder is a build artefact: it is
@@ -75,18 +78,19 @@ git makes inside the workspace — including the ones the agent itself triggers.
 Some are baked into the image, the rest are applied by the runner at `create` time. They are listed
 together because they only make sense as one posture.
 
-| Property                                                                           | Where it comes from  |
-| ---------------------------------------------------------------------------------- | -------------------- |
-| Runs as uid 1001, never root                                                       | image (`USER agent`) |
-| No credential in any layer or in `Config.Env`                                      | image                |
-| All Linux capabilities dropped (`--cap-drop ALL`)                                  | runner               |
-| `no-new-privileges`                                                                | runner               |
-| CPU, memory and PIDs ceilings                                                      | runner               |
-| `/tmp` on a tmpfs                                                                  | runner               |
-| No bind mount, no volume, **no Docker socket**                                     | runner               |
-| Bridge network (egress only, no inbound)                                           | runner               |
-| A real init as PID 1 (`--init`) — signals reach the process, orphans are reaped    | runner               |
-| Labelled `ah.instance`, `ah.workspace`, `ah.kind` for scoped discovery and reaping | runner               |
+| Property                                                                            | Where it comes from  |
+| ----------------------------------------------------------------------------------- | -------------------- |
+| Runs as uid 1001, never root                                                        | image (`USER agent`) |
+| No credential in any layer or in `Config.Env`                                       | image                |
+| `/opt/agent-runtime` root-owned — `agent` cannot replace `askpass.sh` or the bundle | image                |
+| All Linux capabilities dropped (`--cap-drop ALL`)                                   | runner               |
+| `no-new-privileges`                                                                 | runner               |
+| CPU, memory and PIDs ceilings                                                       | runner               |
+| `/tmp` on a tmpfs                                                                   | runner               |
+| No bind mount, no volume, **no Docker socket**                                      | runner               |
+| Bridge network (egress only, no inbound)                                            | runner               |
+| A real init as PID 1 (`--init`) — signals reach the process, orphans are reaped     | runner               |
+| Labelled `ah.instance`, `ah.workspace`, `ah.kind` for scoped discovery and reaping  | runner               |
 
 The container runs code chosen by a language model reading untrusted repository content. Treat every
 line above as load-bearing.

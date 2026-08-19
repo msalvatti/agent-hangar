@@ -233,14 +233,83 @@ export async function writeStdin(
     if (stdin === undefined) {
       return;
     }
-    for await (const chunk of stdin) {
-      if (signal?.aborted === true) {
-        return;
-      }
-      await writeChunk(stream, chunk);
-    }
+    await drainIterable(stream, stdin, signal);
   } finally {
     stream.end();
+  }
+}
+
+/**
+ * Writes an async iterable to stdin, abandoning it the moment `signal` aborts.
+ *
+ * Checking `signal.aborted` between chunks is not enough: a source whose `next()` never settles
+ * leaves the await pending for good, and the caller — which awaits this writer before the exec is
+ * considered over — would then never see a terminal event, defeating both the timeout and the
+ * abort. The pending `next()` is therefore raced against the abort, and the iterator is closed on
+ * the way out so the source can release whatever it was holding.
+ *
+ * @param stream - Writable half of the hijacked exec stream.
+ * @param stdin - Source of chunks.
+ * @param signal - Cancellation; aborting abandons an in-flight `next()`.
+ */
+async function drainIterable(
+  stream: ExecStdinStream,
+  stdin: AsyncIterable<Uint8Array>,
+  signal?: AbortSignal,
+): Promise<void> {
+  const iterator = stdin[Symbol.asyncIterator]();
+  try {
+    while (signal?.aborted !== true) {
+      const next = await raceAbort(iterator.next(), signal);
+      if (next === ABORTED || next.done === true) {
+        return;
+      }
+      await writeChunk(stream, next.value);
+    }
+  } finally {
+    await Promise.resolve(iterator.return?.()).catch(() => undefined);
+  }
+}
+
+/** Sentinel returned by {@link raceAbort} when the signal won the race. */
+const ABORTED = Symbol('aborted');
+
+/**
+ * Resolves with the promise's value, or with {@link ABORTED} as soon as `signal` aborts.
+ *
+ * @param promise - Work that may never settle on its own.
+ * @param signal - Cancellation; omitted means simply awaiting the promise.
+ * @returns The settled value, or `ABORTED`.
+ */
+async function raceAbort<T>(
+  promise: Promise<T>,
+  signal?: AbortSignal,
+): Promise<T | typeof ABORTED> {
+  if (signal === undefined) {
+    return promise;
+  }
+  // The rejection is marked handled so abandoning the source never surfaces as an unhandled
+  // rejection; the value is simply dropped once the abort has won.
+  promise.catch(() => undefined);
+  // Checked before the listener is registered: the source itself may abort while producing the
+  // value this call is racing, and `addEventListener` on an already-aborted signal never fires —
+  // which would silently hand back the very chunk the abort was meant to discard.
+  if (signal.aborted) {
+    return ABORTED;
+  }
+  // Definitely assigned: the Promise executor runs synchronously during construction, so `onAbort`
+  // holds the resolver before the next statement reads it.
+  let onAbort!: () => void;
+  const aborted = new Promise<typeof ABORTED>((resolve) => {
+    onAbort = () => {
+      resolve(ABORTED);
+    };
+  });
+  signal.addEventListener('abort', onAbort, { once: true });
+  try {
+    return await Promise.race([promise, aborted]);
+  } finally {
+    signal.removeEventListener('abort', onAbort);
   }
 }
 
@@ -248,6 +317,12 @@ export async function writeStdin(
 interface TerminationWatch {
   /** Why the runner ended the exec, or `null` while the process is running on its own terms. */
   reason(): ExecTermination | null;
+  /**
+   * Settles when the termination attempt has finished; rejects if the process could not be killed.
+   *
+   * Resolves immediately when nothing terminated the exec.
+   */
+  killed(): Promise<void>;
   /** Cancels the timer and removes the abort listener. */
   dispose(): void;
 }
@@ -266,15 +341,20 @@ function watchTermination(params: PumpExecParams, schedule: ScheduleTimeout): Te
   const { stream, signal, kill } = params;
   let terminated: ExecTermination | null = null;
   let cancelTimeout: (() => void) | undefined;
+  let killed: Promise<void> = Promise.resolve();
 
   const terminate = (reason: ExecTermination): void => {
     if (terminated !== null) {
       return;
     }
     terminated = reason;
-    // The kill runs best-effort: the caller's implementation already falls back to killing the
-    // container, and the stream is destroyed on the next line regardless of the outcome.
-    void kill(reason).catch(() => undefined);
+    // The kill is retained, not discarded: the terminal event claims the process was stopped, and
+    // the caller's fallback throws when even the container-level kill failed. Swallowing that
+    // would report a still-running process as terminated. The extra `catch` only marks the
+    // rejection handled so it is not reported as unhandled while the pump drains the stream —
+    // `killed` still rejects for whoever awaits it.
+    killed = kill(reason);
+    killed.catch(() => undefined);
     stream.destroy();
   };
   const onAbort = (): void => {
@@ -296,6 +376,7 @@ function watchTermination(params: PumpExecParams, schedule: ScheduleTimeout): Te
 
   return {
     reason: () => terminated,
+    killed: async () => killed,
     dispose: () => {
       cancelTimeout?.();
       signal?.removeEventListener('abort', onAbort);
@@ -313,7 +394,8 @@ function watchTermination(params: PumpExecParams, schedule: ScheduleTimeout): Te
  *
  * @param params - Stream, parser, limits and the two daemon callbacks.
  * @yields Output events followed by the terminal `exit` event.
- * @throws DockerRunnerError when the stream fails for a reason other than our own termination.
+ * @throws DockerRunnerError when the stream fails for a reason other than our own termination, or
+ *   when the exec had to be terminated and could not be killed even at the container level.
  */
 export async function* pumpExecStream(params: PumpExecParams): AsyncGenerator<ExecEvent> {
   const { stream, demuxer, inspectExitCode } = params;
@@ -333,9 +415,14 @@ export async function* pumpExecStream(params: PumpExecParams): AsyncGenerator<Ex
   }
 
   const reason = watch.reason();
-  yield reason === null
-    ? { type: 'exit', code: await inspectExitCode() }
-    : { type: 'exit', code: null, signal: reason };
+  if (reason === null) {
+    yield { type: 'exit', code: await inspectExitCode() };
+    return;
+  }
+  // Rejects when the process could not be stopped at all; the caller must not be told the exec
+  // ended when it is still running.
+  await watch.killed();
+  yield { type: 'exit', code: null, signal: reason };
 }
 
 /**
@@ -371,6 +458,23 @@ export function execWrapperCommand(execRef: string, cmd: readonly string[]): str
     execRef,
     ...cmd,
   ];
+}
+
+/**
+ * Builds the command that removes a finished exec's pid file.
+ *
+ * The wrapper cannot do this itself: it ends with `exec "$@"`, which replaces the shell, so no
+ * trap of its own can ever run. Left in place the file outlives the process it names, and the
+ * container recycles pids freely — a `signal` arriving late would then be delivered to whatever
+ * process inherited that number. Removing the file turns that case back into "already finished".
+ *
+ * @param execRef - UUID of the exec whose pid file should go.
+ * @returns Argument vector for Docker's `Cmd`; succeeds whether or not the file is still there.
+ * @throws DockerRunnerError when `execRef` is not UUID-shaped.
+ */
+export function pidFileCleanupCommand(execRef: string): string[] {
+  assertSafeExecRef(execRef);
+  return ['sh', '-c', `rm -f "${EXEC_PID_DIR}/$0.pid"`, execRef];
 }
 
 /**

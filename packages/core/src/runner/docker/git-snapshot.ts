@@ -43,11 +43,14 @@ export type CaptureExec = (cmd: readonly string[]) => Promise<CaptureResult>;
  * Cuts a summary down to the contract's byte budget.
  *
  * The budget is in bytes, not characters, because it bounds what is written to Postgres and
- * streamed to the browser. A multi-byte character split by the cut degrades to a replacement
- * character, which is acceptable in a human-readable summary.
+ * streamed to the browser — so the result must respect it after re-encoding, not before. Cutting
+ * the buffer at a fixed offset does not: a cut landing inside a multi-byte sequence decodes to a
+ * three-byte replacement character, so a head of `keep` bytes can come back as `keep + 2`, and the
+ * finished string overshoots the cap it was supposed to enforce. The cut is therefore walked back
+ * to a character boundary, which can only shrink the result.
  *
  * @param summary - Full `git status` + `git diff --stat` text.
- * @returns The summary unchanged, or its head plus a truncation marker.
+ * @returns The summary unchanged, or its head plus a truncation marker, never over the budget.
  */
 export function truncateSummary(summary: string): string {
   const bytes = Buffer.from(summary, 'utf8');
@@ -55,7 +58,13 @@ export function truncateSummary(summary: string): string {
     return summary;
   }
   const keep = MAX_SUMMARY_BYTES - Buffer.byteLength(TRUNCATION_NOTICE, 'utf8');
-  return `${bytes.subarray(0, keep).toString('utf8')}${TRUNCATION_NOTICE}`;
+  let head = bytes.subarray(0, keep).toString('utf8');
+  // Drop the trailing replacement character produced by a cut inside a sequence, then any further
+  // character whose re-encoding still does not fit.
+  while (head.length > 0 && Buffer.byteLength(head, 'utf8') > keep) {
+    head = head.slice(0, -1);
+  }
+  return `${head}${TRUNCATION_NOTICE}`;
 }
 
 /**

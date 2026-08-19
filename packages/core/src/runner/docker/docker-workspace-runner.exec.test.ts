@@ -66,7 +66,9 @@ describe('DockerWorkspaceRunner.exec', () => {
 
     await drain(runner.exec(handle, { cmd: ['pwd'], cwd: '/tmp', env: { EXTRA: 'value' } }));
 
-    const options = docker.execOptions.at(-1);
+    // Selected by the command it carries: the runner also execs a pid-file cleanup after the
+    // process ends, so the last exec is not the one under test.
+    const options = docker.execOptions.find((entry) => entry.Cmd.includes('pwd'));
     expect(options?.WorkingDir).toBe('/tmp');
     expect(options?.Env).toEqual(['EXTRA=value']);
     expect(options?.User).toBe('agent');
@@ -204,9 +206,12 @@ describe('DockerWorkspaceRunner.exec', () => {
     const handle = await createWorkspace(runner);
     docker.failures.containerKill = new Error('daemon unreachable');
 
-    const result = await drain(runner.exec(handle, { cmd: ['sleep', '30'], timeoutMs: 5 }));
-
-    expect(result.exit).toEqual({ type: 'exit', code: null, signal: 'TIMEOUT' });
+    // Both routes to the process failed, so it is still running. Reporting `exit ... TIMEOUT` here
+    // would tell the caller the command stopped and let the workspace be reused with a runaway
+    // process in it; the caller has to hear that the exec could not be terminated.
+    await expect(
+      drain(runner.exec(handle, { cmd: ['sleep', '30'], timeoutMs: 5 })),
+    ).rejects.toThrow(/cannot terminate exec/);
     await vi.waitFor(() => {
       expect(docker.calls).toContain('kill:c1');
     });
@@ -282,6 +287,71 @@ describe('DockerWorkspaceRunner.exec', () => {
     expect(raised).toBeInstanceOf(DockerRunnerError);
     expect(raised?.message).toContain('invalid environment variable name "BAD-KEY"');
     expect(raised?.message).not.toContain(CANARY_MARKER);
+  });
+
+  /**
+   * The window the pid file cannot cover. `exec` yields `started` before it touches the daemon, so
+   * a caller that cancels immediately does so while no process exists and no pid file has been
+   * written — the kill would find nothing, report "already finished", and the command would then
+   * start anyway, uncancelled. The request has to be remembered and honoured instead.
+   */
+  it('never starts a command whose reference was signalled before the exec reached the daemon', async () => {
+    const { runner, docker } = makeRunner({
+      execScripts: [{ match: (cmd) => cmd.includes('sleep'), hang: true }],
+    });
+    const handle = await createWorkspace(runner);
+
+    const events = runner.exec(handle, { cmd: ['sleep', '30'] });
+    const started = await events.next();
+    await runner.signal(handle, EXEC_REF, 'TERM');
+    const terminal = await events.next();
+    const end = await events.next();
+
+    expect(started.value).toEqual({ type: 'started', execRef: EXEC_REF });
+    expect(terminal.value).toEqual({ type: 'exit', code: null, signal: 'ABORTED' });
+    expect(end.done).toBe(true);
+    expect(docker.execOptions.some((entry) => entry.Cmd.includes('sleep'))).toBe(false);
+  });
+
+  /**
+   * The wrapper ends with `exec "$@"`, so it cannot clean up after itself — no trap of its own can
+   * run once the shell is replaced. A pid file left behind outlives the process it names, and the
+   * container recycles pids, so a signal arriving late would be delivered to whatever inherited
+   * that number. Removing the file turns that case back into "already finished".
+   */
+  it('removes the pid file once the exec is over', async () => {
+    const { runner, docker } = makeRunner({
+      execScripts: [{ match: (cmd) => cmd.includes('echo'), stdout: 'done\n' }],
+    });
+    const handle = await createWorkspace(runner);
+
+    await drain(runner.exec(handle, { cmd: ['echo', 'done'] }));
+
+    expect(
+      docker.execOptions.some((entry) =>
+        entry.Cmd.join(' ').includes(`rm -f "/tmp/ah-exec/$0.pid"`),
+      ),
+    ).toBe(true);
+  });
+
+  /**
+   * The cleanup is housekeeping, not part of the contract: a daemon that refuses it leaves a stale
+   * file on a container that is about to be thrown away anyway. Turning that into a thrown error
+   * would fail a command that actually succeeded.
+   */
+  it('still reports the exit code when the pid-file cleanup fails', async () => {
+    const { runner } = makeRunner({
+      execScripts: [
+        { match: (cmd) => cmd.join(' ').includes('rm -f'), failStart: true },
+        { match: (cmd) => cmd.includes('echo'), stdout: 'done\n' },
+      ],
+    });
+    const handle = await createWorkspace(runner);
+
+    const result = await drain(runner.exec(handle, { cmd: ['echo', 'done'] }));
+
+    expect(result.exit).toEqual({ type: 'exit', code: 0 });
+    expect(result.stdout).toBe('done\n');
   });
 });
 

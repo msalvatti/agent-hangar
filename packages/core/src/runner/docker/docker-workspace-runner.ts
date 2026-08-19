@@ -41,6 +41,7 @@ import {
   createDockerDemuxer,
   execWrapperCommand,
   killCommand,
+  pidFileCleanupCommand,
   pumpExecStream,
   writeStdin,
 } from './exec-stream.js';
@@ -107,6 +108,21 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
   readonly #randomUUID: () => string;
 
   /**
+   * Execs this runner has handed a reference out for and not yet started on the daemon.
+   *
+   * Covers the window the pid file cannot: between the `started` event and the wrapper writing its
+   * pid, there is no pid to kill, so a `signal` would find nothing, report success, and let the
+   * command start uncancelled anyway. The entry records the request and the exec honours it.
+   *
+   * It deliberately does NOT gate delivery. `execRef` travels to the caller and back, and the
+   * contract does not promise that `signal` reaches the same process that ran `exec`; refusing to
+   * signal a reference this instance does not know would turn a cross-process cancellation into a
+   * silent no-op. Staleness is handled where it arises instead — the pid file is removed when the
+   * exec ends, so a late signal finds no file rather than a recycled pid.
+   */
+  readonly #liveExecs = new Map<string, { cancelled: ExecSignal | null }>();
+
+  /**
    * @param options - Docker API, instance naming and the injectable clock, timer and id source.
    */
   constructor(options: DockerWorkspaceRunnerOptions) {
@@ -132,8 +148,16 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
   async create(spec: WorkspaceSpec, opts?: { signal?: AbortSignal }): Promise<WorkspaceHandle> {
     await this.#assertImageExists(spec.image);
     const container = await this.#createContainer(spec);
-    await container.start();
-    await this.#awaitReadiness(container, opts?.signal);
+    // Once the container exists, every later failure must remove it. A created-but-abandoned
+    // container holds the workspace name for good, so the retry the caller is about to make would
+    // fail the name-conflict check forever instead of recovering.
+    try {
+      await container.start();
+      await this.#awaitReadiness(container, opts?.signal);
+    } catch (error) {
+      await this.#discard(container);
+      throw error;
+    }
     return { workspaceId: spec.workspaceId, runnerRef: container.id };
   }
 
@@ -151,10 +175,14 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
    */
   async *exec(handle: WorkspaceHandle, spec: ExecSpec): AsyncGenerator<ExecEvent> {
     const execRef = this.#randomUUID();
+    // Registered before the reference is handed out, so a `signal` arriving while this generator is
+    // still suspended at the `started` yield has somewhere to record itself.
+    const record = { cancelled: null as ExecSignal | null };
+    this.#liveExecs.set(execRef, record);
     yield { type: 'started', execRef };
 
     try {
-      yield* this.#streamExec(handle, spec, execRef);
+      yield* this.#streamExec(handle, spec, execRef, record);
     } catch (error) {
       if (!isDockerNotFound(error)) {
         throw error instanceof DockerRunnerError
@@ -164,6 +192,8 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
             });
       }
       yield { type: 'exit', code: null, signal: 'GONE' };
+    } finally {
+      this.#liveExecs.delete(execRef);
     }
   }
 
@@ -180,7 +210,19 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
    * @throws DockerRunnerError when the reference is malformed or the daemon fails otherwise.
    */
   async signal(handle: WorkspaceHandle, execRef: string, sig: ExecSignal): Promise<void> {
+    // Built first so a malformed reference or an unknown signal is rejected even when the exec is
+    // already over — the caller's bug should not depend on timing to be reported.
     const cmd = killCommand(execRef, sig);
+
+    // When this instance owns the exec and it has not reached the daemon yet, record the request:
+    // the pid file does not exist, so the kill below would report "already finished" and the
+    // command would start anyway. Delivery is still attempted, because the exec may equally be
+    // owned by another process.
+    const record = this.#liveExecs.get(execRef);
+    if (record !== undefined) {
+      record.cancelled = sig;
+    }
+
     try {
       await this.#runCapture(this.#docker.getContainer(handle.runnerRef), cmd);
     } catch (error) {
@@ -327,13 +369,14 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
    *
    * @param container - The freshly started container.
    * @param signal - Optional cancellation, checked before every attempt.
-   * @throws DockerRunnerError when the caller aborted or the budget ran out; the container is
-   *   destroyed first in both cases so no orphan is left behind.
+   * Cleanup is deliberately not done here: `create` removes the container on any failure of the
+   * start-and-readiness sequence, so this method only has to report why it gave up.
+   *
+   * @throws DockerRunnerError when the caller aborted or the readiness budget ran out.
    */
   async #awaitReadiness(container: DockerContainerApi, signal?: AbortSignal): Promise<void> {
     for (let attempt = 0; attempt < this.#readiness.attempts; attempt += 1) {
       if (signal?.aborted === true) {
-        await this.#discard(container);
         throw new DockerRunnerError('create aborted');
       }
       const probe = await this.#runCapture(container, READINESS_COMMAND);
@@ -342,7 +385,6 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
       }
       await this.#sleep(this.#readiness.delayMs);
     }
-    await this.#discard(container);
     throw new DockerRunnerError('workspace did not become ready');
   }
 
@@ -352,13 +394,22 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
    * @param handle - Workspace to run in.
    * @param spec - The exec specification.
    * @param execRef - Reference already reported to the caller.
+   * @param record - Registry entry carrying a `signal` that arrived before the exec started.
    * @yields Output events followed by the terminal `exit` event.
    */
   async *#streamExec(
     handle: WorkspaceHandle,
     spec: ExecSpec,
     execRef: string,
+    record: { cancelled: ExecSignal | null },
   ): AsyncGenerator<ExecEvent> {
+    // A signal delivered while this generator was suspended at the `started` yield refers to a
+    // process that does not exist yet. Honour it by never starting one.
+    if (record.cancelled !== null) {
+      yield { type: 'exit', code: null, signal: 'ABORTED' };
+      return;
+    }
+
     const container = this.#docker.getContainer(handle.runnerRef);
     const exec = await container.exec({
       Cmd: execWrapperCommand(execRef, spec.cmd),
@@ -372,13 +423,21 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     });
     const stream = await exec.start({ hijack: true, stdin: true });
 
+    // Aborted whenever the exec ends early, so the stdin writer stops too. The caller's own signal
+    // is not enough: a wall-clock timeout ends the exec without aborting it, and the writer is
+    // awaited below — an async stdin source still waiting inside `next()` would hold that await
+    // open for good and no terminal event would ever reach the caller. Every early end runs
+    // through `kill`, and the `finally` covers the ordinary one, so no separate abort listener is
+    // needed here.
+    const stdinDone = new AbortController();
+
     // Not awaited here: the process may produce output long before it has consumed all of stdin,
     // and awaiting first would deadlock on anything larger than the pipe buffer. The rejection
     // handler is attached immediately rather than at the `await` below, so the promise is never
     // momentarily unhandled. Stdin failures are not exec failures: the stream is destroyed on the
     // termination paths, and a caller-supplied source that throws leaves the process with
     // truncated input — whose consequence the exit code already reports.
-    const stdinWritten = writeStdin(stream, spec.stdin, spec.signal).catch(() => undefined);
+    const stdinWritten = writeStdin(stream, spec.stdin, stdinDone.signal).catch(() => undefined);
 
     try {
       yield* pumpExecStream({
@@ -386,12 +445,20 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
         demuxer: createDockerDemuxer(),
         timeoutMs: spec.timeoutMs,
         signal: spec.signal,
-        kill: async (reason: ExecTermination) => this.#killExec(container, execRef, reason),
+        kill: async (reason: ExecTermination) => {
+          stdinDone.abort();
+          return this.#killExec(container, execRef, reason);
+        },
         inspectExitCode: async () => (await exec.inspect()).ExitCode,
       });
     } finally {
       // Wait for the writer to finish so stdin is always closed before the exec is considered over.
+      // Bounded by `stdinDone`: the writer abandons an uncooperative source instead of hanging.
+      stdinDone.abort();
       await stdinWritten;
+      // Best-effort: the pid file must not outlive the process it names, or a late signal lands on
+      // a recycled pid. A failure here only leaves a stale file behind on a disposable container.
+      await this.#runCapture(container, pidFileCleanupCommand(execRef)).catch(() => undefined);
     }
   }
 
