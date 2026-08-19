@@ -109,7 +109,6 @@ jobs:
           --health-retries 30
     env:
       AH_INSTANCE: ci
-      DATABASE_URL: postgresql://${{ env.COMPOSE_DB_CREDENTIALS }}@127.0.0.1:5432/ah
       REDIS_URL: redis://127.0.0.1:6379
       DOCKER_AVAILABLE: '1'
     steps:
@@ -122,6 +121,8 @@ jobs:
           runtime: node@24
           cache: true
           install: false
+      - name: Derive DATABASE_URL
+        run: echo "DATABASE_URL=postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:5432/ah" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @agent-hangar/core db:generate
       - run: pnpm --filter @agent-hangar/core db:migrate
@@ -156,7 +157,6 @@ jobs:
           --health-retries 30
     env:
       AH_INSTANCE: ci
-      DATABASE_URL: postgresql://${{ env.COMPOSE_DB_CREDENTIALS }}@127.0.0.1:5432/ah
       REDIS_URL: redis://127.0.0.1:6379
       AGENT_MODEL_PROVIDER: fake
     steps:
@@ -169,6 +169,8 @@ jobs:
           runtime: node@24
           cache: true
           install: false
+      - name: Derive DATABASE_URL
+        run: echo "DATABASE_URL=postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:5432/ah" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:generate
       - run: pnpm --filter web exec playwright install --with-deps chromium
