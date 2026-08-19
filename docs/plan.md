@@ -300,7 +300,7 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | W1-B 🐳 | ⬜ | — | — | |
 | W1-C | ⬜ | — | — | |
 | W1-D | ⬜ | — | — | Dockerfile COPY lines → orchestrator |
-| W1-E | 🟦 | `feat/w1e-persistence` | — | |
+| W1-E | 🟨 PR open | `feat/w1e-persistence` | core 100 (all four metrics) | |
 | W1-F | ⬜ | — | — | |
 | W1-G | ⬜ | — | — | creates `shared/transcript` first |
 | W1-H | ⬜ | — | — | rebase after W1-G |

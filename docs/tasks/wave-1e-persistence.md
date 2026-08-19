@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-E (parallel with W1-A … W1-I; no Docker) |
-| **Status** | 🟦 running |
-| **Progress** | 4/5 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1e-persistence` |
 | **Owned paths** | `packages/core/src/persistence/repositories/**`, `packages/core/src/persistence/testing/db.ts` (+ its test), `packages/core/vitest.config.ts` (`coverage.include` lines only) |
 | **Depends on** | W0 merged to `main` |
@@ -47,7 +47,7 @@ Testing model for this lane (plan §6 W1-E): mappers and helpers are unit-tested
 | 1E.2 | `ChatRepository`, `MessageRepository` (gap-free `seq` transaction), `TurnRepository` + `@db` suites | ✅ | P0 | L | 1E.1 |
 | 1E.3 | `WorkspaceRepository` (partial-unique → typed error), `ScheduledJobRepository`, `JobRunRepository` + `@db` suites | ✅ | P0 | L | 1E.1 |
 | 1E.4 | `ToolCallLogRepository`, `SecretRepository`, cross-repository invariant suite (cascade, concurrency, canary never stored) | ✅ | P0 | M | 1E.2, 1E.3 |
-| 1E.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1E.1–1E.4 |
+| 1E.5 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 1E.1–1E.4 |
 
 ---
 
@@ -396,16 +396,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1e-persistence
 
 ## Task 1E.5 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1E.1–1E.4
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1E.1–1E.4
 
 **Description.** Run every gate with the database available, bring the code review to zero findings, update the plan dashboard and the tasks index, and open the PR with the structured summary the orchestrator expects.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` — exit 0
-- [ ] `DATABASE_URL=… pnpm --filter @agent-hangar/core test -- --coverage` — green, 100/100/100/100 on `src/persistence/repositories/**` and `src/persistence/testing/**`; `pnpm test` without `DATABASE_URL` also green
-- [ ] `/bymax-quality:code-review` on the branch → zero open findings (or each remaining finding justified in the PR body)
-- [ ] `docs/plan.md` §12 row W1-E → 🟨 with branch and PR number; `docs/tasks/README.md` row for this lane updated
-- [ ] PR opened against `main`; structured result returned to the orchestrator
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` — exit 0
+- [x] `DATABASE_URL=… pnpm --filter @agent-hangar/core test -- --coverage` — green, 100/100/100/100 on `src/persistence/repositories/**` and `src/persistence/testing/**`; `pnpm test` without `DATABASE_URL` also green
+- [x] `/bymax-quality:code-review` on the branch → zero open findings (or each remaining finding justified in the PR body)
+- [x] `docs/plan.md` §12 row W1-E → 🟨 with branch and PR number; `docs/tasks/README.md` row for this lane updated
+- [x] PR opened against `main`; structured result returned to the orchestrator
 
 **Files to create/modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (W1-E row only), this file (header Status/Progress, completion log).
@@ -460,3 +460,4 @@ Completion Protocol: append `- 1E.5 ✅ <date> — PR #<n> opened`; commit `docs
 - 1E.2 ✅ 2026-08-19 — `PrismaChatRepository`, `PrismaMessageRepository` (gap-free `seq` under a `SELECT … FOR UPDATE` transaction, proven with 20 concurrent appends), `PrismaTurnRepository`; unit + `@db` suites green.
 - 1E.3 ✅ 2026-08-19 — `PrismaWorkspaceRepository` (partial-unique index → `LiveWorkspaceExistsError`, pinned against the real `@prisma/adapter-pg` P2002 shape), `PrismaScheduledJobRepository`, `PrismaJobRunRepository`; unit + `@db` suites green.
 - 1E.4 ✅ 2026-08-19 — `PrismaToolCallLogRepository`, `PrismaSecretRepository`, `createRepositories` wired to the real classes, cross-repository invariant suite (canary matrix, three cascade chains, factory shape parity with `createInMemoryRepositories`); unit + `@db` suites green.
+- 1E.5 ✅ 2026-08-19 — gates green (lint, format, typecheck, 100 % unit coverage, 58/58 `@db` suites against compose Postgres), code review and security review both zero findings, dashboards updated, PR opened.
