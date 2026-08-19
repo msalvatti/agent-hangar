@@ -50,29 +50,37 @@ describe('describeClientFailure', () => {
 
   /**
    * The guarantee cannot rest on the caller passing a driver-generated value: this is an exported
-   * function taking `unknown`. A classification that does not have the shape of a driver code is
-   * refused rather than repeated, so a rejection whose `code` is itself a connection string — or
-   * any other punctuation-bearing text — cannot recreate the leak the function exists to close.
+   * function taking `unknown`. No pattern separates a driver code from a credential — a bare
+   * password is as much an identifier as `ECONNREFUSED` — so only a recognised classification is
+   * echoed. A connection string, a bare password and an unrecognised code alike report `unknown`.
    */
   it.each([
-    ['a connection string', 'redis://u:SUPERSECRETPW@127.0.0.1:6379'],
-    ['a code with punctuation', 'ECONNREFUSED: ah:SUPERSECRETPW@db'],
+    ['a connection string', `redis://u:${SECRET}@127.0.0.1:6379`],
+    ['a code with punctuation', `ECONNREFUSED: ah:${SECRET}@db`],
+    ['a bare password', SECRET],
     ['an over-long code', 'A'.repeat(65)],
-  ])('refuses a code shaped like %s', (_name, code) => {
+    ['an unrecognised code', 'ENOTAREALCODE'],
+  ])('refuses %s as a code', (_name, code) => {
     const reported = describeClientFailure(Object.assign(new Error('boom'), { code }));
     expect(reported).toBe('unknown');
     expect(reported).not.toContain(SECRET);
   });
 
   /**
-   * A nameless error class — what an anonymous `class extends Error {}` expression produces once
-   * it is passed somewhere without being bound to a name — offers no classification either, and
-   * must not reach the message as the empty string it literally is.
+   * A class name is forgeable — `name` is a configurable property — so the fallback is held to the
+   * same list as the code. A nameless class, which an anonymous `class extends Error {}` produces,
+   * is refused by it too rather than reaching the message as the empty string it literally is.
    */
-  it('returns unknown when the error class has no name', () => {
-    class Nameless extends Error {}
-    Object.defineProperty(Nameless, 'name', { value: '' });
-    expect(describeClientFailure(new Nameless('boom'))).toBe('unknown');
+  it.each([
+    ['a forged class name', SECRET],
+    ['an unrecognised class name', 'SomeOtherError'],
+    ['no class name at all', ''],
+  ])('refuses %s', (_name, className) => {
+    class Forged extends Error {}
+    Object.defineProperty(Forged, 'name', { value: className });
+    const reported = describeClientFailure(new Forged('boom'));
+    expect(reported).toBe('unknown');
+    expect(reported).not.toContain(SECRET);
   });
 
   /**
