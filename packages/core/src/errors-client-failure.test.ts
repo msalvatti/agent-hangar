@@ -43,8 +43,64 @@ describe('describeClientFailure', () => {
     ['a plain error', new Error('boom')],
     ['a string rejection', 'boom'],
     ['an empty code', Object.assign(new Error('boom'), { code: '' })],
+    ['a non-string code', Object.assign(new Error('boom'), { code: 28_001 })],
   ])('returns unknown for %s', (_name, value) => {
     expect(describeClientFailure(value)).toBe('unknown');
+  });
+
+  /**
+   * The guarantee cannot rest on the caller passing a driver-generated value: this is an exported
+   * function taking `unknown`. A classification that does not have the shape of a driver code is
+   * refused rather than repeated, so a rejection whose `code` is itself a connection string — or
+   * any other punctuation-bearing text — cannot recreate the leak the function exists to close.
+   */
+  it.each([
+    ['a connection string', 'redis://u:SUPERSECRETPW@127.0.0.1:6379'],
+    ['a code with punctuation', 'ECONNREFUSED: ah:SUPERSECRETPW@db'],
+    ['an over-long code', 'A'.repeat(65)],
+  ])('refuses a code shaped like %s', (_name, code) => {
+    const reported = describeClientFailure(Object.assign(new Error('boom'), { code }));
+    expect(reported).toBe('unknown');
+    expect(reported).not.toContain(SECRET);
+  });
+
+  /**
+   * A nameless error class — what an anonymous `class extends Error {}` expression produces once
+   * it is passed somewhere without being bound to a name — offers no classification either, and
+   * must not reach the message as the empty string it literally is.
+   */
+  it('returns unknown when the error class has no name', () => {
+    class Nameless extends Error {}
+    Object.defineProperty(Nameless, 'name', { value: '' });
+    expect(describeClientFailure(new Nameless('boom'))).toBe('unknown');
+  });
+
+  /**
+   * The input is `unknown`, so introspecting it is itself an operation that can fail: a throwing
+   * `code` getter or a `Proxy` trap would otherwise replace the sanitized error with whatever it
+   * threw — which, coming from a driver, is exactly what must not travel.
+   */
+  it.each([
+    [
+      'a throwing code getter',
+      (): unknown =>
+        Object.defineProperty(new Error('boom'), 'code', {
+          get: () => {
+            throw new Error(`connect ECONNREFUSED redis://u:${SECRET}@h:6379`);
+          },
+        }),
+    ],
+    [
+      'a proxy whose has trap throws',
+      (): unknown =>
+        new Proxy(new Error('boom'), {
+          has: () => {
+            throw new Error(`connect ECONNREFUSED redis://u:${SECRET}@h:6379`);
+          },
+        }),
+    ],
+  ])('returns unknown for %s', (_name, build) => {
+    expect(describeClientFailure(build())).toBe('unknown');
   });
 
   /**
