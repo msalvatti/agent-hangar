@@ -57,10 +57,9 @@ describe('useApiQuery', () => {
 
   // A non-Error rejection is wrapped so `.message` is always available.
   it('wraps a non-Error rejection', async () => {
-    // Cast to Error at the type level only: the runtime value stays a plain string so the test
-    // can prove `toError()` wraps a non-Error reason via `String(reason)`.
-    const nonError = 'plain string' as unknown as Error;
-    const loader = vi.fn(() => Promise.reject(nonError));
+    // `mockRejectedValue` accepts any reason, so the rejection stays a plain string and the test
+    // proves `toError()` wraps a non-Error reason via `String(reason)`.
+    const loader = vi.fn().mockRejectedValue('plain string');
     const { result } = renderHook(() => useApiQuery(['b2'], loader));
     await waitFor(() => {
       expect(result.current.status).toBe('error');

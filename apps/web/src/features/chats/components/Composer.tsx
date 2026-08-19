@@ -59,6 +59,36 @@ export type ComposerProps = ComposerBaseProps &
     | { mode: 'followup' }
   );
 
+/** Props of {@link ComposerTargets}. */
+interface ComposerTargetsProps {
+  repo: RepoSummary | null;
+  onRepoChange: (repo: RepoSummary | null) => void;
+  branch: string | null;
+  onBranchChange: (branch: string) => void;
+  disabled: boolean;
+}
+
+/**
+ * The top row of a `new` composer: which repository and which branch the chat starts from.
+ *
+ * @param props - The current selection, its handlers and the lock state.
+ */
+function ComposerTargets({
+  repo,
+  onRepoChange,
+  branch,
+  onBranchChange,
+  disabled,
+}: ComposerTargetsProps) {
+  const fullName = repo?.fullName ?? null;
+  return (
+    <div className="border-border flex flex-wrap items-center gap-2 border-b px-3 py-2">
+      <RepoPicker value={fullName} disabled={disabled} onChange={onRepoChange} />
+      <BranchPicker repo={fullName} value={branch} disabled={disabled} onChange={onBranchChange} />
+    </div>
+  );
+}
+
 /** Placeholder per placement. */
 const PLACEHOLDER: Record<ComposerMode, string> = {
   new: 'Describe a task or ask a question…',
@@ -100,19 +130,13 @@ export function Composer(props: ComposerProps) {
   return (
     <div className={cn('border-input bg-card w-full rounded-xl border', className)}>
       {props.mode === 'new' && (
-        <div className="border-border flex flex-wrap items-center gap-2 border-b px-3 py-2">
-          <RepoPicker
-            value={props.repo?.fullName ?? null}
-            disabled={locked}
-            onChange={props.onRepoChange}
-          />
-          <BranchPicker
-            repo={props.repo?.fullName ?? null}
-            value={props.branch}
-            disabled={locked}
-            onChange={props.onBranchChange}
-          />
-        </div>
+        <ComposerTargets
+          repo={props.repo}
+          onRepoChange={props.onRepoChange}
+          branch={props.branch}
+          onBranchChange={props.onBranchChange}
+          disabled={locked}
+        />
       )}
       <label className="sr-only" htmlFor={promptId}>
         Prompt

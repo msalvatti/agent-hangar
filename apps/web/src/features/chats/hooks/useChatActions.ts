@@ -2,14 +2,18 @@
  * The chat-level actions of the header overflow menu and the archived banner.
  *
  * Layer: feature (hook).
+ *
+ * Every action follows the same shape — call the endpoint, refresh the lists that show the chat,
+ * confirm with a toast — so they are built from one runner instead of repeating it six times.
  */
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 
 import { invalidateQueries } from '@/shared/api/use-api-query';
+import { maskSecretShapes } from '@/shared/transcript';
 
 import {
   archiveChat,
@@ -45,7 +49,7 @@ export function useChatActions(id: string): UseChatActionsResult {
   const [busy, setBusy] = useState<Partial<Record<ChatActionName, boolean>>>({});
 
   const run = useCallback(
-    async (name: ChatActionName, action: () => Promise<void>, success: string) => {
+    async (name: ChatActionName, action: () => Promise<unknown>, success: string) => {
       setBusy((current) => ({ ...current, [name]: true }));
       try {
         await action();
@@ -53,7 +57,7 @@ export function useChatActions(id: string): UseChatActionsResult {
         invalidateQueries(['chat', id]);
         toast.success(success);
       } catch (reason) {
-        toast.error(reason instanceof Error ? reason.message : String(reason));
+        toast.error(maskSecretShapes(reason instanceof Error ? reason.message : String(reason)));
       } finally {
         setBusy((current) => ({ ...current, [name]: false }));
       }
@@ -61,31 +65,11 @@ export function useChatActions(id: string): UseChatActionsResult {
     [id],
   );
 
-  return {
-    archive: useCallback(
-      () =>
-        run(
-          'archive',
-          async () => {
-            await archiveChat(id);
-          },
-          'Chat archived',
-        ),
-      [id, run],
-    ),
-    restore: useCallback(
-      () =>
-        run(
-          'restore',
-          async () => {
-            await restoreChat(id);
-          },
-          'Chat restored',
-        ),
-      [id, run],
-    ),
-    remove: useCallback(
-      () =>
+  return useMemo(
+    () => ({
+      archive: () => run('archive', () => archiveChat(id), 'Chat archived'),
+      restore: () => run('restore', () => restoreChat(id), 'Chat restored'),
+      remove: () =>
         run(
           'remove',
           async () => {
@@ -94,34 +78,14 @@ export function useChatActions(id: string): UseChatActionsResult {
           },
           'Chat deleted',
         ),
-      [id, router, run],
-    ),
-    rename: useCallback(
-      (title: string) =>
-        run(
-          'rename',
-          async () => {
-            await renameChat(id, title);
-          },
-          'Chat renamed',
-        ),
-      [id, run],
-    ),
-    cancel: useCallback(
-      (turnId: string) =>
-        run(
-          'cancel',
-          async () => {
-            await cancelTurn(turnId);
-          },
-          'Turn stopped',
-        ),
-      [run],
-    ),
-    copyId: useCallback(async () => {
-      await navigator.clipboard.writeText(id);
-      toast.success('Chat id copied');
-    }, [id]),
-    busy,
-  };
+      rename: (title: string) => run('rename', () => renameChat(id, title), 'Chat renamed'),
+      cancel: (turnId: string) => run('cancel', () => cancelTurn(turnId), 'Turn stopped'),
+      copyId: async () => {
+        await navigator.clipboard.writeText(id);
+        toast.success('Chat id copied');
+      },
+      busy,
+    }),
+    [busy, id, router, run],
+  );
 }

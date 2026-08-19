@@ -10,18 +10,14 @@ import type { RepoSummary } from '@agent-hangar/core';
 import type { ReactNode } from 'react';
 import { useRef, useState } from 'react';
 
-import { ErrorCard } from '@/shared/feedback';
 import { PageHeader } from '@/shared/shell/PageHeader';
 import { assertPresent } from '@/shared/transcript';
-import { Button } from '@/shared/ui/button';
-import { Skeleton } from '@/shared/ui/skeleton';
 
 import { useCreateChat } from '../hooks/useCreateChat';
 import { useSettingsStatus } from '../hooks/useSettingsStatus';
 
-import { Composer } from './Composer';
+import { HomeComposer } from './HomeComposer';
 import { LogoMark } from './LogoMark';
-import { SettingsMissingNotice } from './SettingsMissingNotice';
 import { SuggestionGrid } from './SuggestionGrid';
 
 /** Props of {@link NewChatView}. */
@@ -82,55 +78,19 @@ export function NewChatView({ navTrigger }: NewChatViewProps) {
               textareaRef.current?.focus();
             }}
           />
-          {settings.status === 'loading' || settings.status === 'idle' ? (
-            <Skeleton className="h-36 w-full rounded-xl" data-testid="composer-skeleton" />
-          ) : settings.status === 'error' ? (
-            <ErrorCard
-              title="Could not load settings"
-              message={assertPresent(settings.error, 'An error status carries an error').message}
-              actions={
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  onClick={() => {
-                    void settings.refetch();
-                  }}
-                >
-                  Retry
-                </Button>
-              }
-            />
-          ) : settings.missing ? (
-            <SettingsMissingNotice />
-          ) : (
-            <div className="flex w-full flex-col gap-3">
-              <Composer
-                mode="new"
-                repo={repo}
-                onRepoChange={handleRepoChange}
-                branch={branch}
-                onBranchChange={setBranch}
-                value={prompt}
-                onChange={setPrompt}
-                onSubmit={submit}
-                busy={busy}
-                model={settings.data?.model}
-                textareaRef={textareaRef}
-              />
-              {createError !== undefined && (
-                <ErrorCard
-                  title="Could not start the chat"
-                  message={createError}
-                  actions={
-                    <Button type="button" variant="outline" size="sm" onClick={submit}>
-                      Retry
-                    </Button>
-                  }
-                />
-              )}
-            </div>
-          )}
+          <HomeComposer
+            settings={settings}
+            repo={repo}
+            onRepoChange={handleRepoChange}
+            branch={branch}
+            onBranchChange={setBranch}
+            prompt={prompt}
+            onPromptChange={setPrompt}
+            onSubmit={submit}
+            busy={busy}
+            createError={createError}
+            textareaRef={textareaRef}
+          />
         </div>
       </div>
     </>

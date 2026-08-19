@@ -16,6 +16,7 @@ import { Box, Check, ChevronDown } from 'lucide-react';
 import { useState } from 'react';
 
 import { cn } from '@/shared/lib/cn';
+import { assertPresent, maskSecretShapes } from '@/shared/transcript';
 import { Button } from '@/shared/ui/button';
 import {
   Command,
@@ -133,10 +134,11 @@ export function RepoPicker({
             )}
             {status === 'error' && (
               <div className="space-y-2 p-4 text-center text-sm">
-                {/* `error` is always set once `status === 'error'` (`useApiQuery` sets both
-                    together in the same catch block), so there is no real fallback case to
-                    render text for — `?.` alone satisfies the type without one. */}
-                <p className="text-destructive">{error?.message}</p>
+                <p className="text-destructive">
+                  {maskSecretShapes(
+                    assertPresent(error, 'An error status carries an error').message,
+                  )}
+                </p>
                 <Button
                   type="button"
                   variant="outline"

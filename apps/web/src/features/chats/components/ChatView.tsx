@@ -6,28 +6,28 @@
 'use client';
 
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import { ErrorCard } from '@/shared/feedback';
 import { PageHeader } from '@/shared/shell/PageHeader';
-import { assertPresent, Transcript } from '@/shared/transcript';
+import { assertPresent } from '@/shared/transcript';
 import type { CreateEventSource } from '@/shared/transcript';
 import { Button } from '@/shared/ui/button';
 
 import { useChat } from '../hooks/useChat';
 import { useChatActions } from '../hooks/useChatActions';
 import { useChatStream } from '../hooks/useChatStream';
+import { useEscapeToStop } from '../hooks/useEscapeToStop';
 import { useSendMessage } from '../hooks/useSendMessage';
 import { useSettingsStatus } from '../hooks/useSettingsStatus';
 
 import { ArchivedBanner } from './ArchivedBanner';
-import { ChatHeader } from './ChatHeader';
+import { ChatBody } from './ChatBody';
+import { ChatHeaderBar } from './ChatHeaderBar';
 import { ChatSkeleton } from './ChatSkeleton';
-import { Composer } from './Composer';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { LoadedChat } from './loaded-chat';
 import { ReconnectBar } from './ReconnectBar';
-import { TurnErrorCard } from './TurnErrorCard';
 
 /** Props of {@link ChatView}. */
 export interface ChatViewProps {
@@ -130,17 +130,10 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
     phase !== 'failed' &&
     phase !== 'cancelled';
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Escape' && running) {
-        setStopOpen(true);
-      }
-    };
-    globalThis.addEventListener('keydown', onKeyDown);
-    return () => {
-      globalThis.removeEventListener('keydown', onKeyDown);
-    };
-  }, [running]);
+  const openStop = useCallback(() => {
+    setStopOpen(true);
+  }, []);
+  useEscapeToStop(running, openStop);
 
   async function submit(prompt: string): Promise<void> {
     const turnId = await send.send(prompt);
@@ -163,29 +156,14 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
 
   return (
     <>
-      <ChatHeader
+      <ChatHeaderBar
         chat={chat}
         phase={phase}
         startedAt={stream.state.startedAt}
-        renaming={actions.busy.rename === true}
-        onRename={actions.rename}
-        onStop={() => {
-          setStopOpen(true);
-        }}
+        actions={actions}
+        onStop={openStop}
         onShowError={() => {
           errorRef.current?.scrollIntoView({ block: 'center' });
-        }}
-        onArchive={() => {
-          void actions.archive();
-        }}
-        onRestore={() => {
-          void actions.restore();
-        }}
-        onCopyId={() => {
-          void actions.copyId();
-        }}
-        onDelete={() => {
-          void actions.remove();
         }}
       />
       {connection === 'reconnecting' && <ReconnectBar />}
@@ -197,30 +175,22 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
           }}
         />
       )}
-      <Transcript
+      <ChatBody
         items={stream.state.items}
         phase={phase}
-        readOnly={archived}
-        className="min-h-0 flex-1"
+        archived={archived}
+        error={stream.state.error}
+        onRetry={retry}
+        errorRef={errorRef}
+        draft={draft}
+        onDraftChange={setDraft}
+        onSubmit={() => {
+          void submit(draft);
+        }}
+        sending={send.busy}
+        turnLive={running}
+        model={settings.data?.model}
       />
-      {stream.state.error !== null && (
-        <div ref={errorRef}>
-          <TurnErrorCard error={stream.state.error} onRetry={retry} />
-        </div>
-      )}
-      <div className="px-6 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-        <Composer
-          mode="followup"
-          value={draft}
-          onChange={setDraft}
-          onSubmit={() => {
-            void submit(draft);
-          }}
-          busy={send.busy}
-          disabled={archived || running}
-          model={settings.data?.model}
-        />
-      </div>
       <ConfirmDialog
         open={stopOpen}
         onOpenChange={setStopOpen}

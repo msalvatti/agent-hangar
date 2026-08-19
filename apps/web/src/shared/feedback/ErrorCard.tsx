@@ -35,7 +35,7 @@ export interface ErrorCardProps {
   title: string;
   /** Passed through {@link maskSecretShapes} before rendering. */
   message: string;
-  /** Machine-readable error code, shown as a small mono badge. */
+  /** Machine-readable error code, shown as a small mono badge; masked like the message. */
   code?: string;
   /** Retry / navigation buttons, supplied by the caller. */
   actions?: ReactNode;
@@ -70,7 +70,7 @@ export function ErrorCard({
             <span className="text-[14px] font-semibold">{title}</span>
             {code !== undefined && (
               <span className="bg-muted text-muted-foreground rounded px-1.5 py-0.5 font-mono text-[11px]">
-                {code}
+                {maskSecretShapes(code)}
               </span>
             )}
           </div>

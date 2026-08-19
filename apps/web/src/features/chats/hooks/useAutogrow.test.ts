@@ -8,6 +8,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { useAutogrow } from './useAutogrow';
 
 /**
+ * Builds a real `CSSStyleDeclaration` reporting the given line height.
+ *
+ * A detached element's `style` is a genuine declaration object, so the stub needs no cast to
+ * stand in for what `getComputedStyle` returns.
+ *
+ * @param lineHeight - Value the declaration reports for `line-height`.
+ * @returns A style declaration.
+ */
+function styleWithLineHeight(lineHeight: string): CSSStyleDeclaration {
+  const style = document.createElement('div').style;
+  style.lineHeight = lineHeight;
+  return style;
+}
+
+/**
  * Builds a textarea whose `scrollHeight` is fixed, since jsdom performs no layout.
  *
  * @param scrollHeight - The value `scrollHeight` reports.
@@ -62,9 +77,7 @@ describe('useAutogrow', () => {
   it('falls back to a fixed line height when the computed one is not a number', () => {
     const ref = createRef<HTMLTextAreaElement>();
     ref.current = textareaWithScrollHeight(1000);
-    vi.spyOn(globalThis, 'getComputedStyle').mockReturnValue({
-      lineHeight: 'normal',
-    } as unknown as CSSStyleDeclaration);
+    vi.spyOn(globalThis, 'getComputedStyle').mockReturnValue(styleWithLineHeight('normal'));
     renderHook(() => {
       useAutogrow(ref, 'tall');
     });
@@ -75,9 +88,7 @@ describe('useAutogrow', () => {
   it('uses the computed line height when it is a pixel value', () => {
     const ref = createRef<HTMLTextAreaElement>();
     ref.current = textareaWithScrollHeight(1000);
-    vi.spyOn(globalThis, 'getComputedStyle').mockReturnValue({
-      lineHeight: '20px',
-    } as unknown as CSSStyleDeclaration);
+    vi.spyOn(globalThis, 'getComputedStyle').mockReturnValue(styleWithLineHeight('20px'));
     renderHook(() => {
       useAutogrow(ref, 'tall');
     });

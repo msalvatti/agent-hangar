@@ -9,6 +9,7 @@ import { ChevronRight } from 'lucide-react';
 import { useSyncExternalStore } from 'react';
 
 import { cn } from '@/shared/lib/cn';
+import { assertPresent, maskSecretShapes } from '@/shared/transcript';
 import { Button } from '@/shared/ui/button';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/shared/ui/collapsible';
 import { Skeleton } from '@/shared/ui/skeleton';
@@ -77,7 +78,9 @@ export function ChatList({ activeId }: ChatListProps) {
       )}
       {status === 'error' && (
         <div className="flex flex-col items-start gap-2 px-2 text-sm">
-          <p className="text-destructive">{error?.message}</p>
+          <p className="text-destructive">
+            {maskSecretShapes(assertPresent(error, 'An error status carries an error').message)}
+          </p>
           <Button
             type="button"
             variant="outline"

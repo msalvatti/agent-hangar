@@ -23,18 +23,25 @@ export function stubMatchMedia(matching: readonly string[]): MatchMediaStub {
   const listeners = new Map<string, Set<() => void>>();
   let current = new Set(matching);
 
-  globalThis.matchMedia = ((query: string) => ({
-    matches: current.has(query),
-    media: query,
-    addEventListener: (_type: string, listener: () => void) => {
-      const set = listeners.get(query) ?? new Set<() => void>();
-      set.add(listener);
-      listeners.set(query, set);
-    },
-    removeEventListener: (_type: string, listener: () => void) => {
-      listeners.get(query)?.delete(listener);
-    },
-  })) as unknown as typeof globalThis.matchMedia;
+  // Installed with `defineProperty` rather than an assignment: `MediaQueryList` declares
+  // mutually-narrowing `addEventListener` overloads that no single hand-written signature
+  // satisfies, and this keeps the stub honest instead of casting it into the nominal type.
+  Object.defineProperty(globalThis, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      matches: current.has(query),
+      media: query,
+      addEventListener: (_type: string, listener: () => void) => {
+        const set = listeners.get(query) ?? new Set<() => void>();
+        set.add(listener);
+        listeners.set(query, set);
+      },
+      removeEventListener: (_type: string, listener: () => void) => {
+        listeners.get(query)?.delete(listener);
+      },
+    }),
+  });
 
   return {
     set: (next) => {
@@ -46,7 +53,11 @@ export function stubMatchMedia(matching: readonly string[]): MatchMediaStub {
       }
     },
     restore: () => {
-      globalThis.matchMedia = original;
+      Object.defineProperty(globalThis, 'matchMedia', {
+        configurable: true,
+        writable: true,
+        value: original,
+      });
     },
   };
 }

@@ -25,6 +25,12 @@ function maskAllMatches(text: string, pattern: RegExp): string {
   return masked;
 }
 
+/**
+ * Masks every secret-shaped substring so a leaked credential can never reach the screen.
+ *
+ * @param text - Text that may contain a secret-shaped substring.
+ * @returns `text` with every match replaced by `[REDACTED]`.
+ */
 export function maskSecretShapes(text: string): string {
   return SECRET_SHAPE_PATTERNS.reduce((masked, pattern) => maskAllMatches(masked, pattern), text);
 }

@@ -1,6 +1,7 @@
 /**
  * Tests for the inline error card: variants, code badge, actions, masking, and role.
  */
+import { REDACTED_TOKEN } from '@agent-hangar/core';
 import { GITHUB_CANARY } from '@agent-hangar/core/testing';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
@@ -20,6 +21,14 @@ describe('ErrorCard', () => {
   it('shows the code badge when provided', () => {
     render(<ErrorCard title="Turn failed" message="msg" code="WORKSPACE_IMAGE_MISSING" />);
     expect(screen.getByText('WORKSPACE_IMAGE_MISSING')).toBeInTheDocument();
+  });
+
+  // The code badge is masked like the message: a leaked credential must not reach the screen
+  // through the one field that is not prose.
+  it('masks a secret shape in the code badge', () => {
+    render(<ErrorCard title="Turn failed" message="msg" code={GITHUB_CANARY} />);
+    expect(screen.queryByText(GITHUB_CANARY)).not.toBeInTheDocument();
+    expect(screen.getByText(REDACTED_TOKEN)).toBeInTheDocument();
   });
 
   // No code badge renders when the prop is omitted.

@@ -92,6 +92,7 @@ describe('Transcript', () => {
     expect(screen.getByText('No messages yet.')).toBeInTheDocument();
   });
 
+  // A caller can replace the empty text without losing the empty state itself.
   it('shows a custom empty text when provided', () => {
     render(<Transcript items={[]} phase="idle" emptyText="Nothing here yet." />);
     expect(screen.getByText('Nothing here yet.')).toBeInTheDocument();
