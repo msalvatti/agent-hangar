@@ -449,6 +449,15 @@ describe('turn.failed', () => {
       { kind: 'error', id: 'error-0', code: 'WORKSPACE_IMAGE_MISSING', message: 'image not found' },
     ]);
   });
+
+  // A turn that fails mid-stream must not leave its assistant bubble stuck in streaming state
+  // (it will never receive another delta once the turn is terminal).
+  it('finalizes a streaming assistant item before the error item', () => {
+    let state = dispatchEvent(createInitialState(), { type: 'assistant.delta', text: 'partial' });
+    state = dispatchEvent(state, { type: 'turn.failed', error: { code: 'E', message: 'boom' } });
+    expect(state.items[0]).toMatchObject({ kind: 'assistant', text: 'partial', streaming: false });
+    expect(state.items[1]).toMatchObject({ kind: 'error', code: 'E' });
+  });
 });
 
 describe('turn.cancelled', () => {

@@ -339,7 +339,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): Tr
         phase: 'failed',
         finishedAt: now,
         error: event.error,
-        items: [...state.items, errorItem],
+        items: [...finalizeStreamingAssistant(state.items), errorItem],
       };
     }
 

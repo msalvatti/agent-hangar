@@ -121,12 +121,18 @@ export function useTurnEvents(options: UseTurnEventsOptions): UseTurnEventsResul
   }, [now]);
 
   const sourceRef = useRef<EventSource | null>(null);
+  // Timestamp of the most recent (re)connect attempt. The stall watchdog compares against
+  // `max(lastActivityAt, lastOpenedAt)`: without it, reopening a still-stalled connection would
+  // not itself count as activity, so the very next 5 s tick would see the same staleness and
+  // reopen again — a tight reconnect loop instead of a fresh 45 s grace period per attempt.
+  const lastOpenedAtRef = useRef(0);
 
   const openConnection = useCallback(
     (resumeId: string | null) => {
       if (url === null) {
         return;
       }
+      lastOpenedAtRef.current = nowRef.current();
       const source = createEventSourceRef.current(
         url,
         resumeId === null ? undefined : { lastEventId: resumeId },
@@ -184,10 +190,11 @@ export function useTurnEvents(options: UseTurnEventsOptions): UseTurnEventsResul
     const watchdog = setInterval(() => {
       const current = stateRef.current;
       const isActive = current.phase === 'preparing' || current.phase === 'running';
-      if (!isActive || current.lastActivityAt === null) {
+      if (!isActive) {
         return;
       }
-      if (nowRef.current() - current.lastActivityAt > STALL_TIMEOUT_MS) {
+      const lastActivity = Math.max(current.lastActivityAt ?? 0, lastOpenedAtRef.current);
+      if (nowRef.current() - lastActivity > STALL_TIMEOUT_MS) {
         sourceRef.current?.close();
         dispatch({ type: 'connection', connection: 'reconnecting' });
         openConnection(current.lastEventId);

@@ -187,6 +187,39 @@ describe('useTurnEvents', () => {
     expect(result.current.state.connection).toBe('reconnecting');
   });
 
+  // A reopen itself grants a fresh stall grace period: without that, the next 5 s tick would see
+  // the same stale `lastActivityAt` (no new data has arrived yet on the new connection) and
+  // reopen again immediately, looping every 5 s instead of waiting a full 45 s per attempt.
+  it('does not reopen again immediately after a stall-triggered reopen', () => {
+    const { instances, setNow } = setup();
+    act(() => {
+      instances[0]?.emit('assistant.delta', { type: 'assistant.delta', text: 'hi' }, '1-0');
+    });
+    setNow(46_000);
+    act(() => {
+      vi.advanceTimersByTime(5_000);
+    });
+    expect(instances).toHaveLength(2);
+
+    setNow(51_000);
+    act(() => {
+      vi.advanceTimersByTime(5_000);
+    });
+    expect(instances).toHaveLength(2);
+  });
+
+  // A resumed turn seeded as already "running" (e.g. a page reload mid-turn) has no recorded
+  // activity yet; the watchdog must fall back to the connection's own open time instead of
+  // treating a null lastActivityAt as "never stall".
+  it('falls back to the connection open time when no activity has been recorded yet', () => {
+    const { instances, setNow } = setup({ initialPhase: 'running' });
+    setNow(46_000);
+    act(() => {
+      vi.advanceTimersByTime(5_000);
+    });
+    expect(instances).toHaveLength(2);
+  });
+
   // While active but not yet stalled, the watchdog checks and does nothing.
   it('does not reopen the connection before the stall threshold is reached', () => {
     const { instances, setNow } = setup();
