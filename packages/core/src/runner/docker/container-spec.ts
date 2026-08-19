@@ -158,6 +158,12 @@ export function buildContainerCreateOptions(
       SecurityOpt: ['no-new-privileges'],
       Tmpfs: { '/tmp': '' },
       NetworkMode: 'bridge',
+      // Run a real init as PID 1. Two reasons, both measurable: the kernel discards signals that
+      // PID 1 has no handler for, so the image's idling `sleep` never sees the SIGTERM `destroy`
+      // sends and every teardown would burn the full stop grace before the SIGKILL; and an init
+      // reaps the orphaned children an agent's shell commands leave behind, which would otherwise
+      // accumulate as zombies against the PIDs limit for the whole life of the workspace.
+      Init: true,
     },
   };
 }

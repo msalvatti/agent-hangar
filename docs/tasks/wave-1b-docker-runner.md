@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-B 🐳 (Docker-integration lane — the orchestrator runs at most one 🐳 lane at a time) |
 | **Status** | 🟦 running |
-| **Progress** | 3/5 tasks |
+| **Progress** | 4/5 tasks |
 | **Branch** | `feat/w1b-docker-runner` |
 | **Owned paths** | `packages/core/src/runner/docker/**`, `infra/workspace/**` (Dockerfile, askpass.sh, .dockerignore, README.md, .gitignore) · additive-only edits allowed in `packages/core/vitest.config.ts` (`coverage.include`) and `packages/core/package.json` (`exports` subpath `./runner/docker`) |
 | **Depends on** | W0 merged to `main` |
@@ -45,7 +45,7 @@ Quality bar (same as every lane): TypeScript strict, zero `any`, zero suppressio
 | 1B.1 | Docker socket resolution + container spec builder (pure) | ✅ | P0 | M | — |
 | 1B.2 | Exec stream: demux, stdin pump, timeout/abort kill path (pure) | ✅ | P0 | M | 1B.1 |
 | 1B.3 | `DockerWorkspaceRunner` class + factory + unit tests with a faked Docker API | ✅ | P0 | L | 1B.1, 1B.2 |
-| 1B.4 | Workspace image hardening/verification, askpass token-file support, README, `@docker` integration suite | 📋 | P0 | M | 1B.3 |
+| 1B.4 | Workspace image hardening/verification, askpass token-file support, README, `@docker` integration suite | ✅ | P0 | M | 1B.3 |
 | 1B.5 | Close-out: gates, code review, plan dashboard, PR | 📋 | P0 | S | 1B.1–1B.4 |
 
 ---
@@ -349,16 +349,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1b-docker-runn
 
 ## Task 1B.4 — Workspace image hardening/verification, askpass token-file support, README, `@docker` integration suite
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1B.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1B.3
 
 **Description.** Verify and finish the workspace image W0 started (build time, non-root, tools present, no secrets in image config, placeholder intact), extend `askpass.sh` to read the token from `AH_GIT_TOKEN_FILE` when set (so W1-D's runtime can keep `GITHUB_TOKEN` out of the agent's shell env), prepare `.dockerignore`/`.gitignore` for the runtime bundle W1-D will drop into `infra/workspace/runtime/`, write `infra/workspace/README.md`, and add the `@docker` integration suite covering every behaviour listed in spec 06 §3 for the runner.
 
 **Acceptance criteria**
-- [ ] `docker build -t agent-hangar/workspace:dev infra/workspace` succeeds in < 3 min on a warm cache; `docker run --rm agent-hangar/workspace:dev id -u` → `1001`; `git`, `rg`, `jq`, `python3`, `node`, `pnpm` (corepack) resolve; `docker image inspect` shows `Config.User=agent`, `WorkingDir=/workspace`, `Entrypoint=["sleep","infinity"]`, and no `Env` entry matching `TOKEN|KEY|SECRET`
-- [ ] The placeholder `# --- AGENT RUNTIME BUNDLE (added by W1-D) ---` is present and untouched; `.dockerignore` allows `runtime/`; `infra/workspace/.gitignore` ignores `runtime/`
-- [ ] `askpass.sh`: Username prompt → `x-access-token`; otherwise prints the content of `$AH_GIT_TOKEN_FILE` when that variable is set and the file is readable, else `$GITHUB_TOKEN`; never echoes the prompt; exit 0
-- [ ] `infra/workspace/README.md` documents contents, build command, security properties, the W1-D COPY lines that will be added, and the `infra:image` flow
-- [ ] `packages/core/src/runner/docker/docker-workspace-runner.integration.test.ts` (describe tagged `@docker`) green locally with `DOCKER_AVAILABLE=1`; fails loudly with `CI=1` and no Docker; skips with a printed instruction otherwise
+- [x] `docker build -t agent-hangar/workspace:dev infra/workspace` succeeds in < 3 min on a warm cache; `docker run --rm agent-hangar/workspace:dev id -u` → `1001`; `git`, `rg`, `jq`, `python3`, `node`, `pnpm` (corepack) resolve; `docker image inspect` shows `Config.User=agent`, `WorkingDir=/workspace`, `Entrypoint=["sleep","infinity"]`, and no `Env` entry matching `TOKEN|KEY|SECRET`
+- [x] The placeholder `# --- AGENT RUNTIME BUNDLE (added by W1-D) ---` is present and untouched; `.dockerignore` allows `runtime/`; `infra/workspace/.gitignore` ignores `runtime/`
+- [x] `askpass.sh`: Username prompt → `x-access-token`; otherwise prints the content of `$AH_GIT_TOKEN_FILE` when that variable is set and the file is readable, else `$GITHUB_TOKEN`; never echoes the prompt; exit 0
+- [x] `infra/workspace/README.md` documents contents, build command, security properties, the W1-D COPY lines that will be added, and the `infra:image` flow
+- [x] `packages/core/src/runner/docker/docker-workspace-runner.integration.test.ts` (describe tagged `@docker`) green locally with `DOCKER_AVAILABLE=1`; fails loudly with `CI=1` and no Docker; skips with a printed instruction otherwise
 
 **Files to create/modify**
 `infra/workspace/{Dockerfile (minimal hardening only), askpass.sh, .dockerignore, .gitignore, README.md}`, `packages/core/src/runner/docker/docker-workspace-runner.integration.test.ts`, `packages/core/src/runner/docker/testing/docker-available.ts` (gate helper).
@@ -510,3 +510,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1b-docker-runn
 - 1B.1 ✅ 2026-08-19 — socket resolution order, hardened container-spec builder with compose grouping labels, typed DockerRunnerError; 100 % unit coverage
 - 1B.2 ✅ 2026-08-19 — frame demuxer, stdin pump with backpressure and EOF, timeout/abort termination path and the pid-file exec wrappers; 100 % unit coverage
 - 1B.3 ✅ 2026-08-19 — DockerWorkspaceRunner over an injectable Docker API, factory, in-memory fake and the `@agent-hangar/core/runner/docker` subpath export; 100 % unit coverage
+- 1B.4 ✅ 2026-08-19 — image labels and runtime-dir ownership, askpass token file, image README, `@docker` suite (15 tests, 6.4 s) and the `--init` fix that cut teardown from 10 s to 0.1 s per workspace

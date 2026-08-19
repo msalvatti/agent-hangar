@@ -102,6 +102,7 @@ describe('buildContainerCreateOptions', () => {
         SecurityOpt: ['no-new-privileges'],
         Tmpfs: { '/tmp': '' },
         NetworkMode: 'bridge',
+        Init: true,
       },
     });
   });

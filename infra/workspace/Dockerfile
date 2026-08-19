@@ -4,6 +4,9 @@
 # GIT_ASKPASS. The agent runtime bundle is copied in by a later build step (see placeholder).
 FROM node:24-bookworm-slim
 
+LABEL org.opencontainers.image.title="agent-hangar-workspace"
+LABEL ah.image="workspace"
+
 ENV DEBIAN_FRONTEND=noninteractive \
     LANG=C.UTF-8 \
     GIT_TERMINAL_PROMPT=0 \
@@ -16,7 +19,8 @@ RUN apt-get update \
     && corepack enable \
     && useradd -m -u 1001 -s /bin/bash agent \
     && mkdir -p /workspace /opt/agent-runtime \
-    && chown agent:agent /workspace
+    && chown agent:agent /workspace \
+    && chown -R agent:agent /opt/agent-runtime
 
 COPY --chmod=755 askpass.sh /opt/agent-runtime/askpass.sh
 
