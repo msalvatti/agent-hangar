@@ -511,4 +511,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1b-docker-runn
 - 1B.2 ✅ 2026-08-19 — frame demuxer, stdin pump with backpressure and EOF, timeout/abort termination path and the pid-file exec wrappers; 100 % unit coverage
 - 1B.3 ✅ 2026-08-19 — DockerWorkspaceRunner over an injectable Docker API, factory, in-memory fake and the `@agent-hangar/core/runner/docker` subpath export; 100 % unit coverage
 - 1B.4 ✅ 2026-08-19 — image labels and runtime-dir ownership, askpass token file, image README, `@docker` suite (15 tests, 6.4 s) and the `--init` fix that cut teardown from 10 s to 0.1 s per workspace
-- 1B.5 ✅ 2026-08-19 — gates green, code review and security review to zero findings, dashboards updated, PR #PRNUM opened
+- 1B.5 ✅ 2026-08-19 — gates green, code review and security review to zero findings, dashboards updated, PR #7 opened

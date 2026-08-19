@@ -297,7 +297,7 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 |---|---|---|---|---|
 | W0 | 🟨 PR open | `feat/w0-foundation` · PR #4 | core 100 / web 100 / worker 100 (all four metrics) | TypeScript pinned `~6.0.3` |
 | W1-A | 🟨 PR open | `feat/w1a-secrets-redaction` · PR #6 | core 100 (all four metrics) | |
-| W1-B 🐳 | 🟨 PR open | `feat/w1b-docker-runner` · PR #PRNUM | 100/100/100/100 (runner/docker) | subpath export `@agent-hangar/core/runner/docker`; askpass supports AH_GIT_TOKEN_FILE |
+| W1-B 🐳 | 🟨 PR open | `feat/w1b-docker-runner` · PR #7 | 100/100/100/100 (runner/docker) | subpath export `@agent-hangar/core/runner/docker`; askpass supports AH_GIT_TOKEN_FILE |
 | W1-C | 🟨 PR open | `feat/w1c-openai-provider` · PR #10 | core 100 / 100 / 100 / 100 | openai SDK 7.5.0 verified |
 | W1-D | 🟨 PR open | `feat/w1d-agent-runtime` · PR #11 | 100/100/100/100 (agent-runtime src/**) | Dockerfile COPY lines + infra:image change in PR body; openai provider seam for W3-A |
 | W1-E | 🟨 PR open | `feat/w1e-persistence` · PR #8 | core 100 (all four metrics) | |
