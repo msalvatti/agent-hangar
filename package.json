@@ -10,7 +10,7 @@
     "node": ">=24 <25"
   },
   "scripts": {
-    "dev": "bash -c 'set -a; . ./.env.local; set +a; concurrently -n web,worker -c blue,magenta \"pnpm --filter web dev --port ${WEB_PORT:-3000}\" \"pnpm --filter worker dev\"'",
+    "dev": "bash -c 'set -a; . ./.env.local; set +a; export NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\"; concurrently -n web,worker -c blue,magenta \"pnpm --filter web dev --port ${WEB_PORT:-3000}\" \"pnpm --filter worker dev\"'",
     "build": "pnpm -r --if-present build",
     "start": "bash -c 'set -a; . ./.env.local; set +a; concurrently -n web,worker -c blue,magenta \"pnpm --filter web start --port ${WEB_PORT:-3000}\" \"pnpm --filter worker start\"'",
     "lint": "eslint .",
