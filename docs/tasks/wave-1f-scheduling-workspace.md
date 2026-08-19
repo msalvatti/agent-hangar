@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-F (Wave 1, parallel with W1-A … W1-I) |
 | **Status** | 🟦 running |
-| **Progress** | 1/5 tasks |
+| **Progress** | 2/5 tasks |
 | **Branch** | `feat/w1f-scheduling-workspace` |
 | **Owned paths** | `packages/core/src/scheduling/**` (except the frozen `types.ts`), `packages/core/src/workspace/**` (except the frozen `types.ts`), `packages/core/src/restore/**`, `packages/core/src/queues/queues.ts`, `packages/core/src/queues/schedulers.ts` (+ their `*.test.ts` / `*.integration.test.ts`; `queues/contracts.ts` is frozen) — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./scheduling/index.js`, `./workspace/index.js`, `./restore/index.js`, `./queues/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
@@ -44,7 +44,7 @@ This lane fills in the pure domain logic that W2-A (API) and W2-B (worker) orche
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
 | 1F.1 | Scheduling: cron validation, `nextRunAt` (tz/DST), `describeCron`, overlap policy, reconcile diff, scheduler keys | ✅ | P0 | M | — |
-| 1F.2 | Workspace lifecycle: transition tables + `assertTransition`, `ensureWorkspaceDecision`, idle-TTL selection, orphan reconcile | 📋 | P0 | M | — |
+| 1F.2 | Workspace lifecycle: transition tables + `assertTransition`, `ensureWorkspaceDecision`, idle-TTL selection, orphan reconcile | ✅ | P0 | M | — |
 | 1F.3 | Restore context: history window, `TOOL_SUMMARY` compaction text, restoration notice, `buildRestoreContext`, `buildTurnRequest` | 📋 | P0 | M | 1F.2 |
 | 1F.4 | BullMQ factories: queues, worker connection, Job Scheduler wrappers, `@redis` integration tests | 📋 | P0 | M | 1F.1 |
 | 1F.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1F.1–1F.4 |
@@ -163,17 +163,17 @@ Completion Protocol (after you finish):
 
 ## Task 1F.2 — Workspace lifecycle: transitions, `ensureWorkspaceDecision`, idle-TTL, orphan reconcile
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Pure workspace domain logic: the allowed-transition tables for `WorkspaceStatus` (and the shared `TurnStatus`/`JobRunStatus` run lifecycle) with `IllegalTransitionError`, the "ensure workspace" decision (reuse live READY → `reuse`; none → `create` + restore; image missing → `WorkspaceImageMissing`; CREATING/BUSY/STOPPING → `WorkspaceBusyError` so the worker runs stalled recovery first), idle-TTL selection for GC, and the orphan reconcile plan from `runner.list()` vs DB live rows.
 
 **Acceptance criteria**
-- [ ] `WORKSPACE_TRANSITIONS` table exactly: CREATING→{READY, FAILED, DESTROYED}; READY→{BUSY, STOPPING, DESTROYED, FAILED}; BUSY→{READY, STOPPING, FAILED, DESTROYED}; STOPPING→{DESTROYED, FAILED}; FAILED→{DESTROYED}; DESTROYED→{} ; `RUN_TRANSITIONS` (Turn/JobRun): QUEUED→{PREPARING, FAILED, CANCELLED}; PREPARING→{RUNNING, FAILED, CANCELLED}; RUNNING→{SUCCEEDED, FAILED, CANCELLED}; terminal→{}
-- [ ] `canTransition`, `assertTransition` (throws `IllegalTransitionError` naming subject, from, to), `LIVE_WORKSPACE_STATUSES` = CREATING/READY/BUSY/STOPPING (mirrors the partial unique index), `isLiveWorkspaceStatus`, `isTerminalRunStatus`
-- [ ] `ensureWorkspaceDecision({ liveWorkspace, imagePresent, restore })` returns `EnsureWorkspaceDecision` exactly as typed in W0; `imagePresent === false` → throws `WorkspaceImageMissing` before anything else; READY → `{ action: 'reuse', workspaceId }`; `null`/DESTROYED/FAILED → `{ action: 'create', clone: true, restore }`; CREATING/BUSY/STOPPING → `WorkspaceBusyError` (local `AgentHangarError` subclass, code `WORKSPACE_BUSY`)
-- [ ] `selectIdleWorkspaces(candidates, { now, idleTtlMin })` → ids of READY workspaces with `now − lastActiveAt > ttl` (strict), any kind; stable order by `lastActiveAt` asc
-- [ ] `planOrphanReconcile({ runnerHandles, dbLive })` → `{ destroyOrphans: WorkspaceHandle[] (runner has it, DB has no live row for workspaceId), markGone: string[] (DB live row, runner does not list it) }`, sorted deterministically
-- [ ] 100 % coverage on `src/workspace/**` (types.ts excluded)
+- [x] `WORKSPACE_TRANSITIONS` table exactly: CREATING→{READY, FAILED, DESTROYED}; READY→{BUSY, STOPPING, DESTROYED, FAILED}; BUSY→{READY, STOPPING, FAILED, DESTROYED}; STOPPING→{DESTROYED, FAILED}; FAILED→{DESTROYED}; DESTROYED→{} ; `RUN_TRANSITIONS` (Turn/JobRun): QUEUED→{PREPARING, FAILED, CANCELLED}; PREPARING→{RUNNING, FAILED, CANCELLED}; RUNNING→{SUCCEEDED, FAILED, CANCELLED}; terminal→{}
+- [x] `canTransition`, `assertTransition` (throws `IllegalTransitionError` naming subject, from, to), `LIVE_WORKSPACE_STATUSES` = CREATING/READY/BUSY/STOPPING (mirrors the partial unique index), `isLiveWorkspaceStatus`, `isTerminalRunStatus`
+- [x] `ensureWorkspaceDecision({ liveWorkspace, imagePresent, restore })` returns `EnsureWorkspaceDecision` exactly as typed in W0; `imagePresent === false` → throws `WorkspaceImageMissing` before anything else; READY → `{ action: 'reuse', workspaceId }`; `null`/DESTROYED/FAILED → `{ action: 'create', clone: true, restore }`; CREATING/BUSY/STOPPING → `WorkspaceBusyError` (local `AgentHangarError` subclass, code `WORKSPACE_BUSY`)
+- [x] `selectIdleWorkspaces(candidates, { now, idleTtlMin })` → ids of READY workspaces with `now − lastActiveAt > ttl` (strict), any kind; stable order by `lastActiveAt` asc
+- [x] `planOrphanReconcile({ runnerHandles, dbLive })` → `{ destroyOrphans: WorkspaceHandle[] (runner has it, DB has no live row for workspaceId), markGone: string[] (DB live row, runner does not list it) }`, sorted deterministically
+- [x] 100 % coverage on `src/workspace/**` (types.ts excluded)
 
 **Files to create**
 `packages/core/src/workspace/lifecycle.ts`, `lifecycle.test.ts`, `errors.ts`, `errors.test.ts`, `ensure.ts`, `ensure.test.ts`, `idle.ts`, `idle.test.ts`, `orphans.ts`, `orphans.test.ts`, `index.ts`; modify `packages/core/vitest.config.ts` (+ the owned folder `index.ts`).
@@ -549,3 +549,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1f-scheduling-
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 - 1F.1 ✅ 2026-08-19 — cron validation/description/next-run over cron-parser 5.10.0, overlap policy, scheduler keys and reconcile plan; 46 unit tests, 100 % on `src/scheduling/**`
+- 1F.2 ✅ 2026-08-19 — workspace and run transition tables, ensure-workspace decision with `WorkspaceBusyError`, idle-TTL selection and orphan reconcile; 33 unit tests, 100 % on `src/workspace/**`
