@@ -150,6 +150,28 @@ describe('connectTestDb', () => {
   });
 
   /**
+   * The refusal is printed and logged, so it must never repeat a credential. An authority-less
+   * connection URL parses with an empty host and puts user, password and host into the pathname,
+   * which the name reader would otherwise hand to the message verbatim.
+   */
+  it.each([
+    ['an authority-less URL', 'postgresql:/ah:PLANTED_PW@127.0.0.1:5432/agent_hangar_dev'],
+    ['a normal URL with credentials', 'postgresql://ah:PLANTED_PW@127.0.0.1:5432/agent_hangar_dev'],
+    ['a path that is not a plain name', 'postgresql://host/PLANTED_PW@x'],
+  ])('refuses %s without repeating what it was given', (_name, connectionString) => {
+    vi.stubEnv(DESTRUCTIVE_TESTS_ENV, '1');
+    let message = '';
+    try {
+      connectTestDb({ DATABASE_URL: connectionString, [DESTRUCTIVE_TESTS_ENV]: '1' });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+    expect(message).toContain('Refusing to erase');
+    expect(message).not.toContain('PLANTED_PW');
+    expect(createPrismaClient).not.toHaveBeenCalled();
+  });
+
+  /**
    * Default env source is `process.env`, so a real run is gated by the same two conditions.
    */
   it('reads process.env by default', () => {
