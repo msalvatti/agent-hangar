@@ -37,6 +37,35 @@ let stderr: string[];
 let sigintHandlers: (() => void)[];
 
 /**
+ * Remote named by every fixture request.
+ *
+ * The turn request crosses `turnRequestSchema`, which requires a credential-free hierarchical
+ * `http(s)` URL, so the `file://` path of the local bare repository can no longer be the URL the
+ * worker sends. The fixture therefore names a plausible GitHub remote and {@link gitAgainstFixture}
+ * redirects it to the repository on disk, which keeps every git command in these tests real and
+ * changes only where `origin` lives.
+ */
+const REMOTE_URL = 'https://github.com/agent-hangar/fixture.git';
+
+/**
+ * Real git, with {@link REMOTE_URL} pointing at the seeded bare repository.
+ *
+ * @returns A runner that substitutes the remote and delegates everything else.
+ */
+function gitAgainstFixture(): GitRunner {
+  const real = createGitRunner();
+  return {
+    // The subcommand is never a URL, so only the arguments after it are translated; keeping it
+    // separate is also what preserves the non-empty tuple the runner's type promises.
+    run: (args, options) =>
+      real.run(
+        [args[0], ...args.slice(1).map((arg) => (arg === REMOTE_URL ? repo.url : arg))],
+        options,
+      ),
+  };
+}
+
+/**
  * Builds a turn request for the seeded repository.
  *
  * @param prompt - Last user message, which selects the fake script.
@@ -50,7 +79,7 @@ function request(prompt: string, overrides: Partial<TurnRequest> = {}): TurnRequ
     model: 'fake-model',
     instructions: 'be useful',
     items: [{ role: 'user', content: prompt }],
-    repo: { url: repo.url, baseBranch: 'main', workBranch: 'agent/work' },
+    repo: { url: REMOTE_URL, baseBranch: 'main', workBranch: 'agent/work' },
     limits: {
       maxSteps: 8,
       maxTurnMs: 120_000,
@@ -123,7 +152,7 @@ async function runTurn(
     io: io(stdinText, env),
     workspaceRoot: root,
     runtimeDir,
-    urlPolicy: 'any',
+    git: gitAgainstFixture(),
     ...overrides,
   });
 }
@@ -270,10 +299,17 @@ describe('runTurnCommand and failures it can name', () => {
   });
 
   it('applies the strict URL policy and the container paths when none are chosen', async () => {
-    // Production passes no overrides at all. Nothing here touches `/workspace` or `/tmp`: with no
-    // token in the environment no file is written, and the `file://` remote is refused before
-    // git runs.
-    const exit = await runTurnCommand({ io: io(`${JSON.stringify(request('hello'))}\n`) });
+    // Production passes no overrides at all. Nothing here touches `/workspace` or `/tmp` and
+    // nothing reaches the network: with no token in the environment no file is written, and this
+    // remote is refused before git runs because the policy requires https on github.com. The
+    // schema upstream already requires a credential-free http(s) URL, so the rejection under test
+    // is the runtime's own policy rather than the parse.
+    const turn = request('hello');
+    const exit = await runTurnCommand({
+      io: io(
+        `${JSON.stringify({ ...turn, repo: { ...turn.repo, url: 'http://github.com/acme/demo' } })}\n`,
+      ),
+    });
     expect(exit).toBe(EXIT.ok);
     expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'prepare' } });
   });
@@ -336,7 +372,7 @@ describe('runTurnCommand and cancellation', () => {
     };
     const pending = runTurn(
       `${JSON.stringify(request('run a long command'))}\n`,
-      { git: createGitRunner() },
+      {},
       { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) },
     );
     await new Promise((resolve) => setTimeout(resolve, 400));
