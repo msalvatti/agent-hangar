@@ -74,19 +74,23 @@ export interface CreateLoggerOptions {
 }
 
 /**
- * Scrubs a serialised error, whose message and stack routinely quote the input that failed.
+ * Scrubs a serialised error.
+ *
+ * A message and a stack routinely quote the input that failed, and libraries attach whole request
+ * objects as extra properties, so every property is walked rather than only the top-level strings.
+ * Serialisation runs before the record formatter, so this is the only pass over an error's fields.
  *
  * @param serialized - Output of pino's standard error serializer.
- * @param redact - String redaction function.
- * @returns A new record with every string property scrubbed.
+ * @param redactor - Redactor applied to keys and values.
+ * @returns A new record with every reachable string scrubbed.
  */
 function redactSerializedError(
   serialized: Record<string, unknown>,
-  redact: (value: string) => string,
+  redactor: LoggerRedactor,
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(serialized)) {
-    result[redact(key)] = typeof value === 'string' ? redact(value) : value;
+    result[redactor.redact(key)] = redactor.redactJson(value);
   }
   return result;
 }
@@ -95,11 +99,11 @@ function redactSerializedError(
  * Applies the last-resort scrub to a finished line, keeping the output parseable.
  *
  * @param line - Serialised record, newline terminated.
- * @param redact - String redaction function.
+ * @param redactor - Redactor applied to the whole line.
  * @returns The scrubbed line, or a fixed notice when scrubbing broke the JSON.
  */
-function redactLine(line: string, redact: (value: string) => string): string {
-  const scrubbed = redact(line);
+function redactLine(line: string, redactor: LoggerRedactor): string {
+  const scrubbed = redactor.redact(line);
   if (scrubbed === line) {
     return line;
   }
@@ -119,26 +123,29 @@ function redactLine(line: string, redact: (value: string) => string): string {
  */
 function buildLoggerOptions(options: CreateLoggerOptions): LoggerOptions {
   const { redactor } = options;
-  const redact = (value: string): string => redactor.redact(value);
   return {
     level: options.level,
     base: options.base ?? {},
     timestamp: pino.stdTimeFunctions.isoTime,
     redact: { paths: [...LOG_REDACT_PATHS], censor: REDACTED_TOKEN },
     formatters: {
-      // `redactJson` rebuilds plain objects as plain objects, so the record keeps its shape.
+      // `redactJson` rebuilds a plain object as a plain object, so the record keeps its shape and
+      // the cast back from `unknown` holds by construction. Same for the bindings below.
       log: (record) => redactor.redactJson(record) as Record<string, unknown>,
       bindings: (bindings) => redactor.redactJson(bindings) as Record<string, unknown>,
     },
     serializers: {
-      err: (error: Error) => redactSerializedError(pino.stdSerializers.err(error), redact),
+      err: (error: Error) => redactSerializedError(pino.stdSerializers.err(error), redactor),
     },
     hooks: {
       logMethod(args, method) {
+        // Scrubbing here reaches the message and the interpolation arguments, which pino merges
+        // into `msg` after this hook and which no later layer could take apart again. The cast
+        // restores the tuple shape that `map` widens to `unknown[]`.
         const scrubbed = args.map((argument: unknown) => redactor.redactJson(argument));
         method.apply(this, scrubbed as Parameters<typeof method>);
       },
-      streamWrite: (line) => redactLine(line, redact),
+      streamWrite: (line) => redactLine(line, redactor),
     },
     ...(options.name === undefined ? {} : { name: options.name }),
   };

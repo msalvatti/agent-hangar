@@ -155,6 +155,23 @@ describe('createLogger', () => {
   });
 
   /**
+   * HTTP clients attach the whole failed request to the error they throw, so a credential can sit
+   * several levels inside an error property; the serializer walks them all rather than only the
+   * top-level strings.
+   */
+  it('redacts a credential nested inside an error property', () => {
+    const sink = capture();
+    const failure = Object.assign(new Error('request failed'), {
+      request: { headers: { custom: OPENAI_CANARY } },
+    });
+
+    sink.logger.error({ err: failure }, 'failed');
+
+    assertNoCanary(sink.text());
+    expect(sink.text()).toContain(REDACTED_TOKEN);
+  });
+
+  /**
    * A credential parked on a class instance is invisible to the structural walk, but pino still
    * serialises the instance's own fields; the final scrub of the written line closes that gap.
    */

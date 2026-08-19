@@ -95,6 +95,63 @@ function isPlainObject(value: object): boolean {
 }
 
 /**
+ * Adds one spelling of a credential to a registry.
+ *
+ * Values shorter than {@link MIN_REGISTERED_LENGTH} would match ordinary prose, and a value that
+ * occurs inside the replacement token would make redaction non-idempotent; both are ignored so a
+ * caller can register whatever it revealed without inspecting it first.
+ *
+ * @param registry - Set of exact values to look for.
+ * @param replacement - Token written in place of a match.
+ * @param value - Exact text to look for.
+ */
+function remember(registry: Set<string>, replacement: string, value: string): void {
+  if (value.length >= MIN_REGISTERED_LENGTH && !replacement.includes(value)) {
+    registry.add(value);
+  }
+}
+
+/**
+ * Walks a JSON-like value, scrubbing keys and strings.
+ *
+ * @param value - Value to scrub.
+ * @param redact - String redaction function.
+ * @param ancestors - Objects on the current path, for cycle detection.
+ * @returns A new structure; the input is never mutated.
+ */
+function redactValue(
+  value: unknown,
+  redact: (input: string) => string,
+  ancestors: WeakSet<object>,
+): unknown {
+  if (typeof value === 'string') {
+    return redact(value);
+  }
+  if (typeof value !== 'object' || value === null) {
+    return value;
+  }
+  if (ancestors.has(value)) {
+    return CIRCULAR_TOKEN;
+  }
+  if (Array.isArray(value)) {
+    ancestors.add(value);
+    const items: unknown[] = value.map((item: unknown) => redactValue(item, redact, ancestors));
+    ancestors.delete(value);
+    return items;
+  }
+  if (!isPlainObject(value)) {
+    return value;
+  }
+  ancestors.add(value);
+  const record: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    record[redact(key)] = redactValue(entry, redact, ancestors);
+  }
+  ancestors.delete(value);
+  return record;
+}
+
+/**
  * Creates a redactor over a set of shape patterns.
  *
  * @param options - Patterns and replacement token; both default to the frozen contract values.
@@ -106,24 +163,7 @@ export function createRedactor(options: RedactorOptions = {}): RegisteringRedact
   const registered = new Set<string>();
   let longestFirst: string[] = [];
 
-  /**
-   * Adds one spelling of a credential to the registry.
-   *
-   * @param value - Exact text to look for.
-   */
-  function remember(value: string): void {
-    if (value.length >= MIN_REGISTERED_LENGTH && !replacement.includes(value)) {
-      registered.add(value);
-    }
-  }
-
-  /**
-   * Replaces registered values and shape matches in a string.
-   *
-   * @param input - Text to scrub.
-   * @returns The text with every credential replaced.
-   */
-  function redact(input: string): string {
+  const redact = (input: string): string => {
     let output = input;
     for (const value of longestFirst) {
       output = output.split(value).join(replacement);
@@ -132,51 +172,16 @@ export function createRedactor(options: RedactorOptions = {}): RegisteringRedact
       output = replaceEvery(output, pattern, replacement);
     }
     return output;
-  }
-
-  /**
-   * Walks a JSON-like value, scrubbing keys and strings.
-   *
-   * @param value - Value to scrub.
-   * @param ancestors - Objects currently being walked, for cycle detection.
-   * @returns A new structure; the input is never mutated.
-   */
-  function redactValue(value: unknown, ancestors: WeakSet<object>): unknown {
-    if (typeof value === 'string') {
-      return redact(value);
-    }
-    if (typeof value !== 'object' || value === null) {
-      return value;
-    }
-    if (ancestors.has(value)) {
-      return CIRCULAR_TOKEN;
-    }
-    if (Array.isArray(value)) {
-      ancestors.add(value);
-      const items: unknown[] = value.map((item: unknown) => redactValue(item, ancestors));
-      ancestors.delete(value);
-      return items;
-    }
-    if (!isPlainObject(value)) {
-      return value;
-    }
-    ancestors.add(value);
-    const record: Record<string, unknown> = {};
-    for (const [key, entry] of Object.entries(value)) {
-      record[redact(key)] = redactValue(entry, ancestors);
-    }
-    ancestors.delete(value);
-    return record;
-  }
+  };
 
   return {
     register(values: readonly string[]): void {
       for (const value of values) {
-        remember(value);
         // A credential keeps its identity through the encodings it meets on the way out: inside a
         // clone URL, and inside a JSON string that escapes quotes or backslashes.
-        remember(encodeURIComponent(value));
-        remember(JSON.stringify(value).slice(1, -1));
+        remember(registered, replacement, value);
+        remember(registered, replacement, encodeURIComponent(value));
+        remember(registered, replacement, JSON.stringify(value).slice(1, -1));
       }
       longestFirst = [...registered].sort((left, right) => right.length - left.length);
     },
@@ -189,7 +194,7 @@ export function createRedactor(options: RedactorOptions = {}): RegisteringRedact
     redact,
 
     redactJson(input: unknown): unknown {
-      return redactValue(input, new WeakSet<object>());
+      return redactValue(input, redact, new WeakSet<object>());
     },
   };
 }
