@@ -6,7 +6,7 @@
 | **Source spec** | [docs/spec/](spec/README.md) (01–10) — this plan executes it; where they differ, this plan wins on *sequencing*, the spec wins on *behaviour* |
 | **Execution model** | One orchestrator session; each workstream = one isolated subagent in its own git worktree = one PR. Workstreams in the same wave run **in parallel** |
 | **Quality bar** | TS strict, zero suppressions, JSDoc on every export, **100 % coverage on all four metrics (lines / branches / functions / statements) per package**, gates green before every PR. Stryker 10 mutation testing is the **final wave** and is explicitly allowed to slip |
-| **Last updated** | 2026-08-19 · §12 reflects Wave 1 in flight: six lanes merged, one PR open, three running |
+| **Last updated** | 2026-08-19 · §12 reflects Wave 1 in flight: seven lanes merged, three running |
 
 ---
 
@@ -299,30 +299,30 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | W1-A | 🟩 merged | PR #6 | core 100 (all four metrics) | secret ciphertext bound to its key as GCM AAD; master-key file refuses symlink, FIFO and group/world-readable modes |
 | W1-B 🐳 | 🟩 merged | PR #7 | 100/100/100/100 (runner/docker) | subpath export `@agent-hangar/core/runner/docker`; `/opt/agent-runtime` stays root-owned so the workspace cannot replace the askpass helper |
 | W1-C | 🟩 merged | PR #10 | core 100 (all four metrics) | openai SDK 7.5.0 verified against its shipped types; no SDK or server text reaches a persisted event |
-| W1-D | 🟩 merged | PR #11 | 100/100/100/100 (agent-runtime `src/**`) | three Dockerfile `COPY` lines (bundle, map, `{"type":"module"}` manifest); path confinement resolves symlinks |
+| W1-D | 🟩 merged | PR #11 | 100/100/100/100 (agent-runtime `src/**`) | three Dockerfile `COPY` lines (bundle, map, `{"type":"module"}` manifest) written in the PR body for the infra lane to apply, not in this diff; path confinement resolves symlinks |
 | W1-E | 🟩 merged | PR #8 | core 100 (all four metrics) | status stamps are transactional; `ScheduledJob.prompt` and `Chat.title` redacted on write |
-| W1-F | 🟨 PR open | `feat/w1f-scheduling-workspace` · PR #12 | core 100 (all four metrics) | BullMQ 6 API read from the installed types; needs a rebase onto current `main` |
-| W1-G | 🟦 running | `feat/w1g-web-chats` | — | 1G.1–1G.2 done, 1G.3 in progress; `shared/transcript` pushed, so W1-H is unblocked |
+| W1-F | 🟩 merged | PR #12 | core 100 (all four metrics) | BullMQ 6 API read from the installed types |
+| W1-G | 🟦 running | `feat/w1g-web-chats` | — | 1G.1–1G.3 done, 1G.4 in progress; `shared/transcript` pushed, so W1-H is unblocked |
 | W1-H | 🟦 running | `feat/w1h-web-scheduled-settings` | — | close-out waits for W1-G to merge; builds on `TEMP-STUB(W1-H)` until then |
 | W1-I | 🟦 running | `feat/w1i-infra-conductor` | — | started once W1-A, W1-C and W1-E were merged |
-| W2-A | ⬜ | — | — | unblocked: W1-A, W1-E and W1-F merged is the gate; W1-F still open |
-| W2-B 🐳 | ⬜ | — | — | needs W1-A…W1-F merged |
-| W2-C | ⬜ | — | — | needs W1-G and W1-H merged |
+| W2-A | ⬜ | — | — | gate is W1-A, W1-E and W1-F merged — all three are, so the lane can start |
+| W2-B 🐳 | ⬜ | — | — | gate is W1-A…W1-F merged — all six are, so the lane can start |
+| W2-C | ⬜ | — | — | gate is W1-G and W1-H merged — both are still running |
 | W3-A 🐳 | ⬜ | — | — | success criteria S1–S6, S8 |
 | W3-B | ⬜ | — | — | |
 | W4-A | ⬜ | — | — | may slip — documented |
 | W4-B | ⬜ | — | — | may slip — documented |
 
-**Orchestrator fixes alongside the lanes** (not lanes of the plan; each closed a defect found while shepherding):
+**Orchestrator fixes alongside the lanes** (not lanes of the plan; each fixes a defect found while shepherding, and the Status column says whether that fix has landed):
 
-| PR | Status | What it closed |
+| PR | Status | The defect |
 |---|---|---|
 | #9 | 🟩 merged | The `e2e` job installed a browser to run an empty suite, taking 111–1367 s and gating every merge |
 | #5 | 🟩 merged | `@agent-hangar/core` was unresolvable from source, so a fresh worktree could not run the worker; repository URLs hardened |
 | #13 | 🟩 merged | A connection failure repeated the driver message and attached the driver error as `cause`, leaking the database password twice over |
 | #14 | 🟨 PR open | The destructive-test guard printed the password back when the connection URL had no authority |
 
-Legend: ⬜ not started · 🟦 running (worktree path) · 🟨 PR open · 🟩 merged · 🟥 blocked.
+Legend: ⬜ not started · 🟦 running (branch) · 🟨 PR open · 🟩 merged · 🟥 blocked.
 
 ## 13. Estimated complexity
 
