@@ -83,6 +83,9 @@ const RECORDINGS: Recording[] = [
 /**
  * Removes credential material from a recorded line.
  *
+ * Mirrors the shape redaction of the model mapping layer; both are placeholders for the shared
+ * `Redactor` of the secrets contract, which has no implementation yet.
+ *
  * @param line - Serialised event.
  * @param apiKey - The live key, removed literally as well as by shape.
  * @returns The line with every credential replaced by the redaction token.

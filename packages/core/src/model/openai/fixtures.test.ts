@@ -9,7 +9,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { SECRET_SHAPE_PATTERNS } from '../../secrets/types.js';
-import { assertNoCanary } from '../../testing/canaries.js';
+import { OPENAI_CANARY, assertNoCanary } from '../../testing/canaries.js';
 
 import {
   OPENAI_FIXTURE_NAMES,
@@ -37,6 +37,11 @@ describe('parseOpenAIFixture', () => {
     expect(parseOpenAIFixture(body, 'inline')).toHaveLength(1);
   });
 
+  it('rejects a line that is not JSON without repeating it', () => {
+    // The platform parser quotes its input in the error it raises; the fixture body never is.
+    expect(() => parseOpenAIFixture('{"broken"\n', 'inline')).toThrow('Fixture line is not JSON');
+  });
+
   it('rejects a line that is not an event object', () => {
     // A malformed fixture must fail loudly instead of replaying as `undefined`.
     expect(() => parseOpenAIFixture('42\n', 'inline')).toThrow(
@@ -48,11 +53,12 @@ describe('parseOpenAIFixture', () => {
 });
 
 describe('loadOpenAIFixture', () => {
-  it('rejects a name that is not a committed fixture', () => {
-    // The name is the only caller-supplied part of the path, so it stays a closed list.
-    const unknown = 'nope' as OpenAIFixtureName;
+  it('rejects a name that is not a committed fixture without repeating it', () => {
+    // The name is the only caller-supplied part of the path, so it stays a closed list, and the
+    // rejected value is never echoed back into the error.
+    const unknown = OPENAI_CANARY as OpenAIFixtureName;
     return expect(loadOpenAIFixture(unknown)).rejects.toThrow(
-      /Unknown OpenAI fixture "nope" \(expected one of: text, /,
+      'Unknown OpenAI fixture (expected one of: text, tool-call, text-and-tool-call, refusal, failed, incomplete, error-event)',
     );
   });
 

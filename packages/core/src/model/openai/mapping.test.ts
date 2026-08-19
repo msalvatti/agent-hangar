@@ -182,10 +182,18 @@ describe('toResponseInputItem', () => {
     });
   });
 
-  it('throws when an unmapped item kind reaches the mapper', () => {
-    // Guards the exhaustive switch against a contract member added without a mapping.
-    const impossible = { type: 'telepathy' } as unknown as ConversationItem;
-    expect(() => toResponseInputItem(impossible)).toThrow(/Unsupported conversation item/);
+  it('throws without repeating the item when an unmapped kind reaches the mapper', () => {
+    // The item carries the conversation, so the guard names the problem and nothing else.
+    const impossible: unknown = { type: 'telepathy', content: OPENAI_CANARY };
+    const failure = (() => {
+      try {
+        toResponseInputItem(impossible as ConversationItem);
+        return '';
+      } catch (error) {
+        return error instanceof Error ? error.message : '';
+      }
+    })();
+    expect(failure).toBe('Unsupported conversation item');
   });
 });
 
@@ -536,8 +544,8 @@ describe('createEventMapper', () => {
         sequence_number: 0,
       }),
     ).toEqual([]);
-    const future = { type: 'response.something.new' } as unknown as ResponseStreamEvent;
-    expect(mapper.map(future)).toEqual([]);
+    const future: unknown = { type: 'response.something.new' };
+    expect(mapper.map(future as ResponseStreamEvent)).toEqual([]);
     expect(mapper.sawTerminal).toBe(false);
   });
 });

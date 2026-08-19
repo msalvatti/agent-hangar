@@ -42,6 +42,24 @@ export function openAIFixturesDir(): string {
 }
 
 /**
+ * Parses one line as JSON.
+ *
+ * The platform parser quotes a prefix of its input in the `SyntaxError` it raises, so the failure
+ * is reported without it: a caller may hand this function content it did not author.
+ *
+ * @param line - One line of a fixture file.
+ * @returns The parsed value.
+ * @throws Error stating that the line is not JSON, without repeating it.
+ */
+function parseLine(line: string): unknown {
+  try {
+    return JSON.parse(line) as unknown;
+  } catch {
+    throw new Error('Fixture line is not JSON');
+  }
+}
+
+/**
  * Parses one NDJSON fixture body.
  *
  * @param body - File contents; blank lines are ignored.
@@ -56,7 +74,7 @@ export function parseOpenAIFixture(body: string, source: string): ResponseStream
     if (line.trim().length === 0) {
       continue;
     }
-    const parsed: unknown = JSON.parse(line);
+    const parsed = parseLine(line);
     if (
       typeof parsed !== 'object' ||
       parsed === null ||
@@ -72,6 +90,9 @@ export function parseOpenAIFixture(body: string, source: string): ResponseStream
 /**
  * Loads one recorded stream.
  *
+ * The rejected name is not repeated in the error, for the same reason configuration errors report
+ * the expectation rather than the value that was read.
+ *
  * @param name - Fixture base name; must be a member of {@link OPENAI_FIXTURE_NAMES}.
  * @param read - File reader; defaults to Node's UTF-8 reader.
  * @returns The events of that stream, in order.
@@ -82,9 +103,7 @@ export async function loadOpenAIFixture(
   read: FixtureReader = readFile,
 ): Promise<ResponseStreamEvent[]> {
   if (!(OPENAI_FIXTURE_NAMES as readonly string[]).includes(name)) {
-    throw new Error(
-      `Unknown OpenAI fixture "${name}" (expected one of: ${OPENAI_FIXTURE_NAMES.join(', ')})`,
-    );
+    throw new Error(`Unknown OpenAI fixture (expected one of: ${OPENAI_FIXTURE_NAMES.join(', ')})`);
   }
   const body = await read(`${openAIFixturesDir()}${name}.ndjson`, 'utf8');
   return parseOpenAIFixture(body, name);

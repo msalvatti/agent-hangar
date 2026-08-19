@@ -10,7 +10,7 @@
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
 import { describe, expect, it } from 'vitest';
 
-import { createFakeOpenAIClient } from './fake-client.js';
+import { DEFAULT_FAKE_MODELS, createFakeOpenAIClient } from './fake-client.js';
 import { toResponseParams } from './mapping.js';
 
 /** Two cheap events, enough to observe ordering and mid-stream failures. */
@@ -141,7 +141,7 @@ describe('createFakeOpenAIClient', () => {
     for await (const model of client.models.list()) {
       ids.push(model.id);
     }
-    expect(ids).toEqual(['gpt-5.6-sol', 'gpt-5.6-mini']);
+    expect(ids).toEqual([...DEFAULT_FAKE_MODELS]);
     expect(client.calls.listModels).toBe(1);
   });
 

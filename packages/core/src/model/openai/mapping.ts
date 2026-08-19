@@ -123,7 +123,11 @@ function isAbortError(value: unknown): boolean {
  *
  * Defence in depth: the API echoes part of the submitted key in some authentication failures, and
  * that message travels into a persisted turn error. The shared patterns carry no `g` flag, so each
- * one is applied until it no longer matches.
+ * one is applied until it no longer matches; every pattern is longer than its replacement, so the
+ * text strictly shrinks and the loop terminates.
+ *
+ * The same few lines appear in the fixture recording script. Both are placeholders for the shared
+ * `Redactor` of the secrets contract, which has no implementation yet.
  *
  * @param message - Raw message from an SDK error or a stream event.
  * @returns The message with every credential shape replaced.
@@ -222,11 +226,14 @@ function fromSdkApiError(err: SdkApiErrorShape): ModelErrorEvent {
 /**
  * Refuses to compile when a {@link ConversationItem} member is added without a mapping.
  *
- * @param value - The unmapped member.
- * @throws Error naming the unmapped kind, if reached through an unchecked cast.
+ * The item is deliberately absent from the message: it carries the conversation, which holds
+ * whatever the operator typed and whatever a tool printed, and this error would travel to the logs.
+ *
+ * @param _value - The unmapped member, reachable only through an unchecked cast.
+ * @throws Error stating that the item kind has no mapping.
  */
-function assertNever(value: never): never {
-  throw new Error(`Unsupported conversation item: ${JSON.stringify(value)}`);
+function assertNever(_value: never): never {
+  throw new Error('Unsupported conversation item');
 }
 
 /**

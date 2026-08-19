@@ -101,7 +101,7 @@ export class OpenAIModelProvider implements AgentModelProvider {
       };
       throw new ModelProviderError(mapped.code, mapped.message, mapped.retryable, { cause: err });
     }
-    return ids.sort((left, right) => (left < right ? -1 : Number(left > right)));
+    return ids.sort();
   }
 }
 
