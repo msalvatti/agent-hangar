@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-C (Wave 1, parallel with W1-A … W1-I) |
 | **Status** | 🟦 running |
-| **Progress** | 3/5 tasks |
+| **Progress** | 4/5 tasks |
 | **Branch** | `feat/w1c-openai-provider` |
 | **Owned paths** | `packages/core/src/model/openai/**`, `packages/core/src/model/registry.ts` (+ `registry.test.ts`), `packages/core/fixtures/openai/**`, `packages/core/scripts/record-fixtures.ts` — plus three append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only), (the root `packages/core/src/index.ts` is frozen — it already re-exports `./model/index.js`; this lane adds exports only to `packages/core/src/model/index.ts` and `model/openai/index.ts`), `packages/core/package.json` (one script `fixtures:record` only) |
 | **Depends on** | W0 merged to `main` |
@@ -44,7 +44,7 @@ Spec 03 §2 lists the event mapping. The SDK's event names must be **verified at
 | 1C.1 | Pure mapping: request params, stream events → `ModelEvent`, SDK errors → `ModelEvent.error` (verified against SDK types) | ✅ | P0 | M | — |
 | 1C.2 | Fixtures (`fixtures/openai/*.ndjson`), fixture loader, fake SDK client, record script | ✅ | P0 | M | 1C.1 |
 | 1C.3 | `OpenAIModelProvider` (`stream`, `listModels`) + SDK client factory | ✅ | P0 | M | 1C.1, 1C.2 |
-| 1C.4 | Registry `createModelProvider(name, deps)` → openai \| fake; barrel exports | 📋 | P0 | S | 1C.3 |
+| 1C.4 | Registry `createModelProvider(name, deps)` → openai \| fake; barrel exports | ✅ | P0 | S | 1C.3 |
 | 1C.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1C.1–1C.4 |
 
 ---
@@ -333,16 +333,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1c-openai-prov
 
 ## Task 1C.4 — Registry `createModelProvider(name, deps)` + barrel exports
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1C.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1C.3
 
 **Description.** Implement `packages/core/src/model/registry.ts`: `createModelProvider(name, deps)` returns the OpenAI provider (built from `apiKey`/`baseURL` or an injected client) for `'openai'` and `FakeAgentModelProvider` for `'fake'`; validates the name and the presence of a key with `ConfigError`.
 
 **Acceptance criteria**
-- [ ] `MODEL_PROVIDER_NAMES = ['openai', 'fake'] as const`, `ModelProviderName`, `isModelProviderName(value)` exported
-- [ ] `createModelProvider('openai', { openai: { apiKey } })` → `OpenAIModelProvider` using `createOpenAIClient`; `{ openai: { client } }` uses the injected client (no SDK construction); missing both → `ConfigError` whose message says the OpenAI API key is not configured and points to Settings
-- [ ] `createModelProvider('fake', { fake })` → `FakeAgentModelProvider` with the given options (default: empty script); unknown name (runtime string) → `ConfigError` listing valid names
-- [ ] Barrel: `packages/core/src/model/index.ts` exports `./registry.js` and `./openai/index.js` (root `src/index.ts` untouched)
-- [ ] 100 % coverage on `src/model/registry.ts`
+- [x] `MODEL_PROVIDER_NAMES = ['openai', 'fake'] as const`, `ModelProviderName`, `isModelProviderName(value)` exported
+- [x] `createModelProvider('openai', { openai: { apiKey } })` → `OpenAIModelProvider` using `createOpenAIClient`; `{ openai: { client } }` uses the injected client (no SDK construction); missing both → `ConfigError` whose message says the OpenAI API key is not configured and points to Settings
+- [x] `createModelProvider('fake', { fake })` → `FakeAgentModelProvider` with the given options (default: empty script); unknown name (runtime string) → `ConfigError` listing valid names
+- [x] Barrel: `packages/core/src/model/index.ts` exports `./registry.js` and `./openai/index.js` (root `src/index.ts` untouched)
+- [x] 100 % coverage on `src/model/registry.ts`
 
 **Files to create**
 `packages/core/src/model/registry.ts`, `packages/core/src/model/registry.test.ts`; modify `packages/core/src/model/index.ts`.
@@ -475,3 +475,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1c-openai-prov
 - 1C.1 ✅ 2026-08-19 — Responses mapping layer verified against `openai@7.5.0`; every consumed event name matches the shipped `ResponseStreamEvent` union.
 - 1C.2 ✅ 2026-08-19 — Seven synthetic NDJSON streams built from the SDK types, plus the fixture loader, the replaying fake client and the redacting record script.
 - 1C.3 ✅ 2026-08-19 — `OpenAIModelProvider` over `responses.stream`, `ModelProviderError`, and the real client factory with `maxRetries: 0`.
+- 1C.4 ✅ 2026-08-19 — `createModelProvider(name, deps)` reusing the config `MODEL_PROVIDERS` list; folder barrel exports the provider, the registry and the fixtures.
