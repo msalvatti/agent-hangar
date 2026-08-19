@@ -3,14 +3,14 @@
 | | |
 |---|---|
 | **Lane** | W1-H (one of nine parallel Wave 1 lanes; cap 5 concurrent) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/6 tasks |
+| **Status** | 🟦 running |
+| **Progress** | 1/6 tasks |
 | **Branch** | `feat/w1h-web-scheduled-settings` |
 | **Owned paths** | `apps/web/src/features/scheduled/**` · `apps/web/src/features/settings/**` · `apps/web/src/mocks/scheduled.ts` (+ test) · `apps/web/src/mocks/settings.ts` (+ test) · `apps/web/app/(app)/scheduled/page.tsx` · `apps/web/app/(app)/scheduled/[id]/page.tsx` · `apps/web/app/(app)/settings/page.tsx` · `apps/web/vitest.config.ts` (`coverage.include` lines only) · one additive line in `apps/web/src/mocks/handlers.ts` (the marked W1-H append line) |
 | **Depends on** | W0 merged to `main`; soft dependency on W1-G's shared modules (`@/shared/transcript`, `@/shared/repo-picker`, `@/shared/feedback`, `@/shared/shell/PageHeader`, `@/shared/api/use-api-query`, `@/mocks/*`) — stubbed locally until W1-G merges, swapped at the final rebase (plan §6 coordination note) |
 | **Unblocks** | W2-C (E2E authoring needs the selectors); W3-A wiring |
 | **Source** | [docs/plan.md §6 W1-H](../plan.md) · spec [10 §4.3–§4.4, §5–§9](../spec/10-ui-design.md) · [03 §4](../spec/03-interfaces.md) · [04 (c)(d)](../spec/04-flows.md) · [06 §2](../spec/06-testing.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-19 (running) |
 
 ## Context
 
@@ -45,7 +45,7 @@ Quality bar (same as every lane): TypeScript strict, zero `any`, zero suppressio
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1H.1 | MSW handlers for jobs/runs/settings (+ local stubs for W1-G shared modules if not merged) | 📋 | P0 | M | — |
+| 1H.1 | MSW handlers for jobs/runs/settings (+ local stubs for W1-G shared modules if not merged) | ✅ | P0 | M | — |
 | 1H.2 | `/scheduled` list: `JobsTable`, row menu, enabled switch, empty/loading/error, `useJobs`, page | 📋 | P0 | M | 1H.1 |
 | 1H.3 | `JobDialog` + `CronField` + `CronPreview` + `TimezoneCombobox`, validation, `useJobMutations` | 📋 | P0 | L | 1H.2 |
 | 1H.4 | `/scheduled/[id]` detail: `JobHeader`, `RunsTable`, `RunDrawer` (Sheet 720, Transcript read-only + live SSE + Stop, Raw output tab), page | 📋 | P0 | L | 1H.3 |
@@ -56,16 +56,16 @@ Quality bar (same as every lane): TypeScript strict, zero `any`, zero suppressio
 
 ## Task 1H.1 — MSW handlers for jobs/runs/settings (+ local stubs)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Create `src/mocks/scheduled.ts` (in-file job/run store, handlers for every jobs/runs route of spec 03 §4, scripted `GET /api/runs/:id/events` reusing W1-G's `createSseResponse`/`scriptedTurnFrames`) and `src/mocks/settings.ts` (`PUT`/`DELETE /api/settings/:key` mutating the shared `store.secrets`), append them in `handlers.ts` at the marked line, and — only if W1-G's shared modules are not on the branch — create the temporary stubs listed below so the lane compiles and tests run against the same import paths.
 
 **Acceptance criteria**
-- [ ] `src/mocks/scheduled.ts` handles `GET/POST /api/jobs`, `PATCH/DELETE /api/jobs/:id`, `POST /api/jobs/:id/run`, `GET /api/jobs/:id/runs`, `GET /api/runs/:id`, `GET /api/runs/:id/events` with responses that parse with the core schemas; validation → 400, unknown → 404; `POST /run` while a run is RUNNING records a FAILED run with error `previous run still running` (spec 04 (c) overlap policy)
-- [ ] `src/mocks/settings.ts` handles `PUT /api/settings/:key { value }` (keys `GITHUB_PAT` | `OPENAI_API_KEY`; stores `last4` + `updatedAt` only — plaintext is discarded; empty value → 400) and `DELETE /api/settings/:key` (204); `GET /api/settings` (W1-G's handler) then reflects the change
-- [ ] `src/mocks/handlers.ts` gains exactly one additive line spreading `scheduledHandlers` and `settingsHandlers` at the marked comment (plus the two imports)
-- [ ] Stub table applied only for modules missing from the branch; every stub file starts with the `TEMP-STUB(W1-H)` marker; `grep -rn "TEMP-STUB(W1-H)"` output is recorded in the task completion log for removal in 1H.6
-- [ ] `vitest.config.ts` `coverage.include` gains `src/mocks/scheduled.ts` and `src/mocks/settings.ts`; handler tests reach 100×4
+- [x] `src/mocks/scheduled.ts` handles `GET/POST /api/jobs`, `PATCH/DELETE /api/jobs/:id`, `POST /api/jobs/:id/run`, `GET /api/jobs/:id/runs`, `GET /api/runs/:id`, `GET /api/runs/:id/events` with responses that parse with the core schemas; validation → 400, unknown → 404; `POST /run` while a run is RUNNING records a FAILED run with error `previous run still running` (spec 04 (c) overlap policy)
+- [x] `src/mocks/settings.ts` handles `PUT /api/settings/:key { value }` (keys `GITHUB_PAT` | `OPENAI_API_KEY`; stores `last4` + `updatedAt` only — plaintext is discarded; empty value → 400) and `DELETE /api/settings/:key` (204); `GET /api/settings` (W1-G's handler) then reflects the change
+- [x] `src/mocks/handlers.ts` gains exactly one additive line spreading `scheduledHandlers` and `settingsHandlers` at the marked comment (plus the two imports)
+- [x] Stub table applied only for modules missing from the branch; every stub file starts with the `TEMP-STUB(W1-H)` marker; `grep -rn "TEMP-STUB(W1-H)"` output is recorded in the task completion log for removal in 1H.6
+- [x] `vitest.config.ts` `coverage.include` gains `src/mocks/scheduled.ts` and `src/mocks/settings.ts`; handler tests reach 100×4
 
 **Files to create/modify**
 `apps/web/src/mocks/{scheduled.ts,scheduled.test.ts,scheduled-events.node.test.ts,settings.ts,settings.test.ts}`; modify `apps/web/src/mocks/handlers.ts` (one line + imports), `apps/web/vitest.config.ts`; temporary stubs (if needed) per the table in the prompt.
@@ -452,3 +452,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1h-web-schedul
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+- 1H.1 ✅ 2026-08-19 — Added `src/mocks/{scheduled,settings}.ts` + tests (100×4) over local `TEMP-STUB(W1-H)` copies/minimal implementations of W1-G's not-yet-merged shared modules (`shared/api/use-api-query.ts`; `shared/transcript/{types,reducer,lib/format,lib/redact-display,hooks/useTurnEvents,testing/*,components/{Transcript,StatusPill},index}.ts(x)`; `shared/repo-picker/*`; `shared/feedback/*`; `shared/shell/PageHeader.tsx`; `mocks/{store,scenario,events,server,vitest}.ts`) and a real (non-stub) `src/mocks/handlers.ts`; stub list: `apps/web/src/mocks/{events,scenario,server,store,vitest}.ts`, `apps/web/src/shared/api/use-api-query.ts`, `apps/web/src/shared/feedback/{EmptyState.tsx,ErrorCard.tsx,index.ts}`, `apps/web/src/shared/repo-picker/{BranchPicker.tsx,RepoPicker.tsx,index.ts}`, `apps/web/src/shared/shell/PageHeader.tsx`, `apps/web/src/shared/transcript/{components/StatusPill.tsx,components/Transcript.tsx,hooks/useTurnEvents.ts,index.ts,lib/format.ts,lib/redact-display.ts,reducer.ts,testing/fake-event-source.ts,testing/index.ts,types.ts}`.
