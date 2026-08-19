@@ -99,6 +99,10 @@ export function describeRedis(name: string, fn: () => void): void {
   }
   if (process.env.CI !== undefined) {
     describe(name, () => {
+      /**
+       * A missing resource in CI must fail the run: a silently skipped integration suite is
+       * indistinguishable from a passing one, so a broken service would ship unnoticed.
+       */
       it('fails loudly: Redis required in CI', () => {
         throw new Error(
           `${REDIS_URL_ENV} is not set; CI must provide Redis (see the integration job in ` +

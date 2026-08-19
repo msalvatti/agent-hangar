@@ -34,6 +34,9 @@ const WEEKDAYS_FIELD = '1-5';
 /** Characters that separate the entries of a day-of-week list. */
 const LIST_SEPARATOR = ',';
 
+/** Width of a zero-padded clock field, as `HH:MM` is written. */
+const CLOCK_FIELD_WIDTH = 2;
+
 /** A schedule split into its fields plus the shape key that selects a sentence template. */
 interface ParsedSchedule {
   minute: string;
@@ -52,7 +55,7 @@ interface ParsedSchedule {
  * @returns The value padded to two characters.
  */
 function pad(value: string): string {
-  return value.padStart(2, '0');
+  return value.padStart(CLOCK_FIELD_WIDTH, '0');
 }
 
 /**
