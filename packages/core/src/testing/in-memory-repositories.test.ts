@@ -11,6 +11,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 
 import { LiveWorkspaceExistsError, NotFoundError, UniqueViolationError } from '../errors.js';
 import type { SecretEnvelope } from '../secrets/types.js';
+import { LIVE_WORKSPACE_STATUSES } from '../workspace/types.js';
 
 import { FakeClock } from './fake-clock.js';
 import { createInMemoryRepositories } from './in-memory-repositories.js';
@@ -297,6 +298,49 @@ describe('WorkspaceRepository', () => {
     await repos.workspaces.create({ ...input, kind: 'JOB' });
     await repos.workspaces.create({ ...input, kind: 'JOB' });
     expect(await repos.workspaces.listLive()).toHaveLength(3);
+  });
+
+  /**
+   * The invariant also binds UPDATEs, because Postgres enforces it with a partial unique index
+   * over the live statuses rather than with an insert-time check. A FAILED row moved back into a
+   * live status while a sibling of the same chat is live must be refused exactly as `create` is,
+   * or the fake would report a false green for a write the database rejects.
+   */
+  it('refuses to move a dead workspace back into a live status beside a live sibling', async () => {
+    const chat = await seedChat();
+    const first = await repos.workspaces.create({ ...input, chatId: chat.id });
+    await repos.workspaces.setStatus(first.id, 'FAILED', { failureReason: 'boom' });
+    const second = await repos.workspaces.create({ ...input, chatId: chat.id });
+
+    for (const status of LIVE_WORKSPACE_STATUSES) {
+      await expect(repos.workspaces.setStatus(first.id, status)).rejects.toThrow(
+        LiveWorkspaceExistsError,
+      );
+    }
+    expect((await repos.workspaces.get(first.id))?.status).toBe('FAILED');
+    expect((await repos.workspaces.findLiveByChat(chat.id))?.id).toBe(second.id);
+
+    // A terminal status is always allowed, and the revival succeeds once the sibling is gone.
+    await repos.workspaces.setStatus(first.id, 'DESTROYED');
+    await repos.workspaces.setStatus(second.id, 'DESTROYED');
+    expect((await repos.workspaces.setStatus(first.id, 'READY')).status).toBe('READY');
+    expect((await repos.workspaces.findLiveByChat(chat.id))?.id).toBe(first.id);
+  });
+
+  /**
+   * A live workspace may move between live statuses: the check must ignore the row being
+   * updated, and a job workspace (no chat) is never constrained.
+   */
+  it('allows a live workspace to change status and leaves job workspaces unconstrained', async () => {
+    const chat = await seedChat();
+    const workspace = await repos.workspaces.create({ ...input, chatId: chat.id });
+    expect((await repos.workspaces.setStatus(workspace.id, 'READY')).status).toBe('READY');
+    expect((await repos.workspaces.setStatus(workspace.id, 'BUSY')).status).toBe('BUSY');
+
+    const job = await repos.workspaces.create({ ...input, kind: 'JOB' });
+    const otherJob = await repos.workspaces.create({ ...input, kind: 'JOB' });
+    expect((await repos.workspaces.setStatus(job.id, 'READY')).status).toBe('READY');
+    expect((await repos.workspaces.setStatus(otherJob.id, 'READY')).status).toBe('READY');
   });
 
   /**

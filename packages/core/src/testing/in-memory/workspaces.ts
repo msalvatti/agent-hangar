@@ -59,6 +59,17 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
     update: WorkspaceStatusUpdate = {},
   ): Promise<Workspace> {
     const workspace = this.store.require(this.store.workspaces, 'Workspace', id);
+    // Postgres enforces the invariant with a partial unique index, which constrains UPDATEs as
+    // well as INSERTs: returning a row to a live status while a sibling of the same chat is live
+    // violates it. Checking only in `create` would let this fake accept a write the database
+    // rejects, and every later lane tests against this fake.
+    if (
+      workspace.chatId !== null &&
+      LIVE_WORKSPACE_STATUSES.includes(status) &&
+      this.liveByChat(workspace.chatId, workspace.id) !== undefined
+    ) {
+      throw new LiveWorkspaceExistsError(workspace.chatId);
+    }
     workspace.status = status;
     if (status === 'READY' && workspace.readyAt === null) {
       workspace.readyAt = this.store.now();
@@ -97,9 +108,15 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
     return workspace === undefined ? null : { ...workspace };
   }
 
-  private liveByChat(chatId: string): Workspace | undefined {
+  /**
+   * The live workspace of a chat, if any.
+   *
+   * @param chatId - Chat to look up.
+   * @param exceptId - Row to ignore, so a status update does not collide with itself.
+   */
+  private liveByChat(chatId: string, exceptId?: string): Workspace | undefined {
     return [...this.store.workspaces.values()].find(
-      (workspace) => workspace.chatId === chatId && isLive(workspace),
+      (workspace) => workspace.chatId === chatId && workspace.id !== exceptId && isLive(workspace),
     );
   }
 }

@@ -16,8 +16,12 @@ pnpm install --frozen-lockfile
 
 log "2/7 Writing .env.local"
 bash infra/scripts/env.sh
+# Load what .env.local defines rather than re-deriving from this shell. `docker compose
+# --env-file` below reads that file, so on a second run an exported AH_INSTANCE/AH_PORT_BASE that
+# disagrees with the preserved file would bring compose up on one instance's ports while the
+# migrations and the image build targeted another.
 # shellcheck source=/dev/null
-eval "$(bash infra/scripts/env.sh --print)"
+eval "$(bash infra/scripts/env.sh --print-effective)"
 
 log "3/7 Master key ($MASTER_KEY_PATH)"
 key_dir=$(dirname "$MASTER_KEY_PATH")

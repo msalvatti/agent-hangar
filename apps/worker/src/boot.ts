@@ -117,8 +117,24 @@ export async function boot<TDatabase extends BootDatabase, TRedis extends BootRe
     }
     closed = true;
     logger.info('shutting down');
-    await redis.quit();
-    await prisma.$disconnect();
+    // Every client is released even when an earlier release fails. `closed` is already set, so a
+    // retry is a no-op: letting a rejected `redis.quit()` skip `$disconnect()` would leave the
+    // Postgres pool open for the rest of the process's life. The first failure is the one thrown,
+    // because it is the one that explains the shutdown.
+    const failures: unknown[] = [];
+    try {
+      await redis.quit();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await prisma.$disconnect();
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length > 0) {
+      throw failures[0];
+    }
     logger.info('shutdown complete');
   };
 

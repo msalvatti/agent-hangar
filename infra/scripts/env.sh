@@ -4,9 +4,14 @@
 # default / 3000. Mirrors packages/core/src/config/instance.ts — a test keeps both in sync.
 #
 # Usage:
-#   infra/scripts/env.sh            write .env.local if absent
-#   infra/scripts/env.sh --force    overwrite .env.local
-#   infra/scripts/env.sh --print    print `export KEY=value` lines (eval "$(infra/scripts/env.sh --print)")
+#   infra/scripts/env.sh                 write .env.local if absent
+#   infra/scripts/env.sh --force         overwrite .env.local
+#   infra/scripts/env.sh --print         print `export KEY=value` lines derived from this shell
+#                                        (eval "$(infra/scripts/env.sh --print)")
+#   infra/scripts/env.sh --print-effective
+#                                        print `export KEY=value` lines from .env.local when it
+#                                        exists, else the derived ones — the environment every
+#                                        step of a run must agree on
 #
 # Runs on macOS bash 3.2: no associative arrays, no mapfile.
 set -euo pipefail
@@ -113,22 +118,35 @@ ah_write_env_file() {
   } > "$target"
 }
 
+# Re-emits an existing .env.local as `export KEY="value"` lines. Values were quoted by
+# ah_write_env_file, so the output is safe to eval; comments and blank lines are dropped.
+ah_print_env_file() {
+  sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' -e 's/^/export /' "$1"
+}
+
 ah_env_main() {
   local mode="write" root target
   case "${1:-}" in
     --print) mode="print" ;;
+    --print-effective) mode="print-effective" ;;
     --force) mode="force" ;;
     "") ;;
     *)
-      echo "usage: env.sh [--print|--force]" >&2
+      echo "usage: env.sh [--print|--print-effective|--force]" >&2
       return 2
       ;;
   esac
-  ah_resolve_env
   root=$(ah_root_dir)
   target="$root/.env.local"
+  # The file wins outright, and is echoed without re-deriving anything: the whole point is that a
+  # variable exported in this shell cannot disagree with the file docker compose --env-file reads.
+  if [ "$mode" = "print-effective" ] && [ -f "$target" ]; then
+    ah_print_env_file "$target"
+    return 0
+  fi
+  ah_resolve_env
   case "$mode" in
-    print)
+    print|print-effective)
       ah_print_env "export "
       ;;
     force)

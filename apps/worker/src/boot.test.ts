@@ -98,6 +98,48 @@ describe('boot', () => {
   });
 
   /**
+   * A failing `redis.quit()` must not strand the database pool: `closed` is already set, so the
+   * caller cannot retry, and skipping `$disconnect()` would keep Postgres connections open for
+   * the life of the process. The shutdown still rejects, so the caller exits non-zero.
+   */
+  it('disconnects Postgres and still rejects when Redis fails to quit', async () => {
+    const { deps, prisma, redis } = makeDeps();
+    const failure = new Error('quit failed');
+    redis.quit.mockRejectedValueOnce(failure);
+    const { shutdown } = await boot(deps);
+    await expect(shutdown()).rejects.toBe(failure);
+    expect(prisma.$disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The mirror case: a failing `$disconnect()` is reported rather than swallowed, after Redis
+   * has already been closed.
+   */
+  it('rejects when Postgres fails to disconnect', async () => {
+    const { deps, prisma, redis } = makeDeps();
+    const failure = new Error('disconnect failed');
+    prisma.$disconnect.mockRejectedValueOnce(failure);
+    const { shutdown } = await boot(deps);
+    await expect(shutdown()).rejects.toBe(failure);
+    expect(redis.quit).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * When both releases fail, the first failure is the one surfaced — it is the one that explains
+   * the shutdown — and both clients were still asked to close.
+   */
+  it('reports the first failure when both clients fail to close', async () => {
+    const { deps, prisma, redis } = makeDeps();
+    const first = new Error('quit failed');
+    redis.quit.mockRejectedValueOnce(first);
+    prisma.$disconnect.mockRejectedValueOnce(new Error('disconnect failed'));
+    const { shutdown } = await boot(deps);
+    await expect(shutdown()).rejects.toBe(first);
+    expect(redis.quit).toHaveBeenCalledTimes(1);
+    expect(prisma.$disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  /**
    * Invalid configuration fails before any client is created.
    */
   it('propagates configuration errors before creating clients', async () => {
