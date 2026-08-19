@@ -83,15 +83,24 @@ const RECORDINGS: Recording[] = [
 /**
  * Removes credential material from a recorded line.
  *
+ * The key is removed in both of the forms it can appear in. A recorded line is the output of
+ * `JSON.stringify`, so a key containing a quote, a backslash or a control character sits there in
+ * its escaped form and does not match the raw value — and a compatible gateway reached through
+ * `OPENAI_BASE_URL` may use exactly such a key. Shape matching is no safety net for it either,
+ * which is the whole reason the key is also removed literally.
+ *
  * Mirrors the shape redaction of the model mapping layer; both are placeholders for the shared
  * `Redactor` of the secrets contract, which has no implementation yet.
  *
- * @param line - Serialised event.
- * @param apiKey - The live key, removed literally as well as by shape.
+ * @param line - Serialised event, or a plain message.
+ * @param apiKey - The live key, removed literally, in its JSON-escaped form, and by shape.
  * @returns The line with every credential replaced by the redaction token.
  */
 function redact(line: string, apiKey: string): string {
+  // `JSON.stringify` of a string wraps it in quotes; the slice is the escaped body alone.
+  const escaped = JSON.stringify(apiKey).slice(1, -1);
   let result = line.split(apiKey).join(REDACTED_TOKEN);
+  result = result.split(escaped).join(REDACTED_TOKEN);
   for (const pattern of SECRET_SHAPE_PATTERNS) {
     while (pattern.test(result)) {
       result = result.replace(pattern, REDACTED_TOKEN);
