@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-H (one of nine parallel Wave 1 lanes; cap 5 concurrent) |
 | **Status** | 🟦 running |
-| **Progress** | 1/6 tasks |
+| **Progress** | 2/6 tasks |
 | **Branch** | `feat/w1h-web-scheduled-settings` |
 | **Owned paths** | `apps/web/src/features/scheduled/**` · `apps/web/src/features/settings/**` · `apps/web/src/mocks/scheduled.ts` (+ test) · `apps/web/src/mocks/settings.ts` (+ test) · `apps/web/app/(app)/scheduled/page.tsx` · `apps/web/app/(app)/scheduled/[id]/page.tsx` · `apps/web/app/(app)/settings/page.tsx` · `apps/web/vitest.config.ts` (`coverage.include` lines only) · one additive line in `apps/web/src/mocks/handlers.ts` (the marked W1-H append line) |
 | **Depends on** | W0 merged to `main`; soft dependency on W1-G's shared modules (`@/shared/transcript`, `@/shared/repo-picker`, `@/shared/feedback`, `@/shared/shell/PageHeader`, `@/shared/api/use-api-query`, `@/mocks/*`) — stubbed locally until W1-G merges, swapped at the final rebase (plan §6 coordination note) |
@@ -46,7 +46,7 @@ Quality bar (same as every lane): TypeScript strict, zero `any`, zero suppressio
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
 | 1H.1 | MSW handlers for jobs/runs/settings (+ local stubs for W1-G shared modules if not merged) | ✅ | P0 | M | — |
-| 1H.2 | `/scheduled` list: `JobsTable`, row menu, enabled switch, empty/loading/error, `useJobs`, page | 📋 | P0 | M | 1H.1 |
+| 1H.2 | `/scheduled` list: `JobsTable`, row menu, enabled switch, empty/loading/error, `useJobs`, page | ✅ | P0 | M | 1H.1 |
 | 1H.3 | `JobDialog` + `CronField` + `CronPreview` + `TimezoneCombobox`, validation, `useJobMutations` | 📋 | P0 | L | 1H.2 |
 | 1H.4 | `/scheduled/[id]` detail: `JobHeader`, `RunsTable`, `RunDrawer` (Sheet 720, Transcript read-only + live SSE + Stop, Raw output tab), page | 📋 | P0 | L | 1H.3 |
 | 1H.5 | `/settings`: `CredentialsCard` + `SecretField` (mask, Replace/Remove, toasts), `EnvironmentCard` + `EnvSummary`, `useSettings`, page | 📋 | P0 | M | 1H.1 |
@@ -134,16 +134,16 @@ Completion Protocol (after you finish):
 
 ## Task 1H.2 — `/scheduled` list: `JobsTable`, row actions, enabled switch, states, page
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1H.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1H.1
 
 **Description.** Implement spec 10 §4.3's table: dense 44 px rows with Name, Schedule (cron mono + human-readable tooltip + timezone), Repo · Branch, Last run (status icon + text + relative time), Next run (relative, absolute tooltip), Enabled switch, and a row menu (Run now / Edit / Delete with AlertDialog). Row click navigates to the detail page. Empty state, loading skeletons, error card. `useJobs` + `useJobActions` (toggle, run now, delete) with optimistic toggle and toasts. The page header carries "+ New job" (dialog arrives in 1H.3 — wire a callback prop now).
 
 **Acceptance criteria**
-- [ ] `/scheduled` renders the seeded jobs as in the §4.3 wireframe; cron in mono with a tooltip from `describeCron` ("every day at 02:00 UTC"); status shown as icon + text (never colour alone); enabled `Switch` labelled `Enable <name>`, optimistic with rollback + toast on error
-- [ ] Row menu (`⋯`, `aria-label="Actions for <name>"`): Run now (toast "Run started" → navigates to detail? no — stays, invalidates runs; 409 overlap → toast "Skipped: previous run still running"), Edit (calls `onEdit(job)`), Delete (AlertDialog "Delete job <name>?" → `DELETE`, toast "Job deleted")
-- [ ] Row click / Enter on the focused name link → `/scheduled/<id>`; interactive cells stop propagation; table scrolls horizontally inside its container below 1024 px; no page horizontal scroll at 375 px
-- [ ] Empty → `EmptyState` (`CalendarClock`, "No scheduled jobs yet.", "Jobs run your prompt in a fresh workspace on a cron schedule.", New job button); loading → 5 skeleton rows; error → `ErrorCard` + Retry
-- [ ] 100 % coverage on `src/features/scheduled/**` so far; `coverage.include` extended
+- [x] `/scheduled` renders the seeded jobs as in the §4.3 wireframe; cron in mono with a tooltip from `describeCron` ("every day at 02:00 UTC"); status shown as icon + text (never colour alone); enabled `Switch` labelled `Enable <name>`, optimistic with rollback + toast on error
+- [x] Row menu (`⋯`, `aria-label="Actions for <name>"`): Run now (toast "Run started" → navigates to detail? no — stays, invalidates runs; 409 overlap → toast "Skipped: previous run still running"), Edit (calls `onEdit(job)`), Delete (AlertDialog "Delete job <name>?" → `DELETE`, toast "Job deleted")
+- [x] Row click / Enter on the focused name link → `/scheduled/<id>`; interactive cells stop propagation; table scrolls horizontally inside its container below 1024 px; no page horizontal scroll at 375 px
+- [x] Empty → `EmptyState` (`CalendarClock`, "No scheduled jobs yet.", "Jobs run your prompt in a fresh workspace on a cron schedule.", New job button); loading → 5 skeleton rows; error → `ErrorCard` + Retry
+- [x] 100 % coverage on `src/features/scheduled/**` so far; `coverage.include` extended
 
 **Files to create/modify**
 `apps/web/src/features/scheduled/{components/ScheduledView.tsx,components/ScheduledView.test.tsx,components/JobsTable.tsx,components/JobsTable.test.tsx,components/JobRow.tsx,components/JobRowMenu.tsx,components/JobRowMenu.test.tsx,components/RunStatus.tsx,components/RunStatus.test.tsx,components/ScheduleCell.tsx,components/ScheduleCell.test.tsx,components/DeleteJobDialog.tsx,components/DeleteJobDialog.test.tsx,components/JobsEmptyState.tsx,components/JobsSkeleton.tsx,hooks/useJobs.ts,hooks/useJobs.test.ts,hooks/useJobActions.ts,hooks/useJobActions.test.ts,services/scheduled-api.ts,services/scheduled-api.test.ts,lib/cron.ts,lib/cron.test.ts,lib/status.ts,lib/status.test.ts,index.ts}`, `apps/web/app/(app)/scheduled/page.tsx`; modify `apps/web/vitest.config.ts`.
@@ -453,3 +453,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1h-web-schedul
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 - 1H.1 ✅ 2026-08-19 — Added `src/mocks/{scheduled,settings}.ts` + tests (100×4) over local `TEMP-STUB(W1-H)` copies/minimal implementations of W1-G's not-yet-merged shared modules (`shared/api/use-api-query.ts`; `shared/transcript/{types,reducer,lib/format,lib/redact-display,hooks/useTurnEvents,testing/*,components/{Transcript,StatusPill},index}.ts(x)`; `shared/repo-picker/*`; `shared/feedback/*`; `shared/shell/PageHeader.tsx`; `mocks/{store,scenario,events,server,vitest}.ts`) and a real (non-stub) `src/mocks/handlers.ts`; stub list: `apps/web/src/mocks/{events,scenario,server,store,vitest}.ts`, `apps/web/src/shared/api/use-api-query.ts`, `apps/web/src/shared/feedback/{EmptyState.tsx,ErrorCard.tsx,index.ts}`, `apps/web/src/shared/repo-picker/{BranchPicker.tsx,RepoPicker.tsx,index.ts}`, `apps/web/src/shared/shell/PageHeader.tsx`, `apps/web/src/shared/transcript/{components/StatusPill.tsx,components/Transcript.tsx,hooks/useTurnEvents.ts,index.ts,lib/format.ts,lib/redact-display.ts,reducer.ts,testing/fake-event-source.ts,testing/index.ts,types.ts}`.
+- 1H.2 ✅ 2026-08-19 — Added `JobsTable` (+ `JobRow`, `JobRowMenu`, `RunStatus`, `ScheduleCell`, `DeleteJobDialog`, empty/skeleton states), `useJobs`/`useJobActions`, the `scheduled-api` service, the local `lib/cron.ts` adapter (`TEMP-STUB(W1-H)`, swapped to `@agent-hangar/core` once W1-F merges) and `lib/status.ts`, and wired `ScheduledView` into `/scheduled`; fixed a real bug found along the way in the `TEMP-STUB(W1-H)` `use-api-query.ts` (an unmemoized loader made `run`'s identity change every render, re-running the fetch effect on every render) — held the latest loader in a ref instead so `run`/`refetch` stay referentially stable.
