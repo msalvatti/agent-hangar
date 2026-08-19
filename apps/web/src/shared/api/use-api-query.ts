@@ -11,7 +11,7 @@
  */
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 /** Registered refetch callbacks, keyed by `JSON.stringify(key)`. */
 const registry = new Map<string, Set<() => void>>();
@@ -87,35 +87,41 @@ export function useApiQuery<T>(
   const [error, setError] = useState<Error | undefined>(undefined);
   const [isRefetching, setIsRefetching] = useState(false);
 
-  const run = useCallback(
-    async (signal: AbortSignal, isRefetch: boolean) => {
-      if (isRefetch) {
-        setIsRefetching(true);
-      } else {
-        setStatus('loading');
+  // Callers typically pass a fresh closure every render (it captures render-scoped values like a
+  // debounced query string). Reading through a ref — always the latest closure, but never a new
+  // dependency — keeps `run` (and the effects below that depend on it) stable across renders that
+  // don't change `keyString`, instead of refetching on every render and racing itself.
+  const loaderRef = useRef(loader);
+  useEffect(() => {
+    loaderRef.current = loader;
+  });
+
+  const run = useCallback(async (signal: AbortSignal, isRefetch: boolean) => {
+    if (isRefetch) {
+      setIsRefetching(true);
+    } else {
+      setStatus('loading');
+    }
+    try {
+      const result = await loaderRef.current(signal);
+      if (signal.aborted) {
+        return;
       }
-      try {
-        const result = await loader(signal);
-        if (signal.aborted) {
-          return;
-        }
-        setData(result);
-        setError(undefined);
-        setStatus('success');
-      } catch (reason) {
-        if (signal.aborted || isAbortError(reason)) {
-          return;
-        }
-        setError(toError(reason));
-        setStatus('error');
-      } finally {
-        if (!signal.aborted) {
-          setIsRefetching(false);
-        }
+      setData(result);
+      setError(undefined);
+      setStatus('success');
+    } catch (reason) {
+      if (signal.aborted || isAbortError(reason)) {
+        return;
       }
-    },
-    [loader],
-  );
+      setError(toError(reason));
+      setStatus('error');
+    } finally {
+      if (!signal.aborted) {
+        setIsRefetching(false);
+      }
+    }
+  }, []);
 
   useEffect(() => {
     if (!enabled) {

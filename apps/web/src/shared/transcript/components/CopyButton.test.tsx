@@ -7,11 +7,15 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { CopyButton } from './CopyButton';
 
-vi.mock('sonner', () => ({ toast: { error: vi.fn() } }));
-
 describe('CopyButton', () => {
+  // `vi.spyOn` on the real, already-resolved `toast` object rather than `vi.mock('sonner', ...)`:
+  // with this project's Vite/Vitest setup, a whole-module `vi.mock` factory doesn't propagate to
+  // `CopyButton.tsx`'s own `import { toast } from 'sonner'` (it keeps calling the real
+  // implementation) even though the test file's own import is mocked — two different module
+  // records for the same specifier. Spying mutates the shared singleton object in place instead
+  // of swapping the module binding, which both importers observe.
   afterEach(() => {
-    vi.clearAllMocks();
+    vi.restoreAllMocks();
   });
 
   // Clicking copies the value and flips the icon to a confirmation that reverts afterward.
@@ -41,6 +45,7 @@ describe('CopyButton', () => {
 
   // A clipboard rejection surfaces an error toast instead of throwing.
   it('shows an error toast when the clipboard write rejects', async () => {
+    const errorToast = vi.spyOn(toast, 'error').mockImplementation(() => '');
     const writeText = vi.fn().mockRejectedValue(new Error('denied'));
     Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
 
@@ -48,7 +53,7 @@ describe('CopyButton', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Copy command' }));
 
     await waitFor(() => {
-      expect(toast.error).toHaveBeenCalledWith('Copy failed');
+      expect(errorToast).toHaveBeenCalledWith('Copy failed');
     });
   });
 
