@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-F (Wave 1, parallel with W1-A … W1-I) |
 | **Status** | 🟦 running |
-| **Progress** | 0/5 tasks |
+| **Progress** | 1/5 tasks |
 | **Branch** | `feat/w1f-scheduling-workspace` |
 | **Owned paths** | `packages/core/src/scheduling/**` (except the frozen `types.ts`), `packages/core/src/workspace/**` (except the frozen `types.ts`), `packages/core/src/restore/**`, `packages/core/src/queues/queues.ts`, `packages/core/src/queues/schedulers.ts` (+ their `*.test.ts` / `*.integration.test.ts`; `queues/contracts.ts` is frozen) — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./scheduling/index.js`, `./workspace/index.js`, `./restore/index.js`, `./queues/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
@@ -43,7 +43,7 @@ This lane fills in the pure domain logic that W2-A (API) and W2-B (worker) orche
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1F.1 | Scheduling: cron validation, `nextRunAt` (tz/DST), `describeCron`, overlap policy, reconcile diff, scheduler keys | 📋 | P0 | M | — |
+| 1F.1 | Scheduling: cron validation, `nextRunAt` (tz/DST), `describeCron`, overlap policy, reconcile diff, scheduler keys | ✅ | P0 | M | — |
 | 1F.2 | Workspace lifecycle: transition tables + `assertTransition`, `ensureWorkspaceDecision`, idle-TTL selection, orphan reconcile | 📋 | P0 | M | — |
 | 1F.3 | Restore context: history window, `TOOL_SUMMARY` compaction text, restoration notice, `buildRestoreContext`, `buildTurnRequest` | 📋 | P0 | M | 1F.2 |
 | 1F.4 | BullMQ factories: queues, worker connection, Job Scheduler wrappers, `@redis` integration tests | 📋 | P0 | M | 1F.1 |
@@ -53,18 +53,18 @@ This lane fills in the pure domain logic that W2-A (API) and W2-B (worker) orche
 
 ## Task 1F.1 — Scheduling: cron validation, `nextRunAt`, `describeCron`, overlap, reconcile, keys
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Pure scheduling helpers over `cron-parser`: validate a 5-field cron + IANA timezone (`InvalidCronError`), compute `nextRunAt`/`nextRuns` with timezone and DST correctness, produce the human-readable description the UI preview shows, decide the overlap policy (`skip`), diff DB jobs against existing schedulers into a `ReconcilePlan`, and centralise the scheduler-key convention (key = `ScheduledJob.id`).
 
 **Acceptance criteria**
-- [ ] `validateCronSpec(spec)` accepts exactly 5 whitespace-separated fields parsable by `cron-parser`, rejects 6-field/seconds, `@macros`, empty, unparsable, and invalid/unknown IANA timezones — always `InvalidCronError` with the offending value and reason in the message
-- [ ] `nextRunAt(spec, from)` returns the first instant strictly after `from`; `nextRuns(spec, from, count)` strictly increasing; DST tests: `0 12 * * *` in `Europe/Berlin` across 2026-03-29 → consecutive runs 23 h apart in UTC, across 2026-10-25 → 25 h apart; `30 2 * * *` in `America/New_York` on 2026-03-08 (non-existent wall time) yields an instant after the gap and the run on 2026-03-09 is at 02:30 local; results identical for `UTC` vs `Etc/UTC`
-- [ ] `describeCron(spec)` covers: every minute; every N minutes; every hour at :MM; every day at HH:MM; every weekday at HH:MM; specific weekdays (`Mon, Wed`); day-of-month; fallback ``on schedule `<cron>` ``; always suffixed by the timezone (e.g. `every day at 02:00 UTC`)
-- [ ] `decideOverlap({ runningRun })` → `{ action: 'run' }` or `{ action: 'skip', reason: OVERLAP_SKIP_REASON }` with `OVERLAP_SKIP_REASON === 'previous run still running'`
-- [ ] `reconcile(dbJobs, schedulers)` → `ReconcilePlan`: `upsert` = enabled jobs whose scheduler is missing or differs in `pattern`/`tz`; `remove` = scheduler keys with no enabled job; deterministic order (by id/key); unchanged schedulers untouched
-- [ ] `toSchedulerKey(jobId)` / `jobIdFromSchedulerKey(key)` identity helpers with JSDoc explaining why (spec 03 §5)
-- [ ] 100 % coverage on `src/scheduling/**` (types.ts excluded by config)
+- [x] `validateCronSpec(spec)` accepts exactly 5 whitespace-separated fields parsable by `cron-parser`, rejects 6-field/seconds, `@macros`, empty, unparsable, and invalid/unknown IANA timezones — always `InvalidCronError` with the offending value and reason in the message
+- [x] `nextRunAt(spec, from)` returns the first instant strictly after `from`; `nextRuns(spec, from, count)` strictly increasing; DST tests: `0 12 * * *` in `Europe/Berlin` across 2026-03-29 → consecutive runs 23 h apart in UTC, across 2026-10-25 → 25 h apart; `30 2 * * *` in `America/New_York` on 2026-03-08 (non-existent wall time) yields an instant after the gap and the run on 2026-03-09 is at 02:30 local; results identical for `UTC` vs `Etc/UTC`
+- [x] `describeCron(spec)` covers: every minute; every N minutes; every hour at :MM; every day at HH:MM; every weekday at HH:MM; specific weekdays (`Mon, Wed`); day-of-month; fallback ``on schedule `<cron>` ``; always suffixed by the timezone (e.g. `every day at 02:00 UTC`)
+- [x] `decideOverlap({ runningRun })` → `{ action: 'run' }` or `{ action: 'skip', reason: OVERLAP_SKIP_REASON }` with `OVERLAP_SKIP_REASON === 'previous run still running'`
+- [x] `reconcile(dbJobs, schedulers)` → `ReconcilePlan`: `upsert` = enabled jobs whose scheduler is missing or differs in `pattern`/`tz`; `remove` = scheduler keys with no enabled job; deterministic order (by id/key); unchanged schedulers untouched
+- [x] `toSchedulerKey(jobId)` / `jobIdFromSchedulerKey(key)` identity helpers with JSDoc explaining why (spec 03 §5)
+- [x] 100 % coverage on `src/scheduling/**` (types.ts excluded by config)
 
 **Files to create**
 `packages/core/src/scheduling/cron.ts`, `cron.test.ts`, `describe.ts`, `describe.test.ts`, `overlap.ts`, `overlap.test.ts`, `reconcile.ts`, `reconcile.test.ts`, `keys.ts`, `keys.test.ts`, `index.ts`; modify `packages/core/vitest.config.ts` (+ the owned folder `index.ts`).
@@ -548,3 +548,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1f-scheduling-
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+- 1F.1 ✅ 2026-08-19 — cron validation/description/next-run over cron-parser 5.10.0, overlap policy, scheduler keys and reconcile plan; 46 unit tests, 100 % on `src/scheduling/**`
