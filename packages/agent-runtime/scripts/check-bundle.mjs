@@ -35,6 +35,7 @@ const HOST_ONLY_MARKERS = [
 const packageRoot = fileURLToPath(new URL('..', import.meta.url));
 const bundlePath = join(packageRoot, 'dist', 'cli.js');
 const sourceMapPath = `${bundlePath}.map`;
+const manifestPath = join(packageRoot, 'dist', 'package.json');
 const version = JSON.parse(readFileSync(join(packageRoot, 'package.json'), 'utf8')).version;
 
 /**
@@ -72,7 +73,9 @@ if (survivor !== undefined) {
  * Copies the bundle into an empty directory and runs it there.
  *
  * The fresh directory is what proves self-containment: nothing resolves out of the repository's
- * `node_modules`, which is the situation inside the workspace image.
+ * `node_modules`, which is the situation inside the workspace image. Only the three files the
+ * image receives are copied, and `--no-experimental-detect-module` turns off Node's guess at the
+ * module system, so the run also proves the manifest beside the bundle is doing its job.
  *
  * @returns `undefined` when the bundle printed the expected version, otherwise the failure text.
  */
@@ -81,11 +84,16 @@ function runStandalone() {
   try {
     copyFileSync(bundlePath, join(scratch, 'cli.js'));
     copyFileSync(sourceMapPath, join(scratch, 'cli.js.map'));
-    const stdout = execFileSync(process.execPath, ['cli.js', '--version'], {
-      cwd: scratch,
-      env: { PATH: process.env.PATH },
-      encoding: 'utf8',
-    });
+    copyFileSync(manifestPath, join(scratch, 'package.json'));
+    const stdout = execFileSync(
+      process.execPath,
+      ['--no-experimental-detect-module', 'cli.js', '--version'],
+      {
+        cwd: scratch,
+        env: { PATH: process.env.PATH },
+        encoding: 'utf8',
+      },
+    );
     return stdout === `${version}\n`
       ? undefined
       : `bundle printed ${JSON.stringify(stdout)}, expected ${JSON.stringify(`${version}\n`)}`;

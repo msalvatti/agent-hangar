@@ -9,7 +9,7 @@
  * everything reached through that package side-effect-free so tree shaking removes what the
  * runtime never calls. `scripts/check-bundle.mjs` proves the result really is self-contained.
  */
-import { chmod, readFile } from 'node:fs/promises';
+import { chmod, readFile, writeFile } from 'node:fs/promises';
 
 import { build } from 'esbuild';
 
@@ -76,3 +76,9 @@ await build({
 });
 
 await chmod('dist/cli.js', 0o755);
+
+// The bundle is ESM in a file named `.js`. Node only guesses that by re-parsing a file that
+// failed as CommonJS, which is a default that can be switched off; the manifest beside the bundle
+// states it outright, so the image does not depend on a heuristic to start the runtime at all.
+// It must travel into the image together with `cli.js` — see the PR description.
+await writeFile('dist/package.json', `${JSON.stringify({ type: 'module' }, null, 2)}\n`, 'utf8');
