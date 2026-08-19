@@ -93,3 +93,13 @@ export async function listRuns(jobId: string, signal?: AbortSignal): Promise<Run
 export async function getRun(id: string, signal?: AbortSignal): Promise<RunDetail> {
   return apiFetch('getRun', signal === undefined ? { params: { id } } : { params: { id }, signal });
 }
+
+/**
+ * Cancels an active run. `POST /api/turns/:id/cancel` is shared with the chats lane's turns;
+ * `TurnRequest.turnId` is a `Turn.id` or a `JobRun.id`, so the run id works here too.
+ *
+ * @param runId - Run id.
+ */
+export async function cancelRun(runId: string): Promise<void> {
+  await apiFetch('cancelTurn', { params: { id: runId } });
+}

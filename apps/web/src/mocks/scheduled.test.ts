@@ -226,3 +226,28 @@ describe('GET /api/runs/:id', () => {
     });
   });
 });
+
+describe('POST /api/turns/:id/cancel', () => {
+  /** Cancelling an active run marks it CANCELLED. */
+  it('cancels a running run', async () => {
+    const result = await apiFetch('cancelTurn', { params: { id: 'run-nightly-running' } });
+    expect(result).toEqual({ ok: true });
+    const detail = await apiFetch('getRun', { params: { id: 'run-nightly-running' } });
+    expect(detail.run.status).toBe('CANCELLED');
+  });
+
+  /** Cancelling a terminal run is a no-op that still answers ok. */
+  it('is a no-op for a terminal run', async () => {
+    const result = await apiFetch('cancelTurn', { params: { id: 'run-nightly-success' } });
+    expect(result).toEqual({ ok: true });
+    const detail = await apiFetch('getRun', { params: { id: 'run-nightly-success' } });
+    expect(detail.run.status).toBe('SUCCEEDED');
+  });
+
+  /** An unknown run id answers 404. */
+  it('answers 404 for an unknown run', async () => {
+    await expect(apiFetch('cancelTurn', { params: { id: 'missing' } })).rejects.toMatchObject({
+      status: 404,
+    });
+  });
+});

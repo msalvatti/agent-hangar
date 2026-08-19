@@ -456,4 +456,18 @@ export const scheduledHandlers = [
     }
     return createSseResponse(frames, from === undefined ? {} : { from });
   }),
+
+  // `POST /api/turns/:id/cancel` is a shared route (`TurnRequest.turnId` is a `Turn.id` or a
+  // `JobRun.id`); the chats lane owns its own mock for the turn case, this one covers job runs.
+  http.post('/api/turns/:id/cancel', ({ params }) => {
+    const run = findRun(String(params.id));
+    if (run === undefined) {
+      return notFound('Run not found');
+    }
+    if (run.status === 'RUNNING' || run.status === 'PREPARING' || run.status === 'QUEUED') {
+      const cancelled: MockRun = { ...run, status: 'CANCELLED', finishedAt: nowIso() };
+      runs = runs.map((candidate) => (candidate.id === run.id ? cancelled : candidate));
+    }
+    return HttpResponse.json({ ok: true });
+  }),
 ];

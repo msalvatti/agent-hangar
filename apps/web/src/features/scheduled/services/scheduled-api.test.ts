@@ -12,6 +12,7 @@ import { resetScheduledStore } from '@/mocks/scheduled';
 import { registerMockServer } from '@/mocks/vitest';
 
 import {
+  cancelRun,
   createJob,
   deleteJob,
   getRun,
@@ -108,5 +109,12 @@ describe('getRun', () => {
     const controller = new AbortController();
     controller.abort();
     await expect(getRun('run-nightly-success', controller.signal)).rejects.toThrow();
+  });
+});
+
+describe('cancelRun', () => {
+  /** Cancels a run without throwing. */
+  it('cancels a run', async () => {
+    await expect(cancelRun('run-nightly-running')).resolves.toBeUndefined();
   });
 });
