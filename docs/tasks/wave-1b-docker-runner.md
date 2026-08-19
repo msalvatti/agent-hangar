@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-B 🐳 (Docker-integration lane — the orchestrator runs at most one 🐳 lane at a time) |
 | **Status** | 🟦 running |
-| **Progress** | 1/5 tasks |
+| **Progress** | 2/5 tasks |
 | **Branch** | `feat/w1b-docker-runner` |
 | **Owned paths** | `packages/core/src/runner/docker/**`, `infra/workspace/**` (Dockerfile, askpass.sh, .dockerignore, README.md, .gitignore) · additive-only edits allowed in `packages/core/vitest.config.ts` (`coverage.include`) and `packages/core/package.json` (`exports` subpath `./runner/docker`) |
 | **Depends on** | W0 merged to `main` |
@@ -43,7 +43,7 @@ Quality bar (same as every lane): TypeScript strict, zero `any`, zero suppressio
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
 | 1B.1 | Docker socket resolution + container spec builder (pure) | ✅ | P0 | M | — |
-| 1B.2 | Exec stream: demux, stdin pump, timeout/abort kill path (pure) | 📋 | P0 | M | 1B.1 |
+| 1B.2 | Exec stream: demux, stdin pump, timeout/abort kill path (pure) | ✅ | P0 | M | 1B.1 |
 | 1B.3 | `DockerWorkspaceRunner` class + factory + unit tests with a faked Docker API | 📋 | P0 | L | 1B.1, 1B.2 |
 | 1B.4 | Workspace image hardening/verification, askpass token-file support, README, `@docker` integration suite | 📋 | P0 | M | 1B.3 |
 | 1B.5 | Close-out: gates, code review, plan dashboard, PR | 📋 | P0 | S | 1B.1–1B.4 |
@@ -155,15 +155,15 @@ Completion Protocol (after you finish):
 
 ## Task 1B.2 — Exec stream: demux, stdin pump, timeout/abort kill path (pure)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1B.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1B.1
 
 **Description.** Implement `exec-stream.ts`: a demuxer for Docker's multiplexed attach stream (8-byte frame headers), a stdin writer that accepts `string | Uint8Array | AsyncIterable<Uint8Array>` and always closes stdin, and the async generator that pumps a hijacked exec stream into `ExecEvent`s while honouring `timeoutMs` and `AbortSignal` by invoking an injected `kill()` and yielding `exit { code: null, signal: 'TIMEOUT' | 'ABORTED' }`. Pure: tested with in-memory duplex streams and fake timers.
 
 **Acceptance criteria**
-- [ ] `createDockerDemuxer()` handles frames split across chunks (header split, payload split), several frames per chunk, stream types 0/1 → stdout, 2 → stderr, unknown type → `ProtocolError`
-- [ ] `writeStdin(stream, stdin)` writes the three input shapes, respects backpressure (`await drain`), always calls `stream.end()` (also when `stdin` is undefined), and ends early when the abort signal fires
-- [ ] `pumpExecStream(params)` yields stdout/stderr events in order, then `exit { code }` from `inspectExitCode()`; on timeout calls `kill('TIMEOUT')` once and yields `exit { code: null, signal: 'TIMEOUT' }`; on abort yields `exit { code: null, signal: 'ABORTED' }`; never throws on non-zero exit; stream `error` → `DockerRunnerError`
-- [ ] 100 % coverage on `exec-stream.ts`
+- [x] `createDockerDemuxer()` handles frames split across chunks (header split, payload split), several frames per chunk, stream types 0/1 → stdout, 2 → stderr, unknown type → `ProtocolError`
+- [x] `writeStdin(stream, stdin)` writes the three input shapes, respects backpressure (`await drain`), always calls `stream.end()` (also when `stdin` is undefined), and ends early when the abort signal fires
+- [x] `pumpExecStream(params)` yields stdout/stderr events in order, then `exit { code }` from `inspectExitCode()`; on timeout calls `kill('TIMEOUT')` once and yields `exit { code: null, signal: 'TIMEOUT' }`; on abort yields `exit { code: null, signal: 'ABORTED' }`; never throws on non-zero exit; stream `error` → `DockerRunnerError`
+- [x] 100 % coverage on `exec-stream.ts`
 
 **Files to create**
 `packages/core/src/runner/docker/{exec-stream.ts, exec-stream.test.ts}`.
@@ -508,3 +508,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1b-docker-runn
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 
 - 1B.1 ✅ 2026-08-19 — socket resolution order, hardened container-spec builder with compose grouping labels, typed DockerRunnerError; 100 % unit coverage
+- 1B.2 ✅ 2026-08-19 — frame demuxer, stdin pump with backpressure and EOF, timeout/abort termination path and the pid-file exec wrappers; 100 % unit coverage

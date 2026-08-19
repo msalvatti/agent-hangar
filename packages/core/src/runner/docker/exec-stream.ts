@@ -1,0 +1,333 @@
+/**
+ * Plumbing for a Docker exec: frame demultiplexing, the stdin pump and the termination path.
+ *
+ * Layer: service (adapter).
+ *
+ * Docker multiplexes stdout and stderr over one hijacked connection using an 8-byte frame header
+ * (byte 0 = stream type, bytes 4–7 = big-endian payload length). Everything here works on plain
+ * Node streams and injected timers, so the timeout and cancellation paths — the ones that are
+ * hardest to observe against a real daemon — are exercised deterministically by unit tests.
+ *
+ * The command wrappers exist because dockerode's `exec.inspect().Pid` is a host pid and cannot be
+ * signalled from inside the container: the wrapper records the shell's own pid in a tmpfs file that
+ * a later `kill` exec reads back.
+ */
+import { ProtocolError } from '../../errors.js';
+import type { ExecEvent, ExecSignal, ExecSpec } from '../types.js';
+
+import { DockerRunnerError } from './errors.js';
+
+/** Bytes of the Docker stream frame header that precede every payload. */
+const FRAME_HEADER_BYTES = 8;
+
+/** Offset of the big-endian uint32 payload length inside the frame header. */
+const FRAME_SIZE_OFFSET = 4;
+
+/** Directory (on the container's tmpfs `/tmp`) holding one pid file per exec. */
+export const EXEC_PID_DIR = '/tmp/ah-exec';
+
+/**
+ * Accepted shape of an exec reference.
+ *
+ * Deliberately narrow: the reference is interpolated into a `sh -c` argument list, so restricting
+ * it to the hex-and-dash alphabet of a UUID removes every shell metacharacter, quote and space
+ * that could break out of the wrapper script.
+ */
+const EXEC_REF_PATTERN = /^[0-9a-f-]{36}$/;
+
+/** UTF-8 encoder for string stdin. */
+const encoder = new TextEncoder();
+
+/** Reason an exec was ended by the runner rather than by the process exiting. */
+export type ExecTermination = 'TIMEOUT' | 'ABORTED';
+
+/** Incremental parser for Docker's multiplexed attach/exec stream. */
+export interface DockerDemuxer {
+  /**
+   * Feeds bytes in and returns every complete frame they produced.
+   *
+   * @param chunk - Bytes as they arrived; frames may span chunks in either direction.
+   * @returns Zero or more output events, in stream order.
+   * @throws ProtocolError when a frame declares an unknown stream type.
+   */
+  push(chunk: Uint8Array): ExecEvent[];
+  /** Bytes buffered because they do not yet form a complete frame. */
+  pendingBytes(): number;
+}
+
+/** The hijacked exec stream, as far as the pump is concerned. */
+export interface ExecStream extends AsyncIterable<Uint8Array> {
+  /** Ends the iteration early; the pump calls it after a timeout or an abort. */
+  destroy(error?: Error): unknown;
+}
+
+/** Writable half of the hijacked exec stream. */
+export interface ExecStdinStream {
+  /**
+   * Writes a chunk.
+   *
+   * @param chunk - Bytes to write.
+   * @returns `false` when the internal buffer is full and `'drain'` must be awaited.
+   */
+  write(chunk: Uint8Array): boolean;
+  /** Registers a one-shot listener, used to await `'drain'`. */
+  once(event: 'drain', listener: () => void): unknown;
+  /** Half-closes the stream so the process sees EOF on stdin. */
+  end(): unknown;
+}
+
+/** Everything {@link pumpExecStream} needs to turn a hijacked stream into `ExecEvent`s. */
+export interface PumpExecParams {
+  /** The hijacked exec stream. */
+  stream: ExecStream;
+  /** Parser for the frames arriving on `stream`. */
+  demuxer: DockerDemuxer;
+  /** Wall-clock limit; omitted means no limit. */
+  timeoutMs?: number;
+  /** Cancellation signal; aborting ends the exec like a timeout does. */
+  signal?: AbortSignal;
+  /** Terminates the process inside the container. */
+  kill: (reason: ExecTermination) => Promise<void>;
+  /** Reads the process exit code once the stream closed on its own. */
+  inspectExitCode: () => Promise<number | null>;
+  /** Timer scheduler; injected by tests. */
+  setTimeoutFn?: typeof setTimeout;
+  /** Timer canceller; injected by tests. */
+  clearTimeoutFn?: typeof clearTimeout;
+}
+
+/**
+ * Maps a Docker frame's stream-type byte to the event it produces.
+ *
+ * @param type - Byte 0 of the frame header.
+ * @returns The event kind (`stdout` for types 0 and 1, `stderr` for type 2).
+ * @throws ProtocolError for any other value, which means the framing is out of sync.
+ */
+function streamKindFor(type: number): 'stdout' | 'stderr' {
+  if (type === 0 || type === 1) {
+    return 'stdout';
+  }
+  if (type === 2) {
+    return 'stderr';
+  }
+  throw new ProtocolError(`unexpected docker stream type ${type}`);
+}
+
+/**
+ * Creates a demultiplexer for Docker's multiplexed stream format.
+ *
+ * @returns A stateful parser; feed every chunk in arrival order.
+ */
+export function createDockerDemuxer(): DockerDemuxer {
+  let buffered = Buffer.alloc(0);
+
+  return {
+    push(chunk: Uint8Array): ExecEvent[] {
+      buffered = Buffer.concat([buffered, chunk]);
+      const events: ExecEvent[] = [];
+
+      while (buffered.length >= FRAME_HEADER_BYTES) {
+        const kind = streamKindFor(buffered.readUInt8(0));
+        const size = buffered.readUInt32BE(FRAME_SIZE_OFFSET);
+        const frameEnd = FRAME_HEADER_BYTES + size;
+        if (buffered.length < frameEnd) {
+          break;
+        }
+
+        // A zero-length frame carries no output; Docker emits them and an empty `stdout` event
+        // would be indistinguishable from real output of length zero downstream.
+        if (size > 0) {
+          // Copy the payload: `buffered` is re-sliced below, and a view would keep the consumer
+          // holding memory the parser still owns.
+          const data = new Uint8Array(buffered.subarray(FRAME_HEADER_BYTES, frameEnd));
+          events.push({ type: kind, data });
+        }
+        buffered = buffered.subarray(frameEnd);
+      }
+
+      return events;
+    },
+    pendingBytes(): number {
+      return buffered.length;
+    },
+  };
+}
+
+/**
+ * Writes one chunk, awaiting `'drain'` when the stream signals backpressure.
+ *
+ * @param stream - Writable half of the exec stream.
+ * @param chunk - Bytes to write.
+ * @returns A promise that resolves once the chunk has been accepted.
+ */
+function writeChunk(stream: ExecStdinStream, chunk: Uint8Array): Promise<void> {
+  return new Promise((resolve) => {
+    if (stream.write(chunk)) {
+      resolve();
+      return;
+    }
+    stream.once('drain', resolve);
+  });
+}
+
+/** Accepted stdin payloads, mirroring the `ExecSpec` contract. */
+export type ExecStdin = ExecSpec['stdin'];
+
+/**
+ * Writes the exec's stdin and always closes it.
+ *
+ * Closing is unconditional and happens even when nothing was written: a process reading stdin (the
+ * agent runtime reads an NDJSON turn request from it) hangs forever without EOF, and that hang
+ * would only surface as a turn timeout minutes later.
+ *
+ * @param stream - Writable half of the hijacked exec stream.
+ * @param stdin - String, byte array, async iterable of byte arrays, or nothing.
+ * @param signal - Optional cancellation; aborting stops an in-flight async iterable.
+ * @returns A promise that resolves once stdin has been written and closed.
+ */
+export async function writeStdin(
+  stream: ExecStdinStream,
+  stdin: ExecStdin,
+  signal?: AbortSignal,
+): Promise<void> {
+  try {
+    if (typeof stdin === 'string') {
+      await writeChunk(stream, encoder.encode(stdin));
+      return;
+    }
+    if (stdin instanceof Uint8Array) {
+      await writeChunk(stream, stdin);
+      return;
+    }
+    if (stdin === undefined) {
+      return;
+    }
+    for await (const chunk of stdin) {
+      if (signal?.aborted === true) {
+        return;
+      }
+      await writeChunk(stream, chunk);
+    }
+  } finally {
+    stream.end();
+  }
+}
+
+/**
+ * Turns a hijacked exec stream into the contract's `ExecEvent` sequence.
+ *
+ * Yields every stdout/stderr frame in order and exactly one terminal `exit` event. A non-zero exit
+ * code is data, never an exception. When the runner ends the exec itself — wall-clock timeout or
+ * caller abort — the exit event carries `code: null` and the reason as `signal`, and the exit code
+ * is not inspected because the process was not allowed to finish.
+ *
+ * @param params - Stream, parser, limits and the two daemon callbacks.
+ * @yields Output events followed by the terminal `exit` event.
+ * @throws DockerRunnerError when the stream fails for a reason other than our own termination.
+ */
+export async function* pumpExecStream(params: PumpExecParams): AsyncGenerator<ExecEvent> {
+  const { stream, demuxer, signal, kill, inspectExitCode } = params;
+  const scheduleTimeout = params.setTimeoutFn ?? setTimeout;
+  const cancelTimeout = params.clearTimeoutFn ?? clearTimeout;
+
+  // Held in an object rather than a plain `let`: the reason is written inside `terminate`, and a
+  // closure assignment is invisible to the control-flow analysis that reads it further down.
+  const state: { terminated: ExecTermination | null } = { terminated: null };
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const terminate = (reason: ExecTermination): void => {
+    if (state.terminated !== null) {
+      return;
+    }
+    state.terminated = reason;
+    // The kill runs best-effort: the caller's implementation already falls back to killing the
+    // container, and the stream is destroyed on the next line regardless of the outcome.
+    void kill(reason).catch(() => undefined);
+    stream.destroy();
+  };
+  const onAbort = (): void => {
+    terminate('ABORTED');
+  };
+
+  if (signal !== undefined) {
+    if (signal.aborted) {
+      terminate('ABORTED');
+    } else {
+      signal.addEventListener('abort', onAbort, { once: true });
+    }
+  }
+  if (params.timeoutMs !== undefined) {
+    timer = scheduleTimeout(() => {
+      terminate('TIMEOUT');
+    }, params.timeoutMs);
+  }
+
+  try {
+    for await (const chunk of stream) {
+      yield* demuxer.push(chunk);
+    }
+  } catch (error) {
+    // A stream that fails *because* we destroyed it is the expected end of a terminated exec.
+    if (state.terminated === null) {
+      throw new DockerRunnerError('exec stream failed', { cause: error });
+    }
+  } finally {
+    if (timer !== undefined) {
+      cancelTimeout(timer);
+    }
+    signal?.removeEventListener('abort', onAbort);
+  }
+
+  yield state.terminated === null
+    ? { type: 'exit', code: await inspectExitCode() }
+    : { type: 'exit', code: null, signal: state.terminated };
+}
+
+/**
+ * Rejects an exec reference that could escape the wrapper's argument list.
+ *
+ * @param execRef - Reference to validate.
+ * @throws DockerRunnerError when the reference is not a UUID-shaped string.
+ */
+function assertSafeExecRef(execRef: string): void {
+  if (!EXEC_REF_PATTERN.test(execRef)) {
+    throw new DockerRunnerError(`invalid exec reference "${execRef}"`);
+  }
+}
+
+/**
+ * Wraps a command so its pid can be signalled from inside the container.
+ *
+ * The wrapper writes the shell's own pid to `${EXEC_PID_DIR}/<execRef>.pid` and then `exec`s the
+ * real command, which replaces the shell while keeping that pid — so the recorded pid is the
+ * process the caller wants to signal.
+ *
+ * @param execRef - UUID identifying this exec; becomes the pid file name.
+ * @param cmd - The command and its arguments.
+ * @returns Argument vector for Docker's `Cmd`.
+ * @throws DockerRunnerError when `execRef` is not UUID-shaped.
+ */
+export function execWrapperCommand(execRef: string, cmd: readonly string[]): string[] {
+  assertSafeExecRef(execRef);
+  return [
+    'sh',
+    '-c',
+    `mkdir -p ${EXEC_PID_DIR} && echo $$ > "${EXEC_PID_DIR}/$0.pid" && exec "$@"`,
+    execRef,
+    ...cmd,
+  ];
+}
+
+/**
+ * Builds the command that signals a previously wrapped exec.
+ *
+ * @param execRef - UUID of the exec to signal.
+ * @param sig - Signal name to deliver.
+ * @returns Argument vector for Docker's `Cmd`; exits non-zero when the pid file is gone, which
+ *   simply means the process already finished.
+ * @throws DockerRunnerError when `execRef` is not UUID-shaped.
+ */
+export function killCommand(execRef: string, sig: ExecSignal): string[] {
+  assertSafeExecRef(execRef);
+  return ['sh', '-c', `kill -${sig} "$(cat "${EXEC_PID_DIR}/$0.pid")"`, execRef];
+}
