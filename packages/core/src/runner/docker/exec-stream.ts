@@ -42,6 +42,15 @@ export const EXEC_PID_DIR = '/tmp/ah-exec';
  */
 const EXEC_REF_PATTERN = /^[0-9a-f-]{36}$/;
 
+/**
+ * The only signal names that may be interpolated into the kill command.
+ *
+ * The parameter is already typed as {@link ExecSignal}, but the value originates in an HTTP request
+ * body and this is where a string becomes part of a shell command — the one place where a type
+ * that was not enforced at the boundary would turn into command injection.
+ */
+const ALLOWED_SIGNALS: readonly string[] = ['INT', 'TERM', 'KILL'];
+
 /** UTF-8 encoder for string stdin. */
 const encoder = new TextEncoder();
 
@@ -368,12 +377,15 @@ export function execWrapperCommand(execRef: string, cmd: readonly string[]): str
  * Builds the command that signals a previously wrapped exec.
  *
  * @param execRef - UUID of the exec to signal.
- * @param sig - Signal name to deliver.
+ * @param sig - Signal name to deliver; re-checked at runtime because it ends up in a shell command.
  * @returns Argument vector for Docker's `Cmd`; exits non-zero when the pid file is gone, which
  *   simply means the process already finished.
- * @throws DockerRunnerError when `execRef` is not UUID-shaped.
+ * @throws DockerRunnerError when `execRef` is not UUID-shaped or `sig` is not a known signal.
  */
 export function killCommand(execRef: string, sig: ExecSignal): string[] {
   assertSafeExecRef(execRef);
+  if (!ALLOWED_SIGNALS.includes(sig)) {
+    throw new DockerRunnerError(`unsupported signal "${sig}"`);
+  }
   return ['sh', '-c', `kill -${sig} "$(cat "${EXEC_PID_DIR}/$0.pid")"`, execRef];
 }

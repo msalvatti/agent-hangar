@@ -15,7 +15,7 @@ import { PassThrough, Writable } from 'node:stream';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { ProtocolError } from '../../errors.js';
-import type { ExecEvent } from '../types.js';
+import type { ExecEvent, ExecSignal } from '../types.js';
 
 import { DockerRunnerError } from './errors.js';
 import {
@@ -517,6 +517,19 @@ describe('execWrapperCommand and killCommand', () => {
       `kill -${sig} "$(cat "${EXEC_PID_DIR}/$0.pid")"`,
       EXEC_REF,
     ]);
+  });
+
+  /**
+   * Security boundary: the signal name is interpolated into a `sh -c` string. It is typed as a
+   * three-value union, but the value arrives in an HTTP request body, so a caller that skipped
+   * validation would otherwise turn a cancel request into command injection. The check is here,
+   * at the point where the string becomes a command.
+   */
+  it('refuses a signal name outside the known set', () => {
+    const injected = 'KILL; id #' as ExecSignal;
+
+    expect(() => killCommand(EXEC_REF, injected)).toThrow(DockerRunnerError);
+    expect(() => killCommand(EXEC_REF, injected)).toThrow(/unsupported signal/);
   });
 
   /**
