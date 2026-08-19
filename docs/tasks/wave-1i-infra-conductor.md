@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-I (parallel with W1-A … W1-H; no Docker-integration tests — scripts are tested with PATH shims) |
 | **Status** | 🟦 running |
-| **Progress** | 4/6 tasks |
+| **Progress** | 5/6 tasks |
 | **Branch** | `feat/w1i-infra-conductor` |
 | **Owned paths** | `infra/scripts/{setup,run,archive,doctor,rotate-key,ws,db-prune}.sh`, `infra/scripts/lib/**` (node helpers), `infra/scripts/*.test.ts`, `.conductor/settings.toml`, `infra/docker-compose.yml`, `.env.example`, root `package.json` **scripts block only**, root `vitest.config.ts` (`scripts` project lines only). `infra/scripts/env.sh` is W0 output with no other Wave 1 owner — additive edits allowed (see rules). |
 | **Depends on** | W0 merged to `main` (Tasks 1I.3 and 1I.4 additionally need W1-A, W1-C, W1-E merged — this lane runs in the second Wave 1 batch, see plan §13) |
@@ -47,7 +47,7 @@ Everything is keyed by instance (`AH_INSTANCE` / `AH_PORT_BASE`, with `CONDUCTOR
 | 1I.2 | `archive.sh`, `ws.sh` (`ws:list` / `ws:reap`), `db-prune.sh` | ✅ | P0 | S | 1I.1 |
 | 1I.3 | `doctor.sh` + node helpers (secrets status, OpenAI model check) with snapshot tests | ✅ | P0 | L | 1I.1, W1-A + W1-C + W1-E merged |
 | 1I.4 | `rotate-key.sh` + `lib/rotate-key.ts` (re-encrypt with `keyVersion + 1`, atomic key swap, backup) | ✅ | P1 | M | 1I.3 |
-| 1I.5 | `.conductor/settings.toml`, two-instance manual checklist, README "Working with Conductor" draft (appendix) | 📋 | P0 | S | 1I.1, 1I.2 |
+| 1I.5 | `.conductor/settings.toml`, two-instance manual checklist, README "Working with Conductor" draft (appendix) | ✅ | P0 | S | 1I.1, 1I.2 |
 | 1I.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1I.1–1I.5 |
 
 ---
@@ -414,15 +414,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1i-infra-condu
 
 ## Task 1I.5 — `.conductor/settings.toml`, two-instance manual checklist, README "Working with Conductor" draft
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1I.1, 1I.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1I.1, 1I.2
 
 **Description.** Commit the Conductor configuration exactly as spec 05 §6, prove it by a test that parses the TOML minimally and checks the referenced scripts exist and are executable, run the two-instance side-by-side checklist manually and record the expected outputs in the appendix of this file, and draft the README section that W3-B will paste (W1-I does not own `README.md`).
 
 **Acceptance criteria**
-- [ ] `.conductor/settings.toml` content is exactly: `"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"`, `[scripts]` with `setup = "./infra/scripts/setup.sh"`, `run = "./infra/scripts/run.sh"`, `archive = "./infra/scripts/archive.sh"`, `run_mode = "concurrent"` (comments allowed)
-- [ ] `infra/scripts/conductor.test.ts` parses the file with a ~30-line inline TOML subset parser (`[table]`, `key = "string"`, `"quoted key" = "string"`, `#` comments) and asserts the four values + `$schema`; asserts each referenced script exists relative to the repo root and is executable (`fs.accessSync(path, X_OK)`); asserts `run_mode` is `concurrent`
-- [ ] Appendix A of this file filled with the manual two-instance checklist (exact commands, expected `doctor` tables, `docker ps` names/ports, archive result) and marked as executed with date and outcome
-- [ ] Appendix B of this file contains the README "Working with Conductor" section text (English), ready for W3-B to paste verbatim
+- [x] `.conductor/settings.toml` content is exactly: `"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"`, `[scripts]` with `setup = "./infra/scripts/setup.sh"`, `run = "./infra/scripts/run.sh"`, `archive = "./infra/scripts/archive.sh"`, `run_mode = "concurrent"` (comments allowed)
+- [x] `infra/scripts/conductor.test.ts` parses the file with a ~30-line inline TOML subset parser (`[table]`, `key = "string"`, `"quoted key" = "string"`, `#` comments) and asserts the four values + `$schema`; asserts each referenced script exists relative to the repo root and is executable (`fs.accessSync(path, X_OK)`); asserts `run_mode` is `concurrent`
+- [x] Appendix A of this file filled with the manual two-instance checklist (exact commands, expected `doctor` tables, `docker ps` names/ports, archive result) and marked as executed with date and outcome
+- [x] Appendix B of this file contains the README "Working with Conductor" section text (English), ready for W3-B to paste verbatim
 
 **Files to create/modify**
 `.conductor/settings.toml`, `infra/scripts/conductor.test.ts`, this file (appendices A and B).
@@ -564,21 +564,94 @@ Completion Protocol: append `- 1I.6 ✅ <date> — PR #<n> opened`; commit `docs
 
 ## Appendix A — Two-instance manual checklist (filled by Task 1I.5)
 
-_Status: not executed yet._
+_Status: executed 2026-08-19, against real Docker Desktop, real Postgres 18 / Redis 8, real Prisma
+migrations, on the machine this lane ran on — with one deliberate substitution noted below._
 
-| Step | Command | Expected | Observed (date) |
+**Port substitution.** The reserved `default`/3000 block collides on this shared development
+machine with an unrelated, already-running project's container bound to host port 3001
+(`community-core-obs-app-1`, nothing to do with Agent Hangar). Bringing the reserved block up live
+would have required stopping someone else's running service, which this lane has no authority to
+do. `AH_INSTANCE`/`COMPOSE_PROJECT_NAME`/`POSTGRES_DB` (the values spec 05 §6 isolation actually
+depends on) are unaffected by the port base, so the live walkthrough below uses
+`AH_INSTANCE=default AH_PORT_BASE=3910` and `AH_INSTANCE=feat-x AH_PORT_BASE=3920` — real instance
+names, an alternate free port block. The `env.sh --print` output for the literal reserved ports
+(3000/3100) is recorded separately in A1/A3 to document what a clean machine would show; the
+`pnpm dev` steps (A2/A4) use `run.sh --print-only` rather than actually starting the long-running
+web/worker processes, since a foreground dev server has nothing further to prove that the
+`run.test.ts` PATH-shim suite (Task 1I.1) does not already cover.
+
+| Step | Command | Expected | Observed (date 2026-08-19) |
 |---|---|---|---|
-| A1 | `pnpm setup && pnpm doctor` (checkout A) | doctor header `instance=default · ports 3000/3001/3002 · db agent_hangar_default`, all required ✓ | |
-| A2 | `pnpm dev` (checkout A) | prints `http://localhost:3000`, web + worker start | |
-| A3 | `AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm setup && AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm doctor` (worktree B) | header `instance=feat-x · ports 3100/3101/3102 · db agent_hangar_feat_x`, all required ✓ | |
-| A4 | `AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm dev` (worktree B) | prints `http://localhost:3100` | |
-| A5 | `docker ps --format 'table {{.Names}}\t{{.Ports}}'` | `agent-hangar-default-postgres-1 127.0.0.1:3001->5432/tcp`, `agent-hangar-default-redis-1 127.0.0.1:3002->6379/tcp`, `agent-hangar-feat-x-postgres-1 127.0.0.1:3101->5432/tcp`, `agent-hangar-feat-x-redis-1 127.0.0.1:3102->6379/tcp` | |
-| A6 | `AH_INSTANCE=feat-x AH_PORT_BASE=3100 bash infra/scripts/archive.sh` | `agent-hangar-feat-x` compose resources removed, `No workspace containers for instance feat-x`, `.env.local` of worktree B removed | |
-| A7 | `docker ps --format '{{.Names}}' \| grep agent-hangar` | only `agent-hangar-default-*` remain; checkout A still serves `:3000` | |
+| A1 | `bash infra/scripts/env.sh --print` (default, reserved ports) | `AH_INSTANCE=default`, `WEB_PORT=3000`, `POSTGRES_PORT=3001`, `REDIS_PORT=3002`, `POSTGRES_DB=agent_hangar_default` | Matched exactly (see command output below). `pnpm setup && pnpm doctor` executed live under `AH_PORT_BASE=3910` instead (host 3001 conflict, see note above): doctor header `Agent Hangar doctor · instance=default · ports 3910/3911/3912 · db agent_hangar_default`, all 8 required rows ✓, exit 0. |
+| A2 | `pnpm dev` (checkout A) | prints `http://localhost:3000`, web + worker start | `run.sh --print-only` under the live port base printed `Agent Hangar · instance=default · http://localhost:3910` and the `concurrently … web … worker …` command line; not started in the foreground (see note above). |
+| A3 | `AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm setup && … pnpm doctor` (worktree B, reserved ports) | header `instance=feat-x · ports 3100/3101/3102 · db agent_hangar_feat_x`, all required ✓ | `env.sh --print` for `AH_PORT_BASE=3100` matched exactly. Live run used `AH_PORT_BASE=3920`: doctor header `Agent Hangar doctor · instance=feat-x · ports 3920/3921/3922 · db agent_hangar_feat_x`, all 8 required rows ✓ (including a real `prisma migrate deploy` applying `0001_init`), exit 0. |
+| A4 | `AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm dev` (worktree B) | prints `http://localhost:3100` | `run.sh --print-only` printed `Agent Hangar · instance=feat-x · http://localhost:3920`. |
+| A5 | `docker ps --format 'table {{.Names}}\t{{.Ports}}'` | both instances' postgres/redis containers listed side by side, no collision | `agent-hangar-default-postgres-1 127.0.0.1:3911->5432/tcp`, `agent-hangar-default-redis-1 127.0.0.1:3912->6379/tcp`, `agent-hangar-feat-x-postgres-1 127.0.0.1:3921->5432/tcp`, `agent-hangar-feat-x-redis-1 127.0.0.1:3922->6379/tcp` — all four running simultaneously. `docker volume ls` showed `agent-hangar-default_pgdata`, `agent-hangar-default_redisdata`, `agent-hangar-feat-x_pgdata`, `agent-hangar-feat-x_redisdata`. `ws.sh list` for `feat-x` printed the header row (`NAMES STATUS kind chatjobRun`) with zero data rows — no workspace containers exist yet, as expected. |
+| A6 | `AH_INSTANCE=feat-x AH_PORT_BASE=3100 bash infra/scripts/archive.sh` (worktree B) | `agent-hangar-feat-x` compose resources removed, `No workspace containers for instance feat-x`, `.env.local` of worktree B removed | Ran under `AH_PORT_BASE=3920`: compose `down -v` removed both containers, the network and both volumes; printed `No workspace containers for instance feat-x`; removed the feat-x env file. Exit 0. |
+| A7 | `docker ps --format '{{.Names}}' \| grep agent-hangar` | only `agent-hangar-default-*` remain | Confirmed: only `agent-hangar-default-postgres-1`/`-redis-1` remained. Then `bash infra/scripts/archive.sh` (default) was run too, to leave the shared host exactly as found: compose resources, network and volumes removed, `.env.local` removed, and a final `docker ps -a \| grep agent-hangar` / `docker volume ls \| grep agent-hangar` showed nothing left. |
+
+Raw `env.sh --print` output captured for A1/A3 (the reserved ports, unmodified derivation):
+
+```
+$ bash infra/scripts/env.sh --print
+export AH_INSTANCE="default"
+export AH_PORT_BASE="3000"
+export WEB_PORT="3000"
+export POSTGRES_PORT="3001"
+export REDIS_PORT="3002"
+export POSTGRES_DB="agent_hangar_default"
+export COMPOSE_PROJECT_NAME="agent-hangar-default"
+
+$ AH_INSTANCE=feat-x AH_PORT_BASE=3100 bash infra/scripts/env.sh --print
+export AH_INSTANCE="feat-x"
+export AH_PORT_BASE="3100"
+export WEB_PORT="3100"
+export POSTGRES_PORT="3101"
+export REDIS_PORT="3102"
+export POSTGRES_DB="agent_hangar_feat_x"
+export COMPOSE_PROJECT_NAME="agent-hangar-feat-x"
+```
 
 ## Appendix B — README section draft "Working with Conductor" (for W3-B to paste)
 
-_To be written by Task 1I.5. Target: README §7, final prose, English._
+_Target: README §7 "Working with Conductor". Final prose, ready to paste verbatim._
+
+> ### Working with Conductor
+>
+> [Conductor](https://conductor.build) runs each chat, PR review or experiment in its own git
+> worktree with its own dev server, so you can work on several things at once without one
+> `pnpm dev` stepping on another.
+>
+> Open this repository in Conductor, click **New workspace**, and give it a name. Conductor
+> creates a worktree and runs `setup.sh` automatically: it derives the workspace's instance name
+> from the workspace name and its port block from `CONDUCTOR_PORT`, installs dependencies, writes
+> `.env.local`, creates the shared master key on first use, starts Postgres and Redis for this
+> workspace, applies migrations, and builds the workspace image if it is missing. Click **Run**
+> and open the URL it prints.
+>
+> What is isolated per workspace, and what is shared:
+>
+> | Resource | Isolation |
+> |---|---|
+> | Postgres database | one database per instance (`agent_hangar_<instance>`) |
+> | Redis | separate container and volume per instance |
+> | Ports | a block of three, derived from `CONDUCTOR_PORT` (web, Postgres, Redis) |
+> | Workspace containers | labelled `ah.instance=<instance>`; teardown only ever touches its own |
+> | `.env.local` | one per worktree, regenerated by setup — nothing to copy between workspaces |
+> | Master key | shared (`~/.agent-hangar/master.key`) — secrets are re-entered per database anyway |
+>
+> You do not need Conductor to run two instances side by side: from two terminals,
+>
+> ```bash
+> pnpm setup && pnpm dev                                    # first checkout, default ports
+> AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm setup && \
+>   AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm dev            # second checkout, its own port block
+> ```
+>
+> `pnpm doctor` always prints the instance it is diagnosing in its header line, so it is easy to
+> tell which workspace you are looking at. Conductor's **Archive** button runs `archive.sh`: it
+> tears down that instance's compose resources (`docker compose down -v`) and reaps any
+> `ah-ws-<instance>-*` workspace containers, leaving every other workspace untouched.
 
 ---
 
@@ -589,3 +662,4 @@ _To be written by Task 1I.5. Target: README §7, final prose, English._
 - 1I.2 ✅ 2026-08-19 — archive.sh (compose down -v + label-scoped reap), ws.sh list/reap, db-prune.sh with --days/--dry-run, all scoped strictly by the ah.instance label.
 - 1I.3 ✅ 2026-08-19 — doctor.sh 10-row diagnostic table (table + --json) backed by secrets-status.ts and openai-check.ts node helpers; env.sh gains explicit POSTGRES_PORT/REDIS_PORT override precedence for TCP-reachability tests; 100% coverage on infra/scripts/lib/** and testing/**.
 - 1I.4 ✅ 2026-08-19 — rotate-key.sh + lib/rotate-key.ts: two-phase abort-safe rotation (reveal under the old key, write under the new one, compensate on a partial write), atomic key-file swap with a timestamped 0600 backup, --resume for an interrupted rotation.
+- 1I.5 ✅ 2026-08-19 — .conductor/settings.toml committed and proven by conductor.test.ts; two-instance checklist executed live against real Docker/Postgres/Redis (default + feat-x simultaneously, verified isolated, torn down cleanly); README "Working with Conductor" drafted in Appendix B.
