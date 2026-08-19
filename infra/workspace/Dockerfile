@@ -35,7 +35,19 @@ RUN git config --global credential.helper "" \
     && git config --global --add safe.directory /workspace \
     && git config --global init.defaultBranch main
 
-# --- AGENT RUNTIME BUNDLE (added by W1-D) ---
+# The runtime bundle joins askpass.sh under the same rule: root-owned, readable and executable by
+# `agent`, writable by nobody. The lane that built it asked for `--chown=agent:agent`, which is
+# refused here on purpose — the directory being root-owned stops the bundle being unlinked, but an
+# agent-owned FILE can still be rewritten in place, and this bundle is what reads the token file
+# and confines every tool path. Rewriting it would bypass both.
+#
+# Three files, not two: the bundle is ESM in a file named `cli.js`, and Node only started it by
+# re-parsing a file that had failed as CommonJS — behaviour `--no-experimental-detect-module`
+# turns off. The manifest beside it declares the module type outright, so starting the runtime
+# does not depend on a heuristic.
+COPY --chmod=755 runtime/cli.js /opt/agent-runtime/cli.js
+COPY --chmod=644 runtime/cli.js.map /opt/agent-runtime/cli.js.map
+COPY --chmod=644 runtime/package.json /opt/agent-runtime/package.json
 
 WORKDIR /workspace
 # CMD (not ENTRYPOINT) so the worker can exec into an idling container while `docker run <image> node --version` still works.

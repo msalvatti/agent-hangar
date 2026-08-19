@@ -11,6 +11,9 @@ test-results/
 # Generated code
 packages/core/src/persistence/generated/
 
+# Build artefact staged into the image build context by `pnpm infra:image`
+infra/workspace/runtime/
+
 # Lockfile and planning docs (hand-authored Markdown with nested fences)
 pnpm-lock.yaml
 docs/
