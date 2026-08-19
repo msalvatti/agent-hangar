@@ -44,6 +44,11 @@ describe('credentialFreeUrl', () => {
     ['a file URL', 'file:///etc/passwd'],
     ['the unauthenticated git protocol', 'git://github.com/acme/widgets.git'],
     ['a non-URL', 'not a url'],
+    // WHATWG parsing repairs these into a normal URL, but the ORIGINAL string is what reaches git,
+    // which reads the colon form as an scp-style ssh target rather than HTTPS.
+    ['a scheme with no slashes', 'https:github.com/acme/widgets'],
+    ['a scheme with one slash', 'https:/github.com/acme/widgets'],
+    ['a backslash variant', 'https:\\\\github.com/acme/widgets'],
   ])('rejects %s', (_name, value) => {
     expect(credentialFreeUrl.safeParse(value).success).toBe(false);
   });

@@ -29,10 +29,26 @@ const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
  * @returns `true` when the authority contains `@`.
  */
 function hasUserinfoSeparator(value: string): boolean {
+  // Safe without a guard: every caller has already required the literal `scheme://` prefix.
   const afterScheme = value.slice(value.indexOf('://') + '://'.length);
   const authorityEnd = afterScheme.search(/[/?#]/u);
   const authority = authorityEnd === -1 ? afterScheme : afterScheme.slice(0, authorityEnd);
   return authority.includes('@');
+}
+
+/**
+ * Whether a URL string is written in the hierarchical `scheme://` form.
+ *
+ * WHATWG parsing repairs `https:host/path`, `https:/host/path` and backslash variants into a
+ * normal URL, so the schema would accept them while the ORIGINAL string is what gets stored and
+ * handed to `git`, which reads `https:host/path` as an scp-style target over ssh instead of over
+ * HTTPS. Requiring the literal form keeps what was validated and what is cloned the same string.
+ *
+ * @param value - A URL string.
+ * @returns `true` when the string starts with `http://` or `https://` exactly.
+ */
+function isHierarchicalHttpUrl(value: string): boolean {
+  return /^https?:\/\//u.test(value);
 }
 
 /**
@@ -67,6 +83,9 @@ export function isCredentialFreeUrl(value: string): boolean {
 function parseCredentialFreeUrl(value: string): URL | null {
   const parsed = URL.parse(value);
   if (parsed === null) {
+    return null;
+  }
+  if (!isHierarchicalHttpUrl(value)) {
     return null;
   }
   if (parsed.username !== '' || parsed.password !== '' || hasUserinfoSeparator(value)) {
