@@ -35,7 +35,16 @@ url=${url%%\'*}
 authority=${url#*://}
 authority=${authority%%/*}
 host=${authority##*@}
-host=${host%%:*}
+
+# Reject an explicit port. The authority must name the approved host on the default HTTPS port:
+# `github.com:8443` is still `github.com` to a substring or host-only test, but it is not the
+# service this token belongs to, and the repository-URL schema already refuses non-default ports.
+case "$host" in
+  *:*)
+    echo "askpass: refusing to release credentials to a non-default port" >&2
+    exit 1
+    ;;
+esac
 
 if [ "$host" != "$allowed" ]; then
   echo "askpass: refusing to release credentials to a host other than $allowed" >&2
