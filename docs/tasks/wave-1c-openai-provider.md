@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-C (Wave 1, parallel with W1-A … W1-I) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/5 tasks |
+| **Status** | 🟦 running |
+| **Progress** | 1/5 tasks |
 | **Branch** | `feat/w1c-openai-provider` |
 | **Owned paths** | `packages/core/src/model/openai/**`, `packages/core/src/model/registry.ts` (+ `registry.test.ts`), `packages/core/fixtures/openai/**`, `packages/core/scripts/record-fixtures.ts` — plus three append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only), (the root `packages/core/src/index.ts` is frozen — it already re-exports `./model/index.js`; this lane adds exports only to `packages/core/src/model/index.ts` and `model/openai/index.ts`), `packages/core/package.json` (one script `fixtures:record` only) |
 | **Depends on** | W0 merged to `main` |
@@ -41,7 +41,7 @@ Spec 03 §2 lists the event mapping. The SDK's event names must be **verified at
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1C.1 | Pure mapping: request params, stream events → `ModelEvent`, SDK errors → `ModelEvent.error` (verified against SDK types) | 📋 | P0 | M | — |
+| 1C.1 | Pure mapping: request params, stream events → `ModelEvent`, SDK errors → `ModelEvent.error` (verified against SDK types) | ✅ | P0 | M | — |
 | 1C.2 | Fixtures (`fixtures/openai/*.ndjson`), fixture loader, fake SDK client, record script | 📋 | P0 | M | 1C.1 |
 | 1C.3 | `OpenAIModelProvider` (`stream`, `listModels`) + SDK client factory | 📋 | P0 | M | 1C.1, 1C.2 |
 | 1C.4 | Registry `createModelProvider(name, deps)` → openai \| fake; barrel exports | 📋 | P0 | S | 1C.3 |
@@ -51,16 +51,16 @@ Spec 03 §2 lists the event mapping. The SDK's event names must be **verified at
 
 ## Task 1C.1 — Pure mapping: request params, stream events, errors
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Implement `packages/core/src/model/openai/mapping.ts`: `toResponseParams(input)` (tools with `strict: true`, items → Responses input items, `store: false` always, optional `reasoning`; no `previous_response_id` — the provider is stateless, see spec 03 §2), a stateful `createEventMapper()` that turns each SDK `ResponseStreamEvent` into zero or more `ModelEvent`s (tracking `item_id → call_id`), and `mapErrorToModelEvent(err)` for thrown SDK errors. Event names are verified against the installed SDK types and recorded.
 
 **Acceptance criteria**
-- [ ] `toResponseParams` output: `{ model, instructions, input, tools, store: false, ...(reasoning: { effort }) }`; no `undefined`-valued keys (`exactOptionalPropertyTypes`); `ToolDefinition` → `{ type: 'function', name, description, parameters, strict: true }`; items mapped per the spec table
-- [ ] Event mapping covers: `response.output_text.delta` → `text.delta`; `response.output_text.done` → `text.done`; `response.output_item.added` (function_call) registers `item.id → item.call_id`; `response.function_call_arguments.delta` → `tool_call.arguments.delta` with the resolved `callId`; `response.output_item.done` (function_call) → `tool_call { callId, name, arguments }`; `response.completed` → `response.done { responseId, usage }`; `response.incomplete` → `response.done`; `response.failed` → `error`; stream `error` event → `error`; `response.refusal.delta/done` → `text.delta`/`text.done`; every other event → `[]`
-- [ ] `mapErrorToModelEvent`: 401/403 → `auth` (non-retryable); 429 → `rate_limit` (retryable); 400 with context-length code/message → `context_length`; other 4xx → `unknown` non-retryable; 5xx → `unknown` retryable; `APIConnectionError`/`APIConnectionTimeoutError`/`TypeError: fetch failed` → `network` retryable; `AbortError` → `null` (caller ends the stream silently); anything else → `unknown` non-retryable; messages never include request bodies or headers
-- [ ] `VERIFIED_EVENT_TYPES` constant lists every event type string consumed, typed as `ResponseStreamEvent['type']` so a rename fails `tsc`; file header records the SDK version verified
-- [ ] 100 % coverage on `mapping.ts`
+- [x] `toResponseParams` output: `{ model, instructions, input, tools, store: false, ...(reasoning: { effort }) }`; no `undefined`-valued keys (`exactOptionalPropertyTypes`); `ToolDefinition` → `{ type: 'function', name, description, parameters, strict: true }`; items mapped per the spec table
+- [x] Event mapping covers: `response.output_text.delta` → `text.delta`; `response.output_text.done` → `text.done`; `response.output_item.added` (function_call) registers `item.id → item.call_id`; `response.function_call_arguments.delta` → `tool_call.arguments.delta` with the resolved `callId`; `response.output_item.done` (function_call) → `tool_call { callId, name, arguments }`; `response.completed` → `response.done { responseId, usage }`; `response.incomplete` → `response.done`; `response.failed` → `error`; stream `error` event → `error`; `response.refusal.delta/done` → `text.delta`/`text.done`; every other event → `[]`
+- [x] `mapErrorToModelEvent`: 401/403 → `auth` (non-retryable); 429 → `rate_limit` (retryable); 400 with context-length code/message → `context_length`; other 4xx → `unknown` non-retryable; 5xx → `unknown` retryable; `APIConnectionError`/`APIConnectionTimeoutError`/`TypeError: fetch failed` → `network` retryable; `AbortError` → `null` (caller ends the stream silently); anything else → `unknown` non-retryable; messages never include request bodies or headers
+- [x] `VERIFIED_EVENT_TYPES` constant lists every event type string consumed, typed as `ResponseStreamEvent['type']` so a rename fails `tsc`; file header records the SDK version verified
+- [x] 100 % coverage on `mapping.ts`
 
 **Files to create**
 `packages/core/src/model/openai/mapping.ts`, `packages/core/src/model/openai/mapping.test.ts` (remove `packages/core/src/model/openai/.gitkeep`); modify `packages/core/vitest.config.ts` (`coverage.include` += `src/model/openai/**`, `src/model/registry.ts`).
@@ -471,3 +471,5 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1c-openai-prov
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 1C.1 ✅ 2026-08-19 — Responses mapping layer verified against `openai@7.5.0`; every consumed event name matches the shipped `ResponseStreamEvent` union.

@@ -49,6 +49,8 @@ export default defineConfig({
         'src/testing/**',
         'src/persistence/client.ts',
         'src/persistence/testing/**',
+        'src/model/openai/**',
+        'src/model/registry.ts',
       ],
       exclude: ['**/*.test.ts', 'src/**/types.ts', 'src/index.ts', 'src/persistence/generated/**'],
       thresholds: {
