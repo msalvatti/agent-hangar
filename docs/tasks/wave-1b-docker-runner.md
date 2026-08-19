@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-B 🐳 (Docker-integration lane — the orchestrator runs at most one 🐳 lane at a time) |
-| **Status** | 🟦 running |
-| **Progress** | 4/5 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1b-docker-runner` |
 | **Owned paths** | `packages/core/src/runner/docker/**`, `infra/workspace/**` (Dockerfile, askpass.sh, .dockerignore, README.md, .gitignore) · additive-only edits allowed in `packages/core/vitest.config.ts` (`coverage.include`) and `packages/core/package.json` (`exports` subpath `./runner/docker`) |
 | **Depends on** | W0 merged to `main` |
@@ -46,7 +46,7 @@ Quality bar (same as every lane): TypeScript strict, zero `any`, zero suppressio
 | 1B.2 | Exec stream: demux, stdin pump, timeout/abort kill path (pure) | ✅ | P0 | M | 1B.1 |
 | 1B.3 | `DockerWorkspaceRunner` class + factory + unit tests with a faked Docker API | ✅ | P0 | L | 1B.1, 1B.2 |
 | 1B.4 | Workspace image hardening/verification, askpass token-file support, README, `@docker` integration suite | ✅ | P0 | M | 1B.3 |
-| 1B.5 | Close-out: gates, code review, plan dashboard, PR | 📋 | P0 | S | 1B.1–1B.4 |
+| 1B.5 | Close-out: gates, code review, plan dashboard, PR | ✅ | P0 | S | 1B.1–1B.4 |
 
 ---
 
@@ -447,15 +447,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1b-docker-runn
 
 ## Task 1B.5 — Close-out: gates, code review, plan dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1B.1–1B.4
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1B.1–1B.4
 
 **Description.** Run every gate, take `/bymax-quality:code-review` to zero findings, update the plan dashboard and the task index, open the PR with the structured summary from plan §11 (including the coordination notes for the orchestrator), and return the result object.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck && pnpm --filter @agent-hangar/core test -- --coverage` green; coverage 100/100/100/100 on `src/runner/docker/**`
-- [ ] `DOCKER_AVAILABLE=1 pnpm --filter @agent-hangar/core test:integration` green locally (evidence pasted in the PR)
-- [ ] `/bymax-quality:code-review` run on the branch with zero open findings (no suppressions)
-- [ ] `docs/plan.md` §12 row W1-B → 🟨 with branch/PR; `docs/tasks/README.md` row updated; PR opened; result object returned
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck && pnpm --filter @agent-hangar/core test -- --coverage` green; coverage 100/100/100/100 on `src/runner/docker/**`
+- [x] `DOCKER_AVAILABLE=1 pnpm --filter @agent-hangar/core test:integration` green locally (evidence pasted in the PR)
+- [x] `/bymax-quality:code-review` run on the branch with zero open findings (no suppressions)
+- [x] `docs/plan.md` §12 row W1-B → 🟨 with branch/PR; `docs/tasks/README.md` row updated; PR opened; result object returned
 
 **Files to create/modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (W1-B row only), this file (header + log).
@@ -511,3 +511,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1b-docker-runn
 - 1B.2 ✅ 2026-08-19 — frame demuxer, stdin pump with backpressure and EOF, timeout/abort termination path and the pid-file exec wrappers; 100 % unit coverage
 - 1B.3 ✅ 2026-08-19 — DockerWorkspaceRunner over an injectable Docker API, factory, in-memory fake and the `@agent-hangar/core/runner/docker` subpath export; 100 % unit coverage
 - 1B.4 ✅ 2026-08-19 — image labels and runtime-dir ownership, askpass token file, image README, `@docker` suite (15 tests, 6.4 s) and the `--init` fix that cut teardown from 10 s to 0.1 s per workspace
+- 1B.5 ✅ 2026-08-19 — gates green, code review and security review to zero findings, dashboards updated, PR #PRNUM opened
