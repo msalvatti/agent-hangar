@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-I (parallel with W1-A … W1-H; no Docker-integration tests — scripts are tested with PATH shims) |
 | **Status** | 🟦 running |
-| **Progress** | 3/6 tasks |
+| **Progress** | 4/6 tasks |
 | **Branch** | `feat/w1i-infra-conductor` |
 | **Owned paths** | `infra/scripts/{setup,run,archive,doctor,rotate-key,ws,db-prune}.sh`, `infra/scripts/lib/**` (node helpers), `infra/scripts/*.test.ts`, `.conductor/settings.toml`, `infra/docker-compose.yml`, `.env.example`, root `package.json` **scripts block only**, root `vitest.config.ts` (`scripts` project lines only). `infra/scripts/env.sh` is W0 output with no other Wave 1 owner — additive edits allowed (see rules). |
 | **Depends on** | W0 merged to `main` (Tasks 1I.3 and 1I.4 additionally need W1-A, W1-C, W1-E merged — this lane runs in the second Wave 1 batch, see plan §13) |
@@ -46,7 +46,7 @@ Everything is keyed by instance (`AH_INSTANCE` / `AH_PORT_BASE`, with `CONDUCTOR
 | 1I.1 | `run.sh`, `setup.sh` completion, compose finishing, `.env.example` final, root scripts block | ✅ | P0 | M | — |
 | 1I.2 | `archive.sh`, `ws.sh` (`ws:list` / `ws:reap`), `db-prune.sh` | ✅ | P0 | S | 1I.1 |
 | 1I.3 | `doctor.sh` + node helpers (secrets status, OpenAI model check) with snapshot tests | ✅ | P0 | L | 1I.1, W1-A + W1-C + W1-E merged |
-| 1I.4 | `rotate-key.sh` + `lib/rotate-key.ts` (re-encrypt with `keyVersion + 1`, atomic key swap, backup) | 📋 | P1 | M | 1I.3 |
+| 1I.4 | `rotate-key.sh` + `lib/rotate-key.ts` (re-encrypt with `keyVersion + 1`, atomic key swap, backup) | ✅ | P1 | M | 1I.3 |
 | 1I.5 | `.conductor/settings.toml`, two-instance manual checklist, README "Working with Conductor" draft (appendix) | 📋 | P0 | S | 1I.1, 1I.2 |
 | 1I.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1I.1–1I.5 |
 
@@ -342,14 +342,14 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1i-infra-condu
 
 ## Task 1I.4 — `rotate-key.sh` + `lib/rotate-key.ts`
 
-**Status:** 📋 ToDo · **Priority:** P1 · **Size:** M · **Depends on:** 1I.3
+**Status:** ✅ Done · **Priority:** P1 · **Size:** M · **Depends on:** 1I.3
 
 **Description.** Provide the master-key rotation path the README promises (spec 04 (d) controls table: "README explains backup/rotation (`keyVersion`)"): generate a new key, re-encrypt every `Secret` row with `keyVersion + 1` using core's `SecretsService`, swap the key file atomically and keep a timestamped backup of the old key. Failure at any point leaves the old key active and the rows decryptable.
 
 **Acceptance criteria**
-- [ ] `infra/scripts/lib/rotate-key.ts` exports `rotateSecrets(deps)` that: reads current `keyVersion` (max over rows, default 1), builds service A (old key) and service B (new key, `keyVersion + 1`), reveals every set secret into memory first (any `SecretIntegrityError` → abort before writing, exit 2), writes each with B, and on a write failure re-writes the already-rotated keys with A (compensation) and exits 3; prints `rotated N secret(s) to keyVersion V`
-- [ ] `infra/scripts/rotate-key.sh`: `--yes` required (otherwise prints the plan and exits 2); generates `<MASTER_KEY_PATH>.new` (0600, `openssl rand -hex 32`); runs the helper with `AH_NEW_MASTER_KEY_PATH`; on helper success `mv master.key master.key.bak-<YYYYMMDDHHMMSS>` then `mv master.key.new master.key`; on failure removes `.new` and leaves the old key untouched; prints the backup path and the reminder that backups hold a key that can still decrypt the old ciphertext (delete after verifying); refuses to run if `master.key.new` already exists (previous aborted rotation) unless `--resume`
-- [ ] Tests: helper unit with in-memory `SecretRepository` + W1-A real service against two temp keys (rotates both secrets; `keyVersion` advanced; `reveal` with the new key returns the original values; old key can no longer decrypt; tamper → abort with no writes; injected write failure on the second secret → first secret restored to the old key, exit 3; no canary in output); shell test with shims (`openssl` shim + helper shim): plan-only without `--yes`, success path renames files and keeps mode 600, failure path keeps old key and removes `.new`, `.new` present → refuse unless `--resume`
+- [x] `infra/scripts/lib/rotate-key.ts` exports `rotateSecrets(deps)` that: reads current `keyVersion` (max over rows, default 1), builds service A (old key) and service B (new key, `keyVersion + 1`), reveals every set secret into memory first (any `SecretIntegrityError` → abort before writing, exit 2), writes each with B, and on a write failure re-writes the already-rotated keys with A (compensation) and exits 3; prints `rotated N secret(s) to keyVersion V`
+- [x] `infra/scripts/rotate-key.sh`: `--yes` required (otherwise prints the plan and exits 2); generates `<MASTER_KEY_PATH>.new` (0600, `openssl rand -hex 32`); runs the helper with `AH_NEW_MASTER_KEY_PATH`; on helper success `mv master.key master.key.bak-<YYYYMMDDHHMMSS>` then `mv master.key.new master.key`; on failure removes `.new` and leaves the old key untouched; prints the backup path and the reminder that backups hold a key that can still decrypt the old ciphertext (delete after verifying); refuses to run if `master.key.new` already exists (previous aborted rotation) unless `--resume`
+- [x] Tests: helper unit with in-memory `SecretRepository` + W1-A real service against two temp keys (rotates both secrets; `keyVersion` advanced; `reveal` with the new key returns the original values; old key can no longer decrypt; tamper → abort with no writes; injected write failure on the second secret → first secret restored to the old key, exit 3; no canary in output); shell test with shims (`openssl` shim + helper shim): plan-only without `--yes`, success path renames files and keeps mode 600, failure path keeps old key and removes `.new`, `.new` present → refuse unless `--resume`
 
 **Files to create/modify**
 `infra/scripts/rotate-key.sh`, `infra/scripts/lib/rotate-key.ts`, `infra/scripts/lib/rotate-key.main.ts`, `infra/scripts/lib/rotate-key.test.ts`, `infra/scripts/rotate-key.test.ts`.
@@ -588,3 +588,4 @@ _To be written by Task 1I.5. Target: README §7, final prose, English._
 - 1I.1 ✅ 2026-08-19 — run.sh single entry point, idempotent setup.sh with --force/--rebuild-image/--skip-doctor/--skip-install, tuned compose healthchecks, final root scripts block, PATH-shimmed tests at 100% coverage.
 - 1I.2 ✅ 2026-08-19 — archive.sh (compose down -v + label-scoped reap), ws.sh list/reap, db-prune.sh with --days/--dry-run, all scoped strictly by the ah.instance label.
 - 1I.3 ✅ 2026-08-19 — doctor.sh 10-row diagnostic table (table + --json) backed by secrets-status.ts and openai-check.ts node helpers; env.sh gains explicit POSTGRES_PORT/REDIS_PORT override precedence for TCP-reachability tests; 100% coverage on infra/scripts/lib/** and testing/**.
+- 1I.4 ✅ 2026-08-19 — rotate-key.sh + lib/rotate-key.ts: two-phase abort-safe rotation (reveal under the old key, write under the new one, compensate on a partial write), atomic key-file swap with a timestamped 0600 backup, --resume for an interrupted rotation.
