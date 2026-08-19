@@ -62,10 +62,12 @@ export function SecretField({
 
   // Adjusted during render (React's documented pattern for resetting state when a prop changes)
   // rather than in an effect, which would need an extra render/commit round-trip to take effect.
-  // After a successful save, `status.last4` changes: clear the input and leave replace mode.
-  const [syncedLast4, setSyncedLast4] = useState(currentStatus.last4);
-  if (currentStatus.last4 !== syncedLast4) {
-    setSyncedLast4(currentStatus.last4);
+  // After a successful save, `status.updatedAt` changes: clear the input and leave replace mode.
+  // Keyed on `updatedAt` rather than `last4` — a replacement secret can coincidentally share its
+  // last 4 characters with the one it replaces, but `updatedAt` is a fresh timestamp every time.
+  const [syncedUpdatedAt, setSyncedUpdatedAt] = useState(currentStatus.updatedAt);
+  if (currentStatus.updatedAt !== syncedUpdatedAt) {
+    setSyncedUpdatedAt(currentStatus.updatedAt);
     setValue('');
     setReplacing(false);
   }
