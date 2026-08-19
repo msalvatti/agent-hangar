@@ -75,9 +75,18 @@ function isTestDatabaseName(name: string): boolean {
   return name.slice(DATABASE_PREFIX.length).split('_').includes(TEST_INSTANCE_WORD);
 }
 
+/** What a Postgres database name may look like for this guard to repeat it in a message. */
+const PLAIN_DATABASE_NAME = /^[A-Za-z0-9_-]{1,63}$/u;
+
 /** Names the database in a refusal message, without ever echoing the connection string. */
 function describeDatabase(databaseName: string | undefined): string {
-  return databaseName === undefined ? 'the target database' : `database "${databaseName}"`;
+  // Defence in depth over the authority check in `databaseNameOf`: only a plain identifier is
+  // repeated back. Anything else is described without being quoted, so no shape this function is
+  // handed can carry a credential into a message that is printed and logged.
+  if (databaseName === undefined || !PLAIN_DATABASE_NAME.test(databaseName)) {
+    return 'the target database';
+  }
+  return `database "${databaseName}"`;
 }
 
 /**
@@ -110,7 +119,8 @@ function assertErasable(databaseName: string | undefined, env: RawEnv): void {
  * Extracts the database name from a Postgres connection URL.
  *
  * Query parameters (`?schema=public`, pool settings) are not part of the name, and a URL this
- * cannot read yields `undefined`, which the guard treats as "not a test database".
+ * cannot read yields `undefined`, which the guard treats as "not a test database". A URL with no
+ * authority is refused rather than read, because its pathname carries the credentials.
  *
  * @param connectionString - Value of `DATABASE_URL`.
  * @returns The database name, or `undefined` when the URL does not name one.
@@ -118,6 +128,13 @@ function assertErasable(databaseName: string | undefined, env: RawEnv): void {
 function databaseNameOf(connectionString: string): string | undefined {
   const parsed = URL.parse(connectionString);
   if (parsed === null) {
+    return undefined;
+  }
+  // An authority-less URL such as `postgresql:/user:password@host/db` parses with an empty host
+  // and puts the whole rest — credentials included — into the pathname. Deriving a "name" from
+  // that both misidentifies the database and puts the password into the refusal message, which is
+  // printed and logged. A connection URL that names a host is the only shape this can read.
+  if (parsed.host === '') {
     return undefined;
   }
   const raw = parsed.pathname.replace(/^\//, '');
