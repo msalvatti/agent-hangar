@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-A (Wave 1, parallel with W1-B … W1-I) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/5 tasks |
+| **Status** | 🟦 running |
+| **Progress** | 1/5 tasks |
 | **Branch** | `feat/w1a-secrets-redaction` |
 | **Owned paths** | `packages/core/src/secrets/**` (except the frozen `types.ts`), `packages/core/src/redaction/**`, `packages/core/src/logging/**` — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./secrets/index.js`, `./redaction/index.js`, `./logging/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
@@ -41,7 +41,7 @@ Plaintext secrets exist only in memory inside `set()`/`reveal()` and in the work
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1A.1 | Master key provider: `MasterKeyFile` (0600 create/verify) + `StaticMasterKey` | 📋 | P0 | S | — |
+| 1A.1 | Master key provider: `MasterKeyFile` (0600 create/verify) + `StaticMasterKey` | ✅ | P0 | S | — |
 | 1A.2 | AES-256-GCM envelope crypto + `SecretsService` over `SecretRepository` | 📋 | P0 | M | 1A.1 |
 | 1A.3 | `Redactor`: exact registered values + shape patterns, `redactJson`, idempotent | 📋 | P0 | M | — |
 | 1A.4 | pino logger factory with redact paths + `Redactor` serializer/hook | 📋 | P0 | S | 1A.3 |
@@ -51,17 +51,17 @@ Plaintext secrets exist only in memory inside `set()`/`reveal()` and in the work
 
 ## Task 1A.1 — Master key provider: `MasterKeyFile` + `StaticMasterKey`
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** —
 
 **Description.** Implement the master-key source used by the secrets service: a file-backed provider (`~/.agent-hangar/master.key` by default, path from config) that creates the key with mode 0600 when missing, refuses group/world-readable files, validates the content (32 bytes as 64 hex chars), and exposes a `keyVersion`; plus an in-memory provider for tests.
 
 **Acceptance criteria**
-- [ ] `MasterKeyProvider` interface and `MasterKey { key: Buffer (32 bytes); version: number }` exported from `packages/core/src/secrets/master-key.ts`
-- [ ] `MasterKeyFile.load()` creates the parent dir (0700) and the file (0600, `randomBytes(32).toString('hex') + '\n'`) when missing; loads and caches when present
-- [ ] Refuses with `ConfigError` (message contains `chmod 600 <path>`) when the file mode has any group/world bits (`mode & 0o077 !== 0`)
-- [ ] Refuses with `ConfigError` when content is not exactly 64 hex chars (trailing newline allowed)
-- [ ] `StaticMasterKey` returns a caller-supplied 32-byte key and version (used by tests and by `FakeKeyFile`-style usage in other lanes)
-- [ ] 100 % coverage on `src/secrets/master-key.ts` and `src/secrets/master-key-file.ts`
+- [x] `MasterKeyProvider` interface and `MasterKey { key: Buffer (32 bytes); version: number }` exported from `packages/core/src/secrets/master-key.ts`
+- [x] `MasterKeyFile.load()` creates the parent dir (0700) and the file (0600, `randomBytes(32).toString('hex') + '\n'`) when missing; loads and caches when present
+- [x] Refuses with `ConfigError` (message contains `chmod 600 <path>`) when the file mode has any group/world bits (`mode & 0o077 !== 0`)
+- [x] Refuses with `ConfigError` when content is not exactly 64 hex chars (trailing newline allowed)
+- [x] `StaticMasterKey` returns a caller-supplied 32-byte key and version (used by tests and by `FakeKeyFile`-style usage in other lanes)
+- [x] 100 % coverage on `src/secrets/master-key.ts` and `src/secrets/master-key-file.ts`
 
 **Files to create**
 `packages/core/src/secrets/master-key.ts`, `packages/core/src/secrets/master-key-file.ts`, `packages/core/src/secrets/master-key-file.test.ts`, `packages/core/src/secrets/master-key.test.ts`; modify `packages/core/vitest.config.ts` (`coverage.include` += `src/secrets/**`).
@@ -470,3 +470,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1a-secrets-red
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+- 1A.1 ✅ 2026-08-19 — master key providers: 0600 atomic key file with owner-only enforcement, hex validation and caching, plus StaticMasterKey.
