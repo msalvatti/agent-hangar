@@ -51,15 +51,15 @@ fi
 
 log "2/7 Writing $env_file"
 if [ $force -eq 1 ]; then
-  bash "$here/env.sh" --force
+  bash "$here"/env.sh --force
 else
-  bash "$here/env.sh"
+  bash "$here"/env.sh
 fi
 # Load what the env file defines rather than re-deriving from this shell. `docker compose
 # --env-file` below reads that file, so on a second run an exported AH_INSTANCE/AH_PORT_BASE that
 # disagrees with the preserved file would bring compose up on one instance's ports while the
 # migrations and the image build targeted another.
-eval "$(bash "$here/env.sh" --print-effective)"
+eval "$(bash "$here"/env.sh --print-effective)"
 
 log "3/7 Docker socket"
 if [ -n "${DOCKER_HOST:-}" ]; then

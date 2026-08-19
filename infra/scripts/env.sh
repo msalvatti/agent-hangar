@@ -72,8 +72,11 @@ ah_resolve_env() {
   AH_INSTANCE=$(ah_slugify "$raw_instance")
   AH_PORT_BASE=$raw_port
   WEB_PORT=$((AH_PORT_BASE + 0))
-  POSTGRES_PORT=$((AH_PORT_BASE + 1))
-  REDIS_PORT=$((AH_PORT_BASE + 2))
+  # POSTGRES_PORT/REDIS_PORT are normally derived from AH_PORT_BASE, but an explicit value in the
+  # environment wins — tests point these at an ephemeral port a throwaway listener is bound to,
+  # independent of the rest of the derived block.
+  POSTGRES_PORT="${POSTGRES_PORT:-$((AH_PORT_BASE + 1))}"
+  REDIS_PORT="${REDIS_PORT:-$((AH_PORT_BASE + 2))}"
   POSTGRES_DB="agent_hangar_$(printf '%s' "$AH_INSTANCE" | tr '-' '_')"
   # Local compose credentials (not a secret: loopback only, ciphertext-only contents).
   local db_scheme="postgresql" db_credentials="ah:ah"

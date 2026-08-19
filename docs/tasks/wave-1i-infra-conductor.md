@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-I (parallel with W1-A … W1-H; no Docker-integration tests — scripts are tested with PATH shims) |
 | **Status** | 🟦 running |
-| **Progress** | 2/6 tasks |
+| **Progress** | 3/6 tasks |
 | **Branch** | `feat/w1i-infra-conductor` |
 | **Owned paths** | `infra/scripts/{setup,run,archive,doctor,rotate-key,ws,db-prune}.sh`, `infra/scripts/lib/**` (node helpers), `infra/scripts/*.test.ts`, `.conductor/settings.toml`, `infra/docker-compose.yml`, `.env.example`, root `package.json` **scripts block only**, root `vitest.config.ts` (`scripts` project lines only). `infra/scripts/env.sh` is W0 output with no other Wave 1 owner — additive edits allowed (see rules). |
 | **Depends on** | W0 merged to `main` (Tasks 1I.3 and 1I.4 additionally need W1-A, W1-C, W1-E merged — this lane runs in the second Wave 1 batch, see plan §13) |
@@ -45,7 +45,7 @@ Everything is keyed by instance (`AH_INSTANCE` / `AH_PORT_BASE`, with `CONDUCTOR
 |---|---|---|---|---|---|
 | 1I.1 | `run.sh`, `setup.sh` completion, compose finishing, `.env.example` final, root scripts block | ✅ | P0 | M | — |
 | 1I.2 | `archive.sh`, `ws.sh` (`ws:list` / `ws:reap`), `db-prune.sh` | ✅ | P0 | S | 1I.1 |
-| 1I.3 | `doctor.sh` + node helpers (secrets status, OpenAI model check) with snapshot tests | 📋 | P0 | L | 1I.1, W1-A + W1-C + W1-E merged |
+| 1I.3 | `doctor.sh` + node helpers (secrets status, OpenAI model check) with snapshot tests | ✅ | P0 | L | 1I.1, W1-A + W1-C + W1-E merged |
 | 1I.4 | `rotate-key.sh` + `lib/rotate-key.ts` (re-encrypt with `keyVersion + 1`, atomic key swap, backup) | 📋 | P1 | M | 1I.3 |
 | 1I.5 | `.conductor/settings.toml`, two-instance manual checklist, README "Working with Conductor" draft (appendix) | 📋 | P0 | S | 1I.1, 1I.2 |
 | 1I.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1I.1–1I.5 |
@@ -255,17 +255,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1i-infra-condu
 
 ## Task 1I.3 — `doctor.sh` + node helpers (secrets status, OpenAI model check) with snapshot tests
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 1I.1, W1-A + W1-C + W1-E merged
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 1I.1, W1-A + W1-C + W1-E merged
 
 **Description.** Replace the `doctor.sh` stub with the diagnostic table of spec 05 §4: node/pnpm versions, Docker socket path and reachability, Postgres and Redis reachability, migrations applied, workspace image present, master key present with mode 0600, secrets configured (via a tiny node helper that calls core's `SecretsService.status()` — only `set`/`last4` ever printed), and OpenAI model reachable (only when a key is set; via `createModelProvider('openai').listModels()`). Each ✗ prints the exact fix command; the exit code is non-zero when any required row fails.
 
 **Acceptance criteria**
-- [ ] `doctor.sh` prints a fixed-width table with columns `Check | Status | Detail | Fix` and rows in this order: Node, pnpm, Docker socket, Postgres, Redis, Migrations, Workspace image, Master key, Secrets (optional), OpenAI model (optional); statuses `✓`, `✗`, `⚠` (optional missing), `–` (skipped with reason)
-- [ ] Each ✗/⚠ row's Fix is one of the exact commands listed in the prompt; required ✗ → exit 1; only optional ⚠ → exit 0
-- [ ] `--json` prints the same rows as a JSON array (`{ check, status, detail, fix }`) for tooling/tests
-- [ ] `infra/scripts/lib/secrets-status.ts` prints `GITHUB_PAT=set:<last4>|unset` and `OPENAI_API_KEY=set:<last4>|unset` using core `SecretsService.status()`; never prints plaintext; exits 3 with `db-unreachable` when Postgres is down, 4 with `master-key-missing` when the key file is absent/unreadable
-- [ ] `infra/scripts/lib/openai-check.ts` prints `ok <model>` when `OPENAI_MODEL` is in `listModels()`, `model-missing <model> (available: a, b, c…)` when not, `auth` on 401, `network` otherwise; exits non-zero except on `ok`; only ever called by doctor when the key is set
-- [ ] Snapshot tests with shims and `AH_DOCTOR_HELPER_CMD` override: all-green machine (exit 0), Docker down (exit 1 + R2 fix), image missing (fix `pnpm infra:image`), key mode 644 (fix `chmod 600`), migrations pending (fix `pnpm db:migrate`), secrets unset (⚠, exit 0, fix points at Settings URL with the instance's port), OpenAI skipped when key unset (`–`), `--json` parses and has 10 rows; helper TS files 100 % covered with in-memory repositories / fake provider
+- [x] `doctor.sh` prints a fixed-width table with columns `Check | Status | Detail | Fix` and rows in this order: Node, pnpm, Docker socket, Postgres, Redis, Migrations, Workspace image, Master key, Secrets (optional), OpenAI model (optional); statuses `✓`, `✗`, `⚠` (optional missing), `–` (skipped with reason)
+- [x] Each ✗/⚠ row's Fix is one of the exact commands listed in the prompt; required ✗ → exit 1; only optional ⚠ → exit 0
+- [x] `--json` prints the same rows as a JSON array (`{ check, status, detail, fix }`) for tooling/tests
+- [x] `infra/scripts/lib/secrets-status.ts` prints `GITHUB_PAT=set:<last4>|unset` and `OPENAI_API_KEY=set:<last4>|unset` using core `SecretsService.status()`; never prints plaintext; exits 3 with `db-unreachable` when Postgres is down, 4 with `master-key-missing` when the key file is absent/unreadable
+- [x] `infra/scripts/lib/openai-check.ts` prints `ok <model>` when `OPENAI_MODEL` is in `listModels()`, `model-missing <model> (available: a, b, c…)` when not, `auth` on 401, `network` otherwise; exits non-zero except on `ok`; only ever called by doctor when the key is set
+- [x] Snapshot tests with shims and `AH_DOCTOR_HELPER_CMD` override: all-green machine (exit 0), Docker down (exit 1 + R2 fix), image missing (fix `pnpm infra:image`), key mode 644 (fix `chmod 600`), migrations pending (fix `pnpm db:migrate`), secrets unset (⚠, exit 0, fix points at Settings URL with the instance's port), OpenAI skipped when key unset (`–`), `--json` parses and has 10 rows; helper TS files 100 % covered with in-memory repositories / fake provider
 
 **Files to create/modify**
 `infra/scripts/doctor.sh`, `infra/scripts/lib/{secrets-status,openai-check,cli-args}.ts` (+ `*.test.ts`), `infra/scripts/doctor.test.ts`, `infra/scripts/testing/shims.ts` (extend: `pg/redis` tcp behaviour flags, prisma `migrate status` output).
@@ -587,3 +587,4 @@ _To be written by Task 1I.5. Target: README §7, final prose, English._
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 - 1I.1 ✅ 2026-08-19 — run.sh single entry point, idempotent setup.sh with --force/--rebuild-image/--skip-doctor/--skip-install, tuned compose healthchecks, final root scripts block, PATH-shimmed tests at 100% coverage.
 - 1I.2 ✅ 2026-08-19 — archive.sh (compose down -v + label-scoped reap), ws.sh list/reap, db-prune.sh with --days/--dry-run, all scoped strictly by the ah.instance label.
+- 1I.3 ✅ 2026-08-19 — doctor.sh 10-row diagnostic table (table + --json) backed by secrets-status.ts and openai-check.ts node helpers; env.sh gains explicit POSTGRES_PORT/REDIS_PORT override precedence for TCP-reachability tests; 100% coverage on infra/scripts/lib/** and testing/**.
