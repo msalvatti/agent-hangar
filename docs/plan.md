@@ -303,7 +303,7 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | W1-E | 🟩 merged | PR #8 | core 100 (all four metrics) | status stamps are transactional; `ScheduledJob.prompt` and `Chat.title` redacted on write |
 | W1-F | 🟩 merged | PR #12 | core 100 (all four metrics) | BullMQ 6 API read from the installed types |
 | W1-G | 🟦 running | `feat/w1g-web-chats` | — | 1G.1–1G.3 done, 1G.4 in progress; `shared/transcript` pushed, so W1-H is unblocked |
-| W1-H | 🟦 running | `feat/w1h-web-scheduled-settings` | — | close-out waits for W1-G to merge; builds on `TEMP-STUB(W1-H)` until then |
+| W1-H | 🟥 blocked | `feat/w1h-web-scheduled-settings` | web 100 (all four metrics) | 1H.1–1H.5 done and pushed; stopped at the close-out because opening a pull request now would ship 18 `TEMP-STUB(W1-H)` files standing in for W1-G's modules. The orchestrator finalises it once W1-G merges |
 | W1-I | 🟦 running | `feat/w1i-infra-conductor` | — | started once W1-A, W1-C and W1-E were merged |
 | W2-A | 🟦 running | `feat/w2a-web-api-sse` | — | started once W1-A, W1-E and W1-F were merged |
 | W2-B 🐳 | 🟦 running | `feat/w2b-worker` | — | started once W1-A…W1-F were merged; its 🐳 suite needs the runtime bundled into the image (PR #16) |
