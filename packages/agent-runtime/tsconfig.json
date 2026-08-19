@@ -2,8 +2,10 @@
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "dist",
-    "tsBuildInfoFile": "dist/.tsbuildinfo",
+    // `tsc` emits into `dist/lib` so the esbuild bundle can own `dist/cli.js` outright: a
+    // transpiled `src/cli.ts` would otherwise land on the same path and shadow the bundle.
+    "outDir": "dist/lib",
+    "tsBuildInfoFile": "dist/lib/.tsbuildinfo",
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
