@@ -387,6 +387,36 @@ describe('credential containment', () => {
   });
 
   /**
+   * The repository URL schema rejects a credential-bearing URL, so the one input whose rejection
+   * proves a token is present is also the one whose value must never reach the message. This is
+   * where reporting field paths instead of values stops being defensive and starts being load
+   * bearing: a chat row that somehow held `user:token@` fails here, and the token stays put.
+   */
+  it('keeps a credential-bearing repository URL out of the validation error', () => {
+    expect.assertions(3);
+    try {
+      buildTurnRequest({
+        turnId: 'turn-1',
+        model: 'gpt-5',
+        instructions: '',
+        chat: {
+          ...PUSHED_CHAT,
+          repoUrl: `https://x-access-token:${GITHUB_CANARY}@github.com/acme/api`,
+        },
+        messages: MESSAGES,
+        decision: REUSE,
+      });
+    } catch (error) {
+      expect(error).toBeInstanceOf(ProtocolError);
+      const failure = error as ProtocolError;
+      expect(() => {
+        assertNoCanary(failure.message);
+      }).not.toThrow();
+      expect(failure.message).toContain('repo.url');
+    }
+  });
+
+  /**
    * The same containment applies to a scheduled run, whose prompt is user-supplied text that could
    * equally hold a pasted credential.
    */
