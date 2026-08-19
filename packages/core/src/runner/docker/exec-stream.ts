@@ -23,7 +23,14 @@ const FRAME_HEADER_BYTES = 8;
 /** Offset of the big-endian uint32 payload length inside the frame header. */
 const FRAME_SIZE_OFFSET = 4;
 
-/** Directory (on the container's tmpfs `/tmp`) holding one pid file per exec. */
+/**
+ * Directory (on the container's tmpfs `/tmp`) holding one pid file per exec.
+ *
+ * The workspace user can write here, so a hostile workspace could point a signal at a different
+ * pid. That grants nothing: every process in the container already belongs to that same user and
+ * PID namespace, so it could signal them directly. The file is a rendezvous point, not a
+ * privilege boundary — the boundary is the container itself.
+ */
 export const EXEC_PID_DIR = '/tmp/ah-exec';
 
 /**
@@ -40,6 +47,23 @@ const encoder = new TextEncoder();
 
 /** Reason an exec was ended by the runner rather than by the process exiting. */
 export type ExecTermination = 'TIMEOUT' | 'ABORTED';
+
+/**
+ * Schedules `callback` after `ms` and returns a function that cancels it.
+ *
+ * The canceller is returned instead of a timer handle so the seam is a plain function on both
+ * sides: production wires it to `setTimeout`/`clearTimeout`, and a test supplies a stub without
+ * having to produce a value of the platform's opaque handle type.
+ */
+export type ScheduleTimeout = (callback: () => void, ms: number) => () => void;
+
+/** The real scheduler, used when no override is given. */
+export const systemScheduleTimeout: ScheduleTimeout = (callback, ms) => {
+  const handle = setTimeout(callback, ms);
+  return () => {
+    clearTimeout(handle);
+  };
+};
 
 /** Incremental parser for Docker's multiplexed attach/exec stream. */
 export interface DockerDemuxer {
@@ -90,10 +114,8 @@ export interface PumpExecParams {
   kill: (reason: ExecTermination) => Promise<void>;
   /** Reads the process exit code once the stream closed on its own. */
   inspectExitCode: () => Promise<number | null>;
-  /** Timer scheduler; injected by tests. */
-  setTimeoutFn?: typeof setTimeout | undefined;
-  /** Timer canceller; injected by tests. */
-  clearTimeoutFn?: typeof clearTimeout | undefined;
+  /** Timer seam; injected by tests. */
+  scheduleTimeout?: ScheduleTimeout | undefined;
 }
 
 /**
@@ -213,33 +235,34 @@ export async function writeStdin(
   }
 }
 
-/**
- * Turns a hijacked exec stream into the contract's `ExecEvent` sequence.
- *
- * Yields every stdout/stderr frame in order and exactly one terminal `exit` event. A non-zero exit
- * code is data, never an exception. When the runner ends the exec itself — wall-clock timeout or
- * caller abort — the exit event carries `code: null` and the reason as `signal`, and the exit code
- * is not inspected because the process was not allowed to finish.
- *
- * @param params - Stream, parser, limits and the two daemon callbacks.
- * @yields Output events followed by the terminal `exit` event.
- * @throws DockerRunnerError when the stream fails for a reason other than our own termination.
- */
-export async function* pumpExecStream(params: PumpExecParams): AsyncGenerator<ExecEvent> {
-  const { stream, demuxer, signal, kill, inspectExitCode } = params;
-  const scheduleTimeout = params.setTimeoutFn ?? setTimeout;
-  const cancelTimeout = params.clearTimeoutFn ?? clearTimeout;
+/** Watches the two conditions that end an exec early, and remembers which one fired. */
+interface TerminationWatch {
+  /** Why the runner ended the exec, or `null` while the process is running on its own terms. */
+  reason(): ExecTermination | null;
+  /** Cancels the timer and removes the abort listener. */
+  dispose(): void;
+}
 
-  // Held in an object rather than a plain `let`: the reason is written inside `terminate`, and a
-  // closure assignment is invisible to the control-flow analysis that reads it further down.
-  const state: { terminated: ExecTermination | null } = { terminated: null };
-  let timer: ReturnType<typeof setTimeout> | undefined;
+/**
+ * Arms the timeout and the abort listener that can end an exec.
+ *
+ * Termination is idempotent: the first of the two to fire wins. A second one must not kill again,
+ * because by then the pid file may name a different process — the next exec reusing the slot.
+ *
+ * @param params - The pump's parameters; supplies the stream, the signal, the kill and the limit.
+ * @param schedule - Timer seam used for the wall-clock limit.
+ * @returns A watch reporting the termination reason and releasing both resources on `dispose`.
+ */
+function watchTermination(params: PumpExecParams, schedule: ScheduleTimeout): TerminationWatch {
+  const { stream, signal, kill } = params;
+  let terminated: ExecTermination | null = null;
+  let cancelTimeout: (() => void) | undefined;
 
   const terminate = (reason: ExecTermination): void => {
-    if (state.terminated !== null) {
+    if (terminated !== null) {
       return;
     }
-    state.terminated = reason;
+    terminated = reason;
     // The kill runs best-effort: the caller's implementation already falls back to killing the
     // container, and the stream is destroyed on the next line regardless of the outcome.
     void kill(reason).catch(() => undefined);
@@ -257,10 +280,35 @@ export async function* pumpExecStream(params: PumpExecParams): AsyncGenerator<Ex
     }
   }
   if (params.timeoutMs !== undefined) {
-    timer = scheduleTimeout(() => {
+    cancelTimeout = schedule(() => {
       terminate('TIMEOUT');
     }, params.timeoutMs);
   }
+
+  return {
+    reason: () => terminated,
+    dispose: () => {
+      cancelTimeout?.();
+      signal?.removeEventListener('abort', onAbort);
+    },
+  };
+}
+
+/**
+ * Turns a hijacked exec stream into the contract's `ExecEvent` sequence.
+ *
+ * Yields every stdout/stderr frame in order and exactly one terminal `exit` event. A non-zero exit
+ * code is data, never an exception. When the runner ends the exec itself — wall-clock timeout or
+ * caller abort — the exit event carries `code: null` and the reason as `signal`, and the exit code
+ * is not inspected because the process was not allowed to finish.
+ *
+ * @param params - Stream, parser, limits and the two daemon callbacks.
+ * @yields Output events followed by the terminal `exit` event.
+ * @throws DockerRunnerError when the stream fails for a reason other than our own termination.
+ */
+export async function* pumpExecStream(params: PumpExecParams): AsyncGenerator<ExecEvent> {
+  const { stream, demuxer, inspectExitCode } = params;
+  const watch = watchTermination(params, params.scheduleTimeout ?? systemScheduleTimeout);
 
   try {
     for await (const chunk of stream) {
@@ -268,19 +316,17 @@ export async function* pumpExecStream(params: PumpExecParams): AsyncGenerator<Ex
     }
   } catch (error) {
     // A stream that fails *because* we destroyed it is the expected end of a terminated exec.
-    if (state.terminated === null) {
+    if (watch.reason() === null) {
       throw new DockerRunnerError('exec stream failed', { cause: error });
     }
   } finally {
-    if (timer !== undefined) {
-      cancelTimeout(timer);
-    }
-    signal?.removeEventListener('abort', onAbort);
+    watch.dispose();
   }
 
-  yield state.terminated === null
+  const reason = watch.reason();
+  yield reason === null
     ? { type: 'exit', code: await inspectExitCode() }
-    : { type: 'exit', code: null, signal: state.terminated };
+    : { type: 'exit', code: null, signal: reason };
 }
 
 /**

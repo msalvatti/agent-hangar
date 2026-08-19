@@ -60,6 +60,21 @@ const DEFAULT_READINESS = { attempts: 25, delayMs: 200 } as const;
 /** Grace period given to the container's main process before it is killed. */
 const STOP_GRACE_SECONDS = 10;
 
+/**
+ * Waits before the next readiness attempt.
+ *
+ * A plain delay rather than a cancellable timer: the back-off has nothing to cancel, and the abort
+ * signal is re-checked at the top of every attempt, so at worst a cancelled create waits out one
+ * more interval before failing.
+ */
+export type Sleep = (ms: number) => Promise<void>;
+
+/** The real delay, used when no override is given. */
+const systemSleep: Sleep = async (ms) =>
+  new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+
 /** Construction inputs of {@link DockerWorkspaceRunner}. */
 export interface DockerWorkspaceRunnerOptions {
   /** The Docker API to drive; the real dockerode client in production, a fake in unit tests. */
@@ -72,8 +87,8 @@ export interface DockerWorkspaceRunnerOptions {
   clock?: Clock | undefined;
   /** Readiness probe budget. */
   readiness?: { attempts: number; delayMs: number } | undefined;
-  /** Timer scheduler used between readiness attempts; injected by tests. */
-  setTimeoutFn?: typeof setTimeout | undefined;
+  /** Delay between readiness attempts; injected by tests so retries cost no wall-clock time. */
+  sleep?: Sleep | undefined;
   /** Exec reference generator; injected by tests. */
   randomUUID?: (() => string) | undefined;
 }
@@ -88,7 +103,7 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
   readonly #namePrefix: string;
   readonly #clock: Clock;
   readonly #readiness: { attempts: number; delayMs: number };
-  readonly #setTimeoutFn: typeof setTimeout;
+  readonly #sleep: Sleep;
   readonly #randomUUID: () => string;
 
   /**
@@ -100,7 +115,7 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     this.#namePrefix = options.namePrefix;
     this.#clock = options.clock ?? { now: () => new Date() };
     this.#readiness = options.readiness ?? DEFAULT_READINESS;
-    this.#setTimeoutFn = options.setTimeoutFn ?? setTimeout;
+    this.#sleep = options.sleep ?? systemSleep;
     this.#randomUUID = options.randomUUID ?? (() => crypto.randomUUID());
   }
 
@@ -142,7 +157,11 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
       yield* this.#streamExec(handle, spec, execRef);
     } catch (error) {
       if (!isDockerNotFound(error)) {
-        throw error;
+        throw error instanceof DockerRunnerError
+          ? error
+          : new DockerRunnerError(`exec ${execRef} failed in workspace ${handle.workspaceId}`, {
+              cause: error,
+            });
       }
       yield { type: 'exit', code: null, signal: 'GONE' };
     }
@@ -290,9 +309,11 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     try {
       return await this.#docker.createContainer(options);
     } catch (error) {
+      // Neither branch attaches a `cause`. This is the one daemon call whose request body carries
+      // the workspace environment — the GitHub PAT and the OpenAI key — and a rejection from it is
+      // the one place a daemon or proxy might echo that body back. The workspace id is enough to
+      // locate the failure in the daemon's own logs.
       if (isDockerConflict(error)) {
-        // No `cause`: the daemon's conflict body echoes the request, and the request carries the
-        // workspace environment.
         throw new DockerRunnerError(
           `container name already exists for workspace ${spec.workspaceId}`,
         );
@@ -352,8 +373,12 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     const stream = await exec.start({ hijack: true, stdin: true });
 
     // Not awaited here: the process may produce output long before it has consumed all of stdin,
-    // and awaiting first would deadlock on anything larger than the pipe buffer.
-    const stdinWritten = writeStdin(stream, spec.stdin, spec.signal);
+    // and awaiting first would deadlock on anything larger than the pipe buffer. The rejection
+    // handler is attached immediately rather than at the `await` below, so the promise is never
+    // momentarily unhandled. Stdin failures are not exec failures: the stream is destroyed on the
+    // termination paths, and a caller-supplied source that throws leaves the process with
+    // truncated input — whose consequence the exit code already reports.
+    const stdinWritten = writeStdin(stream, spec.stdin, spec.signal).catch(() => undefined);
 
     try {
       yield* pumpExecStream({
@@ -365,11 +390,8 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
         inspectExitCode: async () => (await exec.inspect()).ExitCode,
       });
     } finally {
-      // Stdin failures are not exec failures: the stream is destroyed on the termination paths,
-      // and a caller-supplied stdin source that throws leaves the process with truncated input —
-      // whose consequence is already reported by the exit code that was just yielded. Raising here
-      // would replace a valid terminal event with an error after the fact.
-      await stdinWritten.catch(() => undefined);
+      // Wait for the writer to finish so stdin is always closed before the exec is considered over.
+      await stdinWritten;
     }
   }
 
@@ -390,6 +412,10 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     try {
       delivered = (await this.#runCapture(container, killCommand(execRef, 'KILL'))).code === 0;
     } catch {
+      // Deliberately not surfaced: the kill exec can fail for the same reasons the exec being
+      // killed already has (container gone, exec limit reached), and the caller asked for the
+      // process to stop, not for a diagnosis. The container-level fallback below is the answer,
+      // and its own failure IS reported.
       delivered = false;
     }
     if (delivered) {
@@ -483,19 +509,5 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
    */
   async #discard(container: DockerContainerApi): Promise<void> {
     await this.#destroyContainer(container).catch(() => undefined);
-  }
-
-  /**
-   * Waits between readiness attempts using the injected timer.
-   *
-   * @param ms - Delay in milliseconds.
-   * @returns Resolves once the delay elapsed.
-   */
-  #sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => {
-      this.#setTimeoutFn(() => {
-        resolve();
-      }, ms);
-    });
   }
 }

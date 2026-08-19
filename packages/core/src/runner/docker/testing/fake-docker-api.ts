@@ -39,6 +39,9 @@ const NOT_FOUND = 404;
 /** HTTP status used for "name already in use". */
 const CONFLICT = 409;
 
+/** HTTP status used for a daemon-side failure with no more specific meaning. */
+const SERVER_ERROR = 500;
+
 /** How one scripted exec behaves. */
 export interface FakeExecScript {
   /** Selects the commands this script answers. */
@@ -188,7 +191,7 @@ class FakeExec implements DockerExecApi {
    */
   async start(opts: DockerExecStartOptions): Promise<DockerExecStream> {
     if (this.#script.failStart === true) {
-      throw dockerError(500, `exec start refused (stdin=${String(opts.stdin)})`);
+      throw dockerError(SERVER_ERROR, `exec start refused (stdin=${String(opts.stdin)})`);
     }
     const stream = new FakeHijackedStream(this.#stdinWrites);
     if (this.#script.stdout !== undefined) {

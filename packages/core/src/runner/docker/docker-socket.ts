@@ -52,6 +52,9 @@ const USER_SOCKET_RELATIVE_PATH = '.docker/run/docker.sock';
 /** Socket published by a system-wide daemon installation. */
 const SYSTEM_SOCKET_PATH = '/var/run/docker.sock';
 
+/** Highest TCP port number. */
+const MAX_TCP_PORT = 65_535;
+
 /**
  * Builds the dockerode options for a `tcp://` endpoint.
  *
@@ -69,7 +72,7 @@ function parseTcpDockerHost(value: string): DockerodeOptions {
   const host = authority.slice(0, separator);
   const port = Number(authority.slice(separator + 1));
 
-  if (separator <= 0 || !Number.isInteger(port) || port <= 0 || port > 65_535) {
+  if (separator <= 0 || !Number.isInteger(port) || port <= 0 || port > MAX_TCP_PORT) {
     throw new DockerRunnerError(`unsupported DOCKER_HOST "${value}"`);
   }
 

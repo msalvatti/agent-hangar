@@ -442,11 +442,10 @@ describe('pumpExecStream', () => {
     const { params, kill } = pumpFixture({
       signal: controller.signal,
       timeoutMs: 1_000,
-      setTimeoutFn: ((callback: () => void) => {
+      scheduleTimeout: (callback) => {
         fireTimeout = callback;
-        return 0 as unknown as ReturnType<typeof setTimeout>;
-      }) as unknown as typeof setTimeout,
-      clearTimeoutFn: (() => undefined) as unknown as typeof clearTimeout,
+        return () => undefined;
+      },
     });
 
     const pending = collect(pumpExecStream(params));

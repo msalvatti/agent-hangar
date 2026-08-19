@@ -47,10 +47,15 @@ export type {
   ResolveDockerSocketDeps,
 } from './docker-socket.js';
 export { DockerWorkspaceRunner } from './docker-workspace-runner.js';
-export type { DockerWorkspaceRunnerOptions } from './docker-workspace-runner.js';
+export type { DockerWorkspaceRunnerOptions, Sleep } from './docker-workspace-runner.js';
 export { DockerRunnerError } from './errors.js';
-export { EXEC_PID_DIR, execWrapperCommand, killCommand } from './exec-stream.js';
-export type { ExecTermination } from './exec-stream.js';
+export {
+  EXEC_PID_DIR,
+  execWrapperCommand,
+  killCommand,
+  systemScheduleTimeout,
+} from './exec-stream.js';
+export type { ExecTermination, ScheduleTimeout } from './exec-stream.js';
 export { parseAheadBehind, truncateSummary } from './git-snapshot.js';
 export type { CaptureExec, CaptureResult } from './git-snapshot.js';
 
