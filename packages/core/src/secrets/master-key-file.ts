@@ -17,6 +17,9 @@
  *    link pointing at a file some other account controls.
  * 3. The permission check and the read both run against that one open handle, so there is no
  *    window between checking and reading in which the file could be swapped.
+ * 4. The open is non-blocking and the handle is refused unless it is a regular file. Creation
+ *    tolerates `EEXIST`, so a named pipe sitting at the path would be adopted as the key file, and
+ *    a blocking `open` on a pipe with no writer never returns — that alone would hang startup.
  *
  * Ancestors above the containing directory are not walked: on a single-user local install the
  * directory check plus `O_NOFOLLOW` closes the reachable paths, and a hostile ancestor would
@@ -48,8 +51,19 @@ const KEY_DIRECTORY_MODE = 0o700;
 /** Group and other permission bits; any of them set makes the key file unusable. */
 const GROUP_AND_OTHER_BITS = 0o077;
 
-/** Flags the key file is read with: read-only, and never through a symbolic link. */
-const KEY_FILE_OPEN_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW;
+/**
+ * Flags the key file is read with: read-only, never through a symbolic link, and never waiting on
+ * the open itself. `O_NONBLOCK` has no effect on a regular file, which is the only thing this
+ * provider goes on to read; it exists so that a named pipe or a device fails fast enough to be
+ * rejected instead of blocking the process forever.
+ */
+const KEY_FILE_OPEN_FLAGS = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
+
+/** Mask selecting the file-type bits of a `stat` mode. */
+const FILE_TYPE_BITS = constants.S_IFMT;
+
+/** Value those bits take for a regular file. */
+const REGULAR_FILE_TYPE = constants.S_IFREG;
 
 /** The only accepted file content: 32 bytes as hex, case-insensitive. */
 const HEX_KEY_PATTERN = /^[0-9a-f]{64}$/i;
@@ -97,6 +111,16 @@ export interface MasterKeyFileOptions {
  */
 export function isWorldOrGroupReadable(mode: number): boolean {
   return (mode & GROUP_AND_OTHER_BITS) !== 0;
+}
+
+/**
+ * Reports whether a `stat` mode describes a regular file.
+ *
+ * @param mode - Mode word as returned by `stat`; only the file-type bits are read.
+ * @returns `true` for a regular file, `false` for a directory, pipe, socket or device.
+ */
+export function isRegularFile(mode: number): boolean {
+  return (mode & FILE_TYPE_BITS) === REGULAR_FILE_TYPE;
 }
 
 /**
@@ -229,13 +253,18 @@ export class MasterKeyFile implements MasterKeyProvider {
    * could be replaced between the two, so both run against the open file itself.
    *
    * @returns The decoded 32 key bytes.
-   * @throws ConfigError when the path is a symbolic link, when group or other can reach the file,
-   * or when the content is not 64 hex characters.
+   * @throws ConfigError when the path is a symbolic link or not a regular file, when group or
+   * other can reach the file, or when the content is not 64 hex characters.
    */
   private async readKeyBytes(): Promise<Buffer> {
     const handle = await this.openKeyFile();
     try {
       const stats = await handle.stat();
+      if (!isRegularFile(stats.mode)) {
+        throw new ConfigError(
+          `Master key file ${this.path} is not a regular file; remove it and let the key be recreated.`,
+        );
+      }
       if (isWorldOrGroupReadable(stats.mode)) {
         throw new ConfigError(
           `Master key file ${this.path} is readable by group/others; run: chmod 600 ${this.path}`,

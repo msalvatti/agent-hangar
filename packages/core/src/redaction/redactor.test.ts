@@ -183,10 +183,13 @@ describe('createRedactor shape patterns', () => {
    * the global flag must be honoured rather than recompiled into something different.
    */
   it('accepts caller-supplied patterns and replacement', () => {
-    const redactor = createRedactor({ patterns: [/token\(\d+\)/gi], replacement: '***' });
+    const pattern = /token\(\d+\)/gi;
+    const redactor = createRedactor({ patterns: [pattern], replacement: '***' });
 
     expect(redactor.redact('TOKEN(1) and token(22)')).toBe('*** and ***');
     expect(redactor.redact(CLASSIC_PAT)).toBe(CLASSIC_PAT);
+    // The caller still owns the pattern object, so no cursor may be left on it afterwards.
+    expect(pattern.lastIndex).toBe(0);
   });
 
   /**

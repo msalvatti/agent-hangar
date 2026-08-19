@@ -3,11 +3,12 @@
  *
  * Layer: unit.
  * Goal: the key file is created 0600 with 32 random bytes, refused when group or other can reach
- * it or its directory, refused when it is a symbolic link, refused when malformed, cached after
- * the first load, and tolerant of a lost creation race.
+ * it or its directory, refused when it is a symbolic link or any other non-regular file, refused
+ * when malformed, cached after the first load, and tolerant of a lost creation race.
  * Mocks: the happy paths run against a real temporary directory; the write failure paths use a
  * {@link KeyFileSystem} stub so no permission tricks are needed.
  */
+import { execFileSync } from 'node:child_process';
 import { chmod, mkdtemp, mkdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -17,7 +18,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { ConfigError } from '../errors.js';
 
 import type { KeyFileSystem } from './master-key-file.js';
-import { MasterKeyFile, isWorldOrGroupReadable, nodeKeyFileSystem } from './master-key-file.js';
+import {
+  MasterKeyFile,
+  isRegularFile,
+  isWorldOrGroupReadable,
+  nodeKeyFileSystem,
+} from './master-key-file.js';
 import { MASTER_KEY_BYTES, MASTER_KEY_VERSION } from './master-key.js';
 
 const KEY_HEX = 'a'.repeat(64);
@@ -81,6 +87,22 @@ describe('isWorldOrGroupReadable', () => {
    */
   it('ignores the file-type bits of a stat mode', () => {
     expect(isWorldOrGroupReadable(0o100600)).toBe(false);
+  });
+});
+
+describe('isRegularFile', () => {
+  /**
+   * Only a regular file may hold the key. The mode word carries the file type in its high bits, so
+   * every other kind of node the path could name has to be told apart from it.
+   */
+  it.each([
+    ['regular file', 0o100600, true],
+    ['named pipe', 0o010600, false],
+    ['directory', 0o040700, false],
+    ['character device', 0o020600, false],
+    ['socket', 0o140600, false],
+  ])('classifies a %s', (_label, mode, expected) => {
+    expect(isRegularFile(mode)).toBe(expected);
   });
 });
 
@@ -230,6 +252,36 @@ describe('MasterKeyFile', () => {
 
     expect(masterKey.key.toString('hex')).toBe(KEY_HEX);
     expect(opened).toEqual([path]);
+  });
+
+  /**
+   * Creation tolerates `EEXIST`, so a named pipe already sitting at the path is adopted as if it
+   * were the key file. A blocking `open` on a pipe with no writer never returns, which would hang
+   * startup outright; the open is therefore non-blocking and the handle is refused on its type.
+   * The assertion that this test terminates at all is the point of it.
+   */
+  it('refuses a key file that is a named pipe instead of blocking on it', async () => {
+    const path = join(await makeRoot(), 'master.key');
+    execFileSync('mkfifo', ['-m', '600', path]);
+
+    const load = new MasterKeyFile({ path }).load();
+
+    await expect(load).rejects.toThrow(ConfigError);
+    await expect(load).rejects.toThrow('is not a regular file');
+  });
+
+  /**
+   * A directory at the path is the same class of mistake and must be refused on its type rather
+   * than read as if it held hex.
+   */
+  it('refuses a key path that is a directory', async () => {
+    const path = join(await makeRoot(), 'master.key');
+    await mkdir(path, { mode: 0o700 });
+
+    const load = new MasterKeyFile({ path }).load();
+
+    await expect(load).rejects.toThrow(ConfigError);
+    await expect(load).rejects.toThrow('is not a regular file');
   });
 
   /**

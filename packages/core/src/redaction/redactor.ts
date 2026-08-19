@@ -71,15 +71,22 @@ export function escapeRegExp(value: string): string {
  * the whole input into replacement tokens, so it is refused and the input is returned untouched.
  *
  * @param input - Text to scan.
- * @param pattern - Pattern to look for; its `lastIndex` is left untouched by `split`.
+ * @param pattern - Pattern to look for; the caller keeps ownership of it, so its `lastIndex` is
+ * reset on the way in and on the way out and no position state survives the call.
  * @param replacement - Token written in place of each match.
  * @returns The text with every match replaced.
  */
 function replaceEvery(input: string, pattern: RegExp, replacement: string): string {
-  if (pattern.global || pattern.sticky) {
+  const carriesCursor = pattern.global || pattern.sticky;
+  if (carriesCursor) {
     pattern.lastIndex = 0;
   }
   const probe = pattern.exec(input);
+  if (carriesCursor) {
+    // `exec` advances the cursor of a global or sticky pattern; `split` builds its own copy, so
+    // clearing it here leaves the caller's pattern exactly as it was handed over.
+    pattern.lastIndex = 0;
+  }
   if (probe === null || probe[0].length === 0) {
     return input;
   }
