@@ -74,12 +74,33 @@ export const turnRequestSchema = z.object({
 /** Result status of a tool call. */
 export const toolResultStatusSchema = z.enum(['SUCCEEDED', 'FAILED', 'TIMED_OUT']);
 
-/** Emitted by the NDJSON parser for a line that is not a valid event; never produced by the runtime. */
+/**
+ * Why the NDJSON parser rejected a line. A closed vocabulary on purpose: see
+ * {@link protocolErrorEventSchema}.
+ */
+export const protocolErrorReasonSchema = z.enum([
+  /** The line is not valid JSON. */
+  'invalid-json',
+  /** The line is valid JSON but does not satisfy the schema. */
+  'schema-violation',
+  /** The line exceeded the parser's buffered-line limit and was discarded. */
+  'line-too-long',
+]);
+
+/**
+ * Emitted by the NDJSON parser for a line that is not a valid event; never produced by the runtime.
+ *
+ * Security: the rejected bytes come from a process running inside an agent workspace, whose
+ * environment holds the GitHub PAT and the OpenAI API key, and this event is persisted and
+ * displayed. Every field is therefore machine-generated — a reason drawn from
+ * {@link protocolErrorReasonSchema} and a character count — so the event has no free-form text
+ * and is structurally incapable of carrying a credential, whoever builds it.
+ */
 export const protocolErrorEventSchema = z.object({
   type: z.literal('protocol.error'),
-  /** The offending raw line, truncated. */
-  line: z.string(),
-  reason: z.string(),
+  reason: protocolErrorReasonSchema,
+  /** Length in characters of the offending line. A count cannot carry a secret. */
+  length: z.number().int().nonnegative(),
 });
 
 /** Every event the runtime streams on stdout, one JSON object per line. */

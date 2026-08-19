@@ -99,10 +99,17 @@ export class FakeAgentModelProvider implements AgentModelProvider {
     this.calls.push(input);
     const selected = this.selectScript(input);
     if (selected === undefined) {
+      const prompt = lastUserText(input);
       yield {
         type: 'error',
         code: 'unknown',
-        message: `FakeAgentModelProvider: no script for prompt ${JSON.stringify(lastUserText(input) ?? null)} and no default`,
+        // The last user message carries repository content and whatever the operator typed, and
+        // this event is persisted as the turn's error. Report its size, never its text, so a
+        // scripting mistake cannot copy a pasted credential into a stored row.
+        message:
+          prompt === undefined
+            ? 'FakeAgentModelProvider: no script for a turn without a user message, and no default'
+            : `FakeAgentModelProvider: no script for the last user message (${String(prompt.length)} characters), and no default`,
         retryable: false,
       };
       return;

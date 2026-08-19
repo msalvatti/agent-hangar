@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { ModelEvent, ModelTurnInput } from '../model/types.js';
 
+import { assertNoCanary, GITHUB_CANARY } from './canaries.js';
 import {
   FAKE_USAGE,
   FakeAgentModelProvider,
@@ -146,18 +147,31 @@ describe('FakeAgentModelProvider', () => {
   });
 
   /**
-   * No matching script and no default: an `error` event names the prompt so the test author
-   * sees what to script; a turn without any user item reports `null`.
+   * No matching script and no default: an `error` event sizes the prompt so the test author sees
+   * something actionable, without quoting it — the message is persisted as the turn's error and
+   * a prompt may hold a pasted credential, so a canary in the prompt must not survive. A turn
+   * without any user item says so explicitly.
    */
-  it('yields an error event when no script matches', async () => {
+  it('yields an error event when no script matches, without quoting the prompt', async () => {
     const provider = new FakeAgentModelProvider({ script: { other: simpleAnswer('x') } });
     const events = await collect(provider.stream(input()));
     expect(events[0]).toMatchObject({ type: 'error', code: 'unknown', retryable: false });
-    expect((events[0] as { message: string }).message).toContain('"hello"');
+    expect((events[0] as { message: string }).message).toContain('(5 characters)');
+    expect((events[0] as { message: string }).message).not.toContain('hello');
+
+    const secret = await collect(
+      provider.stream(input({ items: [{ role: 'user', content: GITHUB_CANARY }] })),
+    );
+    const leaked = (secret[0] as { message: string }).message;
+    expect(leaked).toContain(`(${String(GITHUB_CANARY.length)} characters)`);
+    expect(() => {
+      assertNoCanary(leaked);
+    }).not.toThrow();
+
     const noUser = await collect(
       provider.stream(input({ items: [{ role: 'system', content: 's' }] })),
     );
-    expect((noUser[0] as { message: string }).message).toContain('null');
+    expect((noUser[0] as { message: string }).message).toContain('without a user message');
   });
 
   /**

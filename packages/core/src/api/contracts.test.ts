@@ -9,6 +9,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
+import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.js';
+
 import {
   apiError,
   apiOperations,
@@ -67,17 +69,56 @@ const toolCall = {
 
 describe('repoUrl', () => {
   /**
-   * Only credential-free https GitHub URLs are accepted: other hosts, http, and embedded
-   * credentials are rejected so a PAT can never leak through a repository URL.
+   * The shapes a clone actually needs are accepted: owner and repository, with or without the
+   * `.git` suffix git allows, and the punctuation GitHub permits in a repository name.
    */
-  it('accepts https GitHub URLs and rejects other hosts, schemes and credentials', () => {
-    expect(repoUrl.safeParse('https://github.com/acme/widgets').success).toBe(true);
-    expect(repoUrl.safeParse('https://github.com/acme/widgets.git').success).toBe(true);
-    expect(repoUrl.safeParse('http://github.com/acme/widgets').success).toBe(false);
-    expect(repoUrl.safeParse('https://gitlab.com/acme/widgets').success).toBe(false);
-    expect(repoUrl.safeParse('https://user:token@github.com/acme/widgets').success).toBe(false);
-    expect(repoUrl.safeParse('https://user@github.com/acme/widgets').success).toBe(false);
-    expect(repoUrl.safeParse('acme/widgets').success).toBe(false);
+  it.each([
+    'https://github.com/acme/widgets',
+    'https://github.com/acme/widgets.git',
+    'https://github.com/acme/my.repo_name-2',
+  ])('accepts %s', (value) => {
+    expect(repoUrl.safeParse(value).success).toBe(true);
+  });
+
+  /**
+   * Everything else is refused, one rejection per case. The schema is an allow-list because the
+   * value is persisted under a contract that promises a credential-free URL: a query string, a
+   * fragment and userinfo each hide a token, and an extra path segment means the URL is not a
+   * repository at all. A canary stands in for a real PAT in the query-string and fragment cases,
+   * which are the ones a bot review found reachable.
+   */
+  it.each([
+    ['http scheme', 'http://github.com/acme/widgets'],
+    ['another host', 'https://gitlab.com/acme/widgets'],
+    ['host suffix attack', 'https://github.com.evil.test/acme/widgets'],
+    ['userinfo with password', `https://user:${GITHUB_CANARY}@github.com/acme/widgets`],
+    ['userinfo without password', 'https://user@github.com/acme/widgets'],
+    ['query string carrying a token', `https://github.com/acme/widgets?token=${GITHUB_CANARY}`],
+    ['bare question mark', 'https://github.com/acme/widgets?'],
+    ['bare hash', 'https://github.com/acme/widgets#'],
+    ['fragment carrying a token', `https://github.com/acme/widgets#${OPENAI_CANARY}`],
+    ['third path segment', 'https://github.com/acme/widgets/tree/main'],
+    ['trailing slash', 'https://github.com/acme/widgets/'],
+    ['only an owner', 'https://github.com/acme'],
+    ['no path', 'https://github.com'],
+    ['percent-encoded separator', 'https://github.com/acme/wid%2Fgets'],
+    ['bare .git path', 'https://github.com/.git'],
+    ['not a URL', 'acme/widgets'],
+  ])('rejects %s', (_label, value) => {
+    expect(repoUrl.safeParse(value).success).toBe(false);
+  });
+
+  /**
+   * A rejected URL must not have its credential copied into the validation message, which is
+   * returned to the client and logged.
+   */
+  it('never echoes a rejected URL in its error message', () => {
+    const result = repoUrl.safeParse(`https://github.com/acme/widgets?token=${GITHUB_CANARY}`);
+    expect(result.success).toBe(false);
+    const message = JSON.stringify(result.error?.issues);
+    expect(() => {
+      assertNoCanary(message);
+    }).not.toThrow();
   });
 });
 

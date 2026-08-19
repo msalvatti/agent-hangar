@@ -9,6 +9,7 @@ import type {
   agentEventSchema,
   conversationItemSchema,
   protocolErrorEventSchema,
+  protocolErrorReasonSchema,
   toolNameSchema,
   toolResultStatusSchema,
   turnLimitsSchema,
@@ -43,6 +44,9 @@ export type AgentEvent = z.infer<typeof agentEventSchema>;
 
 /** Discriminator values of {@link AgentEvent}. */
 export type AgentEventType = AgentEvent['type'];
+
+/** Why the NDJSON parser rejected a line. */
+export type ProtocolErrorReason = z.infer<typeof protocolErrorReasonSchema>;
 
 /** The event the NDJSON parser yields for an invalid line. */
 export type ProtocolErrorEvent = z.infer<typeof protocolErrorEventSchema>;

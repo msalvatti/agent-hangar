@@ -3,16 +3,33 @@
  *
  * Layer: utility.
  *
- * The parser never throws on malformed input: a line that is not valid JSON or does not satisfy
- * the schema is mapped to a `protocol.error` event so the consumer can persist and display it
- * while the stream keeps flowing.
+ * The parser never throws on malformed input: a line that is not valid JSON, does not satisfy the
+ * schema, or grows past {@link PROTOCOL_MAX_LINE_LENGTH} is mapped to a `protocol.error` event so
+ * the consumer can persist and display it while the stream keeps flowing.
+ *
+ * Security: every byte fed to this parser is produced by a process running inside an agent
+ * workspace, whose environment holds the GitHub PAT and the OpenAI API key, and `protocol.error`
+ * events are persisted and displayed. Nothing derived from those bytes may reach an event, so a
+ * rejection reports only a fixed reason code and a character count. Three echoes are deliberately
+ * avoided: the offending line itself, V8's `JSON.parse` message (which quotes a prefix of its
+ * input) and Zod's issue messages and paths (which quote unrecognised object keys).
+ *
+ * The same untrusted producer is why the buffer is capped: an unterminated line would otherwise
+ * grow until the worker heap is exhausted.
  */
 import type { ZodType } from 'zod';
 
-import type { ProtocolErrorEvent } from './types.js';
+import type { ProtocolErrorEvent, ProtocolErrorReason } from './types.js';
 
-/** Maximum number of characters of a bad line kept in a `protocol.error` event. */
-export const PROTOCOL_ERROR_LINE_LIMIT = 200;
+/**
+ * Maximum number of characters buffered for a single line before the parser abandons it.
+ *
+ * Sized far above any legitimate event and far below anything that threatens the worker: the
+ * largest event the runtime emits is a `tool.output.delta`, bounded by the turn's
+ * `maxToolOutputBytes` limit (32 KB by default), so 1 MiB leaves three orders of magnitude of
+ * headroom while capping what a runaway or hostile producer can pin in memory.
+ */
+export const PROTOCOL_MAX_LINE_LENGTH = 1_048_576;
 
 /** Items produced by the parser: valid values, or a `protocol.error` for each invalid line. */
 export type NdjsonItem<T> = T | ProtocolErrorEvent;
@@ -27,6 +44,13 @@ export interface NdjsonParser<T> {
   push(chunk: Uint8Array | string): NdjsonItem<T>[];
   /** Parses a trailing partial line (no newline at end of stream) and resets the buffer. */
   flush(): NdjsonItem<T>[];
+  /**
+   * Characters currently held for the line in progress.
+   *
+   * Never exceeds {@link PROTOCOL_MAX_LINE_LENGTH} plus the size of the chunk that crossed it,
+   * which is what makes the parser's memory use bounded regardless of what the producer sends.
+   */
+  bufferedLength(): number;
 }
 
 /**
@@ -39,25 +63,31 @@ export function encodeLine(value: unknown): string {
   return `${JSON.stringify(value)}\n`;
 }
 
-function protocolError(line: string, reason: string): ProtocolErrorEvent {
-  return { type: 'protocol.error', line: line.slice(0, PROTOCOL_ERROR_LINE_LIMIT), reason };
+/**
+ * Builds a rejection event out of machine-generated facts only.
+ *
+ * @param reason - Which rejection occurred.
+ * @param length - Characters of the offending line.
+ * @returns The event; carries nothing derived from the rejected bytes.
+ */
+function protocolError(reason: ProtocolErrorReason, length: number): ProtocolErrorEvent {
+  return { type: 'protocol.error', reason, length };
 }
 
 function parseLine<T>(schema: ZodType<T>, line: string): NdjsonItem<T> {
   let json: unknown;
   try {
     json = JSON.parse(line);
-  } catch (error) {
-    return protocolError(line, `invalid JSON: ${String(error)}`);
+  } catch {
+    // The thrown SyntaxError quotes a prefix of `line`; it must not escape this block.
+    return protocolError('invalid-json', line.length);
   }
   const result = schema.safeParse(json);
   if (result.success) {
     return result.data;
   }
-  const reasons = result.error.issues.map((issue) =>
-    issue.path.length === 0 ? issue.message : `${issue.path.join('.')}: ${issue.message}`,
-  );
-  return protocolError(line, `schema violation: ${reasons.join('; ')}`);
+  // Zod issue messages and paths quote unrecognised keys, so only the count survives.
+  return protocolError('schema-violation', line.length);
 }
 
 /**
@@ -70,17 +100,33 @@ function parseLine<T>(schema: ZodType<T>, line: string): NdjsonItem<T> {
 export function createNdjsonParser<T>(schema: ZodType<T>): NdjsonParser<T> {
   const decoder = new TextDecoder('utf-8');
   let buffer = '';
+  // Set once a line passes the length cap: its remaining characters are dropped, unreported, until
+  // the next newline lets the parser resynchronise on a fresh line.
+  let discarding = false;
 
   const parseComplete = (): NdjsonItem<T>[] => {
     const items: NdjsonItem<T>[] = [];
     let newline = buffer.indexOf('\n');
     while (newline !== -1) {
-      const line = buffer.slice(0, newline).replace(/\r$/, '');
+      const raw = buffer.slice(0, newline);
       buffer = buffer.slice(newline + 1);
-      if (line.trim().length > 0) {
-        items.push(parseLine(schema, line));
+      if (discarding) {
+        discarding = false;
+      } else {
+        const line = raw.replace(/\r$/, '');
+        if (line.trim().length > 0) {
+          items.push(parseLine(schema, line));
+        }
       }
       newline = buffer.indexOf('\n');
+    }
+    if (discarding) {
+      // Tail of a condemned line: holding it would be the unbounded growth the cap exists to stop.
+      buffer = '';
+    } else if (buffer.length > PROTOCOL_MAX_LINE_LENGTH) {
+      items.push(protocolError('line-too-long', buffer.length));
+      discarding = true;
+      buffer = '';
     }
     return items;
   };
@@ -93,12 +139,17 @@ export function createNdjsonParser<T>(schema: ZodType<T>): NdjsonParser<T> {
     flush() {
       buffer += decoder.decode();
       const items = parseComplete();
+      // `parseComplete` empties the buffer while discarding, so a condemned tail never lands here.
       const rest = buffer.replace(/\r$/, '');
       buffer = '';
+      discarding = false;
       if (rest.trim().length > 0) {
         items.push(parseLine(schema, rest));
       }
       return items;
+    },
+    bufferedLength() {
+      return buffer.length;
     },
   };
 }

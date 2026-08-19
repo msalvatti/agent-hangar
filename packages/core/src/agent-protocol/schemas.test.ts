@@ -80,7 +80,9 @@ const validEvents: AgentEvent[] = [
   },
   { type: 'turn.failed', error: { code: 'auth', message: 'OpenAI rejected the key' } },
   { type: 'turn.cancelled' },
-  { type: 'protocol.error', line: '{oops', reason: 'invalid JSON' },
+  { type: 'protocol.error', reason: 'invalid-json', length: 5 },
+  { type: 'protocol.error', reason: 'schema-violation', length: 15 },
+  { type: 'protocol.error', reason: 'line-too-long', length: 1_048_577 },
 ];
 
 describe('toolNameSchema', () => {

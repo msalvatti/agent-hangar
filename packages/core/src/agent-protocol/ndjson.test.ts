@@ -3,18 +3,23 @@
  *
  * Layer: unit.
  * Goal: the parser handles partial chunks, multiple lines per chunk, CRLF, multi-byte splits,
- * large lines, invalid JSON and schema violations without throwing; `encodeLine` produces one
- * line per value; the stream helper composes both.
+ * large lines, invalid JSON and schema violations without throwing; a rejection never echoes the
+ * offending bytes (a workspace process could put a credential there) and an unterminated line is
+ * capped instead of exhausting the heap; `encodeLine` produces one line per value; the stream
+ * helper composes both.
  * Mocks: none.
  */
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
+import type { ZodType } from 'zod';
+
+import { CANARY_MARKER, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.js';
 
 import {
   createNdjsonParser,
   encodeLine,
   parseNdjsonStream,
-  PROTOCOL_ERROR_LINE_LIMIT,
+  PROTOCOL_MAX_LINE_LENGTH,
 } from './ndjson.js';
 import { agentEventSchema } from './schemas.js';
 
@@ -26,6 +31,24 @@ async function* chunks(...parts: string[]): AsyncIterable<Uint8Array> {
   for (const part of parts) {
     yield await Promise.resolve(encoder.encode(part));
   }
+}
+
+/**
+ * Asserts a schema-violating line yields nothing but the reason and the length.
+ *
+ * Generic so each call keeps its own schema type: a shared table would union them and `tsc`
+ * could no longer match the schema to `createNdjsonParser`.
+ *
+ * @param schema - Schema the payload must fail.
+ * @param payload - One line, carrying a canary where a leak would show.
+ */
+function expectSchemaViolationHidesCanary<T>(schema: ZodType<T>, payload: string): void {
+  const parser = createNdjsonParser(schema);
+  const items = parser.push(`${payload}\n`);
+  expect(items).toEqual([
+    { type: 'protocol.error', reason: 'schema-violation', length: payload.length },
+  ]);
+  expect(JSON.stringify(items)).not.toContain(CANARY_MARKER);
 }
 
 describe('encodeLine', () => {
@@ -108,43 +131,45 @@ describe('createNdjsonParser', () => {
   });
 
   /**
-   * Invalid JSON: the line becomes a `protocol.error` item carrying the raw line (truncated to
-   * the limit) and a reason; the parser keeps going with the next line.
+   * Invalid JSON: the line becomes a `protocol.error` item naming the reason and the line's
+   * length and nothing else; the parser keeps going with the next line.
    */
   it('maps invalid JSON to protocol.error without throwing', () => {
     const parser = createNdjsonParser(pointSchema);
     const items = parser.push('{oops\n{"x":1,"y":2}\n');
     expect(items).toHaveLength(2);
-    expect(items[0]).toMatchObject({ type: 'protocol.error', line: '{oops' });
-    expect((items[0] as { reason: string }).reason).toMatch(/^invalid JSON: /);
+    expect(items[0]).toEqual({ type: 'protocol.error', reason: 'invalid-json', length: 5 });
     expect(items[1]).toEqual({ x: 1, y: 2 });
   });
 
   /**
    * Schema violation: valid JSON that does not satisfy the schema is also a `protocol.error`,
-   * with the path of the first issue in the reason.
+   * distinguished from a JSON failure by its reason so a consumer can branch on it.
    */
-  it('maps schema violations to protocol.error with the issue path', () => {
+  it('maps schema violations to protocol.error with their own reason', () => {
     const parser = createNdjsonParser(pointSchema);
-    const [item] = parser.push('{"x":"1","y":2}\n');
-    expect(item).toMatchObject({ type: 'protocol.error', line: '{"x":"1","y":2}' });
-    expect((item as { reason: string }).reason).toMatch(/^schema violation: x: /);
+    const line = '{"x":"1","y":2}';
+    expect(parser.push(`${line}\n`)).toEqual([
+      { type: 'protocol.error', reason: 'schema-violation', length: line.length },
+    ]);
   });
 
   /**
-   * Schema violation at the root (no path): the reason carries the message without a path prefix.
+   * Schema violation at the root (a non-object) is reported the same way, so the reason
+   * vocabulary stays closed whatever shape the bad line has.
    */
-  it('describes root-level schema violations without a path', () => {
+  it('reports root-level schema violations with the same reason', () => {
     const parser = createNdjsonParser(pointSchema);
-    const [item] = parser.push('42\n');
-    expect((item as { reason: string }).reason).toMatch(/^schema violation: /);
+    expect(parser.push('42\n')).toEqual([
+      { type: 'protocol.error', reason: 'schema-violation', length: 2 },
+    ]);
   });
 
   /**
-   * Large line: a line far bigger than any chunk is reassembled and parsed; on error only the
-   * first 200 characters of the raw line are kept, bounding memory and log size.
+   * Large line: a line far bigger than any chunk but still under the cap is reassembled and
+   * parsed, and when such a line is malformed the event reports its length rather than its bytes.
    */
-  it('handles large lines and truncates them in error events', () => {
+  it('reassembles large lines and reports only their length on error', () => {
     const parser = createNdjsonParser(z.object({ s: z.string() }));
     const big = 'a'.repeat(100_000);
     const line = `{"s":"${big}"}\n`;
@@ -152,8 +177,10 @@ describe('createNdjsonParser', () => {
     expect(parser.push(line.slice(0, half))).toEqual([]);
     expect(parser.push(line.slice(half))).toEqual([{ s: big }]);
 
-    const [bad] = parser.push(`{"s":${big}}\n`);
-    expect((bad as { line: string }).line).toHaveLength(PROTOCOL_ERROR_LINE_LIMIT);
+    const bad = `{"s":${big}}`;
+    expect(parser.push(`${bad}\n`)).toEqual([
+      { type: 'protocol.error', reason: 'invalid-json', length: bad.length },
+    ]);
   });
 
   /**
@@ -166,6 +193,132 @@ describe('createNdjsonParser', () => {
     const items = parser.push(`${encodeLine({ type: 'turn.cancelled' })}{"type":"nope"}\n`);
     expect(items[0]).toEqual({ type: 'turn.cancelled' });
     expect(agentEventSchema.safeParse(items[1]).success).toBe(true);
+  });
+});
+
+describe('createNdjsonParser credential safety', () => {
+  /**
+   * A malformed line is written by a process inside the agent workspace, whose environment holds
+   * the GitHub PAT and the OpenAI API key, and the resulting event is persisted and displayed.
+   * A canary planted in such a line must not survive anywhere in the event — not as the raw line
+   * and not inside a reason, because V8's `JSON.parse` message quotes a prefix of its input.
+   */
+  it.each([
+    ['bare token', GITHUB_CANARY],
+    ['token inside a broken object', `{"token": ${OPENAI_CANARY}}`],
+    ['unterminated string', `{"a":"${GITHUB_CANARY}`],
+    ['trailing garbage after valid JSON', `{"x":1,"y":2} ${OPENAI_CANARY}`],
+  ])('never echoes a credential from an unparsable line (%s)', (_label, payload) => {
+    const parser = createNdjsonParser(pointSchema);
+    const items = parser.push(`${payload}\n`);
+    expect(items).toEqual([
+      { type: 'protocol.error', reason: 'invalid-json', length: payload.length },
+    ]);
+    expect(JSON.stringify(items)).not.toContain(CANARY_MARKER);
+  });
+
+  /**
+   * Zod puts an unrecognised key straight into its issue message, so a strict schema is the
+   * shortest path from a workspace-chosen key to a persisted event.
+   */
+  it('never echoes a credential from an unrecognised key', () => {
+    expectSchemaViolationHidesCanary(
+      z.strictObject({ a: z.string() }),
+      `{"a":"ok","${GITHUB_CANARY}":1}`,
+    );
+  });
+
+  /**
+   * The other Zod channel: an attacker-chosen object key becomes a segment of the issue *path*,
+   * which the old reason string joined and emitted.
+   */
+  it('never echoes a credential from a key in the issue path', () => {
+    expectSchemaViolationHidesCanary(
+      z.object({}).catchall(z.number()),
+      `{"${OPENAI_CANARY}":"no"}`,
+    );
+  });
+
+  /**
+   * The cap is the third path that builds an event out of rejected bytes; a canary hidden in an
+   * over-long line must not reach the event either.
+   */
+  it('never echoes a credential from an over-long line', () => {
+    const parser = createNdjsonParser(pointSchema);
+    const items = parser.push(GITHUB_CANARY + 'a'.repeat(PROTOCOL_MAX_LINE_LENGTH));
+    expect(items).toEqual([
+      {
+        type: 'protocol.error',
+        reason: 'line-too-long',
+        length: GITHUB_CANARY.length + PROTOCOL_MAX_LINE_LENGTH,
+      },
+    ]);
+    expect(JSON.stringify(items)).not.toContain(CANARY_MARKER);
+  });
+
+  /**
+   * Whatever the parser emits must still validate as an agent event, so a `protocol.error` can be
+   * published and persisted through the same path as every other event.
+   */
+  it('emits protocol.error items that satisfy the event schema', () => {
+    const parser = createNdjsonParser(agentEventSchema);
+    const [item] = parser.push(`${GITHUB_CANARY}\n`);
+    expect(agentEventSchema.safeParse(item).success).toBe(true);
+  });
+});
+
+describe('createNdjsonParser line cap', () => {
+  /**
+   * The producer runs inside the workspace, so an unterminated line is attacker controlled:
+   * without a cap the buffer grows until the heap is exhausted. Crossing the cap reports exactly
+   * one error, further chunks of the same line report nothing, buffered memory stays flat, and
+   * the next well-formed line after the newline still parses — the parser resynchronises rather
+   * than dying or corrupting the stream.
+   */
+  it('reports one error, stops growing, and resynchronises on the next line', () => {
+    const parser = createNdjsonParser(pointSchema);
+    const chunk = 'a'.repeat(PROTOCOL_MAX_LINE_LENGTH + 1);
+
+    expect(parser.push(chunk)).toEqual([
+      { type: 'protocol.error', reason: 'line-too-long', length: chunk.length },
+    ]);
+    expect(parser.bufferedLength()).toBe(0);
+
+    for (let i = 0; i < 5; i += 1) {
+      expect(parser.push(chunk)).toEqual([]);
+      expect(parser.bufferedLength()).toBe(0);
+    }
+
+    expect(parser.push('still the same line\n{"x":1,"y":2}\n')).toEqual([{ x: 1, y: 2 }]);
+    expect(parser.bufferedLength()).toBe(0);
+  });
+
+  /**
+   * A line exactly at the cap is legitimate and must still parse: the limit rejects what exceeds
+   * it, never what merely reaches it.
+   */
+  it('accepts a line exactly at the cap', () => {
+    const parser = createNdjsonParser(z.object({ s: z.string() }));
+    const padding = 'a'.repeat(PROTOCOL_MAX_LINE_LENGTH - '{"s":""}'.length);
+    const line = `{"s":"${padding}"}`;
+    expect(line).toHaveLength(PROTOCOL_MAX_LINE_LENGTH);
+    expect(parser.push(`${line}\n`)).toEqual([{ s: padding }]);
+  });
+
+  /**
+   * `bufferedLength` tracks the line in progress so a caller can prove the parser's memory use is
+   * bounded, and `flush` clears a condemned line instead of emitting it as a trailing item.
+   */
+  it('tracks buffered characters and drops a condemned line on flush', () => {
+    const parser = createNdjsonParser(pointSchema);
+    expect(parser.push('{"x":1,')).toEqual([]);
+    expect(parser.bufferedLength()).toBe(7);
+
+    expect(parser.push('a'.repeat(PROTOCOL_MAX_LINE_LENGTH))).toHaveLength(1);
+    expect(parser.flush()).toEqual([]);
+    expect(parser.bufferedLength()).toBe(0);
+
+    expect(parser.push('{"x":9,"y":8}\n')).toEqual([{ x: 9, y: 8 }]);
   });
 });
 
