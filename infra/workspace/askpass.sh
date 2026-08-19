@@ -27,12 +27,23 @@ if [ -z "$allowed" ]; then
 fi
 
 # Git prompts look like: Password for 'https://x-access-token@github.com'
-# Take what is between the first pair of single quotes, then reduce it to a bare host: drop the
-# scheme, keep the authority (up to the first "/"), drop any userinfo (up to the last "@"), drop
-# the port. A prompt without quotes leaves `prompt` unchanged, which matches no approved host.
+# Take what is between the first pair of single quotes, require https, then reduce what is left to
+# a bare host: keep the authority (up to the first "/"), drop any userinfo (up to the last "@").
+# A prompt without quotes leaves `prompt` unchanged, which is not an https URL and is refused.
 url=${prompt#*\'}
 url=${url%%\'*}
-authority=${url#*://}
+
+# The scheme must be https. A host check alone would answer `http://github.com`, and git would
+# then send the token in cleartext, readable by anything on the path.
+case "$url" in
+  https://*) ;;
+  *)
+    echo "askpass: refusing to release credentials over a non-https URL" >&2
+    exit 1
+    ;;
+esac
+
+authority=${url#https://}
 authority=${authority%%/*}
 host=${authority##*@}
 

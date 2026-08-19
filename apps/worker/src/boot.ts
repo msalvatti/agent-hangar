@@ -80,27 +80,25 @@ async function assertRedisReachable(redis: BootRedis, url: string): Promise<void
 /**
  * Builds the idempotent shutdown of a booted worker.
  *
- * Every client is released even when an earlier release fails: the closed flag is already set, so
- * a retry is a no-op, and letting a rejected `redis.quit()` skip `$disconnect()` would leave the
- * Postgres pool open for the rest of the process's life. The first failure is the one thrown,
- * because it is the one that explains the shutdown.
+ * Every client is released even when an earlier release fails: letting a rejected `redis.quit()`
+ * skip `$disconnect()` would leave the Postgres pool open for the rest of the process's life. The
+ * first failure is the one thrown, because it is the one that explains the shutdown.
  *
  * @param redis - Redis client, closed first so no late job can query a gone database.
  * @param prisma - Prisma client, whose pool is always released.
  * @param logger - Logger for the shutdown breadcrumbs.
- * @returns A function that closes both clients at most once.
+ * @returns A function that closes both clients at most once. A concurrent second call joins the
+ *   run already in flight instead of resolving immediately: SIGINT and SIGTERM are separate
+ *   handlers that each exit the process once this settles, so a second signal arriving mid-shutdown
+ *   would otherwise kill the process with Redis and Prisma still open.
  */
 function createShutdown(
   redis: BootRedis,
   prisma: BootDatabase,
   logger: Logger,
 ): () => Promise<void> {
-  let closed = false;
-  return async (): Promise<void> => {
-    if (closed) {
-      return;
-    }
-    closed = true;
+  let inFlight: Promise<void> | undefined;
+  const run = async (): Promise<void> => {
     logger.info('shutting down');
     const failures: unknown[] = [];
     try {
@@ -118,6 +116,7 @@ function createShutdown(
     }
     logger.info('shutdown complete');
   };
+  return (): Promise<void> => (inFlight ??= run());
 }
 
 /**

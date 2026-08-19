@@ -72,6 +72,9 @@ describe('infra/workspace/askpass.sh', () => {
     ['the path-segment trick', "Password for 'https://evil.test/github.com/x': "],
     ['a foreign host with a port', "Password for 'https://evil.test:8443': "],
     ['the approved host on a non-default port', "Password for 'https://github.com:8443': "],
+    ['cleartext http on the approved host', "Password for 'http://github.com': "],
+    ['a scheme-less prompt naming the approved host', "Password for 'github.com': "],
+    ['git protocol on the approved host', "Password for 'git://github.com': "],
     [
       'the approved host with userinfo on a non-default port',
       "Password for 'https://x@github.com:8443': ",

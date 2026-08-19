@@ -98,6 +98,41 @@ describe('boot', () => {
   });
 
   /**
+   * A second signal arriving while shutdown is still running must join the run in flight, not
+   * resolve immediately: main.ts exits the process once the returned promise settles, so an
+   * early-resolving second call would kill the process with both clients still open.
+   */
+  it('makes a concurrent second call wait for the shutdown already in flight', async () => {
+    const { deps, prisma, redis } = makeDeps();
+    let releaseQuit: () => void = () => undefined;
+    redis.quit.mockImplementation(
+      async () =>
+        new Promise<string>((resolve) => {
+          releaseQuit = (): void => {
+            resolve('OK');
+          };
+        }),
+    );
+    const { shutdown } = await boot(deps);
+
+    const first = shutdown();
+    const second = shutdown();
+    let secondSettled = false;
+    void second.then(() => {
+      secondSettled = true;
+    });
+    await Promise.resolve();
+    expect(secondSettled).toBe(false);
+    expect(prisma.$disconnect).not.toHaveBeenCalled();
+
+    releaseQuit();
+    await Promise.all([first, second]);
+    expect(secondSettled).toBe(true);
+    expect(redis.quit).toHaveBeenCalledTimes(1);
+    expect(prisma.$disconnect).toHaveBeenCalledTimes(1);
+  });
+
+  /**
    * A failing `redis.quit()` must not strand the database pool: `closed` is already set, so the
    * caller cannot retry, and skipping `$disconnect()` would keep Postgres connections open for
    * the life of the process. The shutdown still rejects, so the caller exits non-zero.
