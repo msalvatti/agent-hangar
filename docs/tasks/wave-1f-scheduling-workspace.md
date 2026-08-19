@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-F (Wave 1, parallel with W1-A … W1-I) |
 | **Status** | 🟦 running |
-| **Progress** | 3/5 tasks |
+| **Progress** | 4/5 tasks |
 | **Branch** | `feat/w1f-scheduling-workspace` |
 | **Owned paths** | `packages/core/src/scheduling/**` (except the frozen `types.ts`), `packages/core/src/workspace/**` (except the frozen `types.ts`), `packages/core/src/restore/**`, `packages/core/src/queues/queues.ts`, `packages/core/src/queues/schedulers.ts` (+ their `*.test.ts` / `*.integration.test.ts`; `queues/contracts.ts` is frozen) — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./scheduling/index.js`, `./workspace/index.js`, `./restore/index.js`, `./queues/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
@@ -46,7 +46,7 @@ This lane fills in the pure domain logic that W2-A (API) and W2-B (worker) orche
 | 1F.1 | Scheduling: cron validation, `nextRunAt` (tz/DST), `describeCron`, overlap policy, reconcile diff, scheduler keys | ✅ | P0 | M | — |
 | 1F.2 | Workspace lifecycle: transition tables + `assertTransition`, `ensureWorkspaceDecision`, idle-TTL selection, orphan reconcile | ✅ | P0 | M | — |
 | 1F.3 | Restore context: history window, `TOOL_SUMMARY` compaction text, restoration notice, `buildRestoreContext`, `buildTurnRequest` | ✅ | P0 | M | 1F.2 |
-| 1F.4 | BullMQ factories: queues, worker connection, Job Scheduler wrappers, `@redis` integration tests | 📋 | P0 | M | 1F.1 |
+| 1F.4 | BullMQ factories: queues, worker connection, Job Scheduler wrappers, `@redis` integration tests | ✅ | P0 | M | 1F.1 |
 | 1F.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1F.1–1F.4 |
 
 ---
@@ -380,17 +380,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1f-scheduling-
 
 ## Task 1F.4 — BullMQ factories: queues, worker connection, Job Scheduler wrappers, `@redis` integration
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1F.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1F.1
 
 **Description.** Thin, typed BullMQ wrappers in `packages/core/src/queues/{queues,schedulers}.ts`: connection factories with the per-role `maxRetriesPerRequest` policy (null on worker/blocking connections only), `Queue` factories per `QUEUE_NAMES`, a `Worker` factory, Job Scheduler wrappers (`upsertJobScheduler(jobId, { pattern, tz }, { name, data })`, `removeJobScheduler`, `getJobSchedulers` → `ExistingScheduler[]`), `applyReconcilePlan`, and the GC scheduler; unit-tested to 100 % with duck-typed fakes and proven against real Redis in a `@redis` integration suite.
 
 **Acceptance criteria**
-- [ ] `createQueueConnection(redisUrl)` → ioredis with default retry policy; `createWorkerConnection(redisUrl)` → ioredis with `maxRetriesPerRequest: null`; both `lazyConnect: false`, `enableReadyCheck` default; `closeConnection(conn)` quits safely
-- [ ] `createQueue(name, { connection, prefix? })` → `Queue` for a `QueueName`; `createQueues({ connection, prefix? })` → `{ chatTurns, scheduledJobs, workspaceGc }`; `createWorker(name, processor, { connection, concurrency?, prefix? })` → `Worker` (throws `ConfigError` if the connection's `maxRetriesPerRequest !== null`)
-- [ ] `enqueueRunTurn(queue, { turnId })` uses `jobId: turnId`; `enqueueManualJobRun(queue, { jobId })` adds `run-scheduled-job` with `trigger: 'MANUAL'`; `enqueueDestroyChatWorkspace(queue, { chatId })`; payloads validated with the W0 Zod schemas before `add`
-- [ ] `upsertScheduledJob(queue, { id, cron, timezone })` → `queue.upsertJobScheduler(id, { pattern: cron, tz: timezone }, { name: JOB_NAMES.runScheduledJob, data: { jobId: id, trigger: 'SCHEDULE' } })`; `removeScheduledJob(queue, jobId)`; `listSchedulers(queue)` → `ExistingScheduler[]` (`{ key, pattern, tz }`) sorted by key; `applyReconcilePlan(queue, plan)` → `{ upserted: string[]; removed: string[] }`; `upsertGcScheduler(queue)` key `reap-idle`, pattern `*/5 * * * *`, job `reap-idle`, data `{}`
-- [ ] `@redis` integration (`schedulers.integration.test.ts`, `queues.integration.test.ts`): upsert creates exactly one scheduler per job; re-upsert with a new pattern → still one, pattern updated; remove deletes; `applyReconcilePlan` twice converges (second run no-ops and `listSchedulers` equals the enabled set); worker connection `maxRetriesPerRequest === null` and queue connection not; a `Worker` from the factory processes one `run-turn` job end-to-end; suite FAILS with instructions when `CI=1` and Redis is unreachable
-- [ ] 100 % coverage on `queues.ts` and `schedulers.ts` from unit tests alone
+- [x] `createQueueConnection(redisUrl)` → ioredis with default retry policy; `createWorkerConnection(redisUrl)` → ioredis with `maxRetriesPerRequest: null`; both `lazyConnect: false`, `enableReadyCheck` default; `closeConnection(conn)` quits safely
+- [x] `createQueue(name, { connection, prefix? })` → `Queue` for a `QueueName`; `createQueues({ connection, prefix? })` → `{ chatTurns, scheduledJobs, workspaceGc }`; `createWorker(name, processor, { connection, concurrency?, prefix? })` → `Worker` (throws `ConfigError` if the connection's `maxRetriesPerRequest !== null`)
+- [x] `enqueueRunTurn(queue, { turnId })` uses `jobId: turnId`; `enqueueManualJobRun(queue, { jobId })` adds `run-scheduled-job` with `trigger: 'MANUAL'`; `enqueueDestroyChatWorkspace(queue, { chatId })`; payloads validated with the W0 Zod schemas before `add`
+- [x] `upsertScheduledJob(queue, { id, cron, timezone })` → `queue.upsertJobScheduler(id, { pattern: cron, tz: timezone }, { name: JOB_NAMES.runScheduledJob, data: { jobId: id, trigger: 'SCHEDULE' } })`; `removeScheduledJob(queue, jobId)`; `listSchedulers(queue)` → `ExistingScheduler[]` (`{ key, pattern, tz }`) sorted by key; `applyReconcilePlan(queue, plan)` → `{ upserted: string[]; removed: string[] }`; `upsertGcScheduler(queue)` key `reap-idle`, pattern `*/5 * * * *`, job `reap-idle`, data `{}`
+- [x] `@redis` integration (`schedulers.integration.test.ts`, `queues.integration.test.ts`): upsert creates exactly one scheduler per job; re-upsert with a new pattern → still one, pattern updated; remove deletes; `applyReconcilePlan` twice converges (second run no-ops and `listSchedulers` equals the enabled set); worker connection `maxRetriesPerRequest === null` and queue connection not; a `Worker` from the factory processes one `run-turn` job end-to-end; suite FAILS with instructions when `CI=1` and Redis is unreachable
+- [x] 100 % coverage on `queues.ts` and `schedulers.ts` from unit tests alone
 
 **Files to create**
 `packages/core/src/queues/queues.ts`, `queues.test.ts`, `queues.integration.test.ts`, `schedulers.ts`, `schedulers.test.ts`, `schedulers.integration.test.ts`, `redis.integration-helper.ts` (shared Redis env/ping helper for the two integration files; excluded from coverage by the `*.integration-helper.ts` name); modify `packages/core/vitest.config.ts` (+ the owned folder `index.ts`).
@@ -551,3 +551,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1f-scheduling-
 - 1F.1 ✅ 2026-08-19 — cron validation/description/next-run over cron-parser 5.10.0, overlap policy, scheduler keys and reconcile plan; 46 unit tests, 100 % on `src/scheduling/**`
 - 1F.2 ✅ 2026-08-19 — workspace and run transition tables, ensure-workspace decision with `WorkspaceBusyError`, idle-TTL selection and orphan reconcile; 33 unit tests, 100 % on `src/workspace/**`
 - 1F.3 ✅ 2026-08-19 — history window with anchor and compaction item, TOOL_SUMMARY text, workspace notices, restore-context and turn-request builders; schema failures report field paths only, proven with canaries; 57 unit tests, 100 % on `src/restore/**`
+- 1F.4 ✅ 2026-08-19 — BullMQ 6.1.2 / ioredis 6.0.0 connection, queue, worker and Job Scheduler factories; 30 unit tests reach 100 % without Redis, 7 `@redis` tests pass against compose Redis 8.10.0

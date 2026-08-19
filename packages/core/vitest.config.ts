@@ -54,7 +54,13 @@ export default defineConfig({
         'src/workspace/**',
         'src/restore/**',
       ],
-      exclude: ['**/*.test.ts', 'src/**/types.ts', 'src/index.ts', 'src/persistence/generated/**'],
+      exclude: [
+        '**/*.test.ts',
+        '**/*.integration-helper.ts',
+        'src/**/types.ts',
+        'src/index.ts',
+        'src/persistence/generated/**',
+      ],
       thresholds: {
         lines: 100,
         branches: 100,
