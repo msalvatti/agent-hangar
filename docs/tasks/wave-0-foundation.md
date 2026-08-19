@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W0 (single agent, sequential — critical path) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/8 tasks |
+| **Status** | 🟦 running |
+| **Progress** | 1/8 tasks |
 | **Branch** | `feat/w0-foundation` |
 | **Owned paths** | everything (only lane in this wave) |
 | **Depends on** | — |
@@ -41,7 +41,7 @@ Quality bar that applies to every file created here and in every later lane: Typ
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 0.1 | Monorepo, TypeScript, lint/format, git hooks, CLAUDE.md | 📋 | P0 | M | — |
+| 0.1 | Monorepo, TypeScript, lint/format, git hooks, CLAUDE.md | ✅ | P0 | M | — |
 | 0.2 | Complete dependency manifest (all workspaces) | 📋 | P0 | S | 0.1 |
 | 0.3 | Frozen core contracts: types, Zod, NDJSON codec, errors, config | 📋 | P0 | L | 0.2 |
 | 0.4 | Test doubles and canaries (`packages/core/src/testing`) | 📋 | P0 | M | 0.3 |
@@ -54,17 +54,17 @@ Quality bar that applies to every file created here and in every later lane: Typ
 
 ## Task 0.1 — Monorepo, TypeScript, lint/format, git hooks, CLAUDE.md
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Create the pnpm-workspaces monorepo with strict TypeScript project references, ESLint flat config, Prettier, Husky + commitlint + lint-staged, and a `CLAUDE.md` that carries the ownership map and gates for every later agent.
 
 **Acceptance criteria**
-- [ ] `pnpm install` succeeds on Node 24 with pnpm 11 (`packageManager` pinned)
-- [ ] `pnpm typecheck` runs `tsc -b` over all workspaces (empty packages compile)
-- [ ] `pnpm lint` runs ESLint flat config with import-x ordering, security plugin, `no-restricted-imports` (dockerode outside runner/docker; `crypto` → `node:crypto`; `uuid`/`nanoid` banned) and `no-restricted-syntax` banning `TSEnumDeclaration`
-- [ ] Husky `pre-commit` runs lint-staged (eslint --fix + prettier), `commit-msg` runs commitlint (conventional)
-- [ ] `CLAUDE.md` contains: project one-liner, stack with versions, ownership map (plan §6/§7 lanes → paths), the gates list, canary rule, "no deps added in lanes" rule, English-only rule, no-attribution rule
-- [ ] `.gitignore` ignores `.env*` (except `.env.example`), `master.key`, `coverage/`, `reports/`, `.next/`, `dist/`, `node_modules/`, `playwright-report/`, `test-results/`
+- [x] `pnpm install` succeeds on Node 24 with pnpm 11 (`packageManager` pinned)
+- [x] `pnpm typecheck` runs `tsc -b` over all workspaces (empty packages compile)
+- [x] `pnpm lint` runs ESLint flat config with import-x ordering, security plugin, `no-restricted-imports` (dockerode outside runner/docker; `crypto` → `node:crypto`; `uuid`/`nanoid` banned) and `no-restricted-syntax` banning `TSEnumDeclaration`
+- [x] Husky `pre-commit` runs lint-staged (eslint --fix + prettier), `commit-msg` runs commitlint (conventional)
+- [x] `CLAUDE.md` contains: project one-liner, stack with versions, ownership map (plan §6/§7 lanes → paths), the gates list, canary rule, "no deps added in lanes" rule, English-only rule, no-attribution rule
+- [x] `.gitignore` ignores `.env*` (except `.env.example`), `master.key`, `coverage/`, `reports/`, `.next/`, `dist/`, `node_modules/`, `playwright-report/`, `test-results/`
 
 **Files to create**
 `package.json`, `pnpm-workspace.yaml`, `.npmrc`, `.nvmrc`, `tsconfig.base.json`, `tsconfig.json` (solution file with references), `eslint.config.js`, `.prettierrc`, `.prettierignore`, `.editorconfig`, `.gitignore`, `.husky/pre-commit`, `.husky/commit-msg`, `commitlint.config.js`, `.lintstagedrc.json`, `CLAUDE.md`, `apps/web/package.json`, `apps/worker/package.json`, `packages/core/package.json`, `packages/agent-runtime/package.json` (all four with `tsconfig.json` extending base, empty `src/index.ts`).
@@ -587,3 +587,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+- 0.1 ✅ 2026-08-19 — pnpm 11 monorepo with four workspaces, strict TS ~6.0.3 project references, ESLint 10 flat config, Prettier, Husky + commitlint + lint-staged suppression grep, CLAUDE.md

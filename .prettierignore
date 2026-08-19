@@ -1,0 +1,21 @@
+# Build output and caches
+dist/
+.next/
+coverage/
+reports/
+node_modules/
+playwright-report/
+test-results/
+.turbo/
+
+# Generated code
+packages/core/src/persistence/generated/
+
+# Lockfile and planning docs (hand-authored Markdown with nested fences)
+pnpm-lock.yaml
+docs/
+
+# Local environment files
+.env
+.env.*
+!.env.example

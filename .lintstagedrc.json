@@ -1,0 +1,9 @@
+{
+  "*.{ts,tsx,js,mjs,cjs}": [
+    "bash scripts/check-suppressions.sh",
+    "eslint --fix --max-warnings 0",
+    "prettier --write --ignore-unknown"
+  ],
+  "*.{md,json,yml,yaml,css,mdx}": ["prettier --write --ignore-unknown"],
+  "*.sh": ["bash scripts/check-suppressions.sh"]
+}

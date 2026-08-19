@@ -1,0 +1,22 @@
+{
+  "name": "@agent-hangar/agent-runtime",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Code that runs inside workspace containers: the turn loop, tools and NDJSON protocol bridge (bundled with esbuild).",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "lint": "eslint .",
+    "typecheck": "tsc -b",
+    "test": "vitest run"
+  }
+}

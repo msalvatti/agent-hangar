@@ -1,0 +1,7 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# Dependencies whose install scripts are allowed to run (pnpm 11 blocks the rest).
+allowBuilds:
+  unrs-resolver: true
