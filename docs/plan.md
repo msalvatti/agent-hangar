@@ -301,7 +301,7 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | W1-C | ⬜ | — | — | |
 | W1-D | ⬜ | — | — | Dockerfile COPY lines → orchestrator |
 | W1-E | ⬜ | — | — | |
-| W1-F | ⬜ | — | — | |
+| W1-F | 🟦 | `feat/w1f-scheduling-workspace` | — | |
 | W1-G | ⬜ | — | — | creates `shared/transcript` first |
 | W1-H | ⬜ | — | — | rebase after W1-G |
 | W1-I | ⬜ | — | — | merge first in batch |
