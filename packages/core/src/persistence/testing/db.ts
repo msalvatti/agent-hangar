@@ -18,6 +18,8 @@
  * `AH_INSTANCE=test pnpm setup`, then
  * `AH_ALLOW_DESTRUCTIVE_TESTS=1 DATABASE_URL=postgresql://…/agent_hangar_test pnpm test:integration`.
  */
+import { describe } from 'vitest';
+
 import type { RawEnv } from '../../config/schema.js';
 import { ConfigError } from '../../errors.js';
 import { createPrismaClient, disconnectPrisma } from '../client.js';
@@ -210,4 +212,172 @@ export async function withTestDb<T>(
   } finally {
     await disconnectPrisma(client);
   }
+}
+
+/** Environment variable that fails a `@db` suite loudly instead of letting it skip silently. */
+export const CI_ENV = 'CI';
+
+/** Decision `describeDb` reaches about whether to run its suite. */
+export interface DbSuiteDecision {
+  /** Whether the suite should execute against a real database. */
+  run: boolean;
+  /** Human-readable explanation, printed either as a skip notice or a thrown message. */
+  reason: string;
+}
+
+/**
+ * Decides whether a `@db` suite should run, without touching a database.
+ *
+ * `DATABASE_URL` present → run. Absent in CI → the suite must not silently pass, so this throws
+ * rather than returning a decision the caller could ignore. Absent locally → skip, with a
+ * message telling the developer how to start the test database.
+ *
+ * @param env - Environment to read (defaults to `process.env`).
+ * @throws ConfigError when `DATABASE_URL` is unset and {@link CI_ENV} is truthy.
+ */
+export function shouldRunDbSuite(env: RawEnv = process.env): DbSuiteDecision {
+  const databaseUrl = env.DATABASE_URL;
+  if (databaseUrl !== undefined && databaseUrl.length > 0) {
+    return { run: true, reason: '@db suite running against DATABASE_URL' };
+  }
+  const ci = env[CI_ENV];
+  if (ci !== undefined && ci.length > 0) {
+    throw new ConfigError(
+      'DATABASE_URL is required in CI for @db suites. A suite that silently skipped here would ' +
+        'report green without ever touching the database it is meant to prove correct.',
+    );
+  }
+  return {
+    run: false,
+    reason: `DATABASE_URL not set — @db suite skipped (start compose with AH_INSTANCE=${EXAMPLE_TEST_DATABASE.slice(
+      DATABASE_PREFIX.length,
+    )})`,
+  };
+}
+
+/**
+ * Registers a `describe` block that only runs against a real database.
+ *
+ * Locally, without `DATABASE_URL`, the block is registered with `describe.skip` and a warning is
+ * printed once so the skip is visible instead of silent. In CI, {@link shouldRunDbSuite} throws
+ * before this function can skip anything.
+ *
+ * @param title - Suite title; prefixed with `@db ` so reporters and filters can find it.
+ * @param fn - The `describe` body (`it` calls, `beforeEach`, …).
+ */
+export function describeDb(title: string, fn: () => void): void {
+  const decision = shouldRunDbSuite();
+  const fullTitle = `@db ${title}`;
+  if (!decision.run) {
+    // Deliberate, human-facing local skip notice — not an application log path.
+    console.warn(decision.reason);
+    describe.skip(fullTitle, fn);
+    return;
+  }
+  describe(fullTitle, fn);
+}
+
+/** Fields accepted to seed a `Chat` row directly, bypassing `PrismaChatRepository`. */
+export interface SeedChatOverrides {
+  title?: string;
+  repoUrl?: string;
+  baseBranch?: string;
+  status?: 'ACTIVE' | 'ARCHIVED';
+}
+
+/** The subset of the Prisma client {@link seedChat} relies on. */
+export interface ChatSeedClient {
+  chat: {
+    create(args: {
+      data: { title: string; repoUrl: string; baseBranch: string; status: 'ACTIVE' | 'ARCHIVED' };
+    }): Promise<{ id: string }>;
+  };
+}
+
+/**
+ * Inserts a minimal `Chat` row directly through Prisma, for tests of child entities that need a
+ * parent to exist (`Message`, `Turn`, `Workspace`).
+ *
+ * @param client - Connected test client.
+ * @param overrides - Fields to override; sensible defaults fill the rest.
+ * @returns The id of the inserted chat.
+ */
+export async function seedChat(
+  client: ChatSeedClient,
+  overrides: SeedChatOverrides = {},
+): Promise<string> {
+  const chat = await client.chat.create({
+    data: {
+      title: overrides.title ?? 'Test chat',
+      repoUrl: overrides.repoUrl ?? 'https://github.com/agent-hangar/example',
+      baseBranch: overrides.baseBranch ?? 'main',
+      status: overrides.status ?? 'ACTIVE',
+    },
+  });
+  return chat.id;
+}
+
+/** The subset of the Prisma client {@link rawSelect} relies on. */
+export interface RawQueryClient {
+  $queryRaw<T = unknown>(query: TemplateStringsArray, ...values: unknown[]): Promise<T>;
+}
+
+/**
+ * Thin wrapper over `$queryRaw`, so tests can read a column's raw stored value — bypassing the
+ * repository mappers — to assert redaction happened before the write, not after the read.
+ *
+ * @param client - Connected test client.
+ * @param sql - Tagged-template SQL.
+ * @param values - Interpolated values (parameterised by Prisma, never string-concatenated).
+ */
+export async function rawSelect<T>(
+  client: RawQueryClient,
+  sql: TemplateStringsArray,
+  ...values: unknown[]
+): Promise<T[]> {
+  return client.$queryRaw<T[]>(sql, ...values);
+}
+
+/** The subset of the Prisma client {@link countRows} relies on. */
+export interface RawUnsafeQueryClient {
+  $queryRawUnsafe<T = unknown>(query: string): Promise<T>;
+}
+
+/** Table names `countRows` accepts; anything else is refused before a query is built. */
+const COUNTABLE_TABLES = [
+  'Chat',
+  'Message',
+  'Turn',
+  'Workspace',
+  'ScheduledJob',
+  'JobRun',
+  'ToolCallLog',
+  'Secret',
+] as const;
+
+/** A table `countRows` can count. */
+export type CountableTable = (typeof COUNTABLE_TABLES)[number];
+
+/**
+ * Counts the rows of one table, for cascade-delete assertions.
+ *
+ * The table name is checked against a fixed whitelist before it is interpolated into raw SQL —
+ * `$queryRawUnsafe` cannot parameterise an identifier, so this is what keeps the call injection-
+ * safe even though the parameter type already restricts callers to the whitelist at compile time.
+ *
+ * @param client - Connected test client.
+ * @param table - One of {@link CountableTable}.
+ * @throws ConfigError when `table` is not on the whitelist.
+ */
+export async function countRows(
+  client: RawUnsafeQueryClient,
+  table: CountableTable,
+): Promise<number> {
+  if (!COUNTABLE_TABLES.includes(table)) {
+    throw new ConfigError(`Unknown table for countRows: "${table}"`);
+  }
+  const rows = await client.$queryRawUnsafe<{ count: bigint }[]>(
+    `SELECT COUNT(*)::bigint AS count FROM "${table}"`,
+  );
+  return Number(rows[0]?.count ?? 0n);
 }
