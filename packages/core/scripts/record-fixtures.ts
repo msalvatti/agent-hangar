@@ -136,8 +136,12 @@ const UNKNOWN_FAILURE_MESSAGE = 'unknown error';
 /**
  * Describes a failure in one line, with no stack and nothing of a non-error value.
  *
- * The SDK echoes part of the submitted key in some authentication failures, so the caller redacts
- * whatever this returns before it reaches a stream.
+ * This is the one place in the lane that still reports an SDK message, and it is deliberate: the
+ * provider stopped forwarding foreign text because it cannot redact a credential whose shape it
+ * does not know, while this script *holds* the live key and removes it literally as well as by
+ * shape — the stronger of the two guarantees. The output is a developer's terminal, not a
+ * persisted turn or anything shown to a user, and the message is what makes a failed recording
+ * diagnosable at all.
  *
  * @param error - Anything caught around an SDK call.
  * @returns The message to report.

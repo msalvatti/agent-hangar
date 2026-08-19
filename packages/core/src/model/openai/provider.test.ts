@@ -154,12 +154,13 @@ describe('OpenAIModelProvider', () => {
   });
 
   it('turns a failed response into a single retryable error', async () => {
-    // Nothing may follow a terminal event, even if the stream had more to say.
+    // Nothing may follow a terminal event, even if the stream had more to say. The fixture's
+    // server-side prose classifies the failure and is then dropped from the report.
     expect(await replayFixture('failed')).toEqual([
       {
         type: 'error',
         code: 'rate_limit',
-        message: 'Rate limit reached for requests',
+        message: 'the model response failed',
         retryable: true,
       },
     ]);
@@ -179,12 +180,13 @@ describe('OpenAIModelProvider', () => {
   });
 
   it('turns a stream-level error event into a single error', async () => {
-    // A transport error arrives as a stream event rather than as a thrown exception.
+    // A transport error arrives as a stream event rather than as a thrown exception; its
+    // server-controlled `message` is not repeated into the transcript.
     expect(await replayFixture('error-event')).toEqual([
       {
         type: 'error',
         code: 'unknown',
-        message: 'The server had an error while processing your request',
+        message: 'the model stream reported an error',
         retryable: false,
       },
     ]);
@@ -221,7 +223,12 @@ describe('OpenAIModelProvider', () => {
       ),
     });
     expect(await collect(createOpenAIModelProvider({ client }).stream(INPUT))).toEqual([
-      { type: 'error', code: 'auth', message: '401 Incorrect API key', retryable: false },
+      {
+        type: 'error',
+        code: 'auth',
+        message: 'authentication failed (HTTP 401)',
+        retryable: false,
+      },
     ]);
   });
 
@@ -237,7 +244,12 @@ describe('OpenAIModelProvider', () => {
     expect(await collect(createOpenAIModelProvider({ client }).stream(INPUT))).toEqual([
       { type: 'text.delta', text: 'x' },
       { type: 'text.delta', text: 'x' },
-      { type: 'error', code: 'rate_limit', message: '429 Rate limit reached', retryable: true },
+      {
+        type: 'error',
+        code: 'rate_limit',
+        message: 'rate limit exceeded (HTTP 429)',
+        retryable: true,
+      },
     ]);
   });
 
@@ -334,17 +346,20 @@ describe('OpenAIModelProvider', () => {
       code: 'MODEL_PROVIDER_ERROR',
       modelErrorCode: 'auth',
       retryable: false,
-      message: '401 Incorrect API key',
+      message: 'authentication failed (HTTP 401)',
     });
   });
 
-  it('never lets the SDK error carry a credential out of a failed listing', async () => {
-    // The API echoes part of the submitted key on some auth failures. Redacting only the message
-    // would be undone by any consumer that walks the cause chain, so no cause is attached at all.
+  it('never lets a failed listing carry a credential out, in the message or in a cause', async () => {
+    // Two ways a credential escaped this method. The gateway's text is not repeated at all, so a
+    // credential that matches no known shape is covered too; and no cause is attached, because a
+    // consumer walking the chain would reach the SDK error's unredacted message, response body
+    // and headers. `gateway-secret-value` matches nothing in SECRET_SHAPE_PATTERNS by design.
+    const credential = 'gateway-secret-value';
     const client = createFakeOpenAIClient({
       throwOnListModels: new APIError(
         401,
-        { message: `Incorrect API key provided: ${OPENAI_CANARY}` },
+        { message: `Incorrect key ${credential} (also ${OPENAI_CANARY})` },
         undefined,
         new Headers(),
       ),
@@ -352,11 +367,11 @@ describe('OpenAIModelProvider', () => {
     const failure = await createOpenAIModelProvider({ client })
       .listModels()
       .catch((error: unknown) => error);
-    expect((failure as ModelProviderError).message).toBe(
-      '401 Incorrect API key provided: [REDACTED]',
-    );
+    expect((failure as ModelProviderError).message).toBe('authentication failed (HTTP 401)');
     expect((failure as ModelProviderError).cause).toBeUndefined();
-    assertNoCanary(inspect(failure, { depth: null }));
+    const graph = inspect(failure, { depth: null });
+    expect(graph).not.toContain(credential);
+    assertNoCanary(graph);
   });
 
   it('turns a cancelled listing into a typed provider error too', async () => {

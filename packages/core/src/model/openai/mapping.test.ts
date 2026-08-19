@@ -22,6 +22,7 @@ import type {
 } from 'openai/resources/responses/responses';
 import { describe, expect, it } from 'vitest';
 
+import { SECRET_SHAPE_PATTERNS } from '../../secrets/types.js';
 import { OPENAI_CANARY } from '../../testing/canaries.js';
 import type { ConversationItem, ModelTurnInput } from '../types.js';
 
@@ -30,6 +31,7 @@ import {
   VERIFIED_EVENT_TYPES,
   createEventMapper,
   mapErrorToModelEvent,
+  redactSecretShapes,
   toResponseInputItem,
   toResponseParams,
   toResponseTool,
@@ -455,7 +457,8 @@ describe('createEventMapper', () => {
   });
 
   it('maps a rate-limited response.failed to a retryable error', () => {
-    // The runtime backs off and retries only when the provider says the failure is transient.
+    // The runtime backs off and retries only when the provider says the failure is transient. The
+    // server's own prose is classified and then dropped — only `error.code` is trusted.
     const mapper = createEventMapper();
     expect(
       mapper.map({
@@ -469,7 +472,7 @@ describe('createEventMapper', () => {
       {
         type: 'error',
         code: 'rate_limit',
-        message: 'Rate limit reached for requests',
+        message: 'the model response failed',
         retryable: true,
       },
     ]);
@@ -488,25 +491,28 @@ describe('createEventMapper', () => {
       response: makeResponse({ error: { code: 'invalid_prompt', message: 'bad prompt' } }),
       sequence_number: 3,
     });
-    expect(server).toEqual([{ type: 'error', code: 'unknown', message: 'boom', retryable: true }]);
-    expect(prompt).toEqual([
-      { type: 'error', code: 'unknown', message: 'bad prompt', retryable: false },
-    ]);
+    const failed = 'the model response failed';
+    expect(server).toEqual([{ type: 'error', code: 'unknown', message: failed, retryable: true }]);
+    expect(prompt).toEqual([{ type: 'error', code: 'unknown', message: failed, retryable: false }]);
   });
 
   it('describes a response.failed that carries no error object', () => {
-    // The event type is declared with an optional error; the message must never be empty.
+    // The event type is declared with an optional error; the report is the same either way,
+    // because it never depended on the server's message.
     expect(
       createEventMapper().map({
         type: 'response.failed',
         response: makeResponse(),
         sequence_number: 3,
       }),
-    ).toEqual([{ type: 'error', code: 'unknown', message: 'response failed', retryable: false }]);
+    ).toEqual([
+      { type: 'error', code: 'unknown', message: 'the model response failed', retryable: false },
+    ]);
   });
 
-  it('maps a stream-level error event, falling back when it has no message', () => {
-    // A transport-level error ends the stream; it is never retried blindly.
+  it('maps a stream-level error event without repeating its text', () => {
+    // A transport-level error ends the stream; it is never retried blindly. The event's `message`
+    // is server-controlled, so the report is the same whether it is present or empty.
     expect(
       createEventMapper().map({
         type: 'error',
@@ -519,7 +525,7 @@ describe('createEventMapper', () => {
       {
         type: 'error',
         code: 'unknown',
-        message: 'The server had an error',
+        message: 'the model stream reported an error',
         retryable: false,
       },
     ]);
@@ -531,7 +537,14 @@ describe('createEventMapper', () => {
         param: null,
         sequence_number: 1,
       }),
-    ).toEqual([{ type: 'error', code: 'unknown', message: 'stream error', retryable: false }]);
+    ).toEqual([
+      {
+        type: 'error',
+        code: 'unknown',
+        message: 'the model stream reported an error',
+        retryable: false,
+      },
+    ]);
   });
 
   it('ignores every event it does not consume', () => {
@@ -566,7 +579,7 @@ describe('mapErrorToModelEvent', () => {
     expect(mapErrorToModelEvent(apiError(401, 'Incorrect API key provided'))).toEqual({
       type: 'error',
       code: 'auth',
-      message: '401 Incorrect API key provided',
+      message: 'authentication failed (HTTP 401)',
       retryable: false,
     });
     expect(mapErrorToModelEvent(apiError(403, 'Forbidden'))?.code).toBe('auth');
@@ -577,7 +590,7 @@ describe('mapErrorToModelEvent', () => {
     expect(mapErrorToModelEvent(apiError(429, 'Rate limit reached'))).toEqual({
       type: 'error',
       code: 'rate_limit',
-      message: '429 Rate limit reached',
+      message: 'rate limit exceeded (HTTP 429)',
       retryable: true,
     });
   });
@@ -598,7 +611,7 @@ describe('mapErrorToModelEvent', () => {
     expect(mapErrorToModelEvent(apiError(400, 'Invalid tool schema'))).toEqual({
       type: 'error',
       code: 'unknown',
-      message: '400 Invalid tool schema',
+      message: 'the model provider rejected the request (HTTP 400)',
       retryable: false,
     });
     expect(mapErrorToModelEvent(apiError(404, 'No such model'))?.retryable).toBe(false);
@@ -609,7 +622,7 @@ describe('mapErrorToModelEvent', () => {
     expect(mapErrorToModelEvent(apiError(503, 'Service unavailable'))).toEqual({
       type: 'error',
       code: 'unknown',
-      message: '503 Service unavailable',
+      message: 'the model provider failed (HTTP 503)',
       retryable: true,
     });
   });
@@ -619,7 +632,7 @@ describe('mapErrorToModelEvent', () => {
     expect(mapErrorToModelEvent(new APIConnectionError({ message: 'Connection error.' }))).toEqual({
       type: 'error',
       code: 'network',
-      message: 'Connection error.',
+      message: 'the request did not reach the model provider',
       retryable: true,
     });
     expect(mapErrorToModelEvent(new APIConnectionTimeoutError())?.code).toBe('network');
@@ -630,38 +643,70 @@ describe('mapErrorToModelEvent', () => {
     expect(mapErrorToModelEvent(new TypeError('fetch failed'))).toEqual({
       type: 'error',
       code: 'network',
-      message: 'fetch failed',
+      message: 'the request did not reach the model provider',
       retryable: true,
     });
   });
 
-  it('maps any other error to a non-retryable unknown error', () => {
-    // Includes a TypeError that is not a transport failure, and an empty message.
-    expect(mapErrorToModelEvent(new TypeError('x is not a function'))).toEqual({
-      type: 'error',
-      code: 'unknown',
-      message: 'x is not a function',
-      retryable: false,
-    });
-    expect(mapErrorToModelEvent(new Error(''))?.message).toBe('unknown error');
+  it('maps any other error without describing it', () => {
+    // A TypeError that is not a transport failure, an Error with no message, and a thrown string
+    // all report the same thing: the message of a foreign error is never repeated.
+    const unknown = { type: 'error', code: 'unknown', message: 'unknown error', retryable: false };
+    expect(mapErrorToModelEvent(new TypeError('x is not a function'))).toEqual(unknown);
+    expect(mapErrorToModelEvent(new Error(''))).toEqual(unknown);
+    expect(mapErrorToModelEvent('boom')).toEqual(unknown);
   });
 
-  it('maps a thrown non-error value without describing it', () => {
-    // A thrown string could carry anything, so nothing of it is repeated.
-    expect(mapErrorToModelEvent('boom')).toEqual({
+  it('never reports a credential that no pattern can recognise', () => {
+    // The case shape-matching cannot cover: `OPENAI_BASE_URL` points at a compatible gateway, so
+    // the configured credential is an arbitrary string, and the gateway's 401 echoes it back.
+    // Nothing about `gateway-secret-value` matches SECRET_SHAPE_PATTERNS, so the guarantee has to
+    // come from not forwarding the server's text at all.
+    const credential = 'gateway-secret-value';
+    for (const pattern of SECRET_SHAPE_PATTERNS) {
+      expect(pattern.test(credential)).toBe(false);
+    }
+    const event = mapErrorToModelEvent(
+      apiError(401, `Invalid credential ${credential} for tenant acme`),
+    );
+    expect(event).toEqual({
+      type: 'error',
+      code: 'auth',
+      message: 'authentication failed (HTTP 401)',
+      retryable: false,
+    });
+    expect(JSON.stringify(event)).not.toContain(credential);
+  });
+
+  it('never reports the raw bytes a malformed stream line puts in a SyntaxError', () => {
+    // The SDK rethrows the platform parser's error when a stream line is not JSON, and V8 quotes a
+    // prefix of the input into its message — a second way server bytes reach this function.
+    const credential = 'gateway-secret-value';
+    let parseFailure: unknown;
+    try {
+      JSON.parse(credential);
+    } catch (error: unknown) {
+      parseFailure = error;
+    }
+    expect((parseFailure as Error).message).toContain(credential.slice(0, 10));
+    const event = mapErrorToModelEvent(parseFailure);
+    expect(event).toEqual({
       type: 'error',
       code: 'unknown',
       message: 'unknown error',
       retryable: false,
     });
+    expect(JSON.stringify(event)).not.toContain(credential.slice(0, 10));
   });
 
-  it('never lets a credential-shaped string reach the error message', () => {
-    // The API echoes part of the submitted key on some auth failures.
-    const event = mapErrorToModelEvent(
-      apiError(401, `Incorrect API key provided: ${OPENAI_CANARY}. Also ${OPENAI_CANARY}.`),
+  it('still strips a credential shape from anything handed to the redaction gate', () => {
+    // The gate stays in front of every error message even though no foreign text reaches it any
+    // more, so that reintroducing a forwarded string cannot silently reintroduce a leak with it.
+    expect(redactSecretShapes(`key ${OPENAI_CANARY} and again ${OPENAI_CANARY}`)).toBe(
+      'key [REDACTED] and again [REDACTED]',
     );
-    expect(event?.message).toBe('401 Incorrect API key provided: [REDACTED]. Also [REDACTED].');
-    expect(event?.message).not.toContain(OPENAI_CANARY);
+    expect(redactSecretShapes('authentication failed (HTTP 401)')).toBe(
+      'authentication failed (HTTP 401)',
+    );
   });
 });

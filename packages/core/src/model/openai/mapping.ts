@@ -16,6 +16,13 @@
  * The module imports SDK **types** only. The `APIError` hierarchy is therefore recognised by the
  * own properties its constructor always sets rather than by `instanceof`, which also keeps the
  * classification correct when two copies of the SDK end up in the dependency tree.
+ *
+ * **No foreign text becomes a `ModelEvent`.** An `error` event's message is assembled from
+ * {@link ERROR_MESSAGES} and the numeric HTTP status; the text of an SDK error, of a
+ * `response.failed` and of a stream `error` event is read to classify the failure and then
+ * dropped. Those strings are written by the endpoint, which `OPENAI_BASE_URL` makes configurable,
+ * and they land in a persisted, displayed turn error — so a credential in one of them cannot be
+ * matched away by a pattern list that has never seen the credential's shape.
  */
 import type {
   FunctionTool,
@@ -77,14 +84,32 @@ const CONTEXT_LENGTH_MESSAGE = /context length|maximum context|too many tokens/i
 /** Node surfaces a failed connection as `TypeError: fetch failed`. */
 const FETCH_FAILED_MESSAGE = /fetch failed/i;
 
-/** Reported when a stream-level error event carries no message. */
-const STREAM_ERROR_MESSAGE = 'stream error';
-
-/** Reported when a `response.failed` event carries no error object. */
-const RESPONSE_FAILED_MESSAGE = 'response failed';
-
-/** Reported when a thrown value is not an `Error` at all. */
-const UNKNOWN_ERROR_MESSAGE = 'unknown error';
+/**
+ * The whole vocabulary an `error` {@link ModelEvent} message is built from.
+ *
+ * Nothing outside this object — and the numeric HTTP status — ever reaches a message. See
+ * {@link mapErrorToModelEvent} for why the provider's own text is the only text it reports.
+ */
+const ERROR_MESSAGES = {
+  /** The credential was rejected. */
+  auth: 'authentication failed',
+  /** The provider asked the caller to slow down. */
+  rateLimit: 'rate limit exceeded',
+  /** The request did not fit the model's context window. */
+  contextLength: 'request exceeds the model context window',
+  /** The request never reached the provider. */
+  network: 'the request did not reach the model provider',
+  /** The provider refused the request for a reason with no category of its own. */
+  rejected: 'the model provider rejected the request',
+  /** The provider failed on its side. */
+  providerFailed: 'the model provider failed',
+  /** The stream carried an `error` event. */
+  streamError: 'the model stream reported an error',
+  /** The response ended in `failed`. */
+  responseFailed: 'the model response failed',
+  /** Nothing about the failure could be classified. */
+  unknown: 'unknown error',
+} as const;
 
 /** Own properties the SDK's `APIError` constructor sets on every instance, including subclasses. */
 interface SdkApiErrorShape extends Error {
@@ -136,18 +161,24 @@ function isAbortError(value: unknown): boolean {
 /**
  * Replaces credential-shaped substrings with the redaction token.
  *
- * Defence in depth: the API echoes part of the submitted key in some authentication failures, and
- * that message travels into a persisted turn error. The shared patterns carry no `g` flag, so each
- * one is applied until it no longer matches; every pattern is longer than its replacement, so the
- * text strictly shrinks and the loop terminates.
+ * The last gate every `error` {@link ModelEvent} message passes through. Since no text from the
+ * SDK, the server or the platform is copied into a message any more, it has nothing to strip in
+ * normal operation — it is kept, and applied unconditionally, so that reintroducing a forwarded
+ * string somewhere cannot silently reintroduce a leak with it. It is also the seam the shared
+ * `Redactor` of the secrets contract collapses into once that lane lands, which is why it is
+ * exported and covered directly rather than only through the paths that call it.
  *
- * The same few lines appear in the fixture recording script. Both are placeholders for the shared
- * `Redactor` of the secrets contract, which has no implementation yet.
+ * On its own it is *not* sufficient, which is the reason the messages became controlled: a shape
+ * list cannot match a credential whose shape it does not know, and `OPENAI_BASE_URL` exists so a
+ * compatible gateway with a completely different key format can be used.
  *
- * @param message - Raw message from an SDK error or a stream event.
+ * The shared patterns carry no `g` flag, so each one is applied until it no longer matches; every
+ * pattern is longer than its replacement, so the text strictly shrinks and the loop terminates.
+ *
+ * @param message - Message about to become an `error` event.
  * @returns The message with every credential shape replaced.
  */
-function redactSecretShapes(message: string): string {
+export function redactSecretShapes(message: string): string {
   let result = message;
   for (const pattern of SECRET_SHAPE_PATTERNS) {
     while (pattern.test(result)) {
@@ -158,21 +189,10 @@ function redactSecretShapes(message: string): string {
 }
 
 /**
- * Picks a usable message, falling back when the source carries none.
- *
- * @param raw - Message from the SDK or the stream.
- * @param fallback - Description used when `raw` is absent or empty.
- * @returns The message to report.
- */
-function textOr(raw: string | undefined, fallback: string): string {
-  return raw === undefined || raw.length === 0 ? fallback : raw;
-}
-
-/**
- * Builds an `error` {@link ModelEvent} with a redacted message.
+ * Builds an `error` {@link ModelEvent}.
  *
  * @param code - Error category.
- * @param message - Message to report; never a request body or a header.
+ * @param message - Message to report; built from {@link ERROR_MESSAGES}, never from foreign text.
  * @param retryable - Whether the agent runtime may retry the step.
  * @returns The event to yield.
  */
@@ -215,27 +235,31 @@ function isContextLengthFailure(err: SdkApiErrorShape): boolean {
  * A missing status means the request never got a response (connection reset, DNS failure,
  * timeout), which the runtime retries.
  *
+ * The error's own message is read to classify it and is never copied into the result: the status
+ * and the category are the report. The numeric status is appended because it is the provider's,
+ * not the server's — a number this function narrowed itself.
+ *
  * @param err - The caught SDK error.
  * @returns The `error` event to yield.
  */
 function fromSdkApiError(err: SdkApiErrorShape): ModelErrorEvent {
-  const message = textOr(err.message, UNKNOWN_ERROR_MESSAGE);
   if (typeof err.status !== 'number') {
-    return errorEvent('network', message, true);
+    return errorEvent('network', ERROR_MESSAGES.network, true);
   }
+  const status = ` (HTTP ${String(err.status)})`;
   if (err.status === 401 || err.status === 403) {
-    return errorEvent('auth', message, false);
+    return errorEvent('auth', `${ERROR_MESSAGES.auth}${status}`, false);
   }
   if (err.status === 429) {
-    return errorEvent('rate_limit', message, true);
+    return errorEvent('rate_limit', `${ERROR_MESSAGES.rateLimit}${status}`, true);
   }
   if (err.status === 400 && isContextLengthFailure(err)) {
-    return errorEvent('context_length', message, false);
+    return errorEvent('context_length', `${ERROR_MESSAGES.contextLength}${status}`, false);
   }
   if (err.status >= 500) {
-    return errorEvent('unknown', message, true);
+    return errorEvent('unknown', `${ERROR_MESSAGES.providerFailed}${status}`, true);
   }
-  return errorEvent('unknown', message, false);
+  return errorEvent('unknown', `${ERROR_MESSAGES.rejected}${status}`, false);
 }
 
 /**
@@ -428,12 +452,13 @@ function mapTerminalEvent(event: ResponseStreamEvent): ModelEvent[] | undefined 
     ];
   }
   if (event.type === 'response.failed') {
-    const failure = event.response.error;
-    const { code, retryable } = mapResponseErrorCode(failure?.code);
-    return [errorEvent(code, textOr(failure?.message, RESPONSE_FAILED_MESSAGE), retryable)];
+    // `error.code` is a closed union used to classify; `error.message` is free-form server text
+    // and is deliberately not reported.
+    const { code, retryable } = mapResponseErrorCode(event.response.error?.code);
+    return [errorEvent(code, ERROR_MESSAGES.responseFailed, retryable)];
   }
   if (event.type === 'error') {
-    return [errorEvent('unknown', textOr(event.message, STREAM_ERROR_MESSAGE), false)];
+    return [errorEvent('unknown', ERROR_MESSAGES.streamError, false)];
   }
   return undefined;
 }
@@ -476,9 +501,23 @@ export function createEventMapper(): EventMapper {
  * Classifies an error thrown by the SDK into an `error` {@link ModelEvent}.
  *
  * Checked in order: cancellation (reported as `null` so the caller can end the stream silently),
- * the `APIError` hierarchy by HTTP status, a bare `fetch` failure, any other `Error`, and finally
- * a non-`Error` throw. Messages come from the error only — request parameters and headers are
- * never included, and credential shapes are redacted.
+ * the `APIError` hierarchy by HTTP status, a bare `fetch` failure, and everything else.
+ *
+ * **No foreign text reaches the event.** The caught error's message is read to classify the
+ * failure and is never copied into the result; every message comes from {@link ERROR_MESSAGES}
+ * plus, where one exists, the numeric HTTP status. Three separate channels made forwarding it
+ * unsafe, and none of them is covered by matching credential shapes:
+ *
+ * - `APIError.message` is built from the response body (`makeMessage`), which on an authentication
+ *   failure echoes part of the submitted key.
+ * - The SDK raises an `APIError` whose body is whatever JSON the endpoint sent
+ *   (`core/streaming.js`), and `makeMessage` serialises that object into the message.
+ * - A malformed stream line makes the SDK rethrow the platform `SyntaxError`, whose message quotes
+ *   a prefix of the raw bytes (`Unexpected token 'g', "gateway-se"... is not valid JSON`).
+ *
+ * The credential is whatever the operator typed and the endpoint is whatever `OPENAI_BASE_URL`
+ * points at, so no pattern list can recognise it. The event still carries the category and
+ * `retryable`, which is what the agent runtime and the UI branch on.
  *
  * @param err - Anything caught around an SDK call.
  * @returns The event to yield, or `null` when the stream was cancelled.
@@ -491,10 +530,7 @@ export function mapErrorToModelEvent(err: unknown): ModelErrorEvent | null {
     return fromSdkApiError(err);
   }
   if (err instanceof TypeError && FETCH_FAILED_MESSAGE.test(err.message)) {
-    return errorEvent('network', err.message, true);
+    return errorEvent('network', ERROR_MESSAGES.network, true);
   }
-  if (err instanceof Error) {
-    return errorEvent('unknown', textOr(err.message, UNKNOWN_ERROR_MESSAGE), false);
-  }
-  return errorEvent('unknown', UNKNOWN_ERROR_MESSAGE, false);
+  return errorEvent('unknown', ERROR_MESSAGES.unknown, false);
 }
