@@ -47,6 +47,8 @@ export default defineConfig({
         'src/api/**',
         'src/queues/**',
         'src/testing/**',
+        'src/persistence/client.ts',
+        'src/persistence/testing/**',
       ],
       exclude: ['**/*.test.ts', 'src/**/types.ts', 'src/index.ts', 'src/persistence/generated/**'],
       thresholds: {

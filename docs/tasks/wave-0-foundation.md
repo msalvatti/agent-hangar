@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W0 (single agent, sequential — critical path) |
 | **Status** | 🟦 running |
-| **Progress** | 4/8 tasks |
+| **Progress** | 5/8 tasks |
 | **Branch** | `feat/w0-foundation` |
 | **Owned paths** | everything (only lane in this wave) |
 | **Depends on** | — |
@@ -45,7 +45,7 @@ Quality bar that applies to every file created here and in every later lane: Typ
 | 0.2 | Complete dependency manifest (all workspaces) | ✅ | P0 | S | 0.1 |
 | 0.3 | Frozen core contracts: types, Zod, NDJSON codec, errors, config | ✅ | P0 | L | 0.2 |
 | 0.4 | Test doubles and canaries (`packages/core/src/testing`) | ✅ | P0 | M | 0.3 |
-| 0.5 | Prisma 7 schema, migration, client factory | 📋 | P0 | M | 0.2 |
+| 0.5 | Prisma 7 schema, migration, client factory | ✅ | P0 | M | 0.2 |
 | 0.6 | Infra skeleton: compose, workspace Dockerfile base, env.sh, scripts, .env.example | 📋 | P0 | M | 0.1 |
 | 0.7 | Apps skeleton: Next.js shell with tokens + shadcn, worker boot, test configs | 📋 | P0 | L | 0.3, 0.5, 0.6 |
 | 0.8 | CI workflow, README skeleton, plan dashboard, close-out PR | 📋 | P0 | S | 0.1–0.7 |
@@ -323,16 +323,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 
 ## Task 0.5 — Prisma 7 schema, migration, client factory
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 0.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 0.2
 
 **Description.** Add the Prisma 7 schema exactly as spec 02, the first migration (including the partial unique index), `prisma.config.ts`, and a client factory using `@prisma/adapter-pg` with a real-round-trip boot check.
 
 **Acceptance criteria**
-- [ ] `packages/core/prisma/schema.prisma` matches spec 02 §2 (generator `prisma-client`, output `../src/persistence/generated`, no datasource url)
-- [ ] `prisma.config.ts` reads `DATABASE_URL` via core config (`import 'dotenv/config'` is NOT used; the scripts pass env from `.env.local`)
-- [ ] Migration `0001_init` created with `prisma migrate dev --create-only` and hand-edited to add `CREATE UNIQUE INDEX "Workspace_one_live_per_chat" ON "Workspace"("chatId") WHERE status IN ('CREATING','READY','BUSY','STOPPING') AND "chatId" IS NOT NULL;`
-- [ ] `src/persistence/client.ts`: `createPrismaClient({ connectionString, max?, connectionTimeoutMillis? })` → `PrismaClient` with `PrismaPg` adapter; `assertDatabaseReachable(client)` runs `SELECT 1` (adapter `$connect()` is lazy — documented); `disconnect`
-- [ ] `src/persistence/generated/**` is git-ignored and produced by `pnpm db:generate`; unit tests cover the factory with an injected fake adapter/`$queryRaw`; integration test (tag `@db`) applies the migration to compose Postgres and asserts the partial index exists
+- [x] `packages/core/prisma/schema.prisma` matches spec 02 §2 (generator `prisma-client`, output `../src/persistence/generated`, no datasource url)
+- [x] `prisma.config.ts` reads `DATABASE_URL` via core config (`import 'dotenv/config'` is NOT used; the scripts pass env from `.env.local`)
+- [x] Migration `0001_init` created with `prisma migrate dev --create-only` and hand-edited to add `CREATE UNIQUE INDEX "Workspace_one_live_per_chat" ON "Workspace"("chatId") WHERE status IN ('CREATING','READY','BUSY','STOPPING') AND "chatId" IS NOT NULL;`
+- [x] `src/persistence/client.ts`: `createPrismaClient({ connectionString, max?, connectionTimeoutMillis? })` → `PrismaClient` with `PrismaPg` adapter; `assertDatabaseReachable(client)` runs `SELECT 1` (adapter `$connect()` is lazy — documented); `disconnect`
+- [x] `src/persistence/generated/**` is git-ignored and produced by `pnpm db:generate`; unit tests cover the factory with an injected fake adapter/`$queryRaw`; integration test (tag `@db`) applies the migration to compose Postgres and asserts the partial index exists
 
 **Files to create**
 `packages/core/prisma/schema.prisma`, `packages/core/prisma/migrations/0001_init/migration.sql`, `packages/core/prisma/migrations/migration_lock.toml`, `packages/core/prisma.config.ts`, `packages/core/src/persistence/{client,client.test,client.integration.test}.ts`, `packages/core/src/persistence/testing/db.ts` (connect helper for `AH_INSTANCE=test`, truncate all tables), `.gitignore` entry.
@@ -591,3 +591,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 - 0.2 ✅ 2026-08-19 — full dependency manifest at latest stable (Base UI as @base-ui/react 1.7, tw-animate-css added for shadcn), lockfile committed, audit clean via deepmerge-ts override
 - 0.3 ✅ 2026-08-19 — frozen contracts in packages/core (runner, model, agent protocol with Zod + NDJSON codec, secrets, scheduling, workspace, persistence ports and entities, API and queue contracts, config/instance, typed errors) with 100 % coverage
 - 0.4 ✅ 2026-08-19 — FakeWorkspaceRunner, FakeAgentModelProvider, in-memory repositories for all eight ports, FakeClock and runtime-assembled canaries under @agent-hangar/core/testing, 100 % coverage
+- 0.5 ✅ 2026-08-19 — Prisma 7 schema, 0001_init migration with the partial unique index, prisma.config.ts over core config, adapter-pg client factory with fail-fast SELECT 1, test DB helpers, @db integration test

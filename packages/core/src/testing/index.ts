@@ -4,3 +4,4 @@ export * from './fake-agent-model-provider.js';
 export * from './fake-clock.js';
 export * from './fake-workspace-runner.js';
 export * from './in-memory-repositories.js';
+export * from '../persistence/testing/db.js';
