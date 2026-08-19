@@ -17,7 +17,7 @@
     "build": "tsc -b",
     "lint": "eslint .",
     "typecheck": "tsc -b",
-    "test": "vitest run",
+    "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration"
   },
   "dependencies": {

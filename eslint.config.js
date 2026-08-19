@@ -54,7 +54,12 @@ export default defineConfig([
     languageOptions: {
       parser: tseslint.parser,
       parserOptions: {
-        projectService: true,
+        projectService: {
+          // Tool config files live outside every package `src/` (and thus outside the
+          // project references); they are type-checked against the base compiler options.
+          allowDefaultProject: ['*.config.ts', '*/*/*.config.ts'],
+          defaultProject: 'tsconfig.base.json',
+        },
         tsconfigRootDir: import.meta.dirname,
       },
     },
@@ -120,6 +125,15 @@ export default defineConfig([
       'import-x/no-named-as-default-member': 'off',
       // Flags every bracket access; `noUncheckedIndexedAccess` already forces a guard.
       'security/detect-object-injection': 'off',
+    },
+  },
+
+  // Barrels re-export whole folders with `export *`; a folder that is type-only today may gain
+  // runtime exports later, so forcing `export type *` here would break those additions.
+  {
+    files: ['**/index.ts'],
+    rules: {
+      '@typescript-eslint/consistent-type-exports': 'off',
     },
   },
 

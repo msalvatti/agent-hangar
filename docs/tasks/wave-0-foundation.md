@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W0 (single agent, sequential — critical path) |
 | **Status** | 🟦 running |
-| **Progress** | 2/8 tasks |
+| **Progress** | 3/8 tasks |
 | **Branch** | `feat/w0-foundation` |
 | **Owned paths** | everything (only lane in this wave) |
 | **Depends on** | — |
@@ -43,7 +43,7 @@ Quality bar that applies to every file created here and in every later lane: Typ
 |---|---|---|---|---|---|
 | 0.1 | Monorepo, TypeScript, lint/format, git hooks, CLAUDE.md | ✅ | P0 | M | — |
 | 0.2 | Complete dependency manifest (all workspaces) | ✅ | P0 | S | 0.1 |
-| 0.3 | Frozen core contracts: types, Zod, NDJSON codec, errors, config | 📋 | P0 | L | 0.2 |
+| 0.3 | Frozen core contracts: types, Zod, NDJSON codec, errors, config | ✅ | P0 | L | 0.2 |
 | 0.4 | Test doubles and canaries (`packages/core/src/testing`) | 📋 | P0 | M | 0.3 |
 | 0.5 | Prisma 7 schema, migration, client factory | 📋 | P0 | M | 0.2 |
 | 0.6 | Infra skeleton: compose, workspace Dockerfile base, env.sh, scripts, .env.example | 📋 | P0 | M | 0.1 |
@@ -187,20 +187,20 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 
 ## Task 0.3 — Frozen core contracts: types, Zod, NDJSON codec, errors, config
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 0.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 0.2
 
 **Description.** Implement every cross-lane contract in `packages/core` exactly as specified, with Zod schemas for boundary data, the shared NDJSON codec, typed errors, and the environment/instance configuration module — all unit-tested to 100 %.
 
 **Acceptance criteria**
-- [ ] `src/runner/types.ts` exports `WorkspaceSpec`, `WorkspaceHandle`, `ExecSpec`, `ExecEvent` (incl. `started`), `WorkspaceSnapshot`, `WorkspaceHealth`, `WorkspaceRunner` exactly as spec 03 §1
-- [ ] `src/model/types.ts` exports `ToolDefinition`, `ConversationItem`, `ModelTurnInput`, `ModelEvent`, `AgentModelProvider` as spec 03 §2
-- [ ] `src/agent-protocol/{schemas,types,ndjson}.ts`: Zod schemas for `TurnRequest` and every `AgentEvent` variant; types via `z.infer`; `encodeLine(obj)`, `createNdjsonParser()` (async transform handling partial lines, multiple events per chunk, invalid JSON → `{ type: 'protocol.error', line, reason }` without throwing)
-- [ ] `src/secrets/types.ts` (`SecretKey`, `SecretsService`, `Redactor`), `src/scheduling/types.ts` (`CronSpec`, `SchedulerKey`, `ReconcilePlan`), `src/workspace/types.ts` (`WorkspaceStatus`, `TurnStatus`, `JobRunStatus`, `RestoreContext`, `EnsureWorkspaceDecision`)
-- [ ] `src/persistence/ports.ts`: interfaces for Chat/Message/Turn/Workspace/ScheduledJob/JobRun/ToolCallLog/Secret repositories with method signatures sufficient for every flow in spec 04 (document each method)
-- [ ] `src/api/contracts.ts`: Zod request/response schemas for every route in spec 03 §4 + `SseFrame` type; `src/queues/contracts.ts`: queue names, job names, payload schemas (spec 03 §5)
-- [ ] `src/config/schema.ts` (Zod env schema with every variable in spec 05 §3 and defaults), `src/config/instance.ts` (`resolveInstance({ env })` → `{ instance, portBase, webPort, postgresPort, redisPort, postgresDb, composeProjectName, workspaceNamePrefix }` with precedence `AH_*` → `CONDUCTOR_*` → defaults, slugify `[a-z0-9-]` max 30)
-- [ ] `src/errors.ts`: `AgentHangarError` base + `WorkspaceImageMissing`, `SecretIntegrityError`, `ProtocolError`, `InvalidCronError`, `IllegalTransitionError`, `ConfigError`, each with `code` literal
-- [ ] `src/index.ts` barrel exports the public API (types, schemas, codec, errors, config); 100 % coverage on everything in this task
+- [x] `src/runner/types.ts` exports `WorkspaceSpec`, `WorkspaceHandle`, `ExecSpec`, `ExecEvent` (incl. `started`), `WorkspaceSnapshot`, `WorkspaceHealth`, `WorkspaceRunner` exactly as spec 03 §1
+- [x] `src/model/types.ts` exports `ToolDefinition`, `ConversationItem`, `ModelTurnInput`, `ModelEvent`, `AgentModelProvider` as spec 03 §2
+- [x] `src/agent-protocol/{schemas,types,ndjson}.ts`: Zod schemas for `TurnRequest` and every `AgentEvent` variant; types via `z.infer`; `encodeLine(obj)`, `createNdjsonParser()` (async transform handling partial lines, multiple events per chunk, invalid JSON → `{ type: 'protocol.error', line, reason }` without throwing)
+- [x] `src/secrets/types.ts` (`SecretKey`, `SecretsService`, `Redactor`), `src/scheduling/types.ts` (`CronSpec`, `SchedulerKey`, `ReconcilePlan`), `src/workspace/types.ts` (`WorkspaceStatus`, `TurnStatus`, `JobRunStatus`, `RestoreContext`, `EnsureWorkspaceDecision`)
+- [x] `src/persistence/ports.ts`: interfaces for Chat/Message/Turn/Workspace/ScheduledJob/JobRun/ToolCallLog/Secret repositories with method signatures sufficient for every flow in spec 04 (document each method)
+- [x] `src/api/contracts.ts`: Zod request/response schemas for every route in spec 03 §4 + `SseFrame` type; `src/queues/contracts.ts`: queue names, job names, payload schemas (spec 03 §5)
+- [x] `src/config/schema.ts` (Zod env schema with every variable in spec 05 §3 and defaults), `src/config/instance.ts` (`resolveInstance({ env })` → `{ instance, portBase, webPort, postgresPort, redisPort, postgresDb, composeProjectName, workspaceNamePrefix }` with precedence `AH_*` → `CONDUCTOR_*` → defaults, slugify `[a-z0-9-]` max 30)
+- [x] `src/errors.ts`: `AgentHangarError` base + `WorkspaceImageMissing`, `SecretIntegrityError`, `ProtocolError`, `InvalidCronError`, `IllegalTransitionError`, `ConfigError`, each with `code` literal
+- [x] `src/index.ts` barrel exports the public API (types, schemas, codec, errors, config); 100 % coverage on everything in this task
 
 **Files to create**
 `packages/core/src/{runner/types.ts, model/types.ts, agent-protocol/{schemas,types,ndjson,index}.ts, secrets/types.ts, scheduling/types.ts, workspace/types.ts, persistence/ports.ts, api/contracts.ts, queues/contracts.ts, config/{schema,instance,index}.ts, errors.ts, index.ts}` + `*.test.ts` next to each implementation file, `packages/core/vitest.config.ts`.
@@ -589,3 +589,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 - 0.1 ✅ 2026-08-19 — pnpm 11 monorepo with four workspaces, strict TS ~6.0.3 project references, ESLint 10 flat config, Prettier, Husky + commitlint + lint-staged suppression grep, CLAUDE.md
 - 0.2 ✅ 2026-08-19 — full dependency manifest at latest stable (Base UI as @base-ui/react 1.7, tw-animate-css added for shadcn), lockfile committed, audit clean via deepmerge-ts override
+- 0.3 ✅ 2026-08-19 — frozen contracts in packages/core (runner, model, agent protocol with Zod + NDJSON codec, secrets, scheduling, workspace, persistence ports and entities, API and queue contracts, config/instance, typed errors) with 100 % coverage

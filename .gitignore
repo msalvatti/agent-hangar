@@ -32,3 +32,6 @@ master.key
 !.vscode/settings.json
 *.log
 .turbo/
+
+# Claude Code harness state (isolated agent worktrees live under .claude/worktrees/)
+.claude/
