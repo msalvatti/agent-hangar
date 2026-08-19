@@ -74,8 +74,8 @@ describe('createSecretsService', () => {
   });
 
   /**
-   * The single most important assertion of this lane: whatever the repository persists — and
-   * therefore whatever reaches Postgres — contains no credential in any encoding.
+   * The single most important assertion of the secrets store: whatever the repository persists —
+   * and therefore whatever reaches Postgres — contains no credential in any encoding.
    */
   it('never lets a plaintext credential reach the repository', async () => {
     const { service, repos } = createHarness();

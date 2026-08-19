@@ -287,7 +287,7 @@ describe('createLogger', () => {
   });
 
   /**
-   * The path list is part of the contract other lanes rely on; it names both the root and the
+   * The path list is part of the contract other modules rely on; it names both the root and the
    * one-level-down spelling of every sensitive field.
    */
   it('exposes root and wildcard spellings of every sensitive path', () => {
