@@ -193,6 +193,41 @@ describe('createRedactor shape patterns', () => {
   });
 
   /**
+   * A sticky pattern matches only at its cursor, so probing it once from position 0 answers the
+   * wrong question: it reports "no match" for a credential further along, and the redactor used to
+   * return the input untouched — a silent failure to redact, which is the one outcome this module
+   * exists to prevent.
+   */
+  it('redacts a sticky pattern whose match is not at the start', () => {
+    const pattern = /token\(\d+\)/y;
+    const redactor = createRedactor({ patterns: [pattern] });
+
+    expect(redactor.redact('prefix token(1) tail')).toBe(`prefix ${REDACTED_TOKEN} tail`);
+    expect(pattern.lastIndex).toBe(0);
+  });
+
+  /**
+   * Every occurrence goes, not only the first one found by the walk.
+   */
+  it('redacts every match of a sticky pattern', () => {
+    const redactor = createRedactor({ patterns: [/token\(\d+\)/y] });
+
+    expect(redactor.redact('a token(1) b token(22) c')).toBe(
+      `a ${REDACTED_TOKEN} b ${REDACTED_TOKEN} c`,
+    );
+  });
+
+  /**
+   * A sticky pattern that matches nowhere must exhaust the walk and leave the text byte for byte,
+   * rather than reporting a match at the position the scan happened to stop on.
+   */
+  it('leaves text alone when a sticky pattern matches nowhere', () => {
+    const redactor = createRedactor({ patterns: [/token\(\d+\)/y] });
+
+    expect(redactor.redact('nothing to see here')).toBe('nothing to see here');
+  });
+
+  /**
    * A pattern that can match the empty string would never advance the cursor; the scan stops
    * instead of looping forever, which keeps a bad pattern from hanging the logger.
    */

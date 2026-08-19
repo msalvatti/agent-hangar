@@ -54,6 +54,34 @@ export function escapeRegExp(value: string): string {
 }
 
 /**
+ * Finds the first match of a pattern anywhere in the input, wherever its cursor happens to be.
+ *
+ * A sticky pattern matches only at `lastIndex`, so asking it once from position 0 answers "is
+ * there a match *here*", not "is there a match at all" — and it reports nothing for a credential
+ * that sits further along, which `split` would have found and replaced. The positions are
+ * therefore walked for a sticky pattern, which costs a scan of the input but only for a pattern
+ * that opted into stickiness; none of the contract patterns do.
+ *
+ * @param input - Text to scan.
+ * @param pattern - Pattern to look for; its cursor is moved and the caller resets it.
+ * @returns The first match, or `null` when the pattern matches nowhere in the input.
+ */
+function firstMatch(input: string, pattern: RegExp): RegExpExecArray | null {
+  if (!pattern.sticky) {
+    pattern.lastIndex = 0;
+    return pattern.exec(input);
+  }
+  for (let start = 0; start <= input.length; start += 1) {
+    pattern.lastIndex = start;
+    const match = pattern.exec(input);
+    if (match !== null) {
+      return match;
+    }
+  }
+  return null;
+}
+
+/**
  * Replaces every match of a pattern in a string, whether or not the pattern carries `g`.
  *
  * `String.prototype.split` finds every match itself, against the whole input and independently of
@@ -77,13 +105,9 @@ export function escapeRegExp(value: string): string {
  * @returns The text with every match replaced.
  */
 function replaceEvery(input: string, pattern: RegExp, replacement: string): string {
-  const carriesCursor = pattern.global || pattern.sticky;
-  if (carriesCursor) {
-    pattern.lastIndex = 0;
-  }
-  const probe = pattern.exec(input);
-  if (carriesCursor) {
-    // `exec` advances the cursor of a global or sticky pattern; `split` builds its own copy, so
+  const probe = firstMatch(input, pattern);
+  if (pattern.global || pattern.sticky) {
+    // `exec` moves the cursor of a global or sticky pattern; `split` builds its own copy, so
     // clearing it here leaves the caller's pattern exactly as it was handed over.
     pattern.lastIndex = 0;
   }
