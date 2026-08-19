@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-B 🐳 (Docker-integration lane — the orchestrator runs at most one 🐳 lane at a time) |
 | **Status** | 🟦 running |
-| **Progress** | 0/5 tasks |
+| **Progress** | 1/5 tasks |
 | **Branch** | `feat/w1b-docker-runner` |
 | **Owned paths** | `packages/core/src/runner/docker/**`, `infra/workspace/**` (Dockerfile, askpass.sh, .dockerignore, README.md, .gitignore) · additive-only edits allowed in `packages/core/vitest.config.ts` (`coverage.include`) and `packages/core/package.json` (`exports` subpath `./runner/docker`) |
 | **Depends on** | W0 merged to `main` |
@@ -42,7 +42,7 @@ Quality bar (same as every lane): TypeScript strict, zero `any`, zero suppressio
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1B.1 | Docker socket resolution + container spec builder (pure) | 📋 | P0 | M | — |
+| 1B.1 | Docker socket resolution + container spec builder (pure) | ✅ | P0 | M | — |
 | 1B.2 | Exec stream: demux, stdin pump, timeout/abort kill path (pure) | 📋 | P0 | M | 1B.1 |
 | 1B.3 | `DockerWorkspaceRunner` class + factory + unit tests with a faked Docker API | 📋 | P0 | L | 1B.1, 1B.2 |
 | 1B.4 | Workspace image hardening/verification, askpass token-file support, README, `@docker` integration suite | 📋 | P0 | M | 1B.3 |
@@ -52,15 +52,15 @@ Quality bar (same as every lane): TypeScript strict, zero `any`, zero suppressio
 
 ## Task 1B.1 — Docker socket resolution + container spec builder (pure)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Implement the two pure modules the runner is built on: `docker-socket.ts` (resolve where the Docker daemon is, in the order spec 03 §1 mandates, returning dockerode constructor options) and `container-spec.ts` (translate a `WorkspaceSpec` into dockerode `createContainer` options with the hardening flags, limits and labels). Both are 100 % unit-tested without Docker.
 
 **Acceptance criteria**
-- [ ] `resolveDockerSocket()` honours `DOCKER_HOST` (`unix://` and `tcp://`), then `~/.docker/run/docker.sock`, then `/var/run/docker.sock`; reports which source won; rejects `DOCKER_TLS_VERIFY=1` with a typed error
-- [ ] `buildContainerCreateOptions()` produces: `name = prefix + workspaceId`, `Image`, `Env` as `KEY=VALUE[]`, `User: 'agent'`, `WorkingDir: '/workspace'`, `HostConfig { Memory, NanoCpus, PidsLimit, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges'], Tmpfs: { '/tmp': '' }, NetworkMode: 'bridge' }`, **no** `Binds`/`Mounts`, `Labels` with `ah.instance`, `ah.workspace`, `ah.kind` always set and the caller's labels (`ah.chat` or `ah.jobRun`) passed through
-- [ ] `DockerRunnerError` (code `DOCKER_RUNNER`) exists in `runner/docker/errors.ts` extending `AgentHangarError`
-- [ ] `packages/core/vitest.config.ts` `coverage.include` extended with `src/runner/docker/**`; 100 % on the two modules
+- [x] `resolveDockerSocket()` honours `DOCKER_HOST` (`unix://` and `tcp://`), then `~/.docker/run/docker.sock`, then `/var/run/docker.sock`; reports which source won; rejects `DOCKER_TLS_VERIFY=1` with a typed error
+- [x] `buildContainerCreateOptions()` produces: `name = prefix + workspaceId`, `Image`, `Env` as `KEY=VALUE[]`, `User: 'agent'`, `WorkingDir: '/workspace'`, `HostConfig { Memory, NanoCpus, PidsLimit, CapDrop: ['ALL'], SecurityOpt: ['no-new-privileges'], Tmpfs: { '/tmp': '' }, NetworkMode: 'bridge' }`, **no** `Binds`/`Mounts`, `Labels` with `ah.instance`, `ah.workspace`, `ah.kind` always set and the caller's labels (`ah.chat` or `ah.jobRun`) passed through
+- [x] `DockerRunnerError` (code `DOCKER_RUNNER`) exists in `runner/docker/errors.ts` extending `AgentHangarError`
+- [x] `packages/core/vitest.config.ts` `coverage.include` extended with `src/runner/docker/**`; 100 % on the two modules
 
 **Files to create**
 `packages/core/src/runner/docker/{docker-socket.ts, docker-socket.test.ts, container-spec.ts, container-spec.test.ts, errors.ts, errors.test.ts}`; delete `packages/core/src/runner/docker/.gitkeep`; modify `packages/core/vitest.config.ts` (coverage.include only).
@@ -506,3 +506,5 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1b-docker-runn
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 1B.1 ✅ 2026-08-19 — socket resolution order, hardened container-spec builder with compose grouping labels, typed DockerRunnerError; 100 % unit coverage
