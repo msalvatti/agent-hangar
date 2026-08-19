@@ -7,11 +7,14 @@
  * sequence the agent runtime is entitled to receive, so a change in the mapping shows up here as a
  * diff rather than as a subtly different transcript.
  */
+import { inspect } from 'node:util';
+
 import { APIError } from 'openai/core/error';
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
 import { describe, expect, it } from 'vitest';
 
 import { AgentHangarError } from '../../errors.js';
+import { OPENAI_CANARY, assertNoCanary } from '../../testing/canaries.js';
 import type { ModelEvent, ModelTurnInput } from '../types.js';
 
 import { ModelProviderError } from './errors.js';
@@ -333,6 +336,27 @@ describe('OpenAIModelProvider', () => {
       retryable: false,
       message: '401 Incorrect API key',
     });
+  });
+
+  it('never lets the SDK error carry a credential out of a failed listing', async () => {
+    // The API echoes part of the submitted key on some auth failures. Redacting only the message
+    // would be undone by any consumer that walks the cause chain, so no cause is attached at all.
+    const client = createFakeOpenAIClient({
+      throwOnListModels: new APIError(
+        401,
+        { message: `Incorrect API key provided: ${OPENAI_CANARY}` },
+        undefined,
+        new Headers(),
+      ),
+    });
+    const failure = await createOpenAIModelProvider({ client })
+      .listModels()
+      .catch((error: unknown) => error);
+    expect((failure as ModelProviderError).message).toBe(
+      '401 Incorrect API key provided: [REDACTED]',
+    );
+    expect((failure as ModelProviderError).cause).toBeUndefined();
+    assertNoCanary(inspect(failure, { depth: null }));
   });
 
   it('turns a cancelled listing into a typed provider error too', async () => {

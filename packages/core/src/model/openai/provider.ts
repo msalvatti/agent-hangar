@@ -84,6 +84,11 @@ export class OpenAIModelProvider implements AgentModelProvider {
    *
    * Used by the doctor and by Settings to validate a key and a model id without spending tokens.
    *
+   * The SDK error is deliberately not attached as `cause`: its own message can echo part of the
+   * submitted key, and it carries the response body and headers. Redacting only the top level
+   * would be undone by any consumer that walks the cause chain — Node's inspector and the standard
+   * error serialisers both do. The classified message is the whole of what leaves this method.
+   *
    * @returns The ids, sorted ascending.
    * @throws ModelProviderError classified like a streamed `error` event.
    */
@@ -99,7 +104,7 @@ export class OpenAIModelProvider implements AgentModelProvider {
         message: LISTING_ABORTED_MESSAGE,
         retryable: false,
       };
-      throw new ModelProviderError(mapped.code, mapped.message, mapped.retryable, { cause: err });
+      throw new ModelProviderError(mapped.code, mapped.message, mapped.retryable);
     }
     return ids.sort();
   }
