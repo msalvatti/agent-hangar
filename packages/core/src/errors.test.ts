@@ -15,8 +15,10 @@ import {
   InvalidCronError,
   isAgentHangarError,
   LiveWorkspaceExistsError,
+  NotFoundError,
   ProtocolError,
   SecretIntegrityError,
+  UniqueViolationError,
   WorkspaceImageMissing,
 } from './errors.js';
 
@@ -111,6 +113,23 @@ describe('subclasses', () => {
     expect(error.code).toBe('LIVE_WORKSPACE_EXISTS');
     expect(error.chatId).toBe('chat-1');
     expect(error.message).toContain('chat-1');
+  });
+
+  /**
+   * `NotFoundError` and `UniqueViolationError` mirror the two persistence failures every
+   * repository can raise, with the entity and identifier/field attached.
+   */
+  it('NotFoundError and UniqueViolationError identify entity and field', () => {
+    const missing = new NotFoundError('Chat', 'c1');
+    expect(missing.code).toBe('NOT_FOUND');
+    expect(missing.entity).toBe('Chat');
+    expect(missing.id).toBe('c1');
+    expect(missing.message).toBe('Chat c1 was not found.');
+    const duplicate = new UniqueViolationError('JobRun', 'workspaceId');
+    expect(duplicate.code).toBe('UNIQUE_VIOLATION');
+    expect(duplicate.entity).toBe('JobRun');
+    expect(duplicate.field).toBe('workspaceId');
+    expect(duplicate.message).toBe('JobRun.workspaceId must be unique.');
   });
 
   /**

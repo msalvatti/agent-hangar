@@ -142,6 +142,46 @@ export class LiveWorkspaceExistsError extends AgentHangarError {
   }
 }
 
+/** A row that a repository method needs does not exist. */
+export class NotFoundError extends AgentHangarError {
+  override readonly code = 'NOT_FOUND' as const;
+  /** Entity type, e.g. `Chat`. */
+  readonly entity: string;
+  /** Identifier that was looked up. */
+  readonly id: string;
+
+  /**
+   * @param entity - Entity type name.
+   * @param id - Identifier that was looked up.
+   * @param options - Optional `cause`.
+   */
+  constructor(entity: string, id: string, options?: AgentHangarErrorOptions) {
+    super('NOT_FOUND', `${entity} ${id} was not found.`, options);
+    this.entity = entity;
+    this.id = id;
+  }
+}
+
+/** A write violates a uniqueness invariant (mirrors a Postgres unique-violation). */
+export class UniqueViolationError extends AgentHangarError {
+  override readonly code = 'UNIQUE_VIOLATION' as const;
+  /** Entity type, e.g. `JobRun`. */
+  readonly entity: string;
+  /** Field (or index name) that must be unique. */
+  readonly field: string;
+
+  /**
+   * @param entity - Entity type name.
+   * @param field - Field or index that must be unique.
+   * @param options - Optional `cause`.
+   */
+  constructor(entity: string, field: string, options?: AgentHangarErrorOptions) {
+    super('UNIQUE_VIOLATION', `${entity}.${field} must be unique.`, options);
+    this.entity = entity;
+    this.field = field;
+  }
+}
+
 /** Environment or instance configuration is invalid or a required resource is unreachable. */
 export class ConfigError extends AgentHangarError {
   override readonly code = 'CONFIG_ERROR' as const;

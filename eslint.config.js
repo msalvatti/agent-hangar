@@ -137,6 +137,15 @@ export default defineConfig([
     },
   },
 
+  // In-memory repositories implement asynchronous ports with synchronous bodies; `async` keeps
+  // rejections (not throws) on the error path without sprinkling `await Promise.resolve()`.
+  {
+    files: ['packages/core/src/testing/in-memory/**/*.ts'],
+    rules: {
+      '@typescript-eslint/require-await': 'off',
+    },
+  },
+
   // The Docker runner is the only place allowed to import dockerode.
   {
     files: ['packages/core/src/runner/docker/**/*.ts'],

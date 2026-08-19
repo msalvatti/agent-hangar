@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W0 (single agent, sequential — critical path) |
 | **Status** | 🟦 running |
-| **Progress** | 3/8 tasks |
+| **Progress** | 4/8 tasks |
 | **Branch** | `feat/w0-foundation` |
 | **Owned paths** | everything (only lane in this wave) |
 | **Depends on** | — |
@@ -44,7 +44,7 @@ Quality bar that applies to every file created here and in every later lane: Typ
 | 0.1 | Monorepo, TypeScript, lint/format, git hooks, CLAUDE.md | ✅ | P0 | M | — |
 | 0.2 | Complete dependency manifest (all workspaces) | ✅ | P0 | S | 0.1 |
 | 0.3 | Frozen core contracts: types, Zod, NDJSON codec, errors, config | ✅ | P0 | L | 0.2 |
-| 0.4 | Test doubles and canaries (`packages/core/src/testing`) | 📋 | P0 | M | 0.3 |
+| 0.4 | Test doubles and canaries (`packages/core/src/testing`) | ✅ | P0 | M | 0.3 |
 | 0.5 | Prisma 7 schema, migration, client factory | 📋 | P0 | M | 0.2 |
 | 0.6 | Infra skeleton: compose, workspace Dockerfile base, env.sh, scripts, .env.example | 📋 | P0 | M | 0.1 |
 | 0.7 | Apps skeleton: Next.js shell with tokens + shadcn, worker boot, test configs | 📋 | P0 | L | 0.3, 0.5, 0.6 |
@@ -262,16 +262,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 
 ## Task 0.4 — Test doubles and canaries (`packages/core/src/testing`)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 0.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 0.3
 
 **Description.** Provide the fakes every lane tests against: `FakeWorkspaceRunner`, `FakeAgentModelProvider`, in-memory repositories for every port, `FakeClock`, and the secret canaries.
 
 **Acceptance criteria**
-- [ ] `FakeWorkspaceRunner` implements `WorkspaceRunner` with an in-memory filesystem per handle, scripted `exec` responses (by command prefix), `signal` support that aborts a scripted long exec, `snapshot`, `destroy` idempotent, `list` by labels, `health` reflecting state; records every call for assertions
-- [ ] `FakeAgentModelProvider` implements `AgentModelProvider`; takes a script map keyed by the last user message (or a default) → ordered `ModelEvent[]` with optional per-event delay; supports tool-call sequences across steps; `listModels` returns `['fake-model']`
-- [ ] `InMemory*Repository` for all eight ports with the same invariants as Postgres (gap-free `seq`, one live workspace per chat throws, unique `JobRun.workspaceId`)
-- [ ] `FakeClock` (`now()`, `advance(ms)`) and `canaries.ts` (`GITHUB_CANARY = 'ghp_TESTCANARY0000000000000000000000000'`, `OPENAI_CANARY = 'sk-TESTCANARY00000000000000000000'`)
-- [ ] Exported from `@agent-hangar/core/testing` (package `exports` subpath); 100 % coverage
+- [x] `FakeWorkspaceRunner` implements `WorkspaceRunner` with an in-memory filesystem per handle, scripted `exec` responses (by command prefix), `signal` support that aborts a scripted long exec, `snapshot`, `destroy` idempotent, `list` by labels, `health` reflecting state; records every call for assertions
+- [x] `FakeAgentModelProvider` implements `AgentModelProvider`; takes a script map keyed by the last user message (or a default) → ordered `ModelEvent[]` with optional per-event delay; supports tool-call sequences across steps; `listModels` returns `['fake-model']`
+- [x] `InMemory*Repository` for all eight ports with the same invariants as Postgres (gap-free `seq`, one live workspace per chat throws, unique `JobRun.workspaceId`)
+- [x] `FakeClock` (`now()`, `advance(ms)`) and `canaries.ts` (`GITHUB_CANARY = 'ghp_TESTCANARY0000000000000000000000000'`, `OPENAI_CANARY = 'sk-TESTCANARY00000000000000000000'`)
+- [x] Exported from `@agent-hangar/core/testing` (package `exports` subpath); 100 % coverage
 
 **Files to create**
 `packages/core/src/testing/{fake-workspace-runner,fake-agent-model-provider,in-memory-repositories,fake-clock,canaries,index}.ts` + tests; `packages/core/package.json` exports `./testing`.
@@ -590,3 +590,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 - 0.1 ✅ 2026-08-19 — pnpm 11 monorepo with four workspaces, strict TS ~6.0.3 project references, ESLint 10 flat config, Prettier, Husky + commitlint + lint-staged suppression grep, CLAUDE.md
 - 0.2 ✅ 2026-08-19 — full dependency manifest at latest stable (Base UI as @base-ui/react 1.7, tw-animate-css added for shadcn), lockfile committed, audit clean via deepmerge-ts override
 - 0.3 ✅ 2026-08-19 — frozen contracts in packages/core (runner, model, agent protocol with Zod + NDJSON codec, secrets, scheduling, workspace, persistence ports and entities, API and queue contracts, config/instance, typed errors) with 100 % coverage
+- 0.4 ✅ 2026-08-19 — FakeWorkspaceRunner, FakeAgentModelProvider, in-memory repositories for all eight ports, FakeClock and runtime-assembled canaries under @agent-hangar/core/testing, 100 % coverage
