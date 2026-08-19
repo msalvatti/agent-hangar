@@ -1,0 +1,227 @@
+# Continuous integration: every gate the project defines, on pull requests and on pushes to main.
+# No job is allowed to fail softly: a red job blocks the merge.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_OPTIONS: --max-old-space-size=4096
+  # Local compose Postgres credentials (not a secret: loopback-only service in CI and on laptops).
+  COMPOSE_DB_CREDENTIALS: 'ah:ah'
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/setup@v2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm lint
+      - run: pnpm format:check
+
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/setup@v2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm typecheck
+
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/setup@v2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm test -- --coverage
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage
+          path: |
+            packages/*/coverage/coverage-summary.json
+            apps/*/coverage/coverage-summary.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: ah
+          POSTGRES_PASSWORD: ah
+          POSTGRES_DB: ah
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ah -d ah"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      AH_INSTANCE: ci
+      DATABASE_URL: postgresql://${{ env.COMPOSE_DB_CREDENTIALS }}@127.0.0.1:5432/ah
+      REDIS_URL: redis://127.0.0.1:6379
+      DOCKER_AVAILABLE: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/setup@v2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @agent-hangar/core db:generate
+      - run: pnpm --filter @agent-hangar/core db:migrate
+      - run: docker build -t agent-hangar/workspace:dev infra/workspace
+      - run: pnpm test:integration
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: ah
+          POSTGRES_PASSWORD: ah
+          POSTGRES_DB: ah
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ah -d ah"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      AH_INSTANCE: ci
+      DATABASE_URL: postgresql://${{ env.COMPOSE_DB_CREDENTIALS }}@127.0.0.1:5432/ah
+      REDIS_URL: redis://127.0.0.1:6379
+      AGENT_MODEL_PROVIDER: fake
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/setup@v2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm --filter web exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/setup@v2
+        with:
+          version: 11
+          runtime: node@24
+          cache: true
+          install: false
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm build
+      - run: docker build -t agent-hangar/workspace:dev infra/workspace
+      - run: docker run --rm agent-hangar/workspace:dev node --version
+
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # On pull requests only the commits of the branch are scanned; on pushes to main the full
+      # history is. The gitleaks GitHub Action needs an organisation licence key; the official
+      # container image does not, so the scan runs through it until a key exists.
+      - name: Fetch base branch
+        if: github.event_name == 'pull_request'
+        run: git fetch --no-tags origin "+refs/heads/${GITHUB_BASE_REF}:refs/remotes/origin/${GITHUB_BASE_REF}"
+      - name: gitleaks (pull request scope)
+        if: github.event_name == 'pull_request'
+        run: >-
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1
+          git /repo --config /repo/.gitleaks.toml --redact --no-banner
+          --log-opts="origin/${GITHUB_BASE_REF}..HEAD"
+      - name: gitleaks (full history)
+        if: github.event_name == 'push'
+        run: >-
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1
+          git /repo --config /repo/.gitleaks.toml --redact --no-banner

@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "description": "Local-first web app where AI agents answer questions and perform coding tasks against GitHub repositories inside isolated, disposable Docker workspaces.",
-  "license": "UNLICENSED",
+  "license": "MIT",
   "type": "module",
   "packageManager": "pnpm@11.22.0",
   "engines": {

@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W0 (single agent, sequential — critical path) |
-| **Status** | 🟦 running |
-| **Progress** | 7/8 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 8/8 tasks |
 | **Branch** | `feat/w0-foundation` |
 | **Owned paths** | everything (only lane in this wave) |
 | **Depends on** | — |
@@ -48,7 +48,7 @@ Quality bar that applies to every file created here and in every later lane: Typ
 | 0.5 | Prisma 7 schema, migration, client factory | ✅ | P0 | M | 0.2 |
 | 0.6 | Infra skeleton: compose, workspace Dockerfile base, env.sh, scripts, .env.example | ✅ | P0 | M | 0.1 |
 | 0.7 | Apps skeleton: Next.js shell with tokens + shadcn, worker boot, test configs | ✅ | P0 | L | 0.3, 0.5, 0.6 |
-| 0.8 | CI workflow, README skeleton, plan dashboard, close-out PR | 📋 | P0 | S | 0.1–0.7 |
+| 0.8 | CI workflow, README skeleton, plan dashboard, close-out PR | ✅ | P0 | S | 0.1–0.7 |
 
 ---
 
@@ -527,15 +527,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 
 ## Task 0.8 — CI workflow, README skeleton, plan dashboard, close-out PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 0.1–0.7
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 0.1–0.7
 
 **Description.** Add the GitHub Actions pipeline (all jobs except mutation), the README skeleton with the decisions made here, update the plan dashboard, run the full gate set and code review, open the PR.
 
 **Acceptance criteria**
-- [ ] `.github/workflows/ci.yml` jobs: `lint`, `typecheck`, `unit` (coverage thresholds enforced), `integration` (services postgres:18 + redis:8; `DATABASE_URL`/`REDIS_URL` set; builds workspace image; runs `pnpm test:integration`), `e2e` (placeholder that runs `pnpm test:e2e` — passes with zero specs until W2-C), `build` (`pnpm build` + `docker build infra/workspace` + `docker run --rm <image> node --version`), `secret-scan` (gitleaks action); Node 24 + pnpm 11 via `pnpm/setup@v2` with store cache; concurrency group per ref
-- [ ] `README.md` skeleton with the section list of spec 05 §7, Quick start filled, "Decisions" section recording TypeScript `~6.0.3` pin (why), shadcn Base UI, Responses API, BullMQ over pg-boss (one line each), "Known gaps & plan to finish" listing Wave 1–4 lanes as pending
-- [ ] `docs/plan.md` §12 row W0 → 🟨 PR open with branch/PR number; `docs/tasks/README.md` index exists (table of lane files with status)
-- [ ] `pnpm lint && pnpm typecheck && pnpm test -- --coverage` green locally; `/bymax-quality:code-review` run with zero open findings; PR opened with the structured summary from plan §11
+- [x] `.github/workflows/ci.yml` jobs: `lint`, `typecheck`, `unit` (coverage thresholds enforced), `integration` (services postgres:18 + redis:8; `DATABASE_URL`/`REDIS_URL` set; builds workspace image; runs `pnpm test:integration`), `e2e` (placeholder that runs `pnpm test:e2e` — passes with zero specs until W2-C), `build` (`pnpm build` + `docker build infra/workspace` + `docker run --rm <image> node --version`), `secret-scan` (gitleaks action); Node 24 + pnpm 11 via `pnpm/setup@v2` with store cache; concurrency group per ref
+- [x] `README.md` skeleton with the section list of spec 05 §7, Quick start filled, "Decisions" section recording TypeScript `~6.0.3` pin (why), shadcn Base UI, Responses API, BullMQ over pg-boss (one line each), "Known gaps & plan to finish" listing Wave 1–4 lanes as pending
+- [x] `docs/plan.md` §12 row W0 → 🟨 PR open with branch/PR number; `docs/tasks/README.md` index exists (table of lane files with status)
+- [x] `pnpm lint && pnpm typecheck && pnpm test -- --coverage` green locally; `/bymax-quality:code-review` run with zero open findings; PR opened with the structured summary from plan §11
 
 **Files to create/modify**
 `.github/workflows/ci.yml`, `README.md`, `docs/plan.md` (§12), `docs/tasks/README.md`.
@@ -594,3 +594,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 - 0.5 ✅ 2026-08-19 — Prisma 7 schema, 0001_init migration with the partial unique index, prisma.config.ts over core config, adapter-pg client factory with fail-fast SELECT 1, test DB helpers, @db integration test
 - 0.6 ✅ 2026-08-19 — parameterised compose (Postgres 18 + Redis 8), env.sh mirroring resolveInstance (contract-tested), workspace image base with non-root agent user and askpass helper, idempotent setup.sh, .env.example, stub scripts
 - 0.7 ✅ 2026-08-19 — Next 16 shell (tokens, fonts, theme bootstrap, shadcn base-nova components, security headers, loopback bind, placeholder routes, typed apiFetch) and worker boot with fail-fast DB/Redis checks; web and worker at 100 % coverage
+- 0.8 ✅ 2026-08-19 — CI workflow (lint, typecheck, unit, integration, e2e, build, secret-scan via gitleaks image), README and MIT LICENSE, dashboards updated; PR #4 opened

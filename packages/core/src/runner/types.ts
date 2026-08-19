@@ -4,8 +4,8 @@
  * Layer: service (port).
  *
  * One implementation ships (`DockerWorkspaceRunner`, under `runner/docker/`); a cloud runner is
- * a second implementation of this same interface. Nothing outside `runner/docker/` imports
- * dockerode — an ESLint `no-restricted-imports` rule enforces it.
+ * a second implementation of this same interface. Nothing outside `runner/docker/` imports the
+ * Docker SDK — an ESLint `no-restricted-imports` rule enforces it.
  */
 
 /** Everything a runner needs to create a workspace. */
