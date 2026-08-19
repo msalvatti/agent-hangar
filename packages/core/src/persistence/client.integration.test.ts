@@ -26,7 +26,9 @@ if (!hasDatabase && process.env.CI !== undefined) {
 
 if (!hasDatabase) {
   console.info(
-    '[skip] @db integration tests: set DATABASE_URL (pnpm infra:up; export the values of .env.local) to run them',
+    '[skip] @db integration tests: they truncate every table, so they need a dedicated test ' +
+      'database. Create one with "AH_INSTANCE=test pnpm setup", then run them with ' +
+      'AH_ALLOW_DESTRUCTIVE_TESTS=1 and DATABASE_URL pointing at agent_hangar_test.',
   );
 }
 

@@ -97,11 +97,13 @@ jobs:
         env:
           POSTGRES_USER: ah
           POSTGRES_PASSWORD: ah
-          POSTGRES_DB: ah
+          # Named for the instance below: the test helpers refuse to truncate a database that is
+          # not called agent_hangar_<instance> with "test" as a word of the instance.
+          POSTGRES_DB: agent_hangar_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U ah -d ah"
+          --health-cmd "pg_isready -U ah -d agent_hangar_test"
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
@@ -115,9 +117,11 @@ jobs:
           --health-timeout 3s
           --health-retries 30
     env:
-      AH_INSTANCE: ci
+      AH_INSTANCE: test
       REDIS_URL: redis://127.0.0.1:6379
       DOCKER_AVAILABLE: '1'
+      # These suites truncate every table; the helpers refuse to run without this opt-in.
+      AH_ALLOW_DESTRUCTIVE_TESTS: '1'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -129,7 +133,7 @@ jobs:
         with:
           node-version: 24
       - name: Derive DATABASE_URL
-        run: echo "DATABASE_URL=postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:5432/ah" >> "$GITHUB_ENV"
+        run: echo "DATABASE_URL=postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:5432/agent_hangar_test" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @agent-hangar/core db:generate
       - run: pnpm --filter @agent-hangar/core db:migrate
@@ -145,11 +149,13 @@ jobs:
         env:
           POSTGRES_USER: ah
           POSTGRES_PASSWORD: ah
-          POSTGRES_DB: ah
+          # Named for the instance below: the test helpers refuse to truncate a database that is
+          # not called agent_hangar_<instance> with "test" as a word of the instance.
+          POSTGRES_DB: agent_hangar_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd "pg_isready -U ah -d ah"
+          --health-cmd "pg_isready -U ah -d agent_hangar_test"
           --health-interval 2s
           --health-timeout 3s
           --health-retries 30
@@ -163,9 +169,11 @@ jobs:
           --health-timeout 3s
           --health-retries 30
     env:
-      AH_INSTANCE: ci
+      AH_INSTANCE: test
       REDIS_URL: redis://127.0.0.1:6379
       AGENT_MODEL_PROVIDER: fake
+      # These suites truncate every table; the helpers refuse to run without this opt-in.
+      AH_ALLOW_DESTRUCTIVE_TESTS: '1'
     steps:
       - uses: actions/checkout@v7
         with:
@@ -177,7 +185,7 @@ jobs:
         with:
           node-version: 24
       - name: Derive DATABASE_URL
-        run: echo "DATABASE_URL=postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:5432/ah" >> "$GITHUB_ENV"
+        run: echo "DATABASE_URL=postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:5432/agent_hangar_test" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:generate
       - run: pnpm --filter web exec playwright install --with-deps chromium
