@@ -9,6 +9,8 @@
  */
 import { z } from 'zod';
 
+import { credentialFreeUrl } from '../repo-url.js';
+
 /** Tools the agent runtime exposes to the model. */
 export const toolNameSchema = z.enum(['run_shell', 'read_file', 'write_file', 'list_dir']);
 
@@ -24,9 +26,17 @@ export const conversationItemSchema = z.union([
   z.object({ type: z.literal('tool_result'), callId: z.string().min(1), output: z.string() }),
 ]);
 
-/** Repository the turn works on. The URL is credential-free; the token travels via `GIT_ASKPASS`. */
+/**
+ * Repository the turn works on.
+ *
+ * The URL must be credential-free and the schema enforces it: this value is handed to `git clone`
+ * inside the workspace, so userinfo or a token-bearing query string would put the PAT into the
+ * clone URL and into the container's process arguments instead of travelling via `GIT_ASKPASS`.
+ * Which forge is allowed is the host's policy, decided before the request is built, so it is not
+ * restated here.
+ */
 export const turnRepoSchema = z.object({
-  url: z.url(),
+  url: credentialFreeUrl,
   baseBranch: z.string().min(1),
   /** Branch the agent should commit to. */
   workBranch: z.string().min(1),

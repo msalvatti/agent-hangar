@@ -9,6 +9,7 @@
 import { z } from 'zod';
 
 import type { AgentEventType } from '../agent-protocol/types.js';
+import { credentialFreeUrl, repoUrl } from '../repo-url.js';
 
 // ────────────────────────────── shared ──────────────────────────────
 
@@ -55,60 +56,7 @@ export const MAX_CRON_LENGTH = 100;
 /** Maximum length of an IANA timezone name. */
 export const MAX_TIMEZONE_LENGTH = 64;
 
-/** Optional suffix git accepts on a clone URL. */
-const GIT_URL_SUFFIX = '.git';
-
-/** Characters GitHub allows in an owner or repository name. */
-const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
-
-/**
- * Whether a URL is exactly `https://github.com/<owner>/<repository>` with an optional `.git`.
- *
- * The contract promises a credential-free URL and this value is persisted, echoed back by the API
- * and handed to `git clone`, so the rule is an allow-list of what a clone actually needs rather
- * than a deny-list of known credential shapes. Userinfo, a query string and a fragment are each a
- * place a token hides (`https://user:ghp_…@…`, `?token=…`, `#access_token=…`); a non-default port
- * sends the clone somewhere else; and an extra path segment carries no meaning. All are refused.
- *
- * `URL` normalises `.` and `..` before this runs, and percent-escapes never match the segment
- * pattern, so neither can smuggle a third segment past the length check.
- *
- * @param value - A URL that already passed the scheme and hostname checks.
- * @returns `true` when the URL carries nothing beyond owner and repository.
- */
-function isPlainRepoUrl(value: string): boolean {
-  const parsed = URL.parse(value);
-  if (parsed === null) {
-    return false;
-  }
-  if (parsed.username !== '' || parsed.password !== '') {
-    return false;
-  }
-  // `URL` blanks the port when it is the scheme's default, so anything left here redirects the
-  // clone somewhere other than github.com:443.
-  if (parsed.port !== '') {
-    return false;
-  }
-  // Tested on the raw text rather than on `parsed.search`/`parsed.hash`: a bare `?` or `#`
-  // normalises to an empty component, and the stored URL must be exactly the clone URL.
-  if (value.includes('?') || value.includes('#')) {
-    return false;
-  }
-  const path = parsed.pathname;
-  const withoutSuffix = path.endsWith(GIT_URL_SUFFIX)
-    ? path.slice(0, -GIT_URL_SUFFIX.length)
-    : path;
-  const segments = withoutSuffix.split('/').slice(1);
-  return segments.length === 2 && segments.every((segment) => REPO_SEGMENT_PATTERN.test(segment));
-}
-
-/** Repository URL accepted by the API: `https://github.com/<owner>/<repository>[.git]`, nothing else. */
-export const repoUrl = z
-  .url({ protocol: /^https$/, hostname: /^github\.com$/ })
-  .refine(isPlainRepoUrl, {
-    message:
-      'Repository URL must be https://github.com/<owner>/<repository> with no credentials, query string or fragment',
-  });
+export { repoUrl } from '../repo-url.js';
 
 // ──────────────────────────────── repos ─────────────────────────────
 
@@ -118,7 +66,10 @@ export const listReposQuery = z.object({ query: z.string().max(MAX_TITLE_LENGTH)
 /** One repository the PAT can access. */
 export const repoSummary = z.object({
   fullName: z.string().min(1),
-  url: z.url(),
+  // Credential-free rather than GitHub-only: this URL is whatever the configured forge returned,
+  // and which forges are allowed is the host's policy (`ALLOWED_REPO_HOSTS`), not this schema's.
+  // Pinning it to github.com here would reject the local git server the end-to-end suite serves.
+  url: credentialFreeUrl,
   defaultBranch: z.string().min(1),
   private: z.boolean(),
   description: z.string().nullable(),

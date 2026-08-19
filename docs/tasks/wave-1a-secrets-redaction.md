@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-A (Wave 1, parallel with W1-B … W1-I) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/5 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1a-secrets-redaction` |
 | **Owned paths** | `packages/core/src/secrets/**` (except the frozen `types.ts`), `packages/core/src/redaction/**`, `packages/core/src/logging/**` — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./secrets/index.js`, `./redaction/index.js`, `./logging/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
@@ -41,27 +41,27 @@ Plaintext secrets exist only in memory inside `set()`/`reveal()` and in the work
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1A.1 | Master key provider: `MasterKeyFile` (0600 create/verify) + `StaticMasterKey` | 📋 | P0 | S | — |
-| 1A.2 | AES-256-GCM envelope crypto + `SecretsService` over `SecretRepository` | 📋 | P0 | M | 1A.1 |
-| 1A.3 | `Redactor`: exact registered values + shape patterns, `redactJson`, idempotent | 📋 | P0 | M | — |
-| 1A.4 | pino logger factory with redact paths + `Redactor` serializer/hook | 📋 | P0 | S | 1A.3 |
-| 1A.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1A.1–1A.4 |
+| 1A.1 | Master key provider: `MasterKeyFile` (0600 create/verify) + `StaticMasterKey` | ✅ | P0 | S | — |
+| 1A.2 | AES-256-GCM envelope crypto + `SecretsService` over `SecretRepository` | ✅ | P0 | M | 1A.1 |
+| 1A.3 | `Redactor`: exact registered values + shape patterns, `redactJson`, idempotent | ✅ | P0 | M | — |
+| 1A.4 | pino logger factory with redact paths + `Redactor` serializer/hook | ✅ | P0 | S | 1A.3 |
+| 1A.5 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 1A.1–1A.4 |
 
 ---
 
 ## Task 1A.1 — Master key provider: `MasterKeyFile` + `StaticMasterKey`
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** —
 
 **Description.** Implement the master-key source used by the secrets service: a file-backed provider (`~/.agent-hangar/master.key` by default, path from config) that creates the key with mode 0600 when missing, refuses group/world-readable files, validates the content (32 bytes as 64 hex chars), and exposes a `keyVersion`; plus an in-memory provider for tests.
 
 **Acceptance criteria**
-- [ ] `MasterKeyProvider` interface and `MasterKey { key: Buffer (32 bytes); version: number }` exported from `packages/core/src/secrets/master-key.ts`
-- [ ] `MasterKeyFile.load()` creates the parent dir (0700) and the file (0600, `randomBytes(32).toString('hex') + '\n'`) when missing; loads and caches when present
-- [ ] Refuses with `ConfigError` (message contains `chmod 600 <path>`) when the file mode has any group/world bits (`mode & 0o077 !== 0`)
-- [ ] Refuses with `ConfigError` when content is not exactly 64 hex chars (trailing newline allowed)
-- [ ] `StaticMasterKey` returns a caller-supplied 32-byte key and version (used by tests and by `FakeKeyFile`-style usage in other lanes)
-- [ ] 100 % coverage on `src/secrets/master-key.ts` and `src/secrets/master-key-file.ts`
+- [x] `MasterKeyProvider` interface and `MasterKey { key: Buffer (32 bytes); version: number }` exported from `packages/core/src/secrets/master-key.ts`
+- [x] `MasterKeyFile.load()` creates the parent dir (0700) and the file (0600, `randomBytes(32).toString('hex') + '\n'`) when missing; loads and caches when present. An existing parent directory reachable by group/other is refused, and the file is opened once with `O_NOFOLLOW` and then checked and read through that same handle, so neither a symlink nor a swap between check and read can substitute key material
+- [x] Refuses with `ConfigError` (message contains `chmod 600 <path>`) when the file mode has any group/world bits (`mode & 0o077 !== 0`)
+- [x] Refuses with `ConfigError` when content is not exactly 64 hex chars (a single trailing newline allowed; surrounding whitespace is refused, not trimmed)
+- [x] `StaticMasterKey` returns a caller-supplied 32-byte key and version (used by tests and by `FakeKeyFile`-style usage in other lanes)
+- [x] 100 % coverage on `src/secrets/master-key.ts` and `src/secrets/master-key-file.ts`
 
 **Files to create**
 `packages/core/src/secrets/master-key.ts`, `packages/core/src/secrets/master-key-file.ts`, `packages/core/src/secrets/master-key-file.test.ts`, `packages/core/src/secrets/master-key.test.ts`; modify `packages/core/vitest.config.ts` (`coverage.include` += `src/secrets/**`).
@@ -140,17 +140,17 @@ Completion Protocol (after you finish):
 
 ## Task 1A.2 — AES-256-GCM envelope crypto + `SecretsService`
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1A.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1A.1
 
 **Description.** Implement the pure encrypt/decrypt functions (AES-256-GCM, 12-byte random iv, 16-byte auth tag, `keyVersion`) and the `SecretsService` from spec 03 §6 over the `SecretRepository` port: `set` → encrypt + upsert + return `last4`; `remove`; `status()` for both keys; `reveal` (worker-only, documented) → decrypt with auth-tag verification.
 
 **Acceptance criteria**
-- [ ] `encryptSecret(plaintext, masterKey)` returns `{ ciphertext, iv (12 bytes), authTag (16 bytes), keyVersion }`; two calls with the same input produce different `iv` and `ciphertext`
-- [ ] `decryptSecret(envelope, masterKey)` round-trips; tampered ciphertext, tampered authTag, wrong key, wrong iv length, and `keyVersion !== masterKey.version` all throw `SecretIntegrityError` (never the raw `node:crypto` error)
-- [ ] `createSecretsService({ repository, masterKey })` implements `SecretsService` exactly as declared in `secrets/types.ts`; `set` rejects empty plaintext with `InvalidSecretError` (local `AgentHangarError` subclass, code `SECRET_INVALID`); `last4` = last `min(4, length)` characters
-- [ ] `reveal` returns `null` when no row exists; `status()` always returns an entry for every `SecretKey` (`{ set: false }` or `{ set: true, last4, updatedAt }`)
-- [ ] The repository never sees plaintext (test serialises the in-memory repository state and runs `assertNoCanary`)
-- [ ] 100 % coverage on `src/secrets/crypto.ts`, `src/secrets/secrets-service.ts`, `src/secrets/errors.ts`
+- [x] `encryptSecret(plaintext, masterKey, context)` returns `{ ciphertext, iv (12 bytes), authTag (16 bytes), keyVersion }`; two calls with the same input produce different `iv` and `ciphertext`. `context` is the `SecretKey` the envelope is stored under, passed to GCM as additional authenticated data, so an envelope moved to another row fails authentication
+- [x] `decryptSecret(envelope, masterKey, context)` round-trips; tampered ciphertext, tampered authTag, wrong key, wrong iv length, a mismatched `context` and `keyVersion !== masterKey.version` all throw `SecretIntegrityError` (never the raw `node:crypto` error)
+- [x] `createSecretsService({ repository, masterKey })` implements `SecretsService` exactly as declared in `secrets/types.ts`; `set` rejects empty plaintext with `InvalidSecretError` (local `AgentHangarError` subclass, code `SECRET_INVALID`); `last4` = last `min(4, length)` characters
+- [x] `reveal` returns `null` when no row exists; `status()` always returns an entry for every `SecretKey` (`{ set: false }` or `{ set: true, last4, updatedAt }`)
+- [x] The repository never sees plaintext (test serialises the in-memory repository state and runs `assertNoCanary`)
+- [x] 100 % coverage on `src/secrets/crypto.ts`, `src/secrets/secrets-service.ts`, `src/secrets/errors.ts`
 
 **Files to create**
 `packages/core/src/secrets/crypto.ts`, `packages/core/src/secrets/crypto.test.ts`, `packages/core/src/secrets/errors.ts`, `packages/core/src/secrets/secrets-service.ts`, `packages/core/src/secrets/secrets-service.test.ts`; update `packages/core/src/secrets/index.ts`.
@@ -230,17 +230,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1a-secrets-red
 
 ## Task 1A.3 — `Redactor`: exact registered values + shape patterns, `redactJson`, idempotent
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Implement the `Redactor` from spec 03 §6: replaces registered live secret values (exact substring, plus their URL-encoded form) and every `SECRET_SHAPE_PATTERNS` match with `[REDACTED]`, in strings and deep inside JSON-like values; idempotent; no false positives on ordinary hex.
 
 **Acceptance criteria**
-- [ ] `createRedactor(options?)` returns a `RegisteringRedactor` (`Redactor` + `register(values)` + `clear()`), exported from `packages/core/src/redaction/redactor.ts`
-- [ ] Exact values: registered values (and `encodeURIComponent(value)` when different) are replaced everywhere, longest first; values shorter than `MIN_REGISTERED_LENGTH` (4) are ignored with no error
-- [ ] Shape patterns: every regex in `SECRET_SHAPE_PATTERNS` is applied globally (fresh `RegExp` with the `g` flag built from `source`/`flags`; never a shared stateful instance); the Bearer token value is gone from the output
-- [ ] `redactJson` walks plain objects/arrays recursively (keys and string values), leaves numbers/booleans/null untouched, returns a new structure (input not mutated), tolerates cycles (`'[Circular]'`)
-- [ ] `redact(redact(x)) === redact(x)`; `[REDACTED]` never matches a pattern
-- [ ] 100 % coverage on `src/redaction/**`
+- [x] `createRedactor(options?)` returns a `RegisteringRedactor` (`Redactor` + `register(values)` + `clear()`), exported from `packages/core/src/redaction/redactor.ts`
+- [x] Exact values: registered values (and `encodeURIComponent(value)` when different) are replaced everywhere, longest first; values shorter than `MIN_REGISTERED_LENGTH` (4) are ignored with no error
+- [x] Shape patterns: every regex in `SECRET_SHAPE_PATTERNS` is applied globally, against the whole input so anchors and lookarounds keep their meaning, and never as a shared stateful instance. Implemented with `String.prototype.split` (which matches globally on its own and leaves `lastIndex` alone) rather than a recompiled `RegExp`, because `security/detect-non-literal-regexp` rejects building a pattern from a non-literal source and the lane forbids suppressions; the captures `split` returns are dropped so a grouped pattern cannot write matched text back out. The Bearer token value is gone from the output
+- [x] `redactJson` walks plain objects/arrays recursively (keys and string values), leaves numbers/booleans/null untouched, returns a new structure (input not mutated), tolerates cycles (`'[Circular]'`)
+- [x] `redact(redact(x)) === redact(x)`; `[REDACTED]` never matches a pattern
+- [x] 100 % coverage on `src/redaction/**`
 
 **Files to create**
 `packages/core/src/redaction/redactor.ts`, `packages/core/src/redaction/redactor.test.ts`, `packages/core/src/redaction/index.ts`; modify `packages/core/vitest.config.ts` (`coverage.include` += `src/redaction/**`), (folder barrel only — root `src/index.ts` is frozen).
@@ -320,16 +320,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1a-secrets-red
 
 ## Task 1A.4 — pino logger factory with redact paths + `Redactor` serializer/hook
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1A.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1A.3
 
 **Description.** Provide `createLogger` (pino) for apps/worker and apps/web API routes: pino `redact` on known secret-bearing paths, a `formatters.log`/`formatters.bindings` pass through `redactor.redactJson`, a `hooks.logMethod` that redacts message strings and interpolation args, and an `err` serializer that redacts message/stack. No PII, no plaintext, ever.
 
 **Acceptance criteria**
-- [ ] `createLogger({ level, redactor, name?, destination?, base? })` exported from `packages/core/src/logging/logger.ts`; returns a pino `Logger`
-- [ ] `LOG_REDACT_PATHS` constant exported (`env.GITHUB_TOKEN`, `env.OPENAI_API_KEY`, `*.env.GITHUB_TOKEN`, `*.env.OPENAI_API_KEY`, `headers.authorization`, `*.headers.authorization`, `req.headers.authorization`, `secret`, `*.secret`, `plaintext`, `*.plaintext`, `apiKey`, `*.apiKey`, `token`, `*.token`) with censor `[REDACTED]`
-- [ ] Canaries passed as message, as interpolation arg, inside merge objects at any depth, inside child bindings, inside `err.message`/`err.stack`, and under a redact path never appear in the output stream (`assertNoCanary` on the captured output)
-- [ ] Level, `name` and `base` are honoured; `destination` defaults to stdout (pino default) and can be any `DestinationStream`
-- [ ] 100 % coverage on `src/logging/**`
+- [x] `createLogger({ level, redactor, name?, destination?, base? })` exported from `packages/core/src/logging/logger.ts`; returns a pino `Logger`
+- [x] `LOG_REDACT_PATHS` constant exported (`env.GITHUB_TOKEN`, `env.OPENAI_API_KEY`, `*.env.GITHUB_TOKEN`, `*.env.OPENAI_API_KEY`, `headers.authorization`, `*.headers.authorization`, `req.headers.authorization`, `secret`, `*.secret`, `plaintext`, `*.plaintext`, `apiKey`, `*.apiKey`, `token`, `*.token`) with censor `[REDACTED]`
+- [x] Canaries passed as message, as interpolation arg, inside merge objects at any depth, inside child bindings, inside `err.message`/`err.stack`, and under a redact path never appear in the output stream (`assertNoCanary` on the captured output)
+- [x] Level, `name` and `base` are honoured; `destination` defaults to stdout (pino default) and can be any `DestinationStream`
+- [x] 100 % coverage on `src/logging/**`
 
 **Files to create**
 `packages/core/src/logging/logger.ts`, `packages/core/src/logging/logger.test.ts`, `packages/core/src/logging/index.ts`; modify `packages/core/vitest.config.ts` (`coverage.include` += `src/logging/**`), (folder barrel only — root `src/index.ts` is frozen).
@@ -405,16 +405,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1a-secrets-red
 
 ## Task 1A.5 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1A.1–1A.4
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1A.1–1A.4
 
 **Description.** Run every gate for the lane's owned paths, run the code review to zero findings, update the plan dashboard and the tasks index, open the PR and return the structured summary to the orchestrator.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter @agent-hangar/core test -- --coverage` green with 100 % lines/branches/functions/statements on `src/secrets/**`, `src/redaction/**`, `src/logging/**`
-- [ ] `pnpm --filter @agent-hangar/core test 2>&1 | grep -c TESTCANARY` prints 0
-- [ ] `/bymax-quality:code-review` run on the branch with zero open findings (CRITICAL/HIGH/MEDIUM/LOW all resolved or explicitly justified in the PR)
-- [ ] `docs/plan.md` §12 row W1-A → 🟨 with branch + PR number + coverage; `docs/tasks/README.md` row for this lane updated
-- [ ] PR opened against `main`; structured summary `{ pr, branch, headSha, gates, coverage, contractChangeRequests }` returned
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter @agent-hangar/core test -- --coverage` green with 100 % lines/branches/functions/statements on `src/secrets/**`, `src/redaction/**`, `src/logging/**`
+- [x] `pnpm --filter @agent-hangar/core test 2>&1 | grep -c TESTCANARY` prints 0
+- [x] `/bymax-quality:code-review` run on the branch with zero open findings (CRITICAL/HIGH/MEDIUM/LOW all resolved or explicitly justified in the PR)
+- [x] `docs/plan.md` §12 row W1-A → 🟨 with branch + PR number + coverage; `docs/tasks/README.md` row for this lane updated
+- [x] PR opened against `main`; structured summary `{ pr, branch, headSha, gates, coverage, contractChangeRequests }` returned
 
 **Files to modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (lane row only), `docs/tasks/wave-1a-secrets-redaction.md` (header + log).
@@ -470,3 +470,7 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1a-secrets-red
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+- 1A.1 ✅ 2026-08-19 — master key providers: 0600 atomic key file with owner-only enforcement, hex validation and caching, plus StaticMasterKey.
+- 1A.2 ✅ 2026-08-19 — AES-256-GCM envelope crypto with fail-closed integrity checks and the SecretsService over the SecretRepository port.
+- 1A.3 ✅ 2026-08-19 — redactor over registered values (raw, percent-encoded and JSON-escaped) plus the contract shape patterns, with cycle-safe redactJson.
+- 1A.4 ✅ 2026-08-19 — redacting pino factory: name-based redact paths, argument hook, record and binding formatters, error serializer and a final scrub of the written line.

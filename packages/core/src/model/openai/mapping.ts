@@ -164,9 +164,10 @@ function isAbortError(value: unknown): boolean {
  * The last gate every `error` {@link ModelEvent} message passes through. Since no text from the
  * SDK, the server or the platform is copied into a message any more, it has nothing to strip in
  * normal operation — it is kept, and applied unconditionally, so that reintroducing a forwarded
- * string somewhere cannot silently reintroduce a leak with it. It is also the seam the shared
- * `Redactor` of the secrets contract collapses into once that lane lands, which is why it is
- * exported and covered directly rather than only through the paths that call it.
+ * string somewhere cannot silently reintroduce a leak with it. It is the seam `createRedactor`
+ * from `src/redaction/` slots into, which is why it is exported and covered directly rather than
+ * only through the paths that call it; that swap is a change of its own, not of this one, because
+ * the shared redactor also registers exact values and this module holds no credential to register.
  *
  * On its own it is *not* sufficient, which is the reason the messages became controlled: a shape
  * list cannot match a credential whose shape it does not know, and `OPENAI_BASE_URL` exists so a

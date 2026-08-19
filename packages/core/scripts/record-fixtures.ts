@@ -89,8 +89,9 @@ const RECORDINGS: Recording[] = [
  * `OPENAI_BASE_URL` may use exactly such a key. Shape matching is no safety net for it either,
  * which is the whole reason the key is also removed literally.
  *
- * Mirrors the shape redaction of the model mapping layer; both are placeholders for the shared
- * `Redactor` of the secrets contract, which has no implementation yet.
+ * Mirrors the shape redaction of the model mapping layer. `createRedactor` in `src/redaction/`
+ * now covers both passes — registered exact values and shape patterns — and replacing this
+ * function with it is a worthwhile change on its own terms.
  *
  * @param line - Serialised event, or a plain message.
  * @param apiKey - The live key, removed literally, in its JSON-escaped form, and by shape.

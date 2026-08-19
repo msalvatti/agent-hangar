@@ -80,6 +80,13 @@ from `@agent-hangar/core` and the bundler prunes the Node-only modules (Prisma, 
 BullMQ, dockerode, OpenAI) because nothing runs at import time. Keep it that way — no module in
 `packages/core/src` may open connections, register listeners or touch `process` at the top level.
 
+Node does not enable the `development` condition on its own, so any dev process that runs from
+source must ask for it: the worker's `dev` script passes `--conditions=development` to `tsx`, and
+the root `dev` script exports it through `NODE_OPTIONS` so every child inherits it. Vitest and
+Next.js already resolve the source without help. A new `tsx`-based script that imports
+`@agent-hangar/core` needs the flag too, or it fails with `ERR_MODULE_NOT_FOUND` on `dist/index.js`
+in a tree that has never been built.
+
 Each `exports` entry of `packages/core` carries a `development` condition pointing at the
 TypeScript source (`./src/index.ts`, `./src/testing/index.ts`) ahead of `default`, which points at
 the build output. Tests and dev servers therefore resolve the source and need no prior build,
