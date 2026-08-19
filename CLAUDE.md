@@ -80,6 +80,13 @@ from `@agent-hangar/core` and the bundler prunes the Node-only modules (Prisma, 
 BullMQ, dockerode, OpenAI) because nothing runs at import time. Keep it that way — no module in
 `packages/core/src` may open connections, register listeners or touch `process` at the top level.
 
+Each `exports` entry of `packages/core` carries a `development` condition pointing at the
+TypeScript source (`./src/index.ts`, `./src/testing/index.ts`) ahead of `default`, which points at
+the build output. Tests and dev servers therefore resolve the source and need no prior build,
+while production resolution still goes to `dist`. Do not remove those conditions: every lane works
+in a fresh worktree with no build artefacts, and without them `pnpm test` fails with
+"Failed to resolve entry for package @agent-hangar/core" the moment a test imports the package.
+
 ## Gates before any PR
 
 1. `pnpm lint && pnpm format:check && pnpm typecheck` — exit 0.
