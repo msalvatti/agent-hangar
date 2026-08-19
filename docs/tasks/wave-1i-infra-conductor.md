@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-I (parallel with W1-A … W1-H; no Docker-integration tests — scripts are tested with PATH shims) |
 | **Status** | 🟦 running |
-| **Progress** | 1/6 tasks |
+| **Progress** | 2/6 tasks |
 | **Branch** | `feat/w1i-infra-conductor` |
 | **Owned paths** | `infra/scripts/{setup,run,archive,doctor,rotate-key,ws,db-prune}.sh`, `infra/scripts/lib/**` (node helpers), `infra/scripts/*.test.ts`, `.conductor/settings.toml`, `infra/docker-compose.yml`, `.env.example`, root `package.json` **scripts block only**, root `vitest.config.ts` (`scripts` project lines only). `infra/scripts/env.sh` is W0 output with no other Wave 1 owner — additive edits allowed (see rules). |
 | **Depends on** | W0 merged to `main` (Tasks 1I.3 and 1I.4 additionally need W1-A, W1-C, W1-E merged — this lane runs in the second Wave 1 batch, see plan §13) |
@@ -44,7 +44,7 @@ Everything is keyed by instance (`AH_INSTANCE` / `AH_PORT_BASE`, with `CONDUCTOR
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
 | 1I.1 | `run.sh`, `setup.sh` completion, compose finishing, `.env.example` final, root scripts block | ✅ | P0 | M | — |
-| 1I.2 | `archive.sh`, `ws.sh` (`ws:list` / `ws:reap`), `db-prune.sh` | 📋 | P0 | S | 1I.1 |
+| 1I.2 | `archive.sh`, `ws.sh` (`ws:list` / `ws:reap`), `db-prune.sh` | ✅ | P0 | S | 1I.1 |
 | 1I.3 | `doctor.sh` + node helpers (secrets status, OpenAI model check) with snapshot tests | 📋 | P0 | L | 1I.1, W1-A + W1-C + W1-E merged |
 | 1I.4 | `rotate-key.sh` + `lib/rotate-key.ts` (re-encrypt with `keyVersion + 1`, atomic key swap, backup) | 📋 | P1 | M | 1I.3 |
 | 1I.5 | `.conductor/settings.toml`, two-instance manual checklist, README "Working with Conductor" draft (appendix) | 📋 | P0 | S | 1I.1, 1I.2 |
@@ -181,15 +181,15 @@ Completion Protocol (after you finish):
 
 ## Task 1I.2 — `archive.sh`, `ws.sh` (`ws:list` / `ws:reap`), `db-prune.sh`
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1I.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1I.1
 
 **Description.** Implement the teardown path Conductor calls when a workspace is archived, plus the two debug aids for workspace containers and the retention script from spec 02 §5. Archive must leave no `ah-ws-<instance>-*` container and no compose resources of the instance behind, and must never touch another instance.
 
 **Acceptance criteria**
-- [ ] `infra/scripts/archive.sh`: resolves env, runs `docker compose -f infra/docker-compose.yml down -v --remove-orphans` for the instance's project, then `docker rm -f` every container returned by `docker ps -aq --filter "label=ah.instance=<instance>"`; `--keep-env` keeps `.env.local`, default removes it; `--dry-run` prints what would be removed; exit 0 even when nothing exists
-- [ ] `infra/scripts/ws.sh list` prints `docker ps --filter "label=ah.instance=<instance>" --format 'table {{.Names}}\t{{.Status}}\t{{.Label "ah.kind"}}\t{{.Label "ah.chat"}}{{.Label "ah.jobRun"}}'`; `ws.sh reap` removes them (`docker rm -f`), printing the count; both scoped strictly by the instance label, never by name prefix alone
-- [ ] `infra/scripts/db-prune.sh [--days N]` (default 30) deletes `Workspace` rows with `status = 'DESTROYED' AND "destroyedAt" < now() - interval 'N days'` via `docker compose … exec -T postgres psql -U ah -d $POSTGRES_DB -c …`, prints the count, `--dry-run` counts only
-- [ ] Tests with shims: archive calls compose `down -v` with the right project env, calls `docker ps -aq --filter label=ah.instance=<slug>` and `docker rm -f <ids>` exactly once with all ids, never calls `rm -f` when `ps` returns nothing, removes/keeps the env file per flag, `--dry-run` performs no `rm`/`down`; `ws.sh list|reap` argv assertions; `db-prune.sh` SQL contains the interval and the status filter, `--days 7` → `7 days`, unknown subcommand → exit 2
+- [x] `infra/scripts/archive.sh`: resolves env, runs `docker compose -f infra/docker-compose.yml down -v --remove-orphans` for the instance's project, then `docker rm -f` every container returned by `docker ps -aq --filter "label=ah.instance=<instance>"`; `--keep-env` keeps `.env.local`, default removes it; `--dry-run` prints what would be removed; exit 0 even when nothing exists
+- [x] `infra/scripts/ws.sh list` prints `docker ps --filter "label=ah.instance=<instance>" --format 'table {{.Names}}\t{{.Status}}\t{{.Label "ah.kind"}}\t{{.Label "ah.chat"}}{{.Label "ah.jobRun"}}'`; `ws.sh reap` removes them (`docker rm -f`), printing the count; both scoped strictly by the instance label, never by name prefix alone
+- [x] `infra/scripts/db-prune.sh [--days N]` (default 30) deletes `Workspace` rows with `status = 'DESTROYED' AND "destroyedAt" < now() - interval 'N days'` via `docker compose … exec -T postgres psql -U ah -d $POSTGRES_DB -c …`, prints the count, `--dry-run` counts only
+- [x] Tests with shims: archive calls compose `down -v` with the right project env, calls `docker ps -aq --filter label=ah.instance=<slug>` and `docker rm -f <ids>` exactly once with all ids, never calls `rm -f` when `ps` returns nothing, removes/keeps the env file per flag, `--dry-run` performs no `rm`/`down`; `ws.sh list|reap` argv assertions; `db-prune.sh` SQL contains the interval and the status filter, `--days 7` → `7 days`, unknown subcommand → exit 2
 
 **Files to create/modify**
 `infra/scripts/archive.sh`, `infra/scripts/ws.sh`, `infra/scripts/db-prune.sh`, `infra/scripts/{archive.test,ws.test,db-prune.test}.ts`.
@@ -586,3 +586,4 @@ _To be written by Task 1I.5. Target: README §7, final prose, English._
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 - 1I.1 ✅ 2026-08-19 — run.sh single entry point, idempotent setup.sh with --force/--rebuild-image/--skip-doctor/--skip-install, tuned compose healthchecks, final root scripts block, PATH-shimmed tests at 100% coverage.
+- 1I.2 ✅ 2026-08-19 — archive.sh (compose down -v + label-scoped reap), ws.sh list/reap, db-prune.sh with --days/--dry-run, all scoped strictly by the ah.instance label.
