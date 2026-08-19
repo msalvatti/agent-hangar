@@ -54,7 +54,7 @@ export interface UseTurnEventsOptions {
   /** Resume point for the first connection. */
   lastEventId?: string | null;
   /** `EventSource` factory, injectable for tests. */
-  createEventSource?: CreateEventSource;
+  createEventSource?: CreateEventSource | undefined;
   /** Clock, injectable for tests. */
   now?: () => number;
 }
