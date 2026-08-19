@@ -17,7 +17,13 @@ import { REDACTED_TOKEN } from '../secrets/types.js';
 import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.js';
 
 import type { CreateLoggerOptions, LoggerRedactor } from './logger.js';
-import { LOG_REDACT_PATHS, createLogger } from './logger.js';
+import { LOG_REDACT_PATHS, SENSITIVE_FIELD_NAMES, createLogger } from './logger.js';
+
+/**
+ * A credential shaped like nothing the pattern layer recognises and registered nowhere, so only
+ * field-name redaction can catch it.
+ */
+const OPAQUE_CREDENTIAL = 'opaque-value-1234';
 
 /** A logger writing into memory, plus access to what it wrote. */
 interface Capture {
@@ -224,6 +230,97 @@ describe('createLogger', () => {
 
     assertNoCanary(sink.text());
     expect(sink.records()[0]?.err).toEqual({ reason: REDACTED_TOKEN, code: 7 });
+  });
+
+  /**
+   * pino's `redact` paths are matched case-sensitively, and header names are not. An
+   * `Authorization` header is the ordinary spelling in every HTTP client, and its value is a
+   * credential this process never registered, so no other layer would catch it.
+   */
+  it.each(['Authorization', 'AUTHORIZATION', 'authoriZation'])(
+    'blanks a %s header whatever its case',
+    (field) => {
+      const sink = capture();
+
+      sink.logger.info({ headers: { [field]: `Bearer ${OPAQUE_CREDENTIAL}` } }, 'req');
+
+      expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+      expect(sink.records()[0]?.msg).toBe('req');
+    },
+  );
+
+  /**
+   * The `*` wildcard in a redact path spans exactly one level, so anything nested deeper was
+   * written in full. Request context is routinely two or three levels down.
+   */
+  it('blanks a sensitive field nested deeper than the redact paths reach', () => {
+    const sink = capture();
+
+    sink.logger.info(
+      { outer: { inner: { headers: { authorization: `Bearer ${OPAQUE_CREDENTIAL}` } } } },
+      'req',
+    );
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+  });
+
+  /**
+   * Every name the logger claims to protect must actually be protected at depth and in a
+   * different case. This is the lockstep guard: adding a name to one list and not the other, or
+   * adding a redact path without a matching value pattern, fails here rather than in production.
+   */
+  it.each([...SENSITIVE_FIELD_NAMES])('blanks %s at depth in an unexpected case', (field) => {
+    const sink = capture();
+    const shouted = field.toUpperCase();
+    const nested: Record<string, unknown> = { deep: { [shouted]: OPAQUE_CREDENTIAL } };
+
+    sink.logger.info(nested, 'record');
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+  });
+
+  /**
+   * Only the value is replaced, never the quotes or the comma around it, so the line a consumer
+   * parses is still a record and the untouched fields are still readable.
+   */
+  it('keeps the line parseable and the other fields intact when it blanks a value', () => {
+    const sink = capture();
+
+    sink.logger.info(
+      { requestId: 'abc-123', headers: { Authorization: OPAQUE_CREDENTIAL } },
+      'req',
+    );
+
+    const record = sink.records()[0];
+    expect(record?.requestId).toBe('abc-123');
+    expect(record?.msg).toBe('req');
+    expect((record?.headers as Record<string, unknown>).Authorization).toBe(REDACTED_TOKEN);
+  });
+
+  /**
+   * A value carrying an escaped quote must be blanked whole; stopping at the escape would leave
+   * the tail of the credential in the output.
+   */
+  it('blanks a value that contains an escaped quote', () => {
+    const sink = capture();
+
+    sink.logger.info({ headers: { Authorization: `a"${OPAQUE_CREDENTIAL}` } }, 'req');
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+  });
+
+  /**
+   * A field whose name merely ends with a protected name is a different field; blanking it would
+   * destroy ordinary diagnostics for no gain.
+   */
+  it('leaves a field whose name only ends with a protected name alone', () => {
+    const sink = capture();
+
+    sink.logger.info({ tokenCount: 42, refreshTokenIssuedAt: 'yesterday' }, 'stats');
+
+    const record = sink.records()[0];
+    expect(record?.tokenCount).toBe(42);
+    expect(record?.refreshTokenIssuedAt).toBe('yesterday');
   });
 
   /**

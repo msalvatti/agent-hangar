@@ -13,8 +13,15 @@
  * 4. `serializers.err` scrubs the message and stack of a logged error, which routinely quote the
  *    input that caused them, and scrubs a non-`Error` `err` value without mangling it.
  * 5. `hooks.streamWrite` scrubs the finished line as a last resort, covering anything the earlier
- *    layers could not walk. A line that redaction would leave as invalid JSON is dropped rather
+ *    layers could not walk, and blanks the value of every sensitive field name wherever it appears
+ *    in the serialised record. A line that redaction would leave as invalid JSON is dropped rather
  *    than written, because a malformed line is recoverable and a leaked credential is not.
+ *
+ * Layers 1 and 5 both work by field name, and they are both needed. pino's `redact` paths are
+ * matched case-sensitively and reach one level below the root, so `{ headers: { Authorization } }`,
+ * `{ cfg: { ApiKey } }` and an `authorization` three levels down all slip past them. Layer 5 runs
+ * over the finished JSON text, which makes it case-insensitive and depth-independent for free. It
+ * replaces only the interior of the string value, so the line stays parseable.
  *
  * No transport is configured: pretty printing is the application's decision, and a transport
  * would move serialisation into a worker thread where these hooks do not run.
@@ -49,6 +56,41 @@ export const LOG_REDACT_PATHS: readonly string[] = [
   '*.apiKey',
   'token',
   '*.token',
+];
+
+/**
+ * Field names whose value is blanked wherever it appears in a record, at any depth and in any
+ * spelling. Kept in step with {@link LOG_REDACT_PATHS}; a test asserts every name here is actually
+ * blanked, so a name added to one list without the other fails the build.
+ */
+export const SENSITIVE_FIELD_NAMES: readonly string[] = [
+  'GITHUB_TOKEN',
+  'OPENAI_API_KEY',
+  'authorization',
+  'secret',
+  'plaintext',
+  'apiKey',
+  'token',
+];
+
+/**
+ * One pattern per {@link SENSITIVE_FIELD_NAMES} entry, matching the interior of that field's string
+ * value in a serialised record.
+ *
+ * The key is matched in a lookbehind so only the value is replaced and the surrounding JSON
+ * survives, `i` makes the field name case-insensitive, and `(?:[^"\\]|\\.)*` walks the string
+ * body without stopping at an escaped quote. They are written out as literals rather than built
+ * from the names above because `security/detect-non-literal-regexp` rejects compiling a pattern
+ * from a non-literal source and this project allows no suppressions.
+ */
+const SENSITIVE_VALUE_PATTERNS: readonly RegExp[] = [
+  /(?<="GITHUB_TOKEN"\s*:\s*")(?:[^"\\]|\\.)*/gi,
+  /(?<="OPENAI_API_KEY"\s*:\s*")(?:[^"\\]|\\.)*/gi,
+  /(?<="authorization"\s*:\s*")(?:[^"\\]|\\.)*/gi,
+  /(?<="secret"\s*:\s*")(?:[^"\\]|\\.)*/gi,
+  /(?<="plaintext"\s*:\s*")(?:[^"\\]|\\.)*/gi,
+  /(?<="apiKey"\s*:\s*")(?:[^"\\]|\\.)*/gi,
+  /(?<="token"\s*:\s*")(?:[^"\\]|\\.)*/gi,
 ];
 
 /** Line written when redaction would have produced invalid JSON. */
@@ -107,6 +149,23 @@ function redactSerializedError(error: Error, redactor: LoggerRedactor): unknown 
 }
 
 /**
+ * Blanks the value of every sensitive field name in a serialised record.
+ *
+ * `String.replace` with a global pattern resets the pattern's cursor itself, so the shared literals
+ * carry no state between calls.
+ *
+ * @param line - Serialised record.
+ * @returns The line with each sensitive field's string value replaced by the censor token.
+ */
+function blankSensitiveValues(line: string): string {
+  let output = line;
+  for (const pattern of SENSITIVE_VALUE_PATTERNS) {
+    output = output.replace(pattern, REDACTED_TOKEN);
+  }
+  return output;
+}
+
+/**
  * Applies the last-resort scrub to a finished line, keeping the output parseable.
  *
  * @param line - Serialised record, newline terminated.
@@ -114,7 +173,7 @@ function redactSerializedError(error: Error, redactor: LoggerRedactor): unknown 
  * @returns The scrubbed line, or a fixed notice when scrubbing broke the JSON.
  */
 function redactLine(line: string, redactor: LoggerRedactor): string {
-  const scrubbed = redactor.redact(line);
+  const scrubbed = blankSensitiveValues(redactor.redact(line));
   if (scrubbed === line) {
     return line;
   }
