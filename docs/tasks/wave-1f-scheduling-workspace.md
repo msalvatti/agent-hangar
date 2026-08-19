@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-F (Wave 1, parallel with W1-A … W1-I) |
 | **Status** | 🟦 running |
-| **Progress** | 2/5 tasks |
+| **Progress** | 3/5 tasks |
 | **Branch** | `feat/w1f-scheduling-workspace` |
 | **Owned paths** | `packages/core/src/scheduling/**` (except the frozen `types.ts`), `packages/core/src/workspace/**` (except the frozen `types.ts`), `packages/core/src/restore/**`, `packages/core/src/queues/queues.ts`, `packages/core/src/queues/schedulers.ts` (+ their `*.test.ts` / `*.integration.test.ts`; `queues/contracts.ts` is frozen) — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./scheduling/index.js`, `./workspace/index.js`, `./restore/index.js`, `./queues/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
@@ -45,7 +45,7 @@ This lane fills in the pure domain logic that W2-A (API) and W2-B (worker) orche
 |---|---|---|---|---|---|
 | 1F.1 | Scheduling: cron validation, `nextRunAt` (tz/DST), `describeCron`, overlap policy, reconcile diff, scheduler keys | ✅ | P0 | M | — |
 | 1F.2 | Workspace lifecycle: transition tables + `assertTransition`, `ensureWorkspaceDecision`, idle-TTL selection, orphan reconcile | ✅ | P0 | M | — |
-| 1F.3 | Restore context: history window, `TOOL_SUMMARY` compaction text, restoration notice, `buildRestoreContext`, `buildTurnRequest` | 📋 | P0 | M | 1F.2 |
+| 1F.3 | Restore context: history window, `TOOL_SUMMARY` compaction text, restoration notice, `buildRestoreContext`, `buildTurnRequest` | ✅ | P0 | M | 1F.2 |
 | 1F.4 | BullMQ factories: queues, worker connection, Job Scheduler wrappers, `@redis` integration tests | 📋 | P0 | M | 1F.1 |
 | 1F.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1F.1–1F.4 |
 
@@ -269,17 +269,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1f-scheduling-
 
 ## Task 1F.3 — Restore context: history window, compaction, notice, `buildRestoreContext`, `buildTurnRequest`
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1F.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1F.2
 
 **Description.** Implement `packages/core/src/restore/**`: the history window (last N messages within a char budget, always keeping the first USER message, with a compaction item when messages are dropped), the exact `TOOL_SUMMARY` text format, the exact restoration notice text from spec 02 §4, `buildRestoreContext` (chat + ordered messages → `RestoreContext` with `expectedHeadSha` when `workBranch` + `lastPushedSha` exist), and `buildTurnRequest` (→ a Zod-validated `TurnRequest` with default limits for chats and jobs).
 
 **Acceptance criteria**
-- [ ] `buildHistoryWindow(messages, budget)` returns `ConversationItem[]` in seq order; roles mapped USER→user, ASSISTANT→assistant, SYSTEM/TOOL_SUMMARY→system; honours `maxMessages` and `maxChars` (counting content length, newest first); always keeps the first USER message; when anything is dropped, inserts one `system` compaction item right after the anchor: `"<N> earlier messages omitted to fit the context window.\nEarlier tool activity:\n- <TOOL_SUMMARY lines of dropped messages, max 20, oldest first>"` (second part only when any were tool summaries)
-- [ ] `toolSummaryText(entry)` formats exactly: run_shell → ``ran `<command ≤ 80 chars, "…" when cut>` → exit <code> (<duration>)``, TIMED_OUT → ``ran `<cmd>` → timed out after <duration>``, FAILED with null exit → ``ran `<cmd>` → failed (<duration>)``; write_file → `wrote <path> (<bytes> bytes)`; read_file → `read <path>`; list_dir → `listed <path or "/">`; duration humanised `350 ms` / `12 s` / `2 min 3 s`
-- [ ] `restorationNotice({ at, workBranch })` with workBranch → exactly `` Workspace recreated from history at <ISO>. Uncommitted changes from the previous workspace are gone; pushed work on `<workBranch>` is checked out. ``; without → `Workspace recreated from history at <ISO>. Uncommitted changes from the previous workspace are gone; no pushed work was found, so the base branch is checked out.`
-- [ ] `buildRestoreContext({ chat, messages, now, budget? })` fills every field of W0's `RestoreContext`; `expectedHeadSha` is set only when `workBranch` and `lastPushedSha` are both present
-- [ ] `buildTurnRequest(input)` returns `turnRequestSchema.parse(...)` output; `prepare.clone` is `true` for `create` decisions and `false` for `reuse`; `repo.expectedHeadSha` only on create with a sha; `repo.workBranch` = `chat.workBranch ?? defaultWorkBranch(chat.id)`; limits default `DEFAULT_CHAT_TURN_LIMITS` (40 steps, 20 min, 5 min tool, 32 KiB) / `DEFAULT_JOB_TURN_LIMITS` (30 min) with per-call overrides; `buildJobTurnRequest` builds the single-user-item request for scheduled runs
-- [ ] 100 % coverage on `src/restore/**`
+- [x] `buildHistoryWindow(messages, budget)` returns `ConversationItem[]` in seq order; roles mapped USER→user, ASSISTANT→assistant, SYSTEM/TOOL_SUMMARY→system; honours `maxMessages` and `maxChars` (counting content length, newest first); always keeps the first USER message; when anything is dropped, inserts one `system` compaction item right after the anchor: `"<N> earlier messages omitted to fit the context window.\nEarlier tool activity:\n- <TOOL_SUMMARY lines of dropped messages, max 20, oldest first>"` (second part only when any were tool summaries)
+- [x] `toolSummaryText(entry)` formats exactly: run_shell → ``ran `<command ≤ 80 chars, "…" when cut>` → exit <code> (<duration>)``, TIMED_OUT → ``ran `<cmd>` → timed out after <duration>``, FAILED with null exit → ``ran `<cmd>` → failed (<duration>)``; write_file → `wrote <path> (<bytes> bytes)`; read_file → `read <path>`; list_dir → `listed <path or "/">`; duration humanised `350 ms` / `12 s` / `2 min 3 s`
+- [x] `restorationNotice({ at, workBranch })` with workBranch → exactly `` Workspace recreated from history at <ISO>. Uncommitted changes from the previous workspace are gone; pushed work on `<workBranch>` is checked out. ``; without → `Workspace recreated from history at <ISO>. Uncommitted changes from the previous workspace are gone; no pushed work was found, so the base branch is checked out.`
+- [x] `buildRestoreContext({ chat, messages, now, budget? })` fills every field of W0's `RestoreContext`; `expectedHeadSha` is set only when `workBranch` and `lastPushedSha` are both present
+- [x] `buildTurnRequest(input)` returns `turnRequestSchema.parse(...)` output; `prepare.clone` is `true` for `create` decisions and `false` for `reuse`; `repo.expectedHeadSha` only on create with a sha; `repo.workBranch` = `chat.workBranch ?? defaultWorkBranch(chat.id)`; limits default `DEFAULT_CHAT_TURN_LIMITS` (40 steps, 20 min, 5 min tool, 32 KiB) / `DEFAULT_JOB_TURN_LIMITS` (30 min) with per-call overrides; `buildJobTurnRequest` builds the single-user-item request for scheduled runs
+- [x] 100 % coverage on `src/restore/**`
 
 **Files to create**
 `packages/core/src/restore/history.ts`, `history.test.ts`, `compaction.ts`, `compaction.test.ts`, `notice.ts`, `notice.test.ts`, `build.ts`, `build.test.ts`, `limits.ts`, `limits.test.ts`, `index.ts`; modify `packages/core/vitest.config.ts` (+ the owned folder `index.ts`).
@@ -550,3 +550,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1f-scheduling-
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 - 1F.1 ✅ 2026-08-19 — cron validation/description/next-run over cron-parser 5.10.0, overlap policy, scheduler keys and reconcile plan; 46 unit tests, 100 % on `src/scheduling/**`
 - 1F.2 ✅ 2026-08-19 — workspace and run transition tables, ensure-workspace decision with `WorkspaceBusyError`, idle-TTL selection and orphan reconcile; 33 unit tests, 100 % on `src/workspace/**`
+- 1F.3 ✅ 2026-08-19 — history window with anchor and compaction item, TOOL_SUMMARY text, workspace notices, restore-context and turn-request builders; schema failures report field paths only, proven with canaries; 57 unit tests, 100 % on `src/restore/**`

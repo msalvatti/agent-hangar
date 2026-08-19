@@ -52,6 +52,7 @@ export default defineConfig({
         'src/repo-url.ts',
         'src/scheduling/**',
         'src/workspace/**',
+        'src/restore/**',
       ],
       exclude: ['**/*.test.ts', 'src/**/types.ts', 'src/index.ts', 'src/persistence/generated/**'],
       thresholds: {
