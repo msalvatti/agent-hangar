@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-D (no Docker, no Postgres, no Redis — pure Node + git in a temp dir) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/5 tasks |
+| **Status** | 🟦 running |
+| **Progress** | 1/5 tasks |
 | **Branch** | `feat/w1d-agent-runtime` |
 | **Owned paths** | `packages/agent-runtime/**` (src, tests, `esbuild.config.mjs`, `vitest.config.ts`, `package.json` scripts of this package, `scripts/`) · the two Dockerfile `COPY` lines and the `infra:image` root-script change are **requested via the PR description** (W1-B owns `infra/workspace/**`, W1-I owns root `package.json` scripts) |
 | **Depends on** | W0 merged to `main` |
@@ -45,7 +45,7 @@ Quality bar: TypeScript strict, zero `any`, zero suppression comments, no `enum`
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1D.1 | Package scaffold: protocol I/O, redaction, version, `--version` CLI, esbuild config + bundle check | 📋 | P0 | M | — |
+| 1D.1 | Package scaffold: protocol I/O, redaction, version, `--version` CLI, esbuild config + bundle check | ✅ | P0 | M | — |
 | 1D.2 | Tools: path confinement, `run_shell`, `read_file`, `write_file`, `list_dir`, registry + JSON schemas, child env scrubbing | 📋 | P0 | L | 1D.1 |
 | 1D.3 | `prepare.ts` (clone/checkout/expectedHeadSha) + `git-events.ts` (push detection) | 📋 | P0 | M | 1D.2 |
 | 1D.4 | `loop.ts` step loop + provider seam + `turn` command wiring (cancel, heartbeat, limits, retries) | 📋 | P0 | L | 1D.2, 1D.3 |
@@ -55,17 +55,17 @@ Quality bar: TypeScript strict, zero `any`, zero suppression comments, no `enum`
 
 ## Task 1D.1 — Package scaffold: protocol I/O, redaction, version, `--version` CLI, esbuild config + bundle check
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Set up the package for real: Vitest config with 100 % thresholds, the NDJSON protocol adapters over the core codec (`readTurnRequest`, event writer with backpressure, stderr diagnostics), the runtime redactor, the version constant, the CLI dispatcher with `--version`, the esbuild bundle config with the core tree-shake plugin, and a bundle check script. Building the bundle in the first task surfaces any tree-shaking problem immediately.
 
 **Acceptance criteria**
-- [ ] `packages/agent-runtime/vitest.config.ts` (node env, v8, include `src/**`, exclude `src/bin.ts` + tests, thresholds 100×4) and package scripts `build`, `test`, `lint`, `typecheck`, `check:bundle`
-- [ ] `protocol.ts`: `readTurnRequest(stdin)` parses the first valid `TurnRequest` via `parseNdjsonStream(turnRequestSchema)` and throws `ProtocolError` on malformed/absent input; `createEventWriter(stdout, redactor)` → `{ emit(event), lastEmittedAt() }` writes `encodeLine(redacted)` honouring backpressure; `createDiagnostics(stderr, redactor)` → `diag(message)`
-- [ ] `redact.ts`: `createRuntimeRedactor({ values })` → `{ redactText, redactEvent }` applying exact values (longest first) then `SECRET_SHAPE_PATTERNS` with `[REDACTED]`; `redactEvent` covers every text-carrying field of `AgentEvent` and is idempotent
-- [ ] `cli.ts` exports `runCli(argv, io): Promise<number>`; `--version` prints `RUNTIME_VERSION`; unknown command → usage on stderr, exit 64; `turn` is a stub returning 70 until 1D.4 (tested as such, replaced later)
-- [ ] `esbuild.config.mjs` bundles `src/bin.ts` → `dist/cli.js` (ESM, node24, sourcemap, shebang, createRequire banner, `define` for the version, core side-effect-free plugin, chmod 755); `scripts/check-bundle.mjs` asserts size < 2 MB, no host-only module markers, and `node dist/cli.js --version` works from an empty temp dir
-- [ ] 100 % coverage on everything in `src/**` except `src/bin.ts`
+- [x] `packages/agent-runtime/vitest.config.ts` (node env, v8, include `src/**`, exclude `src/bin.ts` + tests, thresholds 100×4) and package scripts `build`, `test`, `lint`, `typecheck`, `check:bundle`
+- [x] `protocol.ts`: `readTurnRequest(stdin)` parses the first valid `TurnRequest` via `parseNdjsonStream(turnRequestSchema)` and throws `ProtocolError` on malformed/absent input; `createEventWriter(stdout, redactor)` → `{ emit(event), lastEmittedAt() }` writes `encodeLine(redacted)` honouring backpressure; `createDiagnostics(stderr, redactor)` → `diag(message)`
+- [x] `redact.ts`: `createRuntimeRedactor({ values })` → `{ redactText, redactEvent }` applying exact values (longest first) then `SECRET_SHAPE_PATTERNS` with `[REDACTED]`; `redactEvent` covers every text-carrying field of `AgentEvent` and is idempotent
+- [x] `cli.ts` exports `runCli(argv, io): Promise<number>`; `--version` prints `RUNTIME_VERSION`; unknown command → usage on stderr, exit 64; `turn` is a stub returning 70 until 1D.4 (tested as such, replaced later)
+- [x] `esbuild.config.mjs` bundles `src/bin.ts` → `dist/cli.js` (ESM, node24, sourcemap, shebang, createRequire banner, `define` for the version, core side-effect-free plugin, chmod 755); `scripts/check-bundle.mjs` asserts size < 2 MB, no host-only module markers, and `node dist/cli.js --version` works from an empty temp dir
+- [x] 100 % coverage on everything in `src/**` except `src/bin.ts`
 
 **Files to create**
 `packages/agent-runtime/{vitest.config.ts, esbuild.config.mjs, scripts/check-bundle.mjs, src/{bin.ts, cli.ts, cli.test.ts, protocol.ts, protocol.test.ts, redact.ts, redact.test.ts, version.ts, version.test.ts, index.ts}}`; modify `packages/agent-runtime/package.json` (scripts, `bin`, `files`).
@@ -570,3 +570,5 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1d-agent-runti
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 1D.1 ✅ 2026-08-19 — package scaffold: protocol adapters over the core NDJSON codec, runtime redactor, version constant, CLI dispatcher and the esbuild bundle with its self-containment check

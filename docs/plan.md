@@ -299,7 +299,7 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | W1-A | ⬜ | — | — | |
 | W1-B 🐳 | ⬜ | — | — | |
 | W1-C | ⬜ | — | — | |
-| W1-D | ⬜ | — | — | Dockerfile COPY lines → orchestrator |
+| W1-D | 🟦 | `feat/w1d-agent-runtime` | — | Dockerfile COPY lines → orchestrator |
 | W1-E | ⬜ | — | — | |
 | W1-F | ⬜ | — | — | |
 | W1-G | ⬜ | — | — | creates `shared/transcript` first |
