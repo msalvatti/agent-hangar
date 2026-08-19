@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-C (Wave 1, parallel with W1-A … W1-I) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/5 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1c-openai-provider` |
 | **Owned paths** | `packages/core/src/model/openai/**`, `packages/core/src/model/registry.ts` (+ `registry.test.ts`), `packages/core/fixtures/openai/**`, `packages/core/scripts/record-fixtures.ts` — plus three append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only), (the root `packages/core/src/index.ts` is frozen — it already re-exports `./model/index.js`; this lane adds exports only to `packages/core/src/model/index.ts` and `model/openai/index.ts`), `packages/core/package.json` (one script `fixtures:record` only) |
 | **Depends on** | W0 merged to `main` |
@@ -41,26 +41,26 @@ Spec 03 §2 lists the event mapping. The SDK's event names must be **verified at
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1C.1 | Pure mapping: request params, stream events → `ModelEvent`, SDK errors → `ModelEvent.error` (verified against SDK types) | 📋 | P0 | M | — |
-| 1C.2 | Fixtures (`fixtures/openai/*.ndjson`), fixture loader, fake SDK client, record script | 📋 | P0 | M | 1C.1 |
-| 1C.3 | `OpenAIModelProvider` (`stream`, `listModels`) + SDK client factory | 📋 | P0 | M | 1C.1, 1C.2 |
-| 1C.4 | Registry `createModelProvider(name, deps)` → openai \| fake; barrel exports | 📋 | P0 | S | 1C.3 |
-| 1C.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1C.1–1C.4 |
+| 1C.1 | Pure mapping: request params, stream events → `ModelEvent`, SDK errors → `ModelEvent.error` (verified against SDK types) | ✅ | P0 | M | — |
+| 1C.2 | Fixtures (`fixtures/openai/*.ndjson`), fixture loader, fake SDK client, record script | ✅ | P0 | M | 1C.1 |
+| 1C.3 | `OpenAIModelProvider` (`stream`, `listModels`) + SDK client factory | ✅ | P0 | M | 1C.1, 1C.2 |
+| 1C.4 | Registry `createModelProvider(name, deps)` → openai \| fake; barrel exports | ✅ | P0 | S | 1C.3 |
+| 1C.5 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 1C.1–1C.4 |
 
 ---
 
 ## Task 1C.1 — Pure mapping: request params, stream events, errors
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Implement `packages/core/src/model/openai/mapping.ts`: `toResponseParams(input)` (tools with `strict: true`, items → Responses input items, `store: false` always, optional `reasoning`; no `previous_response_id` — the provider is stateless, see spec 03 §2), a stateful `createEventMapper()` that turns each SDK `ResponseStreamEvent` into zero or more `ModelEvent`s (tracking `item_id → call_id`), and `mapErrorToModelEvent(err)` for thrown SDK errors. Event names are verified against the installed SDK types and recorded.
 
 **Acceptance criteria**
-- [ ] `toResponseParams` output: `{ model, instructions, input, tools, store: false, ...(reasoning: { effort }) }`; no `undefined`-valued keys (`exactOptionalPropertyTypes`); `ToolDefinition` → `{ type: 'function', name, description, parameters, strict: true }`; items mapped per the spec table
-- [ ] Event mapping covers: `response.output_text.delta` → `text.delta`; `response.output_text.done` → `text.done`; `response.output_item.added` (function_call) registers `item.id → item.call_id`; `response.function_call_arguments.delta` → `tool_call.arguments.delta` with the resolved `callId`; `response.output_item.done` (function_call) → `tool_call { callId, name, arguments }`; `response.completed` → `response.done { responseId, usage }`; `response.incomplete` → `response.done`; `response.failed` → `error`; stream `error` event → `error`; `response.refusal.delta/done` → `text.delta`/`text.done`; every other event → `[]`
-- [ ] `mapErrorToModelEvent`: 401/403 → `auth` (non-retryable); 429 → `rate_limit` (retryable); 400 with context-length code/message → `context_length`; other 4xx → `unknown` non-retryable; 5xx → `unknown` retryable; `APIConnectionError`/`APIConnectionTimeoutError`/`TypeError: fetch failed` → `network` retryable; `AbortError` → `null` (caller ends the stream silently); anything else → `unknown` non-retryable; messages never include request bodies or headers
-- [ ] `VERIFIED_EVENT_TYPES` constant lists every event type string consumed, typed as `ResponseStreamEvent['type']` so a rename fails `tsc`; file header records the SDK version verified
-- [ ] 100 % coverage on `mapping.ts`
+- [x] `toResponseParams` output: `{ model, instructions, input, tools, store: false, ...(reasoning: { effort }) }`; no `undefined`-valued keys (`exactOptionalPropertyTypes`); `ToolDefinition` → `{ type: 'function', name, description, parameters, strict: true }`; items mapped per the spec table
+- [x] Event mapping covers: `response.output_text.delta` → `text.delta`; `response.output_text.done` → `text.done`; `response.output_item.added` (function_call) registers `item.id → item.call_id`; `response.function_call_arguments.delta` → `tool_call.arguments.delta` with the resolved `callId`; `response.output_item.done` (function_call) → `tool_call { callId, name, arguments }`; `response.completed` → `response.done { responseId, usage }`; `response.incomplete` → `response.done`; `response.failed` → `error`; stream `error` event → `error`; `response.refusal.delta/done` → `text.delta`/`text.done`; every other event → `[]`
+- [x] `mapErrorToModelEvent`: 401/403 → `auth` (non-retryable); 429 → `rate_limit` (retryable); 400 with context-length code/message → `context_length`; other 4xx → `unknown` non-retryable; 5xx → `unknown` retryable; `APIConnectionError`/`APIConnectionTimeoutError`/`TypeError: fetch failed` → `network` retryable; `AbortError` → `null` (caller ends the stream silently); anything else → `unknown` non-retryable; messages never include request bodies or headers
+- [x] `VERIFIED_EVENT_TYPES` constant lists every event type string consumed, typed as `ResponseStreamEvent['type']` so a rename fails `tsc`; file header records the SDK version verified
+- [x] 100 % coverage on `mapping.ts`
 
 **Files to create**
 `packages/core/src/model/openai/mapping.ts`, `packages/core/src/model/openai/mapping.test.ts` (remove `packages/core/src/model/openai/.gitkeep`); modify `packages/core/vitest.config.ts` (`coverage.include` += `src/model/openai/**`, `src/model/registry.ts`).
@@ -144,16 +144,16 @@ Completion Protocol (after you finish):
 
 ## Task 1C.2 — Fixtures, fixture loader, fake SDK client, record script
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1C.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1C.1
 
 **Description.** Create the recorded-style NDJSON fixtures (synthetic, shaped exactly like real `ResponseStreamEvent`s, redacted), a loader, a fake SDK client (`createFakeOpenAIClient`) that replays fixtures or throws configured errors and records calls, and the manual `record-fixtures.ts` script that captures real streams with a real key and redacts them.
 
 **Acceptance criteria**
-- [ ] `packages/core/fixtures/openai/{text,tool-call,text-and-tool-call,refusal,failed,incomplete,error-event}.ndjson` exist; each line parses as JSON with a `type` that is a member of the SDK union (a test asserts this for every file); ids look real (`resp_…`, `msg_…`, `fc_…`, `call_…`) but are synthetic; no secrets (`assertNoCanary` + shape grep pass)
-- [ ] `loadOpenAIFixture(name)` resolves the path relative to the module (`../../../fixtures/openai/`) so it works from `src/` and `dist/`; throws a readable error for an unknown name
-- [ ] `createFakeOpenAIClient(options)` satisfies the `OpenAIResponsesClient` interface (structural subset of the SDK client used by the provider); records `calls.stream[]` params and options; can yield events with optional per-event delay, throw before the first event, throw mid-stream, honour `signal` abort (stops yielding, throws `APIUserAbortError`-shaped error if configured), and serve `models.list()` from a configured id list or throw
-- [ ] `packages/core/scripts/record-fixtures.ts` runs with `OPENAI_API_KEY` set, writes raw events to the fixture files after redaction, refuses to run without a key, never prints the key; documented in `packages/core/fixtures/openai/README.md`; `pnpm --filter @agent-hangar/core fixtures:record` script wired
-- [ ] 100 % coverage on `src/model/openai/{fixtures,fake-client}.ts`
+- [x] `packages/core/fixtures/openai/{text,tool-call,text-and-tool-call,refusal,failed,incomplete,error-event}.ndjson` exist; each line parses as JSON with a `type` that is a member of the SDK union (a test asserts this for every file); ids look real (`resp_…`, `msg_…`, `fc_…`, `call_…`) but are synthetic; no secrets (`assertNoCanary` + shape grep pass)
+- [x] `loadOpenAIFixture(name)` resolves the path relative to the module (`../../../fixtures/openai/`) so it works from `src/` and `dist/`; throws a readable error for an unknown name
+- [x] `createFakeOpenAIClient(options)` satisfies the `OpenAIResponsesClient` interface (structural subset of the SDK client used by the provider); records `calls.stream[]` params and options; can yield events with optional per-event delay, throw before the first event, throw mid-stream, honour `signal` abort (stops yielding, throws `APIUserAbortError`-shaped error if configured), and serve `models.list()` from a configured id list or throw
+- [x] `packages/core/scripts/record-fixtures.ts` runs with `OPENAI_API_KEY` set, writes raw events to the fixture files after redaction, refuses to run without a key, never prints the key; documented in `packages/core/fixtures/openai/README.md`; `pnpm --filter @agent-hangar/core fixtures:record` script wired
+- [x] 100 % coverage on `src/model/openai/{fixtures,fake-client}.ts`
 
 **Files to create**
 `packages/core/fixtures/openai/*.ndjson`, `packages/core/fixtures/openai/README.md`, `packages/core/src/model/openai/fixtures.ts`, `packages/core/src/model/openai/fixtures.test.ts`, `packages/core/src/model/openai/client.ts` (interface `OpenAIResponsesClient` — implementation factory added in 1C.3), `packages/core/src/model/openai/fake-client.ts`, `packages/core/src/model/openai/fake-client.test.ts`, `packages/core/scripts/record-fixtures.ts`; modify `packages/core/package.json` (script `fixtures:record`).
@@ -245,17 +245,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1c-openai-prov
 
 ## Task 1C.3 — `OpenAIModelProvider` (`stream`, `listModels`) + SDK client factory
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1C.1, 1C.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1C.1, 1C.2
 
 **Description.** Implement `OpenAIModelProvider implements AgentModelProvider` over an injected `OpenAIResponsesClient`: `stream()` builds params via `toResponseParams`, iterates `client.responses.stream(params, { signal })`, maps events, guarantees exactly one terminal event (`response.done` or `error`) unless aborted, and `listModels()` returns sorted ids or throws `ModelProviderError`. Plus `createOpenAIClient({ apiKey, baseURL })` wrapping the real SDK with `maxRetries: 0`.
 
 **Acceptance criteria**
-- [ ] `createOpenAIModelProvider({ client })` / `class OpenAIModelProvider` with `name = 'openai'`; `stream` yields mapped events for every fixture (`text`, `tool-call`, `text-and-tool-call`, `refusal`, `failed`, `incomplete`, `error-event`) matching exact expected `ModelEvent[]` sequences
-- [ ] `store: false` is in every request; `model` equals `input.model`; no `previous_response_id` key ever; `signal` forwarded to the SDK call
-- [ ] Thrown SDK errors before/mid-stream become one `error` event (mapped) and the iterable ends; a stream that ends without a terminal event yields `error { code: 'unknown', message: 'stream ended without completion', retryable: true }`; abort ends the stream silently (no error event)
-- [ ] `listModels()` → ids sorted ascending; SDK error → `ModelProviderError` (`code: 'MODEL_PROVIDER_ERROR'`, `modelErrorCode`, `retryable`)
-- [ ] `createOpenAIClient({ apiKey, baseURL? })` returns `new OpenAI({ apiKey, baseURL, maxRetries: 0 })` (retries belong to the agent-runtime per spec 04) and is assignable to `OpenAIResponsesClient` (type-level test); unit test mocks the `openai` module with `vi.mock` and asserts the constructor options
-- [ ] 100 % coverage on `provider.ts`, `client.ts`, `errors.ts`
+- [x] `createOpenAIModelProvider({ client })` / `class OpenAIModelProvider` with `name = 'openai'`; `stream` yields mapped events for every fixture (`text`, `tool-call`, `text-and-tool-call`, `refusal`, `failed`, `incomplete`, `error-event`) matching exact expected `ModelEvent[]` sequences
+- [x] `store: false` is in every request; `model` equals `input.model`; no `previous_response_id` key ever; `signal` forwarded to the SDK call
+- [x] Thrown SDK errors before/mid-stream become one `error` event (mapped) and the iterable ends; a stream that ends without a terminal event yields `error { code: 'unknown', message: 'stream ended without completion', retryable: true }`; abort ends the stream silently (no error event)
+- [x] `listModels()` → ids sorted ascending; SDK error → `ModelProviderError` (`code: 'MODEL_PROVIDER_ERROR'`, `modelErrorCode`, `retryable`)
+- [x] `createOpenAIClient({ apiKey, baseURL? })` returns `new OpenAI({ apiKey, baseURL, maxRetries: 0 })` (retries belong to the agent-runtime per spec 04) and is assignable to `OpenAIResponsesClient` (type-level test); unit test mocks the `openai` module with `vi.mock` and asserts the constructor options
+- [x] 100 % coverage on `provider.ts`, `client.ts`, `errors.ts`
 
 **Files to create**
 `packages/core/src/model/openai/provider.ts`, `packages/core/src/model/openai/provider.test.ts`, `packages/core/src/model/openai/errors.ts`, `packages/core/src/model/openai/client.test.ts`, `packages/core/src/model/openai/index.ts`; modify `packages/core/src/model/openai/client.ts` (add `createOpenAIClient`).
@@ -333,16 +333,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1c-openai-prov
 
 ## Task 1C.4 — Registry `createModelProvider(name, deps)` + barrel exports
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1C.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1C.3
 
 **Description.** Implement `packages/core/src/model/registry.ts`: `createModelProvider(name, deps)` returns the OpenAI provider (built from `apiKey`/`baseURL` or an injected client) for `'openai'` and `FakeAgentModelProvider` for `'fake'`; validates the name and the presence of a key with `ConfigError`.
 
 **Acceptance criteria**
-- [ ] `MODEL_PROVIDER_NAMES = ['openai', 'fake'] as const`, `ModelProviderName`, `isModelProviderName(value)` exported
-- [ ] `createModelProvider('openai', { openai: { apiKey } })` → `OpenAIModelProvider` using `createOpenAIClient`; `{ openai: { client } }` uses the injected client (no SDK construction); missing both → `ConfigError` whose message says the OpenAI API key is not configured and points to Settings
-- [ ] `createModelProvider('fake', { fake })` → `FakeAgentModelProvider` with the given options (default: empty script); unknown name (runtime string) → `ConfigError` listing valid names
-- [ ] Barrel: `packages/core/src/model/index.ts` exports `./registry.js` and `./openai/index.js` (root `src/index.ts` untouched)
-- [ ] 100 % coverage on `src/model/registry.ts`
+- [x] `MODEL_PROVIDER_NAMES = ['openai', 'fake'] as const`, `ModelProviderName`, `isModelProviderName(value)` exported
+- [x] `createModelProvider('openai', { openai: { apiKey } })` → `OpenAIModelProvider` using `createOpenAIClient`; `{ openai: { client } }` uses the injected client (no SDK construction); missing both → `ConfigError` whose message says the OpenAI API key is not configured and points to Settings
+- [x] `createModelProvider('fake', { fake })` → `FakeAgentModelProvider` with the given options (default: empty script); unknown name (runtime string) → `ConfigError` listing valid names
+- [x] Barrel: `packages/core/src/model/index.ts` exports `./registry.js` and `./openai/index.js` (root `src/index.ts` untouched)
+- [x] 100 % coverage on `src/model/registry.ts`
 
 **Files to create**
 `packages/core/src/model/registry.ts`, `packages/core/src/model/registry.test.ts`; modify `packages/core/src/model/index.ts`.
@@ -407,16 +407,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1c-openai-prov
 
 ## Task 1C.5 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1C.1–1C.4
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1C.1–1C.4
 
 **Description.** Run every gate for the lane's owned paths, run the code review to zero findings, update the plan dashboard and tasks index, open the PR with the "API verification" section, and return the structured summary.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter @agent-hangar/core test -- --coverage` green with 100 % ×4 on `src/model/openai/**` and `src/model/registry.ts`
-- [ ] `/bymax-quality:code-review` zero open findings
-- [ ] PR body contains "API verification" (SDK version, event names confirmed, differences from spec 03 §2, confirmation that `store:false` without `previous_response_id` is accepted by the API at build time)
-- [ ] `docs/plan.md` §12 row W1-C → 🟨 with branch/PR/coverage; `docs/tasks/README.md` row updated
-- [ ] PR opened; structured summary returned
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter @agent-hangar/core test -- --coverage` green with 100 % ×4 on `src/model/openai/**` and `src/model/registry.ts`
+- [x] `/bymax-quality:code-review` zero open findings
+- [x] PR body contains "API verification" (SDK version, event names confirmed, differences from spec 03 §2, confirmation that `store:false` without `previous_response_id` is accepted by the API at build time)
+- [x] `docs/plan.md` §12 row W1-C → 🟨 with branch/PR/coverage; `docs/tasks/README.md` row updated
+- [x] PR opened; structured summary returned
 
 **Files to modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (lane row only), `docs/tasks/wave-1c-openai-provider.md` (header + log).
@@ -471,3 +471,9 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1c-openai-prov
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 1C.1 ✅ 2026-08-19 — Responses mapping layer verified against `openai@7.5.0`; every consumed event name matches the shipped `ResponseStreamEvent` union.
+- 1C.2 ✅ 2026-08-19 — Seven synthetic NDJSON streams built from the SDK types, plus the fixture loader, the replaying fake client and the redacting record script.
+- 1C.3 ✅ 2026-08-19 — `OpenAIModelProvider` over `responses.stream`, `ModelProviderError`, and the real client factory with `maxRetries: 0`.
+- 1C.4 ✅ 2026-08-19 — `createModelProvider(name, deps)` reusing the config `MODEL_PROVIDERS` list; folder barrel exports the provider, the registry and the fixtures.
+- 1C.5 ✅ 2026-08-19 — Gates green (lint, format, typecheck, 100/100/100/100 on the owned paths); review findings resolved; PR #10 opened.

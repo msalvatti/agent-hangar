@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-D (no Docker, no Postgres, no Redis — pure Node + git in a temp dir) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/5 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1d-agent-runtime` |
 | **Owned paths** | `packages/agent-runtime/**` (src, tests, `esbuild.config.mjs`, `vitest.config.ts`, `package.json` scripts of this package, `scripts/`) · the two Dockerfile `COPY` lines and the `infra:image` root-script change are **requested via the PR description** (W1-B owns `infra/workspace/**`, W1-I owns root `package.json` scripts) |
 | **Depends on** | W0 merged to `main` |
@@ -45,27 +45,27 @@ Quality bar: TypeScript strict, zero `any`, zero suppression comments, no `enum`
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1D.1 | Package scaffold: protocol I/O, redaction, version, `--version` CLI, esbuild config + bundle check | 📋 | P0 | M | — |
-| 1D.2 | Tools: path confinement, `run_shell`, `read_file`, `write_file`, `list_dir`, registry + JSON schemas, child env scrubbing | 📋 | P0 | L | 1D.1 |
-| 1D.3 | `prepare.ts` (clone/checkout/expectedHeadSha) + `git-events.ts` (push detection) | 📋 | P0 | M | 1D.2 |
-| 1D.4 | `loop.ts` step loop + provider seam + `turn` command wiring (cancel, heartbeat, limits, retries) | 📋 | P0 | L | 1D.2, 1D.3 |
-| 1D.5 | Close-out: gates, bundle size, code review, plan dashboard, PR with orchestrator instructions | 📋 | P0 | S | 1D.1–1D.4 |
+| 1D.1 | Package scaffold: protocol I/O, redaction, version, `--version` CLI, esbuild config + bundle check | ✅ | P0 | M | — |
+| 1D.2 | Tools: path confinement, `run_shell`, `read_file`, `write_file`, `list_dir`, registry + JSON schemas, child env scrubbing | ✅ | P0 | L | 1D.1 |
+| 1D.3 | `prepare.ts` (clone/checkout/expectedHeadSha) + `git-events.ts` (push detection) | ✅ | P0 | M | 1D.2 |
+| 1D.4 | `loop.ts` step loop + provider seam + `turn` command wiring (cancel, heartbeat, limits, retries) | ✅ | P0 | L | 1D.2, 1D.3 |
+| 1D.5 | Close-out: gates, bundle size, code review, plan dashboard, PR with orchestrator instructions | ✅ | P0 | S | 1D.1–1D.4 |
 
 ---
 
 ## Task 1D.1 — Package scaffold: protocol I/O, redaction, version, `--version` CLI, esbuild config + bundle check
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Set up the package for real: Vitest config with 100 % thresholds, the NDJSON protocol adapters over the core codec (`readTurnRequest`, event writer with backpressure, stderr diagnostics), the runtime redactor, the version constant, the CLI dispatcher with `--version`, the esbuild bundle config with the core tree-shake plugin, and a bundle check script. Building the bundle in the first task surfaces any tree-shaking problem immediately.
 
 **Acceptance criteria**
-- [ ] `packages/agent-runtime/vitest.config.ts` (node env, v8, include `src/**`, exclude `src/bin.ts` + tests, thresholds 100×4) and package scripts `build`, `test`, `lint`, `typecheck`, `check:bundle`
-- [ ] `protocol.ts`: `readTurnRequest(stdin)` parses the first valid `TurnRequest` via `parseNdjsonStream(turnRequestSchema)` and throws `ProtocolError` on malformed/absent input; `createEventWriter(stdout, redactor)` → `{ emit(event), lastEmittedAt() }` writes `encodeLine(redacted)` honouring backpressure; `createDiagnostics(stderr, redactor)` → `diag(message)`
-- [ ] `redact.ts`: `createRuntimeRedactor({ values })` → `{ redactText, redactEvent }` applying exact values (longest first) then `SECRET_SHAPE_PATTERNS` with `[REDACTED]`; `redactEvent` covers every text-carrying field of `AgentEvent` and is idempotent
-- [ ] `cli.ts` exports `runCli(argv, io): Promise<number>`; `--version` prints `RUNTIME_VERSION`; unknown command → usage on stderr, exit 64; `turn` is a stub returning 70 until 1D.4 (tested as such, replaced later)
-- [ ] `esbuild.config.mjs` bundles `src/bin.ts` → `dist/cli.js` (ESM, node24, sourcemap, shebang, createRequire banner, `define` for the version, core side-effect-free plugin, chmod 755); `scripts/check-bundle.mjs` asserts size < 2 MB, no host-only module markers, and `node dist/cli.js --version` works from an empty temp dir
-- [ ] 100 % coverage on everything in `src/**` except `src/bin.ts`
+- [x] `packages/agent-runtime/vitest.config.ts` (node env, v8, include `src/**`, exclude `src/bin.ts` + tests, thresholds 100×4) and package scripts `build`, `test`, `lint`, `typecheck`, `check:bundle`
+- [x] `protocol.ts`: `readTurnRequest(stdin)` parses the first valid `TurnRequest` via `parseNdjsonStream(turnRequestSchema)` and throws `ProtocolError` on malformed/absent input; `createEventWriter(stdout, redactor)` → `{ emit(event), lastEmittedAt() }` writes `encodeLine(redacted)` honouring backpressure; `createDiagnostics(stderr, redactor)` → `diag(message)`
+- [x] `redact.ts`: `createRuntimeRedactor({ values })` → `{ redactText, redactEvent }` applying exact values (longest first) then `SECRET_SHAPE_PATTERNS` with `[REDACTED]`; `redactEvent` covers every text-carrying field of `AgentEvent` and is idempotent
+- [x] `cli.ts` exports `runCli(argv, io): Promise<number>`; `--version` prints `RUNTIME_VERSION`; unknown command → usage on stderr, exit 64; `turn` is a stub returning 70 until 1D.4 (tested as such, replaced later)
+- [x] `esbuild.config.mjs` bundles `src/bin.ts` → `dist/cli.js` (ESM, node24, sourcemap, shebang, createRequire banner, `define` for the version, core side-effect-free plugin, chmod 755); `scripts/check-bundle.mjs` asserts size < 2 MB, no host-only module markers, and `node dist/cli.js --version` works from an empty temp dir
+- [x] 100 % coverage on everything in `src/**` except `src/bin.ts`
 
 **Files to create**
 `packages/agent-runtime/{vitest.config.ts, esbuild.config.mjs, scripts/check-bundle.mjs, src/{bin.ts, cli.ts, cli.test.ts, protocol.ts, protocol.test.ts, redact.ts, redact.test.ts, version.ts, version.test.ts, index.ts}}`; modify `packages/agent-runtime/package.json` (scripts, `bin`, `files`).
@@ -189,17 +189,17 @@ Completion Protocol (after you finish):
 
 ## Task 1D.2 — Tools: path confinement, `run_shell`, `read_file`, `write_file`, `list_dir`, registry + JSON schemas, child env scrubbing
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 1D.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 1D.1
 
 **Description.** Implement the four tools the model can call, the path-confinement helper they share, the child-environment builder that scrubs secrets and wires `GIT_ASKPASS`/`AH_GIT_TOKEN_FILE`, and the registry that exposes strict-mode JSON schemas (`ToolDefinition[]`) plus a single `execute()` entry point with Zod-validated args. Every tool is tested against a temp directory acting as `/workspace`.
 
 **Acceptance criteria**
-- [ ] `tools/paths.ts` `resolveInsideWorkspace(root, p)` accepts relative and in-root absolute paths, rejects `../` escapes, absolute paths outside root, and symlink escapes (realpath of the deepest existing ancestor), returning the absolute path
-- [ ] `child-env.ts` `createChildEnv(parentEnv, { tokenFile? })` removes `GITHUB_TOKEN` and `OPENAI_API_KEY`, keeps `PATH`/`HOME`/everything else, sets `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS` (existing or `/opt/agent-runtime/askpass.sh`), `AH_GIT_TOKEN_FILE` when given; `materializeGitToken(env, dir)` writes the token 0600 and returns the path or null
-- [ ] `run_shell`: `bash -lc` in `/workspace` (or confined `cwd`), detached process group, timeout → `SIGKILL` the group → `TIMED_OUT`, abort → `SIGTERM` then `SIGKILL` after 2 s, interleaved output streamed via `onOutput`, truncated to `maxOutputBytes` with `\n[truncated: N bytes total]`, exit code reported, child env scrubbed
-- [ ] `read_file` (numbered lines, `startLine`/`endLine`, truncation), `write_file` (mkdir -p, byte count, no write through escaping symlink), `list_dir` (`.gitignore`-aware via `git ls-files --cached --others --exclude-standard` when inside a git repo, readdir otherwise; `depth` ≤ 5 default 1; entry cap 500 with note)
-- [ ] `tools/index.ts`: `TOOL_DEFINITIONS` derived from Zod schemas with `z.toJSONSchema` (strict-mode compatible: `additionalProperties: false`, every key in `required`, optionals nullable); `createToolExecutor(ctx)` → `execute(name, rawArgs, hooks)` never throws (invalid args / unknown tool → FAILED result)
-- [ ] 100 % coverage on `src/tools/**` and `src/child-env.ts`
+- [x] `tools/paths.ts` `resolveInsideWorkspace(root, p)` accepts relative and in-root absolute paths, rejects `../` escapes, absolute paths outside root, and symlink escapes (realpath of the deepest existing ancestor), returning the absolute path
+- [x] `child-env.ts` `createChildEnv(parentEnv, { tokenFile? })` removes `GITHUB_TOKEN` and `OPENAI_API_KEY`, keeps `PATH`/`HOME`/everything else, sets `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS` (existing or `/opt/agent-runtime/askpass.sh`), `AH_GIT_TOKEN_FILE` when given; `materializeGitToken(env, dir)` writes the token 0600 and returns the path or null
+- [x] `run_shell`: `bash -lc` in `/workspace` (or confined `cwd`), detached process group, timeout → `SIGKILL` the group → `TIMED_OUT`, abort → `SIGTERM` then `SIGKILL` after 2 s, interleaved output streamed via `onOutput`, truncated to `maxOutputBytes` with `\n[truncated: N bytes total]`, exit code reported, child env scrubbed
+- [x] `read_file` (numbered lines, `startLine`/`endLine`, truncation), `write_file` (mkdir -p, byte count, no write through escaping symlink), `list_dir` (`.gitignore`-aware via `git ls-files --cached --others --exclude-standard` when inside a git repo, readdir otherwise; `depth` ≤ 5 default 1; entry cap 500 with note)
+- [x] `tools/index.ts`: `TOOL_DEFINITIONS` derived from Zod schemas with `z.toJSONSchema` (strict-mode compatible: `additionalProperties: false`, every key in `required`, optionals nullable); `createToolExecutor(ctx)` → `execute(name, rawArgs, hooks)` never throws (invalid args / unknown tool → FAILED result)
+- [x] 100 % coverage on `src/tools/**` and `src/child-env.ts`
 
 **Files to create**
 `packages/agent-runtime/src/{child-env.ts, child-env.test.ts, tools/{paths.ts, paths.test.ts, result.ts, schemas.ts, schemas.test.ts, run-shell.ts, run-shell.test.ts, read-file.ts, read-file.test.ts, write-file.ts, write-file.test.ts, list-dir.ts, list-dir.test.ts, index.ts, index.test.ts}}`.
@@ -281,16 +281,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1d-agent-runti
 
 ## Task 1D.3 — `prepare.ts` (clone/checkout/expectedHeadSha) + `git-events.ts` (push detection)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1D.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1D.2
 
 **Description.** Implement the workspace preparation step (validate the repo URL, clone the base branch at full depth with `GIT_ASKPASS` + token file, fetch/checkout or create the work branch, compare HEAD with `expectedHeadSha`, emit `prepare.progress`/`prepare.done`) and the `git.pushed` detection used by the loop after `run_shell`. Tested against local bare repositories created with `git init --bare`.
 
 **Acceptance criteria**
-- [ ] `assertGithubHttpsUrl(url)` accepts `https://github.com/<owner>/<repo>[.git]` and rejects credentials (`user:pass@`), other hosts, `ssh://`, `git@`, query/fragment
-- [ ] `prepare(repo, deps)`: `clone: true` → clone base (no `--depth`), then `workBranch`: exists on origin → fetch + `checkout -B workBranch origin/workBranch`; missing → `checkout -b workBranch` from base; `workBranch === baseBranch` → stay; `clone: false` → require an existing repo in `/workspace` and skip cloning; emits `prepare.progress` messages and one `prepare.done { headSha, branch }`; `expectedHeadSha` mismatch → a `prepare.progress` warning (not a failure)
-- [ ] git runs with the scrubbed child env (`createChildEnv` + token file), never with the token in the URL
-- [ ] `looksLikeGitPush({ command, output, exitCode })` + `resolveGitHead(git, cwd)` → `{ branch, sha }`; the loop emits `git.pushed` only on success
-- [ ] 100 % coverage on `prepare.ts`, `git.ts`, `git-events.ts`
+- [x] `assertGithubHttpsUrl(url)` accepts `https://github.com/<owner>/<repo>[.git]` and rejects credentials (`user:pass@`), other hosts, `ssh://`, `git@`, query/fragment
+- [x] `prepare(repo, deps)`: `clone: true` → clone base (no `--depth`), then `workBranch`: exists on origin → fetch + `checkout -B workBranch origin/workBranch`; missing → `checkout -b workBranch` from base; `workBranch === baseBranch` → stay; `clone: false` → require an existing repo in `/workspace` and skip cloning; emits `prepare.progress` messages and one `prepare.done { headSha, branch }`; `expectedHeadSha` mismatch → a `prepare.progress` warning (not a failure)
+- [x] git runs with the scrubbed child env (`createChildEnv` + token file), never with the token in the URL
+- [x] `looksLikeGitPush({ command, output, exitCode })` + `resolveGitHead(git, cwd)` → `{ branch, sha }`; the loop emits `git.pushed` only on success
+- [x] 100 % coverage on `prepare.ts`, `git.ts`, `git-events.ts`
 
 **Files to create**
 `packages/agent-runtime/src/{git.ts, git.test.ts, prepare.ts, prepare.test.ts, git-events.ts, git-events.test.ts, testing/bare-repo.ts}`.
@@ -357,18 +357,18 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1d-agent-runti
 
 ## Task 1D.4 — `loop.ts` step loop + provider seam + `turn` command wiring (cancel, heartbeat, limits, retries)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 1D.2, 1D.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 1D.2, 1D.3
 
 **Description.** Implement the model ↔ tools loop exactly as spec 03 §3 "Loop" and spec 04 (a) edge cases: per step `provider.stream()` → collect deltas and tool calls → execute tools sequentially emitting `tool.call` / `tool.output.delta` / `tool.result` → append `tool_call` + `tool_result` items → stop when no tool calls, or on `maxSteps` / `maxTurnMs` (`stoppedBy: 'limit'` with an explanatory `assistant.message`), cancellation via `AbortSignal` (→ `turn.cancelled`), `rate_limit` retries (3× backoff), heartbeat every 10 s while idle, `git.pushed` after a successful push. Then wire the real `turn` command: read `TurnRequest`, build redactor/writer/diagnostics, resolve the provider (`fake` built-in; `openai` through the seam), materialize the git token, prepare, run the loop, clean up, map exit codes, SIGINT → abort.
 
 **Acceptance criteria**
-- [ ] `runTurnLoop(deps)` produces the event sequence of spec 03 §3 with exact ordering; `turn.completed` carries summed `usage`, `steps`, `finalMessage` (last assistant text) and `stoppedBy: 'limit'` when a limit stopped it
-- [ ] Cancellation: abort before/during model stream or during a tool → `turn.cancelled`, nothing after it; `maxTurnMs` enforced between steps and as a deadline for the current stream; `rate_limit` error → retry up to 3 times (1 s/2 s/4 s, injected sleep) then `turn.failed { code: 'rate_limit' }`; other provider errors → `turn.failed { code }` immediately
-- [ ] Every `tool.call` is followed by its `tool.result`; invalid tool args/unknown tool produce a FAILED `tool.result` and a `tool_result` item (the model sees the error); `git.pushed` emitted after a successful push
-- [ ] `heartbeat` emitted only when no event was written in the last 10 s (fake timers); cleared at the end
-- [ ] `provider.ts`: `fake` → `FakeAgentModelProvider` with built-in scripts (`fake-scripts.ts`) or `AGENT_FAKE_SCRIPT_JSON`; `openai` → injected factory or `ConfigError` explaining the seam; unknown → `ConfigError`
-- [ ] `cli.ts turn`: exit 0 on completed/cancelled/failed-by-turn, 2 on protocol error, 1 on runtime exception (after emitting `turn.failed { code: 'runtime' }`); token file removed in `finally`; SIGINT handler unsubscribed
-- [ ] 100 % coverage on `loop.ts`, `provider.ts`, `fake-scripts.ts`, `cli.ts`
+- [x] `runTurnLoop(deps)` produces the event sequence of spec 03 §3 with exact ordering; `turn.completed` carries summed `usage`, `steps`, `finalMessage` (last assistant text) and `stoppedBy: 'limit'` when a limit stopped it
+- [x] Cancellation: abort before/during model stream or during a tool → `turn.cancelled`, nothing after it; `maxTurnMs` enforced between steps and as a deadline for the current stream; `rate_limit` error → retry up to 3 times (1 s/2 s/4 s, injected sleep) then `turn.failed { code: 'rate_limit' }`; other provider errors → `turn.failed { code }` immediately
+- [x] Every `tool.call` is followed by its `tool.result`; invalid tool args/unknown tool produce a FAILED `tool.result` and a `tool_result` item (the model sees the error); `git.pushed` emitted after a successful push
+- [x] `heartbeat` emitted only when no event was written in the last 10 s (fake timers); cleared at the end
+- [x] `provider.ts`: `fake` → `FakeAgentModelProvider` with built-in scripts (`fake-scripts.ts`) or `AGENT_FAKE_SCRIPT_JSON`; `openai` → injected factory or `ConfigError` explaining the seam; unknown → `ConfigError`
+- [x] `cli.ts turn`: exit 0 on completed/cancelled/failed-by-turn, 2 on protocol error, 1 on runtime exception (after emitting `turn.failed { code: 'runtime' }`); token file removed in `finally`; SIGINT handler unsubscribed
+- [x] 100 % coverage on `loop.ts`, `provider.ts`, `fake-scripts.ts`, `cli.ts`
 
 **Files to create/modify**
 `packages/agent-runtime/src/{loop.ts, loop.test.ts, provider.ts, provider.test.ts, fake-scripts.ts, fake-scripts.test.ts, turn.ts, turn.test.ts}`; modify `src/cli.ts` + `cli.test.ts` (replace the stub), `src/index.ts`.
@@ -488,15 +488,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1d-agent-runti
 
 ## Task 1D.5 — Close-out: gates, bundle size, code review, plan dashboard, PR with orchestrator instructions
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1D.1–1D.4
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1D.1–1D.4
 
 **Description.** Run every gate including the bundle check, take `/bymax-quality:code-review` to zero findings, optionally smoke the bundle inside the workspace image if Docker is available, update the plan dashboard and task index, and open the PR whose description carries the exact Dockerfile lines, the `infra:image` script change and the CI step for the orchestrator, plus the provider seam note. Return the result object.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck && pnpm --filter @agent-hangar/agent-runtime test` green, 100/100/100/100 on `src/**` (only `src/bin.ts` excluded)
-- [ ] `pnpm --filter @agent-hangar/agent-runtime build && pnpm --filter @agent-hangar/agent-runtime check:bundle` green; size recorded in the PR (< 2 MB)
-- [ ] `/bymax-quality:code-review` zero open findings
-- [ ] PR body contains verbatim: the two Dockerfile `COPY` lines, the `infra:image` script text, the CI step, the provider seam note; `docs/plan.md` §12 W1-D → 🟨 with branch/PR; `docs/tasks/README.md` updated; result object returned
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck && pnpm --filter @agent-hangar/agent-runtime test` green, 100/100/100/100 on `src/**` (only `src/bin.ts` excluded)
+- [x] `pnpm --filter @agent-hangar/agent-runtime build && pnpm --filter @agent-hangar/agent-runtime check:bundle` green; size recorded in the PR (< 2 MB)
+- [x] `/bymax-quality:code-review` zero open findings
+- [x] PR body contains verbatim: the two Dockerfile `COPY` lines, the `infra:image` script text, the CI step, the provider seam note; `docs/plan.md` §12 W1-D → 🟨 with branch/PR; `docs/tasks/README.md` updated; result object returned
 
 **Files to create/modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (W1-D row only), this file (header + log).
@@ -570,3 +570,9 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1d-agent-runti
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 1D.1 ✅ 2026-08-19 — package scaffold: protocol adapters over the core NDJSON codec, runtime redactor, version constant, CLI dispatcher and the esbuild bundle with its self-containment check
+- 1D.2 ✅ 2026-08-19 — confined tools, scrubbed child env with the git token file, strict tool schemas and an executor that never throws; the shared git runner landed here because `list_dir` needs it
+- 1D.3 ✅ 2026-08-19 — repository preparation with a validated GitHub https URL, clone/refresh and the three work-branch cases, plus git remote-update detection tested against local bare repositories
+- 1D.4 ✅ 2026-08-19 — the step loop with limits, cancellation and rate-limit retries, the built-in fake scripts, the provider seam and the real `turn` command
+- 1D.5 ✅ 2026-08-19 — gates green, reviews at zero findings, PR #11 opened
