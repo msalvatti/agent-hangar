@@ -1,5 +1,7 @@
 # Continuous integration: every gate the project defines, on pull requests and on pushes to main.
 # No job is allowed to fail softly: a red job blocks the merge.
+# pnpm comes from `packageManager` in package.json via pnpm/action-setup (on the organisation's
+# allow-list of third-party actions); Node 24 via actions/setup-node.
 name: ci
 
 on:
@@ -27,12 +29,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: pnpm/setup@v2
+      - uses: pnpm/action-setup@v6
         with:
-          version: 11
-          runtime: node@24
           cache: true
-          install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:generate
       - run: pnpm lint
@@ -45,12 +47,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: pnpm/setup@v2
+      - uses: pnpm/action-setup@v6
         with:
-          version: 11
-          runtime: node@24
           cache: true
-          install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:generate
       - run: pnpm typecheck
@@ -62,12 +64,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: pnpm/setup@v2
+      - uses: pnpm/action-setup@v6
         with:
-          version: 11
-          runtime: node@24
           cache: true
-          install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:generate
       - run: pnpm test -- --coverage
@@ -115,12 +117,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: pnpm/setup@v2
+      - uses: pnpm/action-setup@v6
         with:
-          version: 11
-          runtime: node@24
           cache: true
-          install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       - name: Derive DATABASE_URL
         run: echo "DATABASE_URL=postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:5432/ah" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
@@ -163,12 +165,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: pnpm/setup@v2
+      - uses: pnpm/action-setup@v6
         with:
-          version: 11
-          runtime: node@24
           cache: true
-          install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       - name: Derive DATABASE_URL
         run: echo "DATABASE_URL=postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:5432/ah" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
@@ -190,12 +192,12 @@ jobs:
       - uses: actions/checkout@v7
         with:
           persist-credentials: false
-      - uses: pnpm/setup@v2
+      - uses: pnpm/action-setup@v6
         with:
-          version: 11
-          runtime: node@24
           cache: true
-          install: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:generate
       - run: pnpm build
