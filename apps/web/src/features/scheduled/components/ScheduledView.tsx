@@ -1,5 +1,5 @@
 /**
- * `/scheduled` list screen: header, jobs table, and empty/loading/error states.
+ * `/scheduled` list screen: header, jobs table, job dialog, and empty/loading/error states.
  *
  * Layer: component (screen).
  */
@@ -17,35 +17,35 @@ import { useJobActions } from '../hooks/useJobActions';
 import { useJobs } from '../hooks/useJobs';
 
 import { DeleteJobDialog } from './DeleteJobDialog';
+import { JobDialog } from './JobDialog';
 import { JobsEmptyState } from './JobsEmptyState';
 import { JobsSkeleton } from './JobsSkeleton';
 import { JobsTable } from './JobsTable';
 
-/** Props of {@link ScheduledView}. */
-export interface ScheduledViewProps {
-  /** Opens the job dialog in create mode. Provided by 1H.3; a no-op placeholder until then. */
-  onNewJob?: () => void;
-  /** Opens the job dialog in edit mode. Provided by 1H.3; a no-op placeholder until then. */
-  onEditJob?: (job: JobSummary) => void;
+/** State of the create/edit dialog: closed, or open for create (`null`) or edit (a job). */
+interface JobDialogState {
+  open: boolean;
+  job: JobSummary | null;
 }
 
+const CLOSED_DIALOG: JobDialogState = { open: false, job: null };
+
 /**
- * The scheduled-jobs list screen: header with "New job", the jobs table, and its
- * empty/loading/error states.
- *
- * @param props - Callbacks the job dialog (1H.3) wires up.
+ * The scheduled-jobs list screen: header with "New job", the jobs table, the create/edit dialog,
+ * and empty/loading/error states.
  */
-export function ScheduledView({ onNewJob, onEditJob }: ScheduledViewProps) {
+export function ScheduledView() {
   const { status, data, error, refetch } = useJobs();
   const { toggleEnabled, runNow, remove, pending, overrides } = useJobActions();
   const [pendingDelete, setPendingDelete] = useState<JobSummary | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [dialog, setDialog] = useState<JobDialogState>(CLOSED_DIALOG);
 
-  const handleNewJob = () => {
-    onNewJob?.();
+  const openNewJobDialog = () => {
+    setDialog({ open: true, job: null });
   };
-  const handleEditJob = (job: JobSummary) => {
-    onEditJob?.(job);
+  const openEditJobDialog = (job: JobSummary) => {
+    setDialog({ open: true, job });
   };
   const handleRetry = () => {
     void refetch();
@@ -65,7 +65,7 @@ export function ScheduledView({ onNewJob, onEditJob }: ScheduledViewProps) {
       <PageHeader
         title="Scheduled jobs"
         actions={
-          <Button onClick={handleNewJob}>
+          <Button onClick={openNewJobDialog}>
             <Plus /> New job
           </Button>
         }
@@ -78,7 +78,7 @@ export function ScheduledView({ onNewJob, onEditJob }: ScheduledViewProps) {
         />
       )}
       {data === undefined && status !== 'error' && <JobsSkeleton />}
-      {data?.length === 0 && <JobsEmptyState onCreate={handleNewJob} />}
+      {data?.length === 0 && <JobsEmptyState onCreate={openNewJobDialog} />}
       {data !== undefined && data.length > 0 && (
         <JobsTable
           jobs={data}
@@ -87,7 +87,7 @@ export function ScheduledView({ onNewJob, onEditJob }: ScheduledViewProps) {
           onToggle={(job, enabled) => {
             void toggleEnabled(job, enabled);
           }}
-          onEdit={handleEditJob}
+          onEdit={openEditJobDialog}
           onRunNow={(job) => {
             void runNow(job);
           }}
@@ -112,6 +112,13 @@ export function ScheduledView({ onNewJob, onEditJob }: ScheduledViewProps) {
           busy={deleting}
         />
       )}
+      <JobDialog
+        open={dialog.open}
+        job={dialog.job}
+        onOpenChange={(open) => {
+          setDialog((previous) => ({ ...previous, open }));
+        }}
+      />
     </div>
   );
 }

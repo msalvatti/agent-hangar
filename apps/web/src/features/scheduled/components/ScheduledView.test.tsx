@@ -2,11 +2,11 @@
  * Unit tests for `ScheduledView`.
  *
  * Layer: unit.
- * Goal: loading skeleton, seeded rows, empty state, error + retry, "New job" callback, and the
- * delete flow end-to-end against the mock server.
+ * Goal: loading skeleton, seeded rows, empty state, error + retry, the job dialog (create/edit),
+ * and the delete flow end-to-end against the mock server.
  * Mocks: MSW node server serving `src/mocks/scheduled.ts`; `next/navigation`.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -71,33 +71,59 @@ describe('ScheduledView', () => {
     expect(await screen.findByText('No scheduled jobs yet.')).toBeInTheDocument();
   });
 
-  /** "New job" calls the onNewJob callback. */
-  it('calls onNewJob from the header button', async () => {
-    const user = userEvent.setup();
-    const onNewJob = vi.fn();
-    render(<ScheduledView onNewJob={onNewJob} />);
-    await screen.findByText('Nightly tests');
-    await user.click(screen.getByRole('button', { name: 'New job' }));
-    expect(onNewJob).toHaveBeenCalledTimes(1);
-  });
-
-  /** Without an onNewJob prop, the header button is a harmless no-op. */
-  it('does not throw when New job is clicked with no onNewJob prop', async () => {
+  /** "New job" opens the dialog in create mode (blank fields). */
+  it('opens the create dialog from the header button', async () => {
     const user = userEvent.setup();
     render(<ScheduledView />);
     await screen.findByText('Nightly tests');
     await user.click(screen.getByRole('button', { name: 'New job' }));
+    expect(
+      await screen.findByText('Runs your prompt in a fresh workspace on a schedule.'),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toHaveValue('');
   });
 
-  /** Edit calls onEditJob with the job. */
-  it('calls onEditJob from the row menu', async () => {
+  /** The empty state's "New job" button also opens the create dialog. */
+  it('opens the create dialog from the empty state', async () => {
+    server.use(http.get('/api/jobs', () => HttpResponse.json({ jobs: [] })));
     const user = userEvent.setup();
-    const onEditJob = vi.fn();
-    render(<ScheduledView onEditJob={onEditJob} />);
+    render(<ScheduledView />);
+    const emptyState = await screen.findByTestId('empty-state');
+    await user.click(within(emptyState).getByRole('button', { name: 'New job' }));
+    expect(
+      await screen.findByText('Runs your prompt in a fresh workspace on a schedule.'),
+    ).toBeInTheDocument();
+  });
+
+  /** Edit, from the row menu, opens the dialog prefilled with the job's values. */
+  it('opens the edit dialog prefilled from the row menu', async () => {
+    const user = userEvent.setup();
+    render(<ScheduledView />);
     await screen.findByText('Nightly tests');
     await user.click(screen.getByRole('button', { name: 'Actions for Nightly tests' }));
     await user.click(await screen.findByText('Edit'));
-    expect(onEditJob).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText('Edit job')).toBeInTheDocument();
+    expect(screen.getByLabelText('Name')).toHaveValue('Nightly tests');
+  });
+
+  /** Saving the create dialog adds the new job to the list. */
+  it('saves a new job from the dialog and refreshes the list', async () => {
+    const user = userEvent.setup();
+    render(<ScheduledView />);
+    await screen.findByText('Nightly tests');
+    await user.click(screen.getByRole('button', { name: 'New job' }));
+    await user.type(screen.getByLabelText('Name'), 'Weekly report');
+    await user.type(screen.getByLabelText('Repository'), 'acme/api');
+    await user.type(screen.getByLabelText('Branch'), 'main');
+    await user.type(screen.getByLabelText('Cron'), '0 8 * * 1');
+    await user.type(screen.getByLabelText('Prompt'), 'Summarize the week.');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => {
+      expect(
+        screen.queryByText('Runs your prompt in a fresh workspace on a schedule.'),
+      ).not.toBeInTheDocument();
+    });
+    expect(await screen.findByText('Weekly report')).toBeInTheDocument();
   });
 
   /** Run now, from the row menu, starts a run without throwing. */
@@ -125,15 +151,6 @@ describe('ScheduledView', () => {
       expect(screen.queryByText('Delete job Changelog?')).not.toBeInTheDocument();
     });
     expect(screen.getByText('Changelog')).toBeInTheDocument();
-  });
-
-  /** Without an onEditJob prop, the row menu's Edit item is a harmless no-op. */
-  it('does not throw when Edit is clicked with no onEditJob prop', async () => {
-    const user = userEvent.setup();
-    render(<ScheduledView />);
-    await screen.findByText('Nightly tests');
-    await user.click(screen.getByRole('button', { name: 'Actions for Nightly tests' }));
-    await user.click(await screen.findByText('Edit'));
   });
 
   /** The delete flow removes the job from the table end-to-end. */

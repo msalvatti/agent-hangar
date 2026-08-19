@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-H (one of nine parallel Wave 1 lanes; cap 5 concurrent) |
 | **Status** | 🟦 running |
-| **Progress** | 2/6 tasks |
+| **Progress** | 3/6 tasks |
 | **Branch** | `feat/w1h-web-scheduled-settings` |
 | **Owned paths** | `apps/web/src/features/scheduled/**` · `apps/web/src/features/settings/**` · `apps/web/src/mocks/scheduled.ts` (+ test) · `apps/web/src/mocks/settings.ts` (+ test) · `apps/web/app/(app)/scheduled/page.tsx` · `apps/web/app/(app)/scheduled/[id]/page.tsx` · `apps/web/app/(app)/settings/page.tsx` · `apps/web/vitest.config.ts` (`coverage.include` lines only) · one additive line in `apps/web/src/mocks/handlers.ts` (the marked W1-H append line) |
 | **Depends on** | W0 merged to `main`; soft dependency on W1-G's shared modules (`@/shared/transcript`, `@/shared/repo-picker`, `@/shared/feedback`, `@/shared/shell/PageHeader`, `@/shared/api/use-api-query`, `@/mocks/*`) — stubbed locally until W1-G merges, swapped at the final rebase (plan §6 coordination note) |
@@ -47,7 +47,7 @@ Quality bar (same as every lane): TypeScript strict, zero `any`, zero suppressio
 |---|---|---|---|---|---|
 | 1H.1 | MSW handlers for jobs/runs/settings (+ local stubs for W1-G shared modules if not merged) | ✅ | P0 | M | — |
 | 1H.2 | `/scheduled` list: `JobsTable`, row menu, enabled switch, empty/loading/error, `useJobs`, page | ✅ | P0 | M | 1H.1 |
-| 1H.3 | `JobDialog` + `CronField` + `CronPreview` + `TimezoneCombobox`, validation, `useJobMutations` | 📋 | P0 | L | 1H.2 |
+| 1H.3 | `JobDialog` + `CronField` + `CronPreview` + `TimezoneCombobox`, validation, `useJobMutations` | ✅ | P0 | L | 1H.2 |
 | 1H.4 | `/scheduled/[id]` detail: `JobHeader`, `RunsTable`, `RunDrawer` (Sheet 720, Transcript read-only + live SSE + Stop, Raw output tab), page | 📋 | P0 | L | 1H.3 |
 | 1H.5 | `/settings`: `CredentialsCard` + `SecretField` (mask, Replace/Remove, toasts), `EnvironmentCard` + `EnvSummary`, `useSettings`, page | 📋 | P0 | M | 1H.1 |
 | 1H.6 | Close-out: gates, Lighthouse a11y, code review, stub removal at rebase, dashboard, PR | 📋 | P0 | S | 1H.1–1H.5 |
@@ -199,16 +199,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1h-web-schedul
 
 ## Task 1H.3 — `JobDialog` + `CronField` + `CronPreview` + `TimezoneCombobox` + validation
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 1H.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 1H.2
 
 **Description.** The create/edit dialog of spec 10 §4.3: shadcn `Dialog` 520 px with Name, Repository + Branch pickers (from `@/shared/repo-picker`), Cron input (mono) with a live preview line *"Runs every weekday at 09:00 (next: Mon 09:00)"* and inline error for invalid expressions, Timezone combobox (IANA list, default system), Prompt textarea (6 rows), Enabled switch, Save. Inline validation via the core `jobUpsertRequest` schema plus `validateCron`; `useJobMutations` for create/update with toasts and list invalidation. Wired into `ScheduledView` ("New job", row Edit).
 
 **Acceptance criteria**
-- [ ] `JobDialog` opens in create mode (empty, enabled on, tz = system) and edit mode (prefilled); all fields have visible labels; errors under fields linked via `aria-describedby` + `aria-invalid`; Save disabled while invalid or submitting (spinner); Esc/Cancel closes without saving; focus returns to the trigger
-- [ ] `CronField` shows `CronPreview` live: valid → `describeCron` text + `(next: <weekday HH:mm>)` from `nextRunAt` in the selected timezone; invalid → `text-destructive` "Invalid cron expression: <reason>" and no next-run; debounce ≤ 150 ms; mono 13 px input with placeholder `0 9 * * 1-5`
-- [ ] `TimezoneCombobox` searchable (`Command` in a `Popover`), lists `Intl.supportedValuesOf('timeZone')` with the system zone pinned first, keyboard navigable, `aria-label="Timezone"`
-- [ ] Save → `POST /api/jobs` / `PATCH /api/jobs/:id` with the contract body; success → toast "Job saved", dialog closes, `invalidateQueries(['jobs'])`; API 400/409 → `ErrorCard` inside the dialog (message shown, fields keep values)
-- [ ] 100 % coverage on the new files
+- [x] `JobDialog` opens in create mode (empty, enabled on, tz = system) and edit mode (prefilled); all fields have visible labels; errors under fields linked via `aria-describedby` + `aria-invalid`; Save disabled while invalid or submitting (spinner); Esc/Cancel closes without saving; focus returns to the trigger
+- [x] `CronField` shows `CronPreview` live: valid → `describeCron` text + `(next: <weekday HH:mm>)` from `nextRunAt` in the selected timezone; invalid → `text-destructive` "Invalid cron expression: <reason>" and no next-run; debounce ≤ 150 ms; mono 13 px input with placeholder `0 9 * * 1-5`
+- [x] `TimezoneCombobox` searchable (`Command` in a `Popover`), lists `Intl.supportedValuesOf('timeZone')` with the system zone pinned first, keyboard navigable, `aria-label="Timezone"`
+- [x] Save → `POST /api/jobs` / `PATCH /api/jobs/:id` with the contract body; success → toast "Job saved", dialog closes, `invalidateQueries(['jobs'])`; API 400/409 → `ErrorCard` inside the dialog (message shown, fields keep values)
+- [x] 100 % coverage on the new files
 
 **Files to create/modify**
 `apps/web/src/features/scheduled/{components/JobDialog.tsx,components/JobDialog.test.tsx,components/CronField.tsx,components/CronField.test.tsx,components/CronPreview.tsx,components/CronPreview.test.tsx,components/TimezoneCombobox.tsx,components/TimezoneCombobox.test.tsx,components/FormField.tsx,components/FormField.test.tsx,hooks/useJobMutations.ts,hooks/useJobMutations.test.ts,hooks/useJobForm.ts,hooks/useJobForm.test.ts,lib/job-form.ts,lib/job-form.test.ts,lib/timezones.ts,lib/timezones.test.ts}`; modify `components/ScheduledView.tsx` (+ test).
@@ -454,3 +454,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1h-web-schedul
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 - 1H.1 ✅ 2026-08-19 — Added `src/mocks/{scheduled,settings}.ts` + tests (100×4) over local `TEMP-STUB(W1-H)` copies/minimal implementations of W1-G's not-yet-merged shared modules (`shared/api/use-api-query.ts`; `shared/transcript/{types,reducer,lib/format,lib/redact-display,hooks/useTurnEvents,testing/*,components/{Transcript,StatusPill},index}.ts(x)`; `shared/repo-picker/*`; `shared/feedback/*`; `shared/shell/PageHeader.tsx`; `mocks/{store,scenario,events,server,vitest}.ts`) and a real (non-stub) `src/mocks/handlers.ts`; stub list: `apps/web/src/mocks/{events,scenario,server,store,vitest}.ts`, `apps/web/src/shared/api/use-api-query.ts`, `apps/web/src/shared/feedback/{EmptyState.tsx,ErrorCard.tsx,index.ts}`, `apps/web/src/shared/repo-picker/{BranchPicker.tsx,RepoPicker.tsx,index.ts}`, `apps/web/src/shared/shell/PageHeader.tsx`, `apps/web/src/shared/transcript/{components/StatusPill.tsx,components/Transcript.tsx,hooks/useTurnEvents.ts,index.ts,lib/format.ts,lib/redact-display.ts,reducer.ts,testing/fake-event-source.ts,testing/index.ts,types.ts}`.
 - 1H.2 ✅ 2026-08-19 — Added `JobsTable` (+ `JobRow`, `JobRowMenu`, `RunStatus`, `ScheduleCell`, `DeleteJobDialog`, empty/skeleton states), `useJobs`/`useJobActions`, the `scheduled-api` service, the local `lib/cron.ts` adapter (`TEMP-STUB(W1-H)`, swapped to `@agent-hangar/core` once W1-F merges) and `lib/status.ts`, and wired `ScheduledView` into `/scheduled`; fixed a real bug found along the way in the `TEMP-STUB(W1-H)` `use-api-query.ts` (an unmemoized loader made `run`'s identity change every render, re-running the fetch effect on every render) — held the latest loader in a ref instead so `run`/`refetch` stay referentially stable.
+- 1H.3 ✅ 2026-08-19 — Added `JobDialog` (+ `FormField`, `CronField`, `CronPreview`, `TimezoneCombobox`), `useJobForm`/`useJobMutations`, `lib/job-form.ts` and `lib/timezones.ts`; wired create/edit into `ScheduledView` (replacing the 1H.2 placeholder `onNewJob`/`onEditJob` props with an internal dialog state). `TimezoneCombobox` uses the existing dialog-based `Command` composition instead of a `Command`-in-`Popover` (spec 10 §4.3's literal ask) — `@/shared/ui` has no `Popover` primitive yet; noted as a contract/spec-drift item for the PR body. Fixed two more real bugs found writing tests: `listTimezones()` didn't guarantee `UTC` itself (only `Intl.supportedValuesOf('timeZone')`'s entries, which on this runtime omits bare `UTC`) even though the app's own mocks/defaults use it; and `CommandDialog` (shared/ui) doesn't wrap its children in the `Command` root itself, so every consumer must do so.
