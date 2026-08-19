@@ -24,8 +24,21 @@ export const apiError = z.object({
   }),
 });
 
-/** Generic acknowledgement body. */
+/** Generic acknowledgement body, for operations that really do answer with `{ ok: true }`. */
 export const okResponse = z.object({ ok: z.literal(true) });
+
+/** HTTP status of a successful response that carries no body. */
+export const HTTP_NO_CONTENT = 204;
+
+/**
+ * Response schema of an operation whose success is `204 No Content`.
+ *
+ * Deliberately distinct from {@link okResponse}: that one describes a real JSON body, this one
+ * marks the absence of any. An operation carrying it must also set `noContent: true`, which is
+ * what the client branches on to skip parsing altogether; a contract test keeps the two in step
+ * so neither can be set without the other.
+ */
+export const noContentResponse = z.undefined();
 
 /** Maximum length of a prompt (chat message or scheduled-job prompt). */
 export const MAX_PROMPT_LENGTH = 20_000;
@@ -468,6 +481,11 @@ export interface ApiOperation<
   /** JSON body schema; absent when the operation takes no body. */
   body?: TBody;
   response: TResponse;
+  /**
+   * `true` when success is `204 No Content`. `response` must then be {@link noContentResponse},
+   * and a client neither reads nor parses a response body.
+   */
+  noContent?: true;
 }
 
 function op<
@@ -511,7 +529,12 @@ export const apiOperations = {
     body: renameChatRequest,
     response: chatSummary,
   }),
-  deleteChat: op({ method: 'DELETE', path: routes.chat, response: okResponse }),
+  deleteChat: op({
+    method: 'DELETE',
+    path: routes.chat,
+    response: noContentResponse,
+    noContent: true,
+  }),
   postMessage: op({
     method: 'POST',
     path: routes.chatMessages,
@@ -534,7 +557,12 @@ export const apiOperations = {
     response: jobSummary,
   }),
   updateJob: op({ method: 'PATCH', path: routes.job, body: jobPatchRequest, response: jobSummary }),
-  deleteJob: op({ method: 'DELETE', path: routes.job, response: okResponse }),
+  deleteJob: op({
+    method: 'DELETE',
+    path: routes.job,
+    response: noContentResponse,
+    noContent: true,
+  }),
   triggerRun: op({ method: 'POST', path: routes.jobRun, response: triggerRunResponse }),
   listRuns: op({ method: 'GET', path: routes.jobRuns, response: listRunsResponse }),
   getRun: op({ method: 'GET', path: routes.run, response: runDetail }),
@@ -545,7 +573,12 @@ export const apiOperations = {
     body: putSecretRequest,
     response: putSecretResponse,
   }),
-  deleteSecret: op({ method: 'DELETE', path: routes.settingsKey, response: okResponse }),
+  deleteSecret: op({
+    method: 'DELETE',
+    path: routes.settingsKey,
+    response: noContentResponse,
+    noContent: true,
+  }),
   getHealth: op({ method: 'GET', path: routes.health, response: healthResponse }),
 } as const;
 

@@ -213,6 +213,56 @@ describe('apiFetch', () => {
   });
 });
 
+describe('apiFetch no-content operations', () => {
+  /**
+   * A delete answers `204 No Content`. Parsing that as JSON is what used to throw
+   * `INVALID_RESPONSE` on every successful delete; the call must simply resolve.
+   */
+  it.each([
+    ['deleteChat', { id: 'c1' }, '/api/chats/c1'],
+    ['deleteJob', { id: 'j1' }, '/api/jobs/j1'],
+    ['deleteSecret', { key: 'GITHUB_PAT' }, '/api/settings/GITHUB_PAT'],
+  ] as const)('resolves %s on a 204 with no body', async (operation, params, path) => {
+    const fetchMock = fetchReturning(() => new Response(null, { status: 204 }));
+    await expect(apiFetch(operation, { params, fetch: fetchMock })).resolves.toBeUndefined();
+    expect(fetchMock).toHaveBeenCalledWith(path, expect.objectContaining({ method: 'DELETE' }));
+  });
+
+  /**
+   * The contract says these operations send nothing back, so a body is a disagreement between
+   * client and server and is reported rather than quietly dropped.
+   */
+  it('rejects a no-content operation that unexpectedly returns a body', async () => {
+    const fetchMock = fetchReturning(() => jsonResponse({ ok: true }));
+    await expect(
+      apiFetch('deleteChat', { params: { id: 'c1' }, fetch: fetchMock }),
+    ).rejects.toMatchObject({ code: 'INVALID_RESPONSE', status: 200 });
+  });
+
+  /**
+   * 204 is a null-body status, so the emptiness check exists for the statuses that may carry one:
+   * a 200 whose body is blank still means "nothing to report" and must not fail the delete.
+   */
+  it('accepts a blank body as empty', async () => {
+    const fetchMock = fetchReturning(() => new Response('\n  ', { status: 200 }));
+    await expect(
+      apiFetch('deleteChat', { params: { id: 'c1' }, fetch: fetchMock }),
+    ).resolves.toBeUndefined();
+  });
+
+  /**
+   * The mirror case: an operation that declares a body schema cannot be satisfied by a 204, and
+   * says so precisely instead of surfacing as "not JSON".
+   */
+  it('rejects a 204 for an operation that declares a body', async () => {
+    const fetchMock = fetchReturning(() => new Response(null, { status: 204 }));
+    await expect(apiFetch('listChats', { fetch: fetchMock })).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      status: 204,
+    });
+  });
+});
+
 describe('createEventSource', () => {
   const created: string[] = [];
 

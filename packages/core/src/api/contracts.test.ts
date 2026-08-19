@@ -22,6 +22,7 @@ import {
   jobPatchRequest,
   jobSummary,
   jobUpsertRequest,
+  noContentResponse,
   putSecretRequest,
   renameChatRequest,
   repoUrl,
@@ -121,6 +122,44 @@ describe('repoUrl', () => {
     expect(() => {
       assertNoCanary(message);
     }).not.toThrow();
+  });
+});
+
+describe('no-content operations', () => {
+  /**
+   * The three deletes answer 204, so the client must not try to parse a body for them. They are
+   * named explicitly rather than derived, so adding a fourth no-content operation is a decision
+   * someone has to make here on purpose.
+   */
+  it('marks exactly the three deletes as no-content', () => {
+    const noContent = Object.entries(apiOperations)
+      .filter(([, operation]) => operation.noContent === true)
+      .map(([name]) => name)
+      .sort();
+    expect(noContent).toEqual(['deleteChat', 'deleteJob', 'deleteSecret']);
+  });
+
+  /**
+   * The flag and the schema are two halves of one statement: either both say "no body" or
+   * neither does. Without this, an operation could claim `noContent` while declaring a real
+   * response schema, and the client would silently return `undefined` for a body that existed.
+   */
+  it('keeps the no-content flag and the no-content schema in step', () => {
+    for (const [name, operation] of Object.entries(apiOperations)) {
+      expect(
+        { name, flagged: operation.noContent === true },
+        `${name} must set noContent exactly when its response is noContentResponse`,
+      ).toEqual({ name, flagged: operation.response === noContentResponse });
+    }
+  });
+
+  /**
+   * Operations that genuinely answer with `{ ok: true }` keep `okResponse`; only the deletes
+   * changed, so a cancel still parses a real body.
+   */
+  it('leaves acknowledgement operations with a real body schema', () => {
+    expect(apiOperations.cancelTurn.noContent).toBeUndefined();
+    expect(apiOperations.cancelTurn.response.safeParse({ ok: true }).success).toBe(true);
   });
 });
 

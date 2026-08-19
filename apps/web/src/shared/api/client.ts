@@ -6,8 +6,12 @@
  *
  * Same-origin only. Errors are surfaced as `ApiClientError` carrying the HTTP status and the
  * `{ error: { code, message } }` body when the server produced one.
+ *
+ * Operations that declare `noContent` (the deletes, which answer 204) skip JSON parsing entirely
+ * and resolve to `undefined`; a mismatch in either direction between the declared shape and what
+ * the server actually sent is reported rather than ignored.
  */
-import { apiError, apiOperations, buildPath } from '@agent-hangar/core';
+import { apiError, apiOperations, buildPath, HTTP_NO_CONTENT } from '@agent-hangar/core';
 import type {
   ApiBodyInput,
   ApiOperationName,
@@ -118,6 +122,28 @@ export async function apiFetch<K extends ApiOperationName>(
   if (!response.ok) {
     const error = await readErrorBody(response);
     throw new ApiClientError(response.status, error.code, error.message);
+  }
+  if (spec.noContent === true) {
+    // The operation promises an empty body. A body here means the server disagrees with the
+    // contract, which is worth failing on rather than silently ignoring.
+    const text = await response.text();
+    if (text.trim().length > 0) {
+      throw new ApiClientError(
+        response.status,
+        'INVALID_RESPONSE',
+        'Response carries a body but the operation declares none',
+      );
+    }
+    return undefined as ApiResponse<K>;
+  }
+  if (response.status === HTTP_NO_CONTENT) {
+    // The mirror case: the operation declares a body schema, so an empty response cannot satisfy
+    // it. Reported precisely instead of surfacing as "not JSON".
+    throw new ApiClientError(
+      response.status,
+      'INVALID_RESPONSE',
+      'Response carries no body but the operation declares one',
+    );
   }
   let json: unknown;
   try {
