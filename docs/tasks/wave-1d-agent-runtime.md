@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-D (no Docker, no Postgres, no Redis — pure Node + git in a temp dir) |
 | **Status** | 🟦 running |
-| **Progress** | 1/5 tasks |
+| **Progress** | 2/5 tasks |
 | **Branch** | `feat/w1d-agent-runtime` |
 | **Owned paths** | `packages/agent-runtime/**` (src, tests, `esbuild.config.mjs`, `vitest.config.ts`, `package.json` scripts of this package, `scripts/`) · the two Dockerfile `COPY` lines and the `infra:image` root-script change are **requested via the PR description** (W1-B owns `infra/workspace/**`, W1-I owns root `package.json` scripts) |
 | **Depends on** | W0 merged to `main` |
@@ -46,7 +46,7 @@ Quality bar: TypeScript strict, zero `any`, zero suppression comments, no `enum`
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
 | 1D.1 | Package scaffold: protocol I/O, redaction, version, `--version` CLI, esbuild config + bundle check | ✅ | P0 | M | — |
-| 1D.2 | Tools: path confinement, `run_shell`, `read_file`, `write_file`, `list_dir`, registry + JSON schemas, child env scrubbing | 📋 | P0 | L | 1D.1 |
+| 1D.2 | Tools: path confinement, `run_shell`, `read_file`, `write_file`, `list_dir`, registry + JSON schemas, child env scrubbing | ✅ | P0 | L | 1D.1 |
 | 1D.3 | `prepare.ts` (clone/checkout/expectedHeadSha) + `git-events.ts` (push detection) | 📋 | P0 | M | 1D.2 |
 | 1D.4 | `loop.ts` step loop + provider seam + `turn` command wiring (cancel, heartbeat, limits, retries) | 📋 | P0 | L | 1D.2, 1D.3 |
 | 1D.5 | Close-out: gates, bundle size, code review, plan dashboard, PR with orchestrator instructions | 📋 | P0 | S | 1D.1–1D.4 |
@@ -189,17 +189,17 @@ Completion Protocol (after you finish):
 
 ## Task 1D.2 — Tools: path confinement, `run_shell`, `read_file`, `write_file`, `list_dir`, registry + JSON schemas, child env scrubbing
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 1D.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 1D.1
 
 **Description.** Implement the four tools the model can call, the path-confinement helper they share, the child-environment builder that scrubs secrets and wires `GIT_ASKPASS`/`AH_GIT_TOKEN_FILE`, and the registry that exposes strict-mode JSON schemas (`ToolDefinition[]`) plus a single `execute()` entry point with Zod-validated args. Every tool is tested against a temp directory acting as `/workspace`.
 
 **Acceptance criteria**
-- [ ] `tools/paths.ts` `resolveInsideWorkspace(root, p)` accepts relative and in-root absolute paths, rejects `../` escapes, absolute paths outside root, and symlink escapes (realpath of the deepest existing ancestor), returning the absolute path
-- [ ] `child-env.ts` `createChildEnv(parentEnv, { tokenFile? })` removes `GITHUB_TOKEN` and `OPENAI_API_KEY`, keeps `PATH`/`HOME`/everything else, sets `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS` (existing or `/opt/agent-runtime/askpass.sh`), `AH_GIT_TOKEN_FILE` when given; `materializeGitToken(env, dir)` writes the token 0600 and returns the path or null
-- [ ] `run_shell`: `bash -lc` in `/workspace` (or confined `cwd`), detached process group, timeout → `SIGKILL` the group → `TIMED_OUT`, abort → `SIGTERM` then `SIGKILL` after 2 s, interleaved output streamed via `onOutput`, truncated to `maxOutputBytes` with `\n[truncated: N bytes total]`, exit code reported, child env scrubbed
-- [ ] `read_file` (numbered lines, `startLine`/`endLine`, truncation), `write_file` (mkdir -p, byte count, no write through escaping symlink), `list_dir` (`.gitignore`-aware via `git ls-files --cached --others --exclude-standard` when inside a git repo, readdir otherwise; `depth` ≤ 5 default 1; entry cap 500 with note)
-- [ ] `tools/index.ts`: `TOOL_DEFINITIONS` derived from Zod schemas with `z.toJSONSchema` (strict-mode compatible: `additionalProperties: false`, every key in `required`, optionals nullable); `createToolExecutor(ctx)` → `execute(name, rawArgs, hooks)` never throws (invalid args / unknown tool → FAILED result)
-- [ ] 100 % coverage on `src/tools/**` and `src/child-env.ts`
+- [x] `tools/paths.ts` `resolveInsideWorkspace(root, p)` accepts relative and in-root absolute paths, rejects `../` escapes, absolute paths outside root, and symlink escapes (realpath of the deepest existing ancestor), returning the absolute path
+- [x] `child-env.ts` `createChildEnv(parentEnv, { tokenFile? })` removes `GITHUB_TOKEN` and `OPENAI_API_KEY`, keeps `PATH`/`HOME`/everything else, sets `GIT_TERMINAL_PROMPT=0`, `GIT_ASKPASS` (existing or `/opt/agent-runtime/askpass.sh`), `AH_GIT_TOKEN_FILE` when given; `materializeGitToken(env, dir)` writes the token 0600 and returns the path or null
+- [x] `run_shell`: `bash -lc` in `/workspace` (or confined `cwd`), detached process group, timeout → `SIGKILL` the group → `TIMED_OUT`, abort → `SIGTERM` then `SIGKILL` after 2 s, interleaved output streamed via `onOutput`, truncated to `maxOutputBytes` with `\n[truncated: N bytes total]`, exit code reported, child env scrubbed
+- [x] `read_file` (numbered lines, `startLine`/`endLine`, truncation), `write_file` (mkdir -p, byte count, no write through escaping symlink), `list_dir` (`.gitignore`-aware via `git ls-files --cached --others --exclude-standard` when inside a git repo, readdir otherwise; `depth` ≤ 5 default 1; entry cap 500 with note)
+- [x] `tools/index.ts`: `TOOL_DEFINITIONS` derived from Zod schemas with `z.toJSONSchema` (strict-mode compatible: `additionalProperties: false`, every key in `required`, optionals nullable); `createToolExecutor(ctx)` → `execute(name, rawArgs, hooks)` never throws (invalid args / unknown tool → FAILED result)
+- [x] 100 % coverage on `src/tools/**` and `src/child-env.ts`
 
 **Files to create**
 `packages/agent-runtime/src/{child-env.ts, child-env.test.ts, tools/{paths.ts, paths.test.ts, result.ts, schemas.ts, schemas.test.ts, run-shell.ts, run-shell.test.ts, read-file.ts, read-file.test.ts, write-file.ts, write-file.test.ts, list-dir.ts, list-dir.test.ts, index.ts, index.test.ts}}`.
@@ -572,3 +572,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1d-agent-runti
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 
 - 1D.1 ✅ 2026-08-19 — package scaffold: protocol adapters over the core NDJSON codec, runtime redactor, version constant, CLI dispatcher and the esbuild bundle with its self-containment check
+- 1D.2 ✅ 2026-08-19 — confined tools, scrubbed child env with the git token file, strict tool schemas and an executor that never throws; the shared git runner landed here because `list_dir` needs it
