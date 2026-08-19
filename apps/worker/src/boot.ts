@@ -47,16 +47,27 @@ export interface BootResult<
   shutdown: () => Promise<void>;
 }
 
+/** Stands in for a URL whose credentials cannot be proved removed. */
+export const OPAQUE_URL = '(unparseable url)';
+
 /**
  * Returns a URL with any credentials removed, safe for error messages and logs.
  *
+ * Blanking the userinfo only removes a password when the URL actually has an authority to blank.
+ * `URL` parses an authority-less form such as `redis:/ah:pw@host` — which the environment schema
+ * accepts, since it is a valid URL — into an empty host and a path of `ah:pw@host`, leaving
+ * `username`/`password` empty and the password sitting in the path. Echoing the input for those,
+ * as for an outright unparseable one, would put the credential straight into the boot error this
+ * module raises. Anything without a host is therefore reported as {@link OPAQUE_URL} instead:
+ * losing the target from the message costs a little diagnosis, repeating a password costs more.
+ *
  * @param url - Connection URL (may carry `user:password@`).
- * @returns The URL without userinfo, or the input unchanged when it is not a valid URL.
+ * @returns The URL without userinfo, or {@link OPAQUE_URL} when it has no host to strip one from.
  */
 export function describeUrl(url: string): string {
   const parsed = URL.parse(url);
-  if (parsed === null) {
-    return url;
+  if (parsed === null || parsed.host === '') {
+    return OPAQUE_URL;
   }
   parsed.username = '';
   parsed.password = '';

@@ -15,7 +15,7 @@ import pino from 'pino';
 import type { Logger } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 
-import { boot, describeUrl } from './boot.js';
+import { boot, describeUrl, OPAQUE_URL } from './boot.js';
 import type { BootDeps } from './boot.js';
 
 const config: AppConfig = loadConfig({ AH_INSTANCE: 'test', AH_PORT_BASE: '4100' });
@@ -57,14 +57,27 @@ function makeDeps(overrides: Partial<BootDeps> = {}) {
 }
 
 describe('describeUrl', () => {
-  /**
-   * Credentials embedded in a connection URL never reach error messages or logs; non-URL
-   * strings pass through unchanged.
-   */
-  it('strips userinfo and tolerates non-URLs', () => {
+  /** Credentials embedded in a connection URL never reach error messages or logs. */
+  it('strips userinfo from a URL that has an authority', () => {
     expect(describeUrl('redis://user:secret@cache:6379/0')).toBe('redis://cache:6379/0');
     expect(describeUrl('redis://127.0.0.1:6379')).toBe('redis://127.0.0.1:6379');
-    expect(describeUrl('not a url')).toBe('not a url');
+  });
+
+  /**
+   * Blanking the userinfo strips a password only when there is an authority to blank. An
+   * authority-less URL — which the environment schema accepts, because it is a valid URL — parses
+   * with an empty host and the whole `user:password@host` sitting in the path, so returning the
+   * input would put the password straight into the boot error. So would returning an outright
+   * unparseable input. Both are refused instead of echoed.
+   */
+  it.each([
+    ['an authority-less URL', 'redis:/ah:SUPERSECRETPW@cache:6379'],
+    ['a scheme-only URL', 'redis:ah:SUPERSECRETPW@cache'],
+    ['a non-URL', 'not a url SUPERSECRETPW'],
+  ])('refuses to echo %s', (_name, url) => {
+    const described = describeUrl(url);
+    expect(described).toBe(OPAQUE_URL);
+    expect(described).not.toContain('SUPERSECRETPW');
   });
 });
 
