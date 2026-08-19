@@ -338,6 +338,37 @@ From spec 01 §7, spec 04 (d) and the lane rules. Auditable statements every
   weakened coverage thresholds — in implementer work or in orchestrator
   fixes.
 
+### Web security defaults (added 2026-08-19, operator-approved)
+
+The specification defines no HTTP security headers, no bind address and no
+same-origin enforcement. That is a real gap for a local service that stores
+credentials and executes code in containers, so four requirements were added
+to the lanes that own the relevant files. They are acceptance criteria, not
+suggestions.
+
+| # | Requirement | Owning lane |
+|---|---|---|
+| 1 | `apps/web/next.config.ts` sends `Content-Security-Policy`, `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, `Referrer-Policy: no-referrer` and `Permissions-Policy: camera=(), microphone=(), geolocation=()` on `/:path*`. CSP: `default-src 'self'`, `img-src 'self' data:`, `font-src 'self' data:`, `connect-src 'self'`, `frame-ancestors 'none'`, `base-uri 'none'`, `form-action 'self'`, `object-src 'none'`, `style-src 'self' 'unsafe-inline'` (Tailwind and shadcn inject inline styles), `script-src 'self' 'unsafe-inline'` plus `'unsafe-eval'` in development only (the dev server needs it for HMR). | **W0** (T0.7) |
+| 2 | `next dev` and `next start` bind to `127.0.0.1` (`-H 127.0.0.1`), so the credential-writing API is never published to the local network. | **W0** (scripts; W1-I keeps it when it takes over the root scripts block and in `run.sh`) |
+| 3 | An `assertSameOrigin(request)` helper in `apps/web/src/server/**`, called at the top of **every** POST/PUT/PATCH/DELETE handler, 403 on mismatch. `Origin` must equal the request's own origin (derived from `Host`, never a hardcoded port); when `Origin` is absent, accept only `Sec-Fetch-Site: same-origin` or `none`. GET/HEAD and the SSE routes are unaffected. | **W2-A** (T2A.1) |
+| 4 | `AssistantMarkdown` pins the safe-URL behaviour with its own tests (`javascript:` and `data:text/html` hrefs dropped; an `https://` link keeps its href plus `target="_blank"` and `rel="noopener noreferrer"`) instead of relying on the `react-markdown` default `urlTransform`. No sanitiser dependency, no custom `urlTransform`. | **W1-G** |
+
+**Why requirement 3 matters even without authentication:** the API has no
+session cookie, so its effective authorisation is "whoever reaches the port".
+A malicious page open in the developer's browser can send
+`fetch(url, { method: 'PUT', mode: 'no-cors', headers: { 'Content-Type':
+'text/plain' }, body: '{"value":"..."}' })` — no preflight is triggered, the
+request reaches the handler, and `request.json()` parses the body regardless
+of the declared content type. The response is opaque to the attacker, but the
+write succeeds. DNS rebinding produces the same result.
+
+**Honest limit of requirement 1:** `'unsafe-inline'` on `script-src` (there is
+no nonce pipeline in v1) makes the CSP defence in depth rather than a complete
+XSS mitigation. The primary XSS defences remain React escaping and rendering
+agent Markdown without `rehype-raw`. A nonce-based CSP is the documented
+follow-up if the app ever leaves localhost. W3-B records this in the README
+"Security notes" section.
+
 **Per-lane review focus** (the lanes the model policy marks
 security-sensitive): W1-A (crypto correctness: iv uniqueness, tamper →
 `SecretIntegrityError`, wrong key, key-file perms; redaction idempotence
