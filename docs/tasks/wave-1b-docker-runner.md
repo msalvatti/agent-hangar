@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-B 🐳 (Docker-integration lane — the orchestrator runs at most one 🐳 lane at a time) |
 | **Status** | 🟦 running |
-| **Progress** | 2/5 tasks |
+| **Progress** | 3/5 tasks |
 | **Branch** | `feat/w1b-docker-runner` |
 | **Owned paths** | `packages/core/src/runner/docker/**`, `infra/workspace/**` (Dockerfile, askpass.sh, .dockerignore, README.md, .gitignore) · additive-only edits allowed in `packages/core/vitest.config.ts` (`coverage.include`) and `packages/core/package.json` (`exports` subpath `./runner/docker`) |
 | **Depends on** | W0 merged to `main` |
@@ -44,7 +44,7 @@ Quality bar (same as every lane): TypeScript strict, zero `any`, zero suppressio
 |---|---|---|---|---|---|
 | 1B.1 | Docker socket resolution + container spec builder (pure) | ✅ | P0 | M | — |
 | 1B.2 | Exec stream: demux, stdin pump, timeout/abort kill path (pure) | ✅ | P0 | M | 1B.1 |
-| 1B.3 | `DockerWorkspaceRunner` class + factory + unit tests with a faked Docker API | 📋 | P0 | L | 1B.1, 1B.2 |
+| 1B.3 | `DockerWorkspaceRunner` class + factory + unit tests with a faked Docker API | ✅ | P0 | L | 1B.1, 1B.2 |
 | 1B.4 | Workspace image hardening/verification, askpass token-file support, README, `@docker` integration suite | 📋 | P0 | M | 1B.3 |
 | 1B.5 | Close-out: gates, code review, plan dashboard, PR | 📋 | P0 | S | 1B.1–1B.4 |
 
@@ -227,16 +227,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1b-docker-runn
 
 ## Task 1B.3 — `DockerWorkspaceRunner` class + factory + unit tests with a faked Docker API
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 1B.1, 1B.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 1B.1, 1B.2
 
 **Description.** Implement the runner itself: `create` (image check → createContainer → start → readiness probe), `exec` (started event first, wrapper command with pid file, hijacked stream, stdin, timeout/abort), `signal` (kill via pid file), `snapshot` (git state of `/workspace`), `destroy` (stop + remove, 404 = success), `health` (inspect → healthy/unhealthy/gone), `list` (by labels scoped to the instance). The class depends on a narrow `DockerApi` interface so unit tests drive it with an in-memory fake; `createDockerWorkspaceRunner()` builds the real dockerode client. Public subpath export `@agent-hangar/core/runner/docker`.
 
 **Acceptance criteria**
-- [ ] `DockerWorkspaceRunner implements WorkspaceRunner` with `kind = 'docker'`; all seven methods behave as spec 03 §1 + "DockerWorkspaceRunner behaviour"
-- [ ] `create` throws `WorkspaceImageMissing` (message contains `pnpm infra:image`) when the image is absent; cleans up the container if the readiness probe fails or the signal aborts
-- [ ] `exec` yields `{ type: 'started', execRef }` first, then stdout/stderr, then exactly one `exit`; timeout → `exit { code: null, signal: 'TIMEOUT' }` after a `kill -KILL` through the pid file, falling back to `container.kill()` if the kill exec itself fails
-- [ ] `destroy` is idempotent (404 and 304 swallowed); `health` maps inspect states; `list` filters by `ah.instance` + given labels
-- [ ] No env value ever appears in error messages or in `JSON.stringify(runner)`; `packages/core/package.json` exports `./runner/docker`; 100 % coverage on `docker-workspace-runner.ts` and `index.ts` from unit tests
+- [x] `DockerWorkspaceRunner implements WorkspaceRunner` with `kind = 'docker'`; all seven methods behave as spec 03 §1 + "DockerWorkspaceRunner behaviour"
+- [x] `create` throws `WorkspaceImageMissing` (message contains `pnpm infra:image`) when the image is absent; cleans up the container if the readiness probe fails or the signal aborts
+- [x] `exec` yields `{ type: 'started', execRef }` first, then stdout/stderr, then exactly one `exit`; timeout → `exit { code: null, signal: 'TIMEOUT' }` after a `kill -KILL` through the pid file, falling back to `container.kill()` if the kill exec itself fails
+- [x] `destroy` is idempotent (404 and 304 swallowed); `health` maps inspect states; `list` filters by `ah.instance` + given labels
+- [x] No env value ever appears in error messages or in `JSON.stringify(runner)`; `packages/core/package.json` exports `./runner/docker`; 100 % coverage on `docker-workspace-runner.ts` and `index.ts` from unit tests
 
 **Files to create/modify**
 `packages/core/src/runner/docker/{docker-api.ts, docker-workspace-runner.ts, docker-workspace-runner.test.ts, index.ts, testing/fake-docker-api.ts}`; modify `packages/core/package.json` (`exports` → add `./runner/docker`).
@@ -509,3 +509,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1b-docker-runn
 
 - 1B.1 ✅ 2026-08-19 — socket resolution order, hardened container-spec builder with compose grouping labels, typed DockerRunnerError; 100 % unit coverage
 - 1B.2 ✅ 2026-08-19 — frame demuxer, stdin pump with backpressure and EOF, timeout/abort termination path and the pid-file exec wrappers; 100 % unit coverage
+- 1B.3 ✅ 2026-08-19 — DockerWorkspaceRunner over an injectable Docker API, factory, in-memory fake and the `@agent-hangar/core/runner/docker` subpath export; 100 % unit coverage

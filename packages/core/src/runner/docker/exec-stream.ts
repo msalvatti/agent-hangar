@@ -83,17 +83,17 @@ export interface PumpExecParams {
   /** Parser for the frames arriving on `stream`. */
   demuxer: DockerDemuxer;
   /** Wall-clock limit; omitted means no limit. */
-  timeoutMs?: number;
+  timeoutMs?: number | undefined;
   /** Cancellation signal; aborting ends the exec like a timeout does. */
-  signal?: AbortSignal;
+  signal?: AbortSignal | undefined;
   /** Terminates the process inside the container. */
   kill: (reason: ExecTermination) => Promise<void>;
   /** Reads the process exit code once the stream closed on its own. */
   inspectExitCode: () => Promise<number | null>;
   /** Timer scheduler; injected by tests. */
-  setTimeoutFn?: typeof setTimeout;
+  setTimeoutFn?: typeof setTimeout | undefined;
   /** Timer canceller; injected by tests. */
-  clearTimeoutFn?: typeof clearTimeout;
+  clearTimeoutFn?: typeof clearTimeout | undefined;
 }
 
 /**

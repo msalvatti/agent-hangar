@@ -33,11 +33,11 @@ export interface DockerSocketResolution {
 /** Injectable probes so the resolution order can be exercised without touching the host. */
 export interface ResolveDockerSocketDeps {
   /** Environment to read `DOCKER_HOST` / `DOCKER_TLS_VERIFY` from; defaults to `process.env`. */
-  env?: Readonly<Record<string, string | undefined>>;
+  env?: Readonly<Record<string, string | undefined>> | undefined;
   /** Home directory lookup; defaults to `os.homedir`. */
-  homedir?: () => string;
+  homedir?: (() => string) | undefined;
   /** Existence probe for the user socket; defaults to `fs.existsSync`. */
-  exists?: (path: string) => boolean;
+  exists?: ((path: string) => boolean) | undefined;
 }
 
 /** `DOCKER_HOST` scheme for a local unix socket. */
