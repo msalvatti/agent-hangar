@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-A (Wave 1, parallel with W1-B … W1-I) |
 | **Status** | 🟦 running |
-| **Progress** | 1/5 tasks |
+| **Progress** | 2/5 tasks |
 | **Branch** | `feat/w1a-secrets-redaction` |
 | **Owned paths** | `packages/core/src/secrets/**` (except the frozen `types.ts`), `packages/core/src/redaction/**`, `packages/core/src/logging/**` — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./secrets/index.js`, `./redaction/index.js`, `./logging/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
@@ -42,7 +42,7 @@ Plaintext secrets exist only in memory inside `set()`/`reveal()` and in the work
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
 | 1A.1 | Master key provider: `MasterKeyFile` (0600 create/verify) + `StaticMasterKey` | ✅ | P0 | S | — |
-| 1A.2 | AES-256-GCM envelope crypto + `SecretsService` over `SecretRepository` | 📋 | P0 | M | 1A.1 |
+| 1A.2 | AES-256-GCM envelope crypto + `SecretsService` over `SecretRepository` | ✅ | P0 | M | 1A.1 |
 | 1A.3 | `Redactor`: exact registered values + shape patterns, `redactJson`, idempotent | 📋 | P0 | M | — |
 | 1A.4 | pino logger factory with redact paths + `Redactor` serializer/hook | 📋 | P0 | S | 1A.3 |
 | 1A.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1A.1–1A.4 |
@@ -140,17 +140,17 @@ Completion Protocol (after you finish):
 
 ## Task 1A.2 — AES-256-GCM envelope crypto + `SecretsService`
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1A.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1A.1
 
 **Description.** Implement the pure encrypt/decrypt functions (AES-256-GCM, 12-byte random iv, 16-byte auth tag, `keyVersion`) and the `SecretsService` from spec 03 §6 over the `SecretRepository` port: `set` → encrypt + upsert + return `last4`; `remove`; `status()` for both keys; `reveal` (worker-only, documented) → decrypt with auth-tag verification.
 
 **Acceptance criteria**
-- [ ] `encryptSecret(plaintext, masterKey)` returns `{ ciphertext, iv (12 bytes), authTag (16 bytes), keyVersion }`; two calls with the same input produce different `iv` and `ciphertext`
-- [ ] `decryptSecret(envelope, masterKey)` round-trips; tampered ciphertext, tampered authTag, wrong key, wrong iv length, and `keyVersion !== masterKey.version` all throw `SecretIntegrityError` (never the raw `node:crypto` error)
-- [ ] `createSecretsService({ repository, masterKey })` implements `SecretsService` exactly as declared in `secrets/types.ts`; `set` rejects empty plaintext with `InvalidSecretError` (local `AgentHangarError` subclass, code `SECRET_INVALID`); `last4` = last `min(4, length)` characters
-- [ ] `reveal` returns `null` when no row exists; `status()` always returns an entry for every `SecretKey` (`{ set: false }` or `{ set: true, last4, updatedAt }`)
-- [ ] The repository never sees plaintext (test serialises the in-memory repository state and runs `assertNoCanary`)
-- [ ] 100 % coverage on `src/secrets/crypto.ts`, `src/secrets/secrets-service.ts`, `src/secrets/errors.ts`
+- [x] `encryptSecret(plaintext, masterKey)` returns `{ ciphertext, iv (12 bytes), authTag (16 bytes), keyVersion }`; two calls with the same input produce different `iv` and `ciphertext`
+- [x] `decryptSecret(envelope, masterKey)` round-trips; tampered ciphertext, tampered authTag, wrong key, wrong iv length, and `keyVersion !== masterKey.version` all throw `SecretIntegrityError` (never the raw `node:crypto` error)
+- [x] `createSecretsService({ repository, masterKey })` implements `SecretsService` exactly as declared in `secrets/types.ts`; `set` rejects empty plaintext with `InvalidSecretError` (local `AgentHangarError` subclass, code `SECRET_INVALID`); `last4` = last `min(4, length)` characters
+- [x] `reveal` returns `null` when no row exists; `status()` always returns an entry for every `SecretKey` (`{ set: false }` or `{ set: true, last4, updatedAt }`)
+- [x] The repository never sees plaintext (test serialises the in-memory repository state and runs `assertNoCanary`)
+- [x] 100 % coverage on `src/secrets/crypto.ts`, `src/secrets/secrets-service.ts`, `src/secrets/errors.ts`
 
 **Files to create**
 `packages/core/src/secrets/crypto.ts`, `packages/core/src/secrets/crypto.test.ts`, `packages/core/src/secrets/errors.ts`, `packages/core/src/secrets/secrets-service.ts`, `packages/core/src/secrets/secrets-service.test.ts`; update `packages/core/src/secrets/index.ts`.
@@ -471,3 +471,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1a-secrets-red
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 - 1A.1 ✅ 2026-08-19 — master key providers: 0600 atomic key file with owner-only enforcement, hex validation and caching, plus StaticMasterKey.
+- 1A.2 ✅ 2026-08-19 — AES-256-GCM envelope crypto with fail-closed integrity checks and the SecretsService over the SecretRepository port.
