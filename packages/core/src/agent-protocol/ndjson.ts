@@ -47,8 +47,8 @@ export interface NdjsonParser<T> {
   /**
    * Characters currently held for the line in progress.
    *
-   * Never exceeds {@link PROTOCOL_MAX_LINE_LENGTH} plus the size of the chunk that crossed it,
-   * which is what makes the parser's memory use bounded regardless of what the producer sends.
+   * Never exceeds {@link PROTOCOL_MAX_LINE_LENGTH} once a call has returned, which is what makes
+   * the parser's memory use bounded regardless of what the producer sends.
    */
   bufferedLength(): number;
 }
@@ -91,6 +91,70 @@ function parseLine<T>(schema: ZodType<T>, line: string): NdjsonItem<T> {
 }
 
 /**
+ * Decides what one raw line (newline already stripped) contributes to the output.
+ *
+ * @param schema - Zod schema the line must satisfy.
+ * @param raw - The line, possibly still carrying a trailing `\r`.
+ * @returns The parsed value, a `protocol.error`, or `undefined` for a blank line to skip.
+ *   `undefined` is unambiguous as a skip signal because `JSON.parse` never yields it.
+ */
+function classifyLine<T>(schema: ZodType<T>, raw: string): NdjsonItem<T> | undefined {
+  if (raw.length > PROTOCOL_MAX_LINE_LENGTH) {
+    // The cap binds complete lines as well: a producer that writes an over-long line and its
+    // newline in a single chunk would otherwise have it parsed in full, straight past the limit
+    // that exists to bound this work.
+    return protocolError('line-too-long', raw.length);
+  }
+  const line = raw.replace(/\r$/, '');
+  return line.trim().length > 0 ? parseLine(schema, line) : undefined;
+}
+
+/** Mutable state of one parser instance. */
+interface ParserState {
+  /** Characters received since the last newline. */
+  buffer: string;
+  /**
+   * Set once a line passed the cap: its remaining characters are dropped, unreported, until the
+   * next newline lets the parser resynchronise on a fresh line.
+   */
+  discarding: boolean;
+}
+
+/**
+ * Drains every complete line from the buffer, then enforces the cap on whatever is left over.
+ *
+ * @param schema - Zod schema every line must satisfy.
+ * @param state - Parser state; mutated in place.
+ * @returns Items for the lines that completed during this call.
+ */
+function drainLines<T>(schema: ZodType<T>, state: ParserState): NdjsonItem<T>[] {
+  const items: NdjsonItem<T>[] = [];
+  let newline = state.buffer.indexOf('\n');
+  while (newline !== -1) {
+    const raw = state.buffer.slice(0, newline);
+    state.buffer = state.buffer.slice(newline + 1);
+    if (state.discarding) {
+      state.discarding = false;
+    } else {
+      const item = classifyLine(schema, raw);
+      if (item !== undefined) {
+        items.push(item);
+      }
+    }
+    newline = state.buffer.indexOf('\n');
+  }
+  if (state.discarding) {
+    // Tail of a condemned line: holding it would be the unbounded growth the cap exists to stop.
+    state.buffer = '';
+  } else if (state.buffer.length > PROTOCOL_MAX_LINE_LENGTH) {
+    items.push(protocolError('line-too-long', state.buffer.length));
+    state.discarding = true;
+    state.buffer = '';
+  }
+  return items;
+}
+
+/**
  * Creates an incremental parser that buffers partial lines, splits on `\n` (tolerating `\r\n`),
  * validates each line with `schema` and maps invalid lines to `protocol.error` items.
  *
@@ -99,57 +163,28 @@ function parseLine<T>(schema: ZodType<T>, line: string): NdjsonItem<T> {
  */
 export function createNdjsonParser<T>(schema: ZodType<T>): NdjsonParser<T> {
   const decoder = new TextDecoder('utf-8');
-  let buffer = '';
-  // Set once a line passes the length cap: its remaining characters are dropped, unreported, until
-  // the next newline lets the parser resynchronise on a fresh line.
-  let discarding = false;
-
-  const parseComplete = (): NdjsonItem<T>[] => {
-    const items: NdjsonItem<T>[] = [];
-    let newline = buffer.indexOf('\n');
-    while (newline !== -1) {
-      const raw = buffer.slice(0, newline);
-      buffer = buffer.slice(newline + 1);
-      if (discarding) {
-        discarding = false;
-      } else {
-        const line = raw.replace(/\r$/, '');
-        if (line.trim().length > 0) {
-          items.push(parseLine(schema, line));
-        }
-      }
-      newline = buffer.indexOf('\n');
-    }
-    if (discarding) {
-      // Tail of a condemned line: holding it would be the unbounded growth the cap exists to stop.
-      buffer = '';
-    } else if (buffer.length > PROTOCOL_MAX_LINE_LENGTH) {
-      items.push(protocolError('line-too-long', buffer.length));
-      discarding = true;
-      buffer = '';
-    }
-    return items;
-  };
+  const state: ParserState = { buffer: '', discarding: false };
 
   return {
     push(chunk) {
-      buffer += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true });
-      return parseComplete();
+      state.buffer += typeof chunk === 'string' ? chunk : decoder.decode(chunk, { stream: true });
+      return drainLines(schema, state);
     },
     flush() {
-      buffer += decoder.decode();
-      const items = parseComplete();
-      // `parseComplete` empties the buffer while discarding, so a condemned tail never lands here.
-      const rest = buffer.replace(/\r$/, '');
-      buffer = '';
-      discarding = false;
-      if (rest.trim().length > 0) {
-        items.push(parseLine(schema, rest));
+      state.buffer += decoder.decode();
+      const items = drainLines(schema, state);
+      // `drainLines` empties the buffer while discarding, so a condemned tail never lands here.
+      const rest = state.buffer;
+      state.buffer = '';
+      state.discarding = false;
+      const item = classifyLine(schema, rest);
+      if (item !== undefined) {
+        items.push(item);
       }
       return items;
     },
     bufferedLength() {
-      return buffer.length;
+      return state.buffer.length;
     },
   };
 }

@@ -54,8 +54,8 @@ const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
  * The contract promises a credential-free URL and this value is persisted, echoed back by the API
  * and handed to `git clone`, so the rule is an allow-list of what a clone actually needs rather
  * than a deny-list of known credential shapes. Userinfo, a query string and a fragment are each a
- * place a token hides (`https://user:ghp_…@…`, `?token=…`, `#access_token=…`), and an extra path
- * segment carries no meaning for a clone; all of them are refused.
+ * place a token hides (`https://user:ghp_…@…`, `?token=…`, `#access_token=…`); a non-default port
+ * sends the clone somewhere else; and an extra path segment carries no meaning. All are refused.
  *
  * `URL` normalises `.` and `..` before this runs, and percent-escapes never match the segment
  * pattern, so neither can smuggle a third segment past the length check.
@@ -69,6 +69,11 @@ function isPlainRepoUrl(value: string): boolean {
     return false;
   }
   if (parsed.username !== '' || parsed.password !== '') {
+    return false;
+  }
+  // `URL` blanks the port when it is the scheme's default, so anything left here redirects the
+  // clone somewhere other than github.com:443.
+  if (parsed.port !== '') {
     return false;
   }
   // Tested on the raw text rather than on `parsed.search`/`parsed.hash`: a bare `?` or `#`

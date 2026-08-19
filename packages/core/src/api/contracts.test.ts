@@ -76,6 +76,7 @@ describe('repoUrl', () => {
     'https://github.com/acme/widgets',
     'https://github.com/acme/widgets.git',
     'https://github.com/acme/my.repo_name-2',
+    'https://github.com:443/acme/widgets',
   ])('accepts %s', (value) => {
     expect(repoUrl.safeParse(value).success).toBe(true);
   });
@@ -91,6 +92,7 @@ describe('repoUrl', () => {
     ['http scheme', 'http://github.com/acme/widgets'],
     ['another host', 'https://gitlab.com/acme/widgets'],
     ['host suffix attack', 'https://github.com.evil.test/acme/widgets'],
+    ['non-default port', 'https://github.com:8080/acme/widgets'],
     ['userinfo with password', `https://user:${GITHUB_CANARY}@github.com/acme/widgets`],
     ['userinfo without password', 'https://user@github.com/acme/widgets'],
     ['query string carrying a token', `https://github.com/acme/widgets?token=${GITHUB_CANARY}`],

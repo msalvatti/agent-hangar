@@ -294,6 +294,22 @@ describe('createNdjsonParser line cap', () => {
   });
 
   /**
+   * The cap must bind a complete line too. A producer that writes an over-long line together with
+   * its newline in one chunk would otherwise sail past the limit and have the whole thing parsed,
+   * which is the work the cap exists to bound; the line after it must still parse.
+   */
+  it('rejects an over-long complete line delivered in a single chunk', () => {
+    const parser = createNdjsonParser(z.object({ s: z.string() }));
+    const huge = 'a'.repeat(PROTOCOL_MAX_LINE_LENGTH * 2);
+    const line = `{"s":"${huge}"}`;
+    expect(parser.push(`${line}\n{"s":"ok"}\n`)).toEqual([
+      { type: 'protocol.error', reason: 'line-too-long', length: line.length },
+      { s: 'ok' },
+    ]);
+    expect(parser.bufferedLength()).toBe(0);
+  });
+
+  /**
    * A line exactly at the cap is legitimate and must still parse: the limit rejects what exceeds
    * it, never what merely reaches it.
    */

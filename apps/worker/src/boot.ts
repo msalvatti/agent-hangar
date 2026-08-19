@@ -78,6 +78,49 @@ async function assertRedisReachable(redis: BootRedis, url: string): Promise<void
 }
 
 /**
+ * Builds the idempotent shutdown of a booted worker.
+ *
+ * Every client is released even when an earlier release fails: the closed flag is already set, so
+ * a retry is a no-op, and letting a rejected `redis.quit()` skip `$disconnect()` would leave the
+ * Postgres pool open for the rest of the process's life. The first failure is the one thrown,
+ * because it is the one that explains the shutdown.
+ *
+ * @param redis - Redis client, closed first so no late job can query a gone database.
+ * @param prisma - Prisma client, whose pool is always released.
+ * @param logger - Logger for the shutdown breadcrumbs.
+ * @returns A function that closes both clients at most once.
+ */
+function createShutdown(
+  redis: BootRedis,
+  prisma: BootDatabase,
+  logger: Logger,
+): () => Promise<void> {
+  let closed = false;
+  return async (): Promise<void> => {
+    if (closed) {
+      return;
+    }
+    closed = true;
+    logger.info('shutting down');
+    const failures: unknown[] = [];
+    try {
+      await redis.quit();
+    } catch (error) {
+      failures.push(error);
+    }
+    try {
+      await prisma.$disconnect();
+    } catch (error) {
+      failures.push(error);
+    }
+    if (failures.length > 0) {
+      throw failures[0];
+    }
+    logger.info('shutdown complete');
+  };
+}
+
+/**
  * Boots the worker.
  *
  * @param deps - Injected collaborators.
@@ -110,33 +153,5 @@ export async function boot<TDatabase extends BootDatabase, TRedis extends BootRe
   }
   logger.debug('redis reachable');
 
-  let closed = false;
-  const shutdown = async (): Promise<void> => {
-    if (closed) {
-      return;
-    }
-    closed = true;
-    logger.info('shutting down');
-    // Every client is released even when an earlier release fails. `closed` is already set, so a
-    // retry is a no-op: letting a rejected `redis.quit()` skip `$disconnect()` would leave the
-    // Postgres pool open for the rest of the process's life. The first failure is the one thrown,
-    // because it is the one that explains the shutdown.
-    const failures: unknown[] = [];
-    try {
-      await redis.quit();
-    } catch (error) {
-      failures.push(error);
-    }
-    try {
-      await prisma.$disconnect();
-    } catch (error) {
-      failures.push(error);
-    }
-    if (failures.length > 0) {
-      throw failures[0];
-    }
-    logger.info('shutdown complete');
-  };
-
-  return { config, prisma, redis, shutdown };
+  return { config, prisma, redis, shutdown: createShutdown(redis, prisma, logger) };
 }
