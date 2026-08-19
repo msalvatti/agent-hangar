@@ -104,13 +104,29 @@ function assertErasable(databaseName: string | undefined, env: RawEnv): void {
   }
 }
 
-/** Extracts the database name from a Postgres connection URL. */
+/**
+ * Extracts the database name from a Postgres connection URL.
+ *
+ * Query parameters (`?schema=public`, pool settings) are not part of the name, and a URL this
+ * cannot read yields `undefined`, which the guard treats as "not a test database".
+ *
+ * @param connectionString - Value of `DATABASE_URL`.
+ * @returns The database name, or `undefined` when the URL does not name one.
+ */
 function databaseNameOf(connectionString: string): string | undefined {
   const parsed = URL.parse(connectionString);
   if (parsed === null) {
     return undefined;
   }
-  const name = decodeURIComponent(parsed.pathname.replace(/^\//, ''));
+  const raw = parsed.pathname.replace(/^\//, '');
+  let name: string;
+  try {
+    name = decodeURIComponent(raw);
+  } catch {
+    // A malformed percent sequence names no database this guard can identify. Refuse, rather than
+    // let a URIError escape a check whose entire job is to fail closed.
+    return undefined;
+  }
   return name.length === 0 ? undefined : name;
 }
 

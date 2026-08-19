@@ -97,6 +97,7 @@ describe('connectTestDb', () => {
     ['a name that only contains "test"', 'postgresql://ah:ah@127.0.0.1:5433/agent_hangar_latest'],
     ['a URL naming no database', 'postgresql://127.0.0.1:5433'],
     ['a string that is not a URL', 'not-a-url'],
+    ['a URL with a malformed escape', 'postgresql://127.0.0.1:5433/%zz'],
   ])('refuses %s even with the opt-in set', (_label, url) => {
     expect(() => connectTestDb({ DATABASE_URL: url, [DESTRUCTIVE_TESTS_ENV]: '1' })).toThrow(
       /Refusing to erase/,
@@ -130,6 +131,8 @@ describe('connectTestDb', () => {
   it.each([
     'postgresql://ah:ah@127.0.0.1:5433/agent_hangar_test',
     'postgresql://ah:ah@127.0.0.1:5433/agent_hangar_w2b_test',
+    // Prisma URLs routinely carry parameters; they are not part of the database name.
+    'postgresql://ah:ah@127.0.0.1:5433/agent_hangar_test?schema=public&connection_limit=5',
   ])('accepts %s with the opt-in set', (url) => {
     connectTestDb({ DATABASE_URL: url, [DESTRUCTIVE_TESTS_ENV]: '1' });
     expect(createPrismaClient).toHaveBeenCalledWith({

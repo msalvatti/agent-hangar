@@ -83,6 +83,53 @@ async function readErrorBody(response: Response): Promise<{ code: string; messag
   }
 }
 
+/** One entry of the operation map. */
+type OperationSpec = (typeof apiOperations)[ApiOperationName];
+
+/**
+ * Turns a successful response into the value the operation declares.
+ *
+ * @param spec - The operation that was called.
+ * @param response - A 2xx response.
+ * @returns The parsed body, or `undefined` when the operation declares no content.
+ * @throws ApiClientError when the body disagrees with what the operation declares.
+ */
+async function readSuccessBody(spec: OperationSpec, response: Response): Promise<unknown> {
+  if (spec.noContent === true) {
+    // The operation promises an empty body. A body here means the server disagrees with the
+    // contract, which is worth failing on rather than silently ignoring.
+    const text = await response.text();
+    if (text.trim().length > 0) {
+      throw new ApiClientError(
+        response.status,
+        'INVALID_RESPONSE',
+        'Response carries a body but the operation declares none',
+      );
+    }
+    return undefined;
+  }
+  if (response.status === HTTP_NO_CONTENT) {
+    // The mirror case: the operation declares a body schema, so an empty response cannot satisfy
+    // it. Reported precisely instead of surfacing as "not JSON".
+    throw new ApiClientError(
+      response.status,
+      'INVALID_RESPONSE',
+      'Response carries no body but the operation declares one',
+    );
+  }
+  let json: unknown;
+  try {
+    json = await response.json();
+  } catch {
+    throw new ApiClientError(response.status, 'INVALID_RESPONSE', 'Response body is not JSON');
+  }
+  const parsed = spec.response.safeParse(json);
+  if (!parsed.success) {
+    throw new ApiClientError(response.status, 'INVALID_RESPONSE', parsed.error.message);
+  }
+  return parsed.data;
+}
+
 /**
  * Calls an API operation and returns its validated response.
  *
@@ -123,39 +170,7 @@ export async function apiFetch<K extends ApiOperationName>(
     const error = await readErrorBody(response);
     throw new ApiClientError(response.status, error.code, error.message);
   }
-  if (spec.noContent === true) {
-    // The operation promises an empty body. A body here means the server disagrees with the
-    // contract, which is worth failing on rather than silently ignoring.
-    const text = await response.text();
-    if (text.trim().length > 0) {
-      throw new ApiClientError(
-        response.status,
-        'INVALID_RESPONSE',
-        'Response carries a body but the operation declares none',
-      );
-    }
-    return undefined as ApiResponse<K>;
-  }
-  if (response.status === HTTP_NO_CONTENT) {
-    // The mirror case: the operation declares a body schema, so an empty response cannot satisfy
-    // it. Reported precisely instead of surfacing as "not JSON".
-    throw new ApiClientError(
-      response.status,
-      'INVALID_RESPONSE',
-      'Response carries no body but the operation declares one',
-    );
-  }
-  let json: unknown;
-  try {
-    json = await response.json();
-  } catch {
-    throw new ApiClientError(response.status, 'INVALID_RESPONSE', 'Response body is not JSON');
-  }
-  const parsed = spec.response.safeParse(json);
-  if (!parsed.success) {
-    throw new ApiClientError(response.status, 'INVALID_RESPONSE', parsed.error.message);
-  }
-  return parsed.data as ApiResponse<K>;
+  return (await readSuccessBody(spec, response)) as ApiResponse<K>;
 }
 
 /** Options of {@link createEventSource}. */
