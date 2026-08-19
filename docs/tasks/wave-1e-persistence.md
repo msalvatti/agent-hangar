@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-E (parallel with W1-A … W1-I; no Docker) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/5 tasks |
+| **Status** | 🟦 running |
+| **Progress** | 4/5 tasks |
 | **Branch** | `feat/w1e-persistence` |
 | **Owned paths** | `packages/core/src/persistence/repositories/**`, `packages/core/src/persistence/testing/db.ts` (+ its test), `packages/core/vitest.config.ts` (`coverage.include` lines only) |
 | **Depends on** | W0 merged to `main` |
@@ -43,28 +43,28 @@ Testing model for this lane (plan §6 W1-E): mappers and helpers are unit-tested
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1E.1 | Mappers, repository errors, Prisma error translation, `createRepositories` skeleton, db helper extension | 📋 | P0 | M | — |
-| 1E.2 | `ChatRepository`, `MessageRepository` (gap-free `seq` transaction), `TurnRepository` + `@db` suites | 📋 | P0 | L | 1E.1 |
-| 1E.3 | `WorkspaceRepository` (partial-unique → typed error), `ScheduledJobRepository`, `JobRunRepository` + `@db` suites | 📋 | P0 | L | 1E.1 |
-| 1E.4 | `ToolCallLogRepository`, `SecretRepository`, cross-repository invariant suite (cascade, concurrency, canary never stored) | 📋 | P0 | M | 1E.2, 1E.3 |
+| 1E.1 | Mappers, repository errors, Prisma error translation, `createRepositories` skeleton, db helper extension | ✅ | P0 | M | — |
+| 1E.2 | `ChatRepository`, `MessageRepository` (gap-free `seq` transaction), `TurnRepository` + `@db` suites | ✅ | P0 | L | 1E.1 |
+| 1E.3 | `WorkspaceRepository` (partial-unique → typed error), `ScheduledJobRepository`, `JobRunRepository` + `@db` suites | ✅ | P0 | L | 1E.1 |
+| 1E.4 | `ToolCallLogRepository`, `SecretRepository`, cross-repository invariant suite (cascade, concurrency, canary never stored) | ✅ | P0 | M | 1E.2, 1E.3 |
 | 1E.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1E.1–1E.4 |
 
 ---
 
 ## Task 1E.1 — Mappers, repository errors, Prisma error translation, `createRepositories` skeleton, db helper extension
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Lay the shared ground for every repository: a pure `mappers.ts` that converts Prisma rows and enums to domain types (and back), a small typed-error module for persistence-level failures, a translator from `PrismaClientKnownRequestError` codes to those errors, the `createRepositories(prisma, redactor)` factory with the same shape as `createInMemoryRepositories`, and the `@db` helper extensions the later tasks need. Everything here except the factory's wiring is unit-testable without a database.
 
 **Acceptance criteria**
-- [ ] `mappers.ts` exports one `to<Entity>(row)` function per model (`toChat`, `toMessage`, `toTurn`, `toWorkspace`, `toScheduledJob`, `toJobRun`, `toToolCallLog`, `toSecretEnvelope`) returning the domain types used by `ports.ts`, with `null` → `undefined` conversion where the domain type uses optional fields (`exactOptionalPropertyTypes`) and `Date` values passed through untouched
-- [ ] `mappers.ts` exports validated enum converters for every Prisma enum (`asChatStatus`, `asMessageRole`, `asTurnStatus`, `asWorkspaceKind`, `asWorkspaceStatus`, `asJobRunStatus`, `asJobRunTrigger`, `asToolCallStatus`, `asSecretKey`) that throw `PersistenceMappingError` on an unknown value, and their inverses that are identity on the literal strings
-- [ ] `errors.ts` exports `EntityNotFoundError` (`code: 'ENTITY_NOT_FOUND'`, fields `entity`, `id`), `LiveWorkspaceConflictError` (`code: 'LIVE_WORKSPACE_CONFLICT'`, field `chatId`), `UniqueViolationError` (`code: 'UNIQUE_VIOLATION'`, field `constraint`), `PersistenceMappingError` (`code: 'PERSISTENCE_MAPPING'`), all extending `AgentHangarError` from `src/errors.ts`
-- [ ] `prisma-errors.ts` exports `translatePrismaError(error: unknown, ctx): never` mapping `P2002` → `LiveWorkspaceConflictError` when the violated index is `Workspace_one_live_per_chat`, otherwise `UniqueViolationError`; `P2025` → `EntityNotFoundError`; anything else is rethrown unchanged
-- [ ] `index.ts` exports `createRepositories(prisma, redactor): Repositories` (property names identical to `createInMemoryRepositories` in `src/testing/in-memory-repositories.ts`) plus every class and error; nothing Prisma-typed is exported
-- [ ] `persistence/testing/db.ts` gains `describeDb(title, fn)` (registers a `describe` titled `@db <title>` that runs when `DATABASE_URL` is set, throws a loud error when `CI=1` and it is unset/unreachable, and logs a skip message locally otherwise), `seedChat(client, overrides?)`, `rawSelect<T>(client, sql, ...params)` and `countRows(client, table)`
-- [ ] Unit tests give 100 % coverage on `mappers.ts`, `errors.ts`, `prisma-errors.ts`; `db.ts` additions are covered by the `@db` runs of later tasks plus a unit test of `describeDb`'s decision function (`shouldRunDbSuite(env)`)
+- [x] `mappers.ts` exports one `to<Entity>(row)` function per model (`toChat`, `toMessage`, `toTurn`, `toWorkspace`, `toScheduledJob`, `toJobRun`, `toToolCallLog`, `toSecretEnvelope`) returning the domain types used by `ports.ts`, with `null` → `undefined` conversion where the domain type uses optional fields (`exactOptionalPropertyTypes`) and `Date` values passed through untouched
+- [x] `mappers.ts` exports validated enum converters for every Prisma enum (`asChatStatus`, `asMessageRole`, `asTurnStatus`, `asWorkspaceKind`, `asWorkspaceStatus`, `asJobRunStatus`, `asJobRunTrigger`, `asToolCallStatus`, `asSecretKey`) that throw `PersistenceMappingError` on an unknown value, and their inverses that are identity on the literal strings
+- [x] `errors.ts` exports `EntityNotFoundError` (`code: 'ENTITY_NOT_FOUND'`, fields `entity`, `id`), `LiveWorkspaceConflictError` (`code: 'LIVE_WORKSPACE_CONFLICT'`, field `chatId`), `UniqueViolationError` (`code: 'UNIQUE_VIOLATION'`, field `constraint`), `PersistenceMappingError` (`code: 'PERSISTENCE_MAPPING'`), all extending `AgentHangarError` from `src/errors.ts`
+- [x] `prisma-errors.ts` exports `translatePrismaError(error: unknown, ctx): never` mapping `P2002` → `LiveWorkspaceConflictError` when the violated index is `Workspace_one_live_per_chat`, otherwise `UniqueViolationError`; `P2025` → `EntityNotFoundError`; anything else is rethrown unchanged
+- [x] `index.ts` exports `createRepositories(prisma, redactor): Repositories` (property names identical to `createInMemoryRepositories` in `src/testing/in-memory-repositories.ts`) plus every class and error; nothing Prisma-typed is exported
+- [x] `persistence/testing/db.ts` gains `describeDb(title, fn)` (registers a `describe` titled `@db <title>` that runs when `DATABASE_URL` is set, throws a loud error when `CI=1` and it is unset/unreachable, and logs a skip message locally otherwise), `seedChat(client, overrides?)`, `rawSelect<T>(client, sql, ...params)` and `countRows(client, table)`
+- [x] Unit tests give 100 % coverage on `mappers.ts`, `errors.ts`, `prisma-errors.ts`; `db.ts` additions are covered by the `@db` runs of later tasks plus a unit test of `describeDb`'s decision function (`shouldRunDbSuite(env)`)
 
 **Files to create/modify**
 `packages/core/src/persistence/repositories/{mappers,mappers.test,errors,errors.test,prisma-errors,prisma-errors.test,index}.ts`, `packages/core/src/persistence/testing/db.ts` (+ `db.test.ts` for the pure decision function), `packages/core/vitest.config.ts` (`coverage.include` extension only).
@@ -144,16 +144,16 @@ Completion Protocol (after you finish):
 
 ## Task 1E.2 — `ChatRepository`, `MessageRepository` (gap-free `seq` transaction), `TurnRepository` + `@db` suites
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 1E.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 1E.1
 
 **Description.** Implement the three conversation repositories. The critical piece is `MessageRepository.append`, which must assign a gap-free, per-chat `seq` under concurrency using an interactive transaction that locks the parent `Chat` row (`SELECT … FOR UPDATE`) before computing `COALESCE(MAX(seq),0)+1`. Every write of agent-visible text goes through the injected `Redactor`.
 
 **Acceptance criteria**
-- [ ] `PrismaChatRepository` implements every `ChatRepository` method: `create`, `getById` (null when missing), `list(status?)` ordered by `updatedAt` desc, `setStatus` (sets/clears `archivedAt` for `ARCHIVED`/`ACTIVE`), `updateRestoreHints({ workBranch?, lastPushedSha? })` (only provided fields change), `touch` (bumps `updatedAt`), `delete` (cascade)
-- [ ] `PrismaMessageRepository.append(chatId, role, content, turnId?)` runs in `prisma.$transaction(async tx => …)`: `SELECT id FROM "Chat" WHERE id = $1 FOR UPDATE` (throws `EntityNotFoundError('Chat', id)` when no row), `SELECT COALESCE(MAX(seq),0)+1 AS next FROM "Message" WHERE "chatId" = $1`, insert with `content = redactor.redact(content)`; `listByChat(chatId, { limit?, before? })` returns ascending `seq`, `before` meaning `seq < before`, `limit` applied to the **latest** messages before the cursor (query desc + reverse)
-- [ ] `PrismaTurnRepository`: `create` (QUEUED, `model`, optional `queueJobId`), `get`, `setStatus(id, status, { error? })` sets `startedAt` on first `PREPARING`/`RUNNING`, `finishedAt` on terminal statuses, redacts `error`; `finish(id, { status, usage, stepCount, error? })`; `listByChat` ordered by `queuedAt` asc; `attachWorkspace(id, workspaceId)` if declared in the port
-- [ ] `@db` suites cover every method above, including: 20 concurrent `append` via `Promise.all` yield `seq` 1..20 with no gaps or duplicates; `append` to a missing chat throws `EntityNotFoundError`; `content` containing `GITHUB_CANARY` is stored as `[REDACTED]` (asserted with `rawSelect`, not through the mapper); `list('ARCHIVED')` filters; `delete` removes messages and turns (counted via `countRows`)
-- [ ] 100 % coverage on the three repository files when run with `DATABASE_URL`
+- [x] `PrismaChatRepository` implements every `ChatRepository` method: `create`, `getById` (null when missing), `list(status?)` ordered by `updatedAt` desc, `setStatus` (sets/clears `archivedAt` for `ARCHIVED`/`ACTIVE`), `updateRestoreHints({ workBranch?, lastPushedSha? })` (only provided fields change), `touch` (bumps `updatedAt`), `delete` (cascade)
+- [x] `PrismaMessageRepository.append(chatId, role, content, turnId?)` runs in `prisma.$transaction(async tx => …)`: `SELECT id FROM "Chat" WHERE id = $1 FOR UPDATE` (throws `EntityNotFoundError('Chat', id)` when no row), `SELECT COALESCE(MAX(seq),0)+1 AS next FROM "Message" WHERE "chatId" = $1`, insert with `content = redactor.redact(content)`; `listByChat(chatId, { limit?, before? })` returns ascending `seq`, `before` meaning `seq < before`, `limit` applied to the **latest** messages before the cursor (query desc + reverse)
+- [x] `PrismaTurnRepository`: `create` (QUEUED, `model`, optional `queueJobId`), `get`, `setStatus(id, status, { error? })` sets `startedAt` on first `PREPARING`/`RUNNING`, `finishedAt` on terminal statuses, redacts `error`; `finish(id, { status, usage, stepCount, error? })`; `listByChat` ordered by `queuedAt` asc; `attachWorkspace(id, workspaceId)` if declared in the port
+- [x] `@db` suites cover every method above, including: 20 concurrent `append` via `Promise.all` yield `seq` 1..20 with no gaps or duplicates; `append` to a missing chat throws `EntityNotFoundError`; `content` containing `GITHUB_CANARY` is stored as `[REDACTED]` (asserted with `rawSelect`, not through the mapper); `list('ARCHIVED')` filters; `delete` removes messages and turns (counted via `countRows`)
+- [x] 100 % coverage on the three repository files when run with `DATABASE_URL`
 
 **Files to create/modify**
 `packages/core/src/persistence/repositories/{chat.repository,chat.repository.integration.test,message.repository,message.repository.integration.test,turn.repository,turn.repository.integration.test}.ts`.
@@ -237,16 +237,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1e-persistence
 
 ## Task 1E.3 — `WorkspaceRepository` (partial-unique → typed error), `ScheduledJobRepository`, `JobRunRepository` + `@db` suites
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 1E.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 1E.1
 
 **Description.** Implement the workspace and scheduling repositories. `WorkspaceRepository` must surface the "one live workspace per chat" partial unique index as `LiveWorkspaceConflictError`, expose `findLiveByChat` and the idle-TTL query `listIdle(before)`. `JobRunRepository` must surface the `workspaceId` unique constraint and provide `findRunningByJob` for the overlap policy.
 
 **Acceptance criteria**
-- [ ] `PrismaWorkspaceRepository`: `create` (status `CREATING`, `lastActiveAt = now`) translating the partial-index violation into `LiveWorkspaceConflictError`; `get`; `findLiveByChat(chatId)` (status ∈ CREATING/READY/BUSY/STOPPING, null otherwise); `setStatus(id, status, { runnerRef?, failureReason? })` sets `readyAt` on READY (first time), `destroyedAt` on DESTROYED, redacts `failureReason`, always bumps `lastActiveAt` when entering READY from BUSY; `touch(id)` updates `lastActiveAt`; `listIdle(before)` (READY and `lastActiveAt < before`, ordered asc); `listLive()`
-- [ ] `PrismaScheduledJobRepository`: `create`, `update` (partial), `get`, `list` (ordered by `createdAt` asc), `delete` (cascades runs), `listEnabled`, `setRunTimes(id, { lastRunAt?, nextRunAt? })`
-- [ ] `PrismaJobRunRepository`: `create` (QUEUED, `trigger`, `model`, `scheduledFor`), `setStatus` (startedAt/finishedAt rules as Turn), `finish(id, { status, output?, error?, usage, stepCount })` redacting `output` and `error`, `attachWorkspace(id, workspaceId)` translating the unique violation to `UniqueViolationError('workspaceId')`, `listByJob` (queuedAt desc), `get`, `findRunningByJob(jobId)` (PREPARING or RUNNING)
-- [ ] `@db` suites: second live workspace for one chat → `LiveWorkspaceConflictError` (and the exact Prisma `meta` shape is pinned in `prisma-errors.test.ts`); after the first becomes `DESTROYED` a new one is accepted; two `JOB` workspaces with `chatId = null` coexist; `listIdle` returns only READY rows older than the cutoff; `failureReason` canary redacted (raw select); job delete cascades runs; `findRunningByJob` returns null once finished; two runs attaching the same workspace → `UniqueViolationError`
-- [ ] 100 % coverage on the three repository files with `DATABASE_URL`
+- [x] `PrismaWorkspaceRepository`: `create` (status `CREATING`, `lastActiveAt = now`) translating the partial-index violation into `LiveWorkspaceConflictError`; `get`; `findLiveByChat(chatId)` (status ∈ CREATING/READY/BUSY/STOPPING, null otherwise); `setStatus(id, status, { runnerRef?, failureReason? })` sets `readyAt` on READY (first time), `destroyedAt` on DESTROYED, redacts `failureReason`, always bumps `lastActiveAt` when entering READY from BUSY; `touch(id)` updates `lastActiveAt`; `listIdle(before)` (READY and `lastActiveAt < before`, ordered asc); `listLive()`
+- [x] `PrismaScheduledJobRepository`: `create`, `update` (partial), `get`, `list` (ordered by `createdAt` asc), `delete` (cascades runs), `listEnabled`, `setRunTimes(id, { lastRunAt?, nextRunAt? })`
+- [x] `PrismaJobRunRepository`: `create` (QUEUED, `trigger`, `model`, `scheduledFor`), `setStatus` (startedAt/finishedAt rules as Turn), `finish(id, { status, output?, error?, usage, stepCount })` redacting `output` and `error`, `attachWorkspace(id, workspaceId)` translating the unique violation to `UniqueViolationError('workspaceId')`, `listByJob` (queuedAt desc), `get`, `findRunningByJob(jobId)` (PREPARING or RUNNING)
+- [x] `@db` suites: second live workspace for one chat → `LiveWorkspaceConflictError` (and the exact Prisma `meta` shape is pinned in `prisma-errors.test.ts`); after the first becomes `DESTROYED` a new one is accepted; two `JOB` workspaces with `chatId = null` coexist; `listIdle` returns only READY rows older than the cutoff; `failureReason` canary redacted (raw select); job delete cascades runs; `findRunningByJob` returns null once finished; two runs attaching the same workspace → `UniqueViolationError`
+- [x] 100 % coverage on the three repository files with `DATABASE_URL`
 
 **Files to create/modify**
 `packages/core/src/persistence/repositories/{workspace.repository,workspace.repository.integration.test,scheduled-job.repository,scheduled-job.repository.integration.test,job-run.repository,job-run.repository.integration.test}.ts`, `prisma-errors.ts` + test (pin the observed `meta` shape).
@@ -319,15 +319,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1e-persistence
 
 ## Task 1E.4 — `ToolCallLogRepository`, `SecretRepository`, cross-repository invariant suite
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1E.2, 1E.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1E.2, 1E.3
 
 **Description.** Implement the last two repositories and add one integration suite that exercises the data-model invariants across repositories: cascades end to end (Chat → Turn → ToolCallLog; ScheduledJob → JobRun → ToolCallLog; Workspace → ToolCallLog), the canary-never-stored guarantee for every redacted column in one place, and the factory `createRepositories` wiring.
 
 **Acceptance criteria**
-- [ ] `PrismaToolCallLogRepository`: `start({ workspaceId, turnId? | jobRunId?, callId, seq, toolName, args })` with `args = redactor.redactJson(args)`; `finish(id | { turnId/jobRunId, callId }, { status, exitCode?, resultHead?, resultBytes?, durationMs })` with `resultHead` redacted and truncated to `RESULT_HEAD_MAX_BYTES`; `listByTurn(turnId)` and `listByJobRun(jobRunId)` ordered by `seq` asc
-- [ ] `PrismaSecretRepository`: `upsert(key, envelope)` (ciphertext/iv/authTag as `Uint8Array`, `keyVersion`, `last4`) creating or replacing the single row per key; `get(key)` → envelope or null; `remove(key)` idempotent (no throw when missing); `status()` → `Record<SecretKey, { set, last4?, updatedAt? }>` with both keys always present
-- [ ] `invariants.integration.test.ts`: canary matrix (each redacted column written via its repository with both canaries → raw select shows `[REDACTED]`, and a raw `SELECT` across all text columns of all tables finds no canary substring), cascade chains, `createRepositories(prisma, redactor)` returns working instances for all eight ports
-- [ ] 100 % coverage on `tool-call-log.repository.ts`, `secret.repository.ts`, `index.ts`; `persistence/testing/db.ts` fully covered by the combined runs
+- [x] `PrismaToolCallLogRepository`: `start({ workspaceId, turnId? | jobRunId?, callId, seq, toolName, args })` with `args = redactor.redactJson(args)`; `finish(id | { turnId/jobRunId, callId }, { status, exitCode?, resultHead?, resultBytes?, durationMs })` with `resultHead` redacted and truncated to `RESULT_HEAD_MAX_BYTES`; `listByTurn(turnId)` and `listByJobRun(jobRunId)` ordered by `seq` asc
+- [x] `PrismaSecretRepository`: `upsert(key, envelope)` (ciphertext/iv/authTag as `Uint8Array`, `keyVersion`, `last4`) creating or replacing the single row per key; `get(key)` → envelope or null; `remove(key)` idempotent (no throw when missing); `status()` → `Record<SecretKey, { set, last4?, updatedAt? }>` with both keys always present
+- [x] `invariants.integration.test.ts`: canary matrix (each redacted column written via its repository with both canaries → raw select shows `[REDACTED]`, and a raw `SELECT` across all text columns of all tables finds no canary substring), cascade chains, `createRepositories(prisma, redactor)` returns working instances for all eight ports
+- [x] 100 % coverage on `tool-call-log.repository.ts`, `secret.repository.ts`, `index.ts`; `persistence/testing/db.ts` fully covered by the combined runs
 
 **Files to create/modify**
 `packages/core/src/persistence/repositories/{tool-call-log.repository,tool-call-log.repository.integration.test,secret.repository,secret.repository.integration.test,invariants.integration.test}.ts`, `index.ts` (wire the real classes).
@@ -456,3 +456,7 @@ Completion Protocol: append `- 1E.5 ✅ <date> — PR #<n> opened`; commit `docs
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+- 1E.1 ✅ 2026-08-19 — mappers, persistence errors (reusing `src/errors.ts`'s `NotFoundError`/`LiveWorkspaceExistsError`/`UniqueViolationError` plus a new `PersistenceMappingError`), `translatePrismaError`, `db.ts` test helpers (`describeDb`, `shouldRunDbSuite`, `seedChat`, `rawSelect`, `countRows`); 100 % unit coverage.
+- 1E.2 ✅ 2026-08-19 — `PrismaChatRepository`, `PrismaMessageRepository` (gap-free `seq` under a `SELECT … FOR UPDATE` transaction, proven with 20 concurrent appends), `PrismaTurnRepository`; unit + `@db` suites green.
+- 1E.3 ✅ 2026-08-19 — `PrismaWorkspaceRepository` (partial-unique index → `LiveWorkspaceExistsError`, pinned against the real `@prisma/adapter-pg` P2002 shape), `PrismaScheduledJobRepository`, `PrismaJobRunRepository`; unit + `@db` suites green.
+- 1E.4 ✅ 2026-08-19 — `PrismaToolCallLogRepository`, `PrismaSecretRepository`, `createRepositories` wired to the real classes, cross-repository invariant suite (canary matrix, three cascade chains, factory shape parity with `createInMemoryRepositories`); unit + `@db` suites green.
