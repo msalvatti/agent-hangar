@@ -7,6 +7,7 @@ name: ${COMPOSE_PROJECT_NAME:-agent-hangar-default}
 services:
   postgres:
     image: postgres:18-alpine
+    restart: unless-stopped
     environment:
       POSTGRES_USER: ah
       POSTGRES_PASSWORD: ah
@@ -20,9 +21,11 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+      start_period: 5s
 
   redis:
     image: redis:8-alpine
+    restart: unless-stopped
     command: ['redis-server', '--appendonly', 'yes']
     ports:
       - '127.0.0.1:${REDIS_PORT:-3002}:6379'
@@ -33,6 +36,7 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+      start_period: 5s
 
 volumes:
   pgdata: {}

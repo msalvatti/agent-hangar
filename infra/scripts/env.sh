@@ -3,6 +3,9 @@
 # AH_INSTANCE / AH_PORT_BASE, falling back to CONDUCTOR_WORKSPACE_NAME / CONDUCTOR_PORT, then to
 # default / 3000. Mirrors packages/core/src/config/instance.ts — a test keeps both in sync.
 #
+# AH_ENV_FILE overrides the path of the env file read/written below (default: <repo-root>/.env.local),
+# so tests exercise this script against a throwaway file instead of the developer's real one.
+#
 # Usage:
 #   infra/scripts/env.sh                 write .env.local if absent
 #   infra/scripts/env.sh --force         overwrite .env.local
@@ -137,7 +140,7 @@ ah_env_main() {
       ;;
   esac
   root=$(ah_root_dir)
-  target="$root/.env.local"
+  target="${AH_ENV_FILE:-$root/.env.local}"
   # The file wins outright, and is echoed without re-deriving anything: the whole point is that a
   # variable exported in this shell cannot disagree with the file docker compose --env-file reads.
   if [ "$mode" = "print-effective" ] && [ -f "$target" ]; then

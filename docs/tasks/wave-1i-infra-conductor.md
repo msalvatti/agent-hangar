@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-I (parallel with W1-A … W1-H; no Docker-integration tests — scripts are tested with PATH shims) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/6 tasks |
+| **Status** | 🟦 running |
+| **Progress** | 1/6 tasks |
 | **Branch** | `feat/w1i-infra-conductor` |
 | **Owned paths** | `infra/scripts/{setup,run,archive,doctor,rotate-key,ws,db-prune}.sh`, `infra/scripts/lib/**` (node helpers), `infra/scripts/*.test.ts`, `.conductor/settings.toml`, `infra/docker-compose.yml`, `.env.example`, root `package.json` **scripts block only**, root `vitest.config.ts` (`scripts` project lines only). `infra/scripts/env.sh` is W0 output with no other Wave 1 owner — additive edits allowed (see rules). |
 | **Depends on** | W0 merged to `main` (Tasks 1I.3 and 1I.4 additionally need W1-A, W1-C, W1-E merged — this lane runs in the second Wave 1 batch, see plan §13) |
@@ -43,7 +43,7 @@ Everything is keyed by instance (`AH_INSTANCE` / `AH_PORT_BASE`, with `CONDUCTOR
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1I.1 | `run.sh`, `setup.sh` completion, compose finishing, `.env.example` final, root scripts block | 📋 | P0 | M | — |
+| 1I.1 | `run.sh`, `setup.sh` completion, compose finishing, `.env.example` final, root scripts block | ✅ | P0 | M | — |
 | 1I.2 | `archive.sh`, `ws.sh` (`ws:list` / `ws:reap`), `db-prune.sh` | 📋 | P0 | S | 1I.1 |
 | 1I.3 | `doctor.sh` + node helpers (secrets status, OpenAI model check) with snapshot tests | 📋 | P0 | L | 1I.1, W1-A + W1-C + W1-E merged |
 | 1I.4 | `rotate-key.sh` + `lib/rotate-key.ts` (re-encrypt with `keyVersion + 1`, atomic key swap, backup) | 📋 | P1 | M | 1I.3 |
@@ -54,17 +54,17 @@ Everything is keyed by instance (`AH_INSTANCE` / `AH_PORT_BASE`, with `CONDUCTOR
 
 ## Task 1I.1 — `run.sh`, `setup.sh` completion, compose finishing, `.env.example` final, root scripts block
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Replace the `run.sh` stub with the single entry point used by `pnpm dev` and by Conductor's Run button; make `setup.sh` truly idempotent (safe re-run, `--force` env rewrite, doctor at the end); finish `infra/docker-compose.yml` (project `name` from env, tuned healthchecks); finalise `.env.example`; and write the final root `package.json` scripts block that every later lane relies on.
 
 **Acceptance criteria**
-- [ ] `infra/scripts/run.sh`: `eval "$(infra/scripts/env.sh --print)"`, creates `.env.local` if absent, prints `Agent Hangar · instance=<i> · http://localhost:<WEB_PORT>` before launching, then `exec pnpm exec concurrently -n web,worker -c blue,magenta --kill-others-on-fail "pnpm --filter web dev --port <WEB_PORT>" "pnpm --filter worker dev"` with the derived env exported; `--print-only` flag prints the command without running it (used by tests)
-- [ ] `infra/scripts/setup.sh`: re-running on a configured machine performs no destructive action (env not overwritten, key not regenerated, compose `up -d --wait` idempotent, migrations no-op, image rebuild only when `--rebuild-image` or image missing); `--force` rewrites `.env.local`; detects and prints the Docker socket in use; calls `doctor.sh` at the end and propagates its exit code; `--skip-doctor` for CI
-- [ ] `infra/docker-compose.yml`: `name: ${COMPOSE_PROJECT_NAME:-agent-hangar-default}`, healthchecks `interval: 2s`, `timeout: 3s`, `retries: 30`, `start_period: 5s`, `restart: unless-stopped`, ports bound to `127.0.0.1`, volumes `pgdata`/`redisdata`
-- [ ] `.env.example` lists every variable of spec 05 §3 in that order, with the default, one-line comment, and the header stating that PAT/OpenAI key are entered in Settings, never in env
-- [ ] Root `package.json` scripts block is exactly the final list in the prompt (alphabetised inside groups), `dev` → `bash infra/scripts/run.sh`
-- [ ] Tests in `infra/scripts/run.test.ts` and `setup.test.ts` with PATH shims: env precedence (`AH_*` beats `CONDUCTOR_*` beats defaults), slugify, port math in the printed URL and `--port`, setup idempotence (second run records no `openssl`, no `env.sh --force`, compose `up` called with `--wait`, image build skipped when shim reports image present), `--force` rewrites env, socket detection order
+- [x] `infra/scripts/run.sh`: `eval "$(infra/scripts/env.sh --print)"`, creates `.env.local` if absent, prints `Agent Hangar · instance=<i> · http://localhost:<WEB_PORT>` before launching, then `exec pnpm exec concurrently -n web,worker -c blue,magenta --kill-others-on-fail "pnpm --filter web dev --port <WEB_PORT>" "pnpm --filter worker dev"` with the derived env exported; `--print-only` flag prints the command without running it (used by tests)
+- [x] `infra/scripts/setup.sh`: re-running on a configured machine performs no destructive action (env not overwritten, key not regenerated, compose `up -d --wait` idempotent, migrations no-op, image rebuild only when `--rebuild-image` or image missing); `--force` rewrites `.env.local`; detects and prints the Docker socket in use; calls `doctor.sh` at the end and propagates its exit code; `--skip-doctor` for CI
+- [x] `infra/docker-compose.yml`: `name: ${COMPOSE_PROJECT_NAME:-agent-hangar-default}`, healthchecks `interval: 2s`, `timeout: 3s`, `retries: 30`, `start_period: 5s`, `restart: unless-stopped`, ports bound to `127.0.0.1`, volumes `pgdata`/`redisdata`
+- [x] `.env.example` lists every variable of spec 05 §3 in that order, with the default, one-line comment, and the header stating that PAT/OpenAI key are entered in Settings, never in env
+- [x] Root `package.json` scripts block is exactly the final list in the prompt (alphabetised inside groups), `dev` → `bash infra/scripts/run.sh`
+- [x] Tests in `infra/scripts/run.test.ts` and `setup.test.ts` with PATH shims: env precedence (`AH_*` beats `CONDUCTOR_*` beats defaults), slugify, port math in the printed URL and `--port`, setup idempotence (second run records no `openssl`, no `env.sh --force`, compose `up` called with `--wait`, image build skipped when shim reports image present), `--force` rewrites env, socket detection order
 
 **Files to create/modify**
 `infra/scripts/run.sh`, `infra/scripts/setup.sh`, `infra/scripts/env.sh` (additive: `AH_ENV_FILE`), `infra/docker-compose.yml`, `.env.example`, `package.json` (scripts block), `infra/scripts/{run.test,setup.test}.ts`, `infra/scripts/testing/shims.ts` (test helper creating the shim dir — TS, covered).
@@ -585,3 +585,4 @@ _To be written by Task 1I.5. Target: README §7, final prose, English._
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+- 1I.1 ✅ 2026-08-19 — run.sh single entry point, idempotent setup.sh with --force/--rebuild-image/--skip-doctor/--skip-install, tuned compose healthchecks, final root scripts block, PATH-shimmed tests at 100% coverage.
