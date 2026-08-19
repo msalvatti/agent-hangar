@@ -18,6 +18,24 @@ const GIT_URL_SUFFIX = '.git';
 const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
 
 /**
+ * Whether the authority of a raw URL string contains a userinfo separator.
+ *
+ * `URL` normalises a syntactically present but empty userinfo away, so `https://@github.com/x/y`
+ * and `https://:@github.com/x/y` both parse with empty `username` and `password` while the stored
+ * string keeps the `@` and git keeps reading it as a userinfo form. The separator is therefore
+ * looked for in the raw authority — only there, since an `@` inside the path is ordinary.
+ *
+ * @param value - A URL string.
+ * @returns `true` when the authority contains `@`.
+ */
+function hasUserinfoSeparator(value: string): boolean {
+  const afterScheme = value.slice(value.indexOf('://') + '://'.length);
+  const authorityEnd = afterScheme.search(/[/?#]/u);
+  const authority = authorityEnd === -1 ? afterScheme : afterScheme.slice(0, authorityEnd);
+  return authority.includes('@');
+}
+
+/**
  * Whether a URL carries no credential-bearing component.
  *
  * Userinfo, a query string and a fragment are each a place a token hides
@@ -51,7 +69,7 @@ function parseCredentialFreeUrl(value: string): URL | null {
   if (parsed === null) {
     return null;
   }
-  if (parsed.username !== '' || parsed.password !== '') {
+  if (parsed.username !== '' || parsed.password !== '' || hasUserinfoSeparator(value)) {
     return null;
   }
   if (value.includes('?') || value.includes('#')) {

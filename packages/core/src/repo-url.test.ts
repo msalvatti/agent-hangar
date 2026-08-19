@@ -21,6 +21,8 @@ describe('credentialFreeUrl', () => {
     // Scheme, host and port are the host's policy (`ALLOWED_REPO_HOSTS`), not a credential.
     'http://127.0.0.1:3907/sample.git',
     'http://gitserver:8080/sample.git',
+    // An `@` in the PATH is ordinary and must not be mistaken for userinfo.
+    'https://git.example.test/acme/@scope.git',
   ])('accepts the credential-free URL %s', (value) => {
     expect(credentialFreeUrl.safeParse(value).success).toBe(true);
   });
@@ -28,6 +30,11 @@ describe('credentialFreeUrl', () => {
   /** Each rejected shape is a place a token hides on its way into a clone command. */
   it.each([
     ['userinfo', `https://x-access-token:${GITHUB_CANARY}@github.com/acme/widgets`],
+    // `URL` normalises an empty userinfo away, so these parse with empty username and password
+    // while the stored string keeps the `@` that git still reads as a userinfo form.
+    ['an empty userinfo', 'https://@github.com/acme/widgets'],
+    ['an empty user and password', 'https://:@github.com/acme/widgets'],
+    ['a username with no password', 'https://x-access-token@github.com/acme/widgets'],
     ['a query string', `https://github.com/acme/widgets?token=${GITHUB_CANARY}`],
     ['a fragment', `https://github.com/acme/widgets#access_token=${GITHUB_CANARY}`],
     ['a bare question mark', 'https://github.com/acme/widgets?'],
