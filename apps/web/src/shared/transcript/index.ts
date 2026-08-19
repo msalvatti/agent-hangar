@@ -1,12 +1,8 @@
 /**
  * Public API of the shared transcript module: the domain-free model of a rendered turn, its
- * reducer, the SSE and elapsed-time hooks, and display formatting.
+ * reducer, the SSE and elapsed-time hooks, display formatting, and the rendering components.
  *
  * Layer: shared (barrel).
- *
- * Components (`Transcript`, `UserMessage`, `AssistantMarkdown`, `ToolCallRow`, `SystemNotice`,
- * `StreamCursor`, `StatusPill`) are added to this barrel by a later task; only the data layer is
- * exported so far.
  */
 export type {
   AssistantTranscriptItem,
@@ -52,3 +48,23 @@ export {
   shortSha,
 } from './lib/format';
 export { maskSecretShapes, toDisplayJson } from './lib/redact-display';
+export { summarizeArgs } from './lib/summarize-args';
+
+export type { AssistantMarkdownProps } from './components/AssistantMarkdown';
+export { AssistantMarkdown } from './components/AssistantMarkdown';
+export type { CopyButtonProps } from './components/CopyButton';
+export { CopyButton } from './components/CopyButton';
+export type { JumpToLatestProps } from './components/JumpToLatest';
+export { JumpToLatest } from './components/JumpToLatest';
+export type { StatusPillProps } from './components/StatusPill';
+export { StatusPill } from './components/StatusPill';
+export type { StreamCursorProps } from './components/StreamCursor';
+export { StreamCursor } from './components/StreamCursor';
+export type { SystemNoticeProps } from './components/SystemNotice';
+export { SystemNotice } from './components/SystemNotice';
+export type { ToolCallRowProps } from './components/ToolCallRow';
+export { ToolCallRow } from './components/ToolCallRow';
+export type { TranscriptProps } from './components/Transcript';
+export { Transcript } from './components/Transcript';
+export type { UserMessageProps } from './components/UserMessage';
+export { UserMessage } from './components/UserMessage';

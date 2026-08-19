@@ -33,7 +33,12 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary'],
       reportsDirectory: './coverage',
-      include: ['src/shared/api/**', 'src/shared/lib/**', 'src/shared/transcript/**'],
+      include: [
+        'src/shared/api/**',
+        'src/shared/lib/**',
+        'src/shared/transcript/**',
+        'src/shared/feedback/**',
+      ],
       exclude: ['**/*.test.{ts,tsx}', '**/index.ts', 'src/shared/ui/**', 'src/test/**'],
       thresholds: {
         lines: 100,
