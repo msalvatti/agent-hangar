@@ -62,7 +62,7 @@ but not Done until the note is cleared. `docs/plan.md` §12 initially shows
 | launch | `command -v gh && gh auth status` | STOP — `gh auth login` |
 | launch | `docker info` | STOP — operator starts Docker Desktop (needed by W0's image build, every 🐳 lane, `@db`/`@redis` compose stacks) |
 | launch | `node -v \| grep -q '^v24\.' && pnpm -v \| grep -q '^11\.'` | STOP — Node 24 + pnpm 11 (`corepack enable`) |
-| launch | `gh secret list -R bymaxone/agent-hangar \| grep -q GITLEAKS_LICENSE` | **STOP** — gitleaks-action requires a (free) license key for organisation repos; without it the `secret-scan` job fails on every PR and the chain stalls at W0. Operator obtains the key at gitleaks.io and runs `gh secret set GITLEAKS_LICENSE -R bymaxone/agent-hangar`. (Alternative the operator may choose instead, recorded here so W0 implements it: run gitleaks from the official container image `ghcr.io/gitleaks/gitleaks:v8` in the `secret-scan` job — no license needed. Pick one before launch; the default is the secret.) |
+| launch | `gh secret list -R bymaxone/agent-hangar \| grep -q GITLEAKS_LICENSE` | gitleaks-action requires a (free) license key for organisation repos; without it the `secret-scan` job fails on every PR. **Decision at launch (2026-08-19): the secret was not set, so the `secret-scan` job runs gitleaks from the official container image** (`docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8 git /repo --redact --no-banner` — full history on `push` to `main`, `--log-opts="origin/main..HEAD"`-style PR scope on pull requests) — no license needed. W0 implements it that way; switching back to `gitleaks/gitleaks-action@v2` is a later 1-line PR once the operator sets the secret. |
 | launch | `df -g / \| awk 'NR==2 {exit ($4 < 30)}'` | STOP — ≥ 30 GB free (Playwright browsers, workspace image, ≤ 5 worktrees with `node_modules`, Stryker sandboxes) |
 | launch | `gh api repos/bymaxone/agent-hangar/rules/branches/main --jq 'map(.type) \| index("pull_request")'` prints a number | informational — confirms `main` is PR-only (org ruleset `protect-default-branch`): **no direct pushes to `main` after the seed**, dashboard updates go through PRs (see Dashboard policy) |
 | every lane spawn | `git ls-remote --heads origin <lane branch>` prints **nothing** | a leftover branch from a dead run — investigate (open PR? merged?) before re-spawning; never spawn onto an existing remote branch blindly |
@@ -374,8 +374,33 @@ validation on every input), W2-B (`reveal()` scope, redact-before-publish,
 
 - **Method**: squash (org ruleset allows squash/rebase only; delete branch
   on merge — always, with the `ls-remote` + `branch --list` proof)
-- **Grace window**: 5 minutes since last push
+- **Grace window**: 5 minutes since last push — **except after the second
+  Copilot round** (see the operator directive below), when the gate is
+  CI green + zero unresolved threads, no grace.
 - **Review-bot timeout**: 15 minutes (see Review bot above)
+- **Operator directive (launch, 2026-08-19) — at most 2 Copilot rounds per
+  PR, optimise review time:**
+  1. *Round 1* = the review Copilot posts after `gh pr create`. Every
+     thread is verified against the code: real findings are fixed
+     (**all of them, one batched push**), false positives are answered
+     with evidence and resolved **without** a push.
+  2. *Round 2* = the re-review triggered by that push. Same treatment;
+     if a fix push is needed it is the last one.
+  3. After round 2 is handled (threads all resolved, CI green on the final
+     HEAD) the PR is **merged immediately** — no grace window, no waiting
+     for a third review. If a pending review request is still listed at that
+     point, it is removed (`gh pr edit --remove-reviewer`) with the factual
+     audit comment, as in the unresponsive-bot procedure.
+  4. A Copilot review that lands *after* the merge (or during the final CI
+     run) is still triaged — `gh api graphql … reviewThreads` after every
+     merge: real finding → fixed in the next PR touching that area (or a
+     small follow-up PR) and the old thread gets a reply citing the commit;
+     everything is answered and resolved. No thread is ever left open.
+  5. Watchers poll every **30 s** (`gh pr view … --json reviews,
+     reviewRequests,reviewThreads` via GraphQL + `gh pr checks`) so a review
+     is acted on within a minute of landing; the `ScheduleWakeup` fallback
+     stays ≥ 1200 s. While a watcher runs the orchestrator keeps working
+     (spawns, merges, dashboards, reading the next lane).
 - **Stall limit**: 3 full fix cycles on the same lane → 🟥 (or 🟩 with
   `partial:` if merged) + `PushNotification` + STOP that lane; other lanes
   continue; the chain stops cleanly only when nothing else can progress
