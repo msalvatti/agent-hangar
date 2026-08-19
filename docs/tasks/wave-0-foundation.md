@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W0 (single agent, sequential — critical path) |
 | **Status** | 🟦 running |
-| **Progress** | 1/8 tasks |
+| **Progress** | 2/8 tasks |
 | **Branch** | `feat/w0-foundation` |
 | **Owned paths** | everything (only lane in this wave) |
 | **Depends on** | — |
@@ -42,7 +42,7 @@ Quality bar that applies to every file created here and in every later lane: Typ
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
 | 0.1 | Monorepo, TypeScript, lint/format, git hooks, CLAUDE.md | ✅ | P0 | M | — |
-| 0.2 | Complete dependency manifest (all workspaces) | 📋 | P0 | S | 0.1 |
+| 0.2 | Complete dependency manifest (all workspaces) | ✅ | P0 | S | 0.1 |
 | 0.3 | Frozen core contracts: types, Zod, NDJSON codec, errors, config | 📋 | P0 | L | 0.2 |
 | 0.4 | Test doubles and canaries (`packages/core/src/testing`) | 📋 | P0 | M | 0.3 |
 | 0.5 | Prisma 7 schema, migration, client factory | 📋 | P0 | M | 0.2 |
@@ -129,15 +129,15 @@ Completion Protocol (after you finish):
 
 ## Task 0.2 — Complete dependency manifest (all workspaces)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 0.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 0.1
 
 **Description.** Install every runtime and dev dependency any lane will need, at the latest stable versions, so no later lane touches `pnpm-lock.yaml`.
 
 **Acceptance criteria**
-- [ ] All packages below present in the correct workspace `package.json` with caret ranges on latest stable (verified with `npm view <pkg> version` at execution time)
-- [ ] `pnpm install --frozen-lockfile` passes from a clean clone
-- [ ] `pnpm audit --prod` shows no critical/high (document any unavoidable advisory in the PR)
-- [ ] `pnpm typecheck` still passes (type packages resolve)
+- [x] All packages below present in the correct workspace `package.json` with caret ranges on latest stable (verified with `npm view <pkg> version` at execution time)
+- [x] `pnpm install --frozen-lockfile` passes from a clean clone
+- [x] `pnpm audit --prod` shows no critical/high (document any unavoidable advisory in the PR)
+- [x] `pnpm typecheck` still passes (type packages resolve)
 
 **Files to modify**
 `package.json`, `apps/web/package.json`, `apps/worker/package.json`, `packages/core/package.json`, `packages/agent-runtime/package.json`, `pnpm-lock.yaml`.
@@ -588,3 +588,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 - 0.1 ✅ 2026-08-19 — pnpm 11 monorepo with four workspaces, strict TS ~6.0.3 project references, ESLint 10 flat config, Prettier, Husky + commitlint + lint-staged suppression grep, CLAUDE.md
+- 0.2 ✅ 2026-08-19 — full dependency manifest at latest stable (Base UI as @base-ui/react 1.7, tw-animate-css added for shadcn), lockfile committed, audit clean via deepmerge-ts override
