@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Lane** | W2-B 🐳 (parallel with W2-A, W2-C; the only Docker-integration lane running at a time) |
-| **Status** | 📋 ToDo |
+| **Status** | 🟦 running |
 | **Progress** | 0/6 tasks |
 | **Branch** | `feat/w2b-worker` |
 | **Owned paths** | `apps/worker/src/**` (incl. `apps/worker/src/testing/**`), `apps/worker/vitest.config.ts`, `apps/worker/package.json` scripts only (`test:integration`) |
