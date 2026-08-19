@@ -17,12 +17,17 @@ import type { AgentEvent, TurnRequest } from '@agent-hangar/core';
 
 import type { RuntimeRedactor } from './redact.js';
 
-/** Writes redacted events to stdout, one line each, honouring backpressure. */
+/**
+ * Writes redacted events to stdout, one line each, honouring backpressure.
+ *
+ * Both members are declared as function-valued properties rather than methods: callers pass them
+ * straight into the loop and into preparation, and a closure carries no `this` to lose.
+ */
 export interface EventWriter {
   /** Serialises and writes one event; resolves once the line has been accepted by the stream. */
-  emit(event: AgentEvent): Promise<void>;
+  emit: (event: AgentEvent) => Promise<void>;
   /** Timestamp of the last completed write, used to decide when a heartbeat is due. */
-  lastEmittedAt(): number;
+  lastEmittedAt: () => number;
 }
 
 /**

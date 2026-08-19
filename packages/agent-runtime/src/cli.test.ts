@@ -50,11 +50,13 @@ describe('runCli', () => {
     expect(stdout()).toBe(`${RUNTIME_VERSION}\n`);
   });
 
-  it('reports the turn command as not implemented in this build', async () => {
-    // Replaced by the real turn once the loop lands; kept honest until then.
-    const { io, stderr } = testIo();
-    await expect(runCli(['turn'], io)).resolves.toBe(EXIT.notImplemented);
-    expect(stderr()).toBe('turn: not implemented yet\n');
+  it('dispatches the turn command and passes the overrides through', async () => {
+    // Empty stdin is the shortest path through the turn command; the exit code proves it ran.
+    const { io, stdout } = testIo();
+    await expect(runCli(['turn'], io, { workspaceRoot: '/nowhere' })).resolves.toBe(
+      EXIT.protocolError,
+    );
+    expect(stdout()).toBe('');
   });
 
   it.each([['unknown command', ['nope']] as const, ['no arguments', [] as const] as const])(

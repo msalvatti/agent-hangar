@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-D (no Docker, no Postgres, no Redis — pure Node + git in a temp dir) |
 | **Status** | 🟦 running |
-| **Progress** | 3/5 tasks |
+| **Progress** | 4/5 tasks |
 | **Branch** | `feat/w1d-agent-runtime` |
 | **Owned paths** | `packages/agent-runtime/**` (src, tests, `esbuild.config.mjs`, `vitest.config.ts`, `package.json` scripts of this package, `scripts/`) · the two Dockerfile `COPY` lines and the `infra:image` root-script change are **requested via the PR description** (W1-B owns `infra/workspace/**`, W1-I owns root `package.json` scripts) |
 | **Depends on** | W0 merged to `main` |
@@ -48,7 +48,7 @@ Quality bar: TypeScript strict, zero `any`, zero suppression comments, no `enum`
 | 1D.1 | Package scaffold: protocol I/O, redaction, version, `--version` CLI, esbuild config + bundle check | ✅ | P0 | M | — |
 | 1D.2 | Tools: path confinement, `run_shell`, `read_file`, `write_file`, `list_dir`, registry + JSON schemas, child env scrubbing | ✅ | P0 | L | 1D.1 |
 | 1D.3 | `prepare.ts` (clone/checkout/expectedHeadSha) + `git-events.ts` (push detection) | ✅ | P0 | M | 1D.2 |
-| 1D.4 | `loop.ts` step loop + provider seam + `turn` command wiring (cancel, heartbeat, limits, retries) | 📋 | P0 | L | 1D.2, 1D.3 |
+| 1D.4 | `loop.ts` step loop + provider seam + `turn` command wiring (cancel, heartbeat, limits, retries) | ✅ | P0 | L | 1D.2, 1D.3 |
 | 1D.5 | Close-out: gates, bundle size, code review, plan dashboard, PR with orchestrator instructions | 📋 | P0 | S | 1D.1–1D.4 |
 
 ---
@@ -357,18 +357,18 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1d-agent-runti
 
 ## Task 1D.4 — `loop.ts` step loop + provider seam + `turn` command wiring (cancel, heartbeat, limits, retries)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 1D.2, 1D.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 1D.2, 1D.3
 
 **Description.** Implement the model ↔ tools loop exactly as spec 03 §3 "Loop" and spec 04 (a) edge cases: per step `provider.stream()` → collect deltas and tool calls → execute tools sequentially emitting `tool.call` / `tool.output.delta` / `tool.result` → append `tool_call` + `tool_result` items → stop when no tool calls, or on `maxSteps` / `maxTurnMs` (`stoppedBy: 'limit'` with an explanatory `assistant.message`), cancellation via `AbortSignal` (→ `turn.cancelled`), `rate_limit` retries (3× backoff), heartbeat every 10 s while idle, `git.pushed` after a successful push. Then wire the real `turn` command: read `TurnRequest`, build redactor/writer/diagnostics, resolve the provider (`fake` built-in; `openai` through the seam), materialize the git token, prepare, run the loop, clean up, map exit codes, SIGINT → abort.
 
 **Acceptance criteria**
-- [ ] `runTurnLoop(deps)` produces the event sequence of spec 03 §3 with exact ordering; `turn.completed` carries summed `usage`, `steps`, `finalMessage` (last assistant text) and `stoppedBy: 'limit'` when a limit stopped it
-- [ ] Cancellation: abort before/during model stream or during a tool → `turn.cancelled`, nothing after it; `maxTurnMs` enforced between steps and as a deadline for the current stream; `rate_limit` error → retry up to 3 times (1 s/2 s/4 s, injected sleep) then `turn.failed { code: 'rate_limit' }`; other provider errors → `turn.failed { code }` immediately
-- [ ] Every `tool.call` is followed by its `tool.result`; invalid tool args/unknown tool produce a FAILED `tool.result` and a `tool_result` item (the model sees the error); `git.pushed` emitted after a successful push
-- [ ] `heartbeat` emitted only when no event was written in the last 10 s (fake timers); cleared at the end
-- [ ] `provider.ts`: `fake` → `FakeAgentModelProvider` with built-in scripts (`fake-scripts.ts`) or `AGENT_FAKE_SCRIPT_JSON`; `openai` → injected factory or `ConfigError` explaining the seam; unknown → `ConfigError`
-- [ ] `cli.ts turn`: exit 0 on completed/cancelled/failed-by-turn, 2 on protocol error, 1 on runtime exception (after emitting `turn.failed { code: 'runtime' }`); token file removed in `finally`; SIGINT handler unsubscribed
-- [ ] 100 % coverage on `loop.ts`, `provider.ts`, `fake-scripts.ts`, `cli.ts`
+- [x] `runTurnLoop(deps)` produces the event sequence of spec 03 §3 with exact ordering; `turn.completed` carries summed `usage`, `steps`, `finalMessage` (last assistant text) and `stoppedBy: 'limit'` when a limit stopped it
+- [x] Cancellation: abort before/during model stream or during a tool → `turn.cancelled`, nothing after it; `maxTurnMs` enforced between steps and as a deadline for the current stream; `rate_limit` error → retry up to 3 times (1 s/2 s/4 s, injected sleep) then `turn.failed { code: 'rate_limit' }`; other provider errors → `turn.failed { code }` immediately
+- [x] Every `tool.call` is followed by its `tool.result`; invalid tool args/unknown tool produce a FAILED `tool.result` and a `tool_result` item (the model sees the error); `git.pushed` emitted after a successful push
+- [x] `heartbeat` emitted only when no event was written in the last 10 s (fake timers); cleared at the end
+- [x] `provider.ts`: `fake` → `FakeAgentModelProvider` with built-in scripts (`fake-scripts.ts`) or `AGENT_FAKE_SCRIPT_JSON`; `openai` → injected factory or `ConfigError` explaining the seam; unknown → `ConfigError`
+- [x] `cli.ts turn`: exit 0 on completed/cancelled/failed-by-turn, 2 on protocol error, 1 on runtime exception (after emitting `turn.failed { code: 'runtime' }`); token file removed in `finally`; SIGINT handler unsubscribed
+- [x] 100 % coverage on `loop.ts`, `provider.ts`, `fake-scripts.ts`, `cli.ts`
 
 **Files to create/modify**
 `packages/agent-runtime/src/{loop.ts, loop.test.ts, provider.ts, provider.test.ts, fake-scripts.ts, fake-scripts.test.ts, turn.ts, turn.test.ts}`; modify `src/cli.ts` + `cli.test.ts` (replace the stub), `src/index.ts`.
@@ -574,3 +574,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1d-agent-runti
 - 1D.1 ✅ 2026-08-19 — package scaffold: protocol adapters over the core NDJSON codec, runtime redactor, version constant, CLI dispatcher and the esbuild bundle with its self-containment check
 - 1D.2 ✅ 2026-08-19 — confined tools, scrubbed child env with the git token file, strict tool schemas and an executor that never throws; the shared git runner landed here because `list_dir` needs it
 - 1D.3 ✅ 2026-08-19 — repository preparation with a validated GitHub https URL, clone/refresh and the three work-branch cases, plus git remote-update detection tested against local bare repositories
+- 1D.4 ✅ 2026-08-19 — the step loop with limits, cancellation and rate-limit retries, the built-in fake scripts, the provider seam and the real `turn` command

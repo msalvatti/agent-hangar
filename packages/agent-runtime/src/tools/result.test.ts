@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { describeError, failure, truncateOutput } from './result.js';
+import { describeError, describeErrorWithStack, failure, truncateOutput } from './result.js';
 
 describe('describeError', () => {
   it('reports the message of a thrown Error', () => {
@@ -19,6 +19,25 @@ describe('describeError', () => {
   it('renders a thrown value that is not an Error', () => {
     // A rejected promise can carry anything; the tool still has to report something.
     expect(describeError('plain rejection')).toBe('plain rejection');
+  });
+});
+
+describe('describeErrorWithStack', () => {
+  it('keeps the stack of a thrown Error', () => {
+    // The stack is the whole point of a diagnostic about a runtime bug.
+    expect(describeErrorWithStack(new Error('boom'))).toContain('result.test.ts');
+  });
+
+  it('falls back to the message when the Error carries no stack', () => {
+    // A bundled and minified build can strip stacks; something still has to be reported.
+    const stackless = new Error('stackless failure');
+    delete stackless.stack;
+    expect(describeErrorWithStack(stackless)).toBe('stackless failure');
+  });
+
+  it('renders a thrown value that is not an Error', () => {
+    // `catch` binds anything at all, and a diagnostic is not worth crashing over.
+    expect(describeErrorWithStack(42)).toBe('42');
   });
 });
 

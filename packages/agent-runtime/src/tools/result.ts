@@ -62,6 +62,19 @@ export function describeError(error: unknown): string {
 }
 
 /**
+ * Renders a thrown value for a diagnostic, keeping the stack when there is one.
+ *
+ * Diagnostics go to the worker's debug log, where a stack is the whole point; a bundled build can
+ * still strip it, and a rejection can carry something that is not an error at all.
+ *
+ * @param error - Whatever was thrown.
+ * @returns The stack, the message, or the value rendered as text.
+ */
+export function describeErrorWithStack(error: unknown): string {
+  return error instanceof Error ? (error.stack ?? error.message) : describeError(error);
+}
+
+/**
  * Caps output at the turn's byte budget, appending a notice when anything was removed.
  *
  * The cut is made on bytes rather than characters because the budget protects the model's context
