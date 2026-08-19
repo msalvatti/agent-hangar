@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-D (no Docker, no Postgres, no Redis — pure Node + git in a temp dir) |
 | **Status** | 🟦 running |
-| **Progress** | 2/5 tasks |
+| **Progress** | 3/5 tasks |
 | **Branch** | `feat/w1d-agent-runtime` |
 | **Owned paths** | `packages/agent-runtime/**` (src, tests, `esbuild.config.mjs`, `vitest.config.ts`, `package.json` scripts of this package, `scripts/`) · the two Dockerfile `COPY` lines and the `infra:image` root-script change are **requested via the PR description** (W1-B owns `infra/workspace/**`, W1-I owns root `package.json` scripts) |
 | **Depends on** | W0 merged to `main` |
@@ -47,7 +47,7 @@ Quality bar: TypeScript strict, zero `any`, zero suppression comments, no `enum`
 |---|---|---|---|---|---|
 | 1D.1 | Package scaffold: protocol I/O, redaction, version, `--version` CLI, esbuild config + bundle check | ✅ | P0 | M | — |
 | 1D.2 | Tools: path confinement, `run_shell`, `read_file`, `write_file`, `list_dir`, registry + JSON schemas, child env scrubbing | ✅ | P0 | L | 1D.1 |
-| 1D.3 | `prepare.ts` (clone/checkout/expectedHeadSha) + `git-events.ts` (push detection) | 📋 | P0 | M | 1D.2 |
+| 1D.3 | `prepare.ts` (clone/checkout/expectedHeadSha) + `git-events.ts` (push detection) | ✅ | P0 | M | 1D.2 |
 | 1D.4 | `loop.ts` step loop + provider seam + `turn` command wiring (cancel, heartbeat, limits, retries) | 📋 | P0 | L | 1D.2, 1D.3 |
 | 1D.5 | Close-out: gates, bundle size, code review, plan dashboard, PR with orchestrator instructions | 📋 | P0 | S | 1D.1–1D.4 |
 
@@ -281,16 +281,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1d-agent-runti
 
 ## Task 1D.3 — `prepare.ts` (clone/checkout/expectedHeadSha) + `git-events.ts` (push detection)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1D.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1D.2
 
 **Description.** Implement the workspace preparation step (validate the repo URL, clone the base branch at full depth with `GIT_ASKPASS` + token file, fetch/checkout or create the work branch, compare HEAD with `expectedHeadSha`, emit `prepare.progress`/`prepare.done`) and the `git.pushed` detection used by the loop after `run_shell`. Tested against local bare repositories created with `git init --bare`.
 
 **Acceptance criteria**
-- [ ] `assertGithubHttpsUrl(url)` accepts `https://github.com/<owner>/<repo>[.git]` and rejects credentials (`user:pass@`), other hosts, `ssh://`, `git@`, query/fragment
-- [ ] `prepare(repo, deps)`: `clone: true` → clone base (no `--depth`), then `workBranch`: exists on origin → fetch + `checkout -B workBranch origin/workBranch`; missing → `checkout -b workBranch` from base; `workBranch === baseBranch` → stay; `clone: false` → require an existing repo in `/workspace` and skip cloning; emits `prepare.progress` messages and one `prepare.done { headSha, branch }`; `expectedHeadSha` mismatch → a `prepare.progress` warning (not a failure)
-- [ ] git runs with the scrubbed child env (`createChildEnv` + token file), never with the token in the URL
-- [ ] `looksLikeGitPush({ command, output, exitCode })` + `resolveGitHead(git, cwd)` → `{ branch, sha }`; the loop emits `git.pushed` only on success
-- [ ] 100 % coverage on `prepare.ts`, `git.ts`, `git-events.ts`
+- [x] `assertGithubHttpsUrl(url)` accepts `https://github.com/<owner>/<repo>[.git]` and rejects credentials (`user:pass@`), other hosts, `ssh://`, `git@`, query/fragment
+- [x] `prepare(repo, deps)`: `clone: true` → clone base (no `--depth`), then `workBranch`: exists on origin → fetch + `checkout -B workBranch origin/workBranch`; missing → `checkout -b workBranch` from base; `workBranch === baseBranch` → stay; `clone: false` → require an existing repo in `/workspace` and skip cloning; emits `prepare.progress` messages and one `prepare.done { headSha, branch }`; `expectedHeadSha` mismatch → a `prepare.progress` warning (not a failure)
+- [x] git runs with the scrubbed child env (`createChildEnv` + token file), never with the token in the URL
+- [x] `looksLikeGitPush({ command, output, exitCode })` + `resolveGitHead(git, cwd)` → `{ branch, sha }`; the loop emits `git.pushed` only on success
+- [x] 100 % coverage on `prepare.ts`, `git.ts`, `git-events.ts`
 
 **Files to create**
 `packages/agent-runtime/src/{git.ts, git.test.ts, prepare.ts, prepare.test.ts, git-events.ts, git-events.test.ts, testing/bare-repo.ts}`.
@@ -573,3 +573,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1d-agent-runti
 
 - 1D.1 ✅ 2026-08-19 — package scaffold: protocol adapters over the core NDJSON codec, runtime redactor, version constant, CLI dispatcher and the esbuild bundle with its self-containment check
 - 1D.2 ✅ 2026-08-19 — confined tools, scrubbed child env with the git token file, strict tool schemas and an executor that never throws; the shared git runner landed here because `list_dir` needs it
+- 1D.3 ✅ 2026-08-19 — repository preparation with a validated GitHub https URL, clone/refresh and the three work-branch cases, plus git remote-update detection tested against local bare repositories
