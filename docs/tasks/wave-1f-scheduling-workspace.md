@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-F (Wave 1, parallel with W1-A … W1-I) |
-| **Status** | 🟦 running |
-| **Progress** | 4/5 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1f-scheduling-workspace` |
 | **Owned paths** | `packages/core/src/scheduling/**` (except the frozen `types.ts`), `packages/core/src/workspace/**` (except the frozen `types.ts`), `packages/core/src/restore/**`, `packages/core/src/queues/queues.ts`, `packages/core/src/queues/schedulers.ts` (+ their `*.test.ts` / `*.integration.test.ts`; `queues/contracts.ts` is frozen) — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./scheduling/index.js`, `./workspace/index.js`, `./restore/index.js`, `./queues/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
@@ -47,7 +47,7 @@ This lane fills in the pure domain logic that W2-A (API) and W2-B (worker) orche
 | 1F.2 | Workspace lifecycle: transition tables + `assertTransition`, `ensureWorkspaceDecision`, idle-TTL selection, orphan reconcile | ✅ | P0 | M | — |
 | 1F.3 | Restore context: history window, `TOOL_SUMMARY` compaction text, restoration notice, `buildRestoreContext`, `buildTurnRequest` | ✅ | P0 | M | 1F.2 |
 | 1F.4 | BullMQ factories: queues, worker connection, Job Scheduler wrappers, `@redis` integration tests | ✅ | P0 | M | 1F.1 |
-| 1F.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1F.1–1F.4 |
+| 1F.5 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 1F.1–1F.4 |
 
 ---
 
@@ -485,15 +485,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1f-scheduling-
 
 ## Task 1F.5 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1F.1–1F.4
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1F.1–1F.4
 
 **Description.** Run every gate for the lane's owned paths (unit + `@redis` integration), run the code review to zero findings, update the plan dashboard and tasks index, open the PR and return the structured summary.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter @agent-hangar/core test -- --coverage` green with 100 % ×4 on `src/scheduling/**`, `src/workspace/**`, `src/restore/**`, `src/queues/queues.ts`, `src/queues/schedulers.ts`; `pnpm --filter @agent-hangar/core test:integration` green against the test-instance Redis
-- [ ] `/bymax-quality:code-review` zero open findings
-- [ ] `docs/plan.md` §12 row W1-F → 🟨 with branch/PR/coverage; `docs/tasks/README.md` row updated
-- [ ] PR opened; structured summary returned
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter @agent-hangar/core test -- --coverage` green with 100 % ×4 on `src/scheduling/**`, `src/workspace/**`, `src/restore/**`, `src/queues/queues.ts`, `src/queues/schedulers.ts`; `pnpm --filter @agent-hangar/core test:integration` green against the test-instance Redis
+- [x] `/bymax-quality:code-review` zero open findings
+- [x] `docs/plan.md` §12 row W1-F → 🟨 with branch/PR/coverage; `docs/tasks/README.md` row updated
+- [x] PR opened; structured summary returned
 
 **Files to modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (lane row only), `docs/tasks/wave-1f-scheduling-workspace.md` (header + log).
