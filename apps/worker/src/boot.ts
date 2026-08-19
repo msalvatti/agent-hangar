@@ -47,31 +47,35 @@ export interface BootResult<
   shutdown: () => Promise<void>;
 }
 
-/** Stands in for a URL whose credentials cannot be proved removed. */
-export const OPAQUE_URL = '(unparseable url)';
+/** Stands in for a URL that cannot be named without risking a credential. */
+export const REDACTED_URL = '(redacted url)';
 
 /**
- * Returns a URL with any credentials removed, safe for error messages and logs.
+ * Reduces a connection URL to the parts that are safe to print: scheme, host and path.
  *
- * Blanking the userinfo only removes a password when the URL actually has an authority to blank.
- * `URL` parses an authority-less form such as `redis:/ah:pw@host` — which the environment schema
- * accepts, since it is a valid URL — into an empty host and a path of `ah:pw@host`, leaving
- * `username`/`password` empty and the password sitting in the path. Echoing the input for those,
- * as for an outright unparseable one, would put the credential straight into the boot error this
- * module raises. Anything without a host is therefore reported as {@link OPAQUE_URL} instead:
- * losing the target from the message costs a little diagnosis, repeating a password costs more.
+ * Rebuilding from those three is deliberate. Removing the components known to be dangerous would
+ * mean keeping up with every place a credential can hide, and each of them is reachable here,
+ * because the environment schema only asks `URL` to parse the value:
  *
- * @param url - Connection URL (may carry `user:password@`).
- * @returns The URL without userinfo, or {@link OPAQUE_URL} when it has no host to strip one from.
+ * - userinfo, as in `redis://ah:pw@cache:6379`;
+ * - the query, as in `redis://cache:6379?password=pw` — ioredis reads query parameters as
+ *   connection options, so that is a supported way to spell the password, not a typo;
+ * - the fragment, which `repo-url.ts` already treats as credential-bearing for the same reason.
+ *
+ * An authority-less URL such as `redis:/ah:pw@cache` parses with an empty host and the whole of
+ * `ah:pw@cache` as its path, so nothing safe is left to name; it and an outright unparseable value
+ * are both reported as {@link REDACTED_URL}. Losing the target from one boot message costs a
+ * little diagnosis; repeating a password costs more.
+ *
+ * @param url - Connection URL (may carry credentials in userinfo, query or fragment).
+ * @returns `scheme//host/path`, or {@link REDACTED_URL} when no host can be isolated.
  */
 export function describeUrl(url: string): string {
   const parsed = URL.parse(url);
   if (parsed === null || parsed.host === '') {
-    return OPAQUE_URL;
+    return REDACTED_URL;
   }
-  parsed.username = '';
-  parsed.password = '';
-  return parsed.toString();
+  return `${parsed.protocol}//${parsed.host}${parsed.pathname}`;
 }
 
 async function assertRedisReachable(redis: BootRedis, url: string): Promise<void> {

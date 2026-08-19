@@ -15,7 +15,7 @@ import pino from 'pino';
 import type { Logger } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 
-import { boot, describeUrl, OPAQUE_URL } from './boot.js';
+import { boot, describeUrl, REDACTED_URL } from './boot.js';
 import type { BootDeps } from './boot.js';
 
 const config: AppConfig = loadConfig({ AH_INSTANCE: 'test', AH_PORT_BASE: '4100' });
@@ -57,18 +57,32 @@ function makeDeps(overrides: Partial<BootDeps> = {}) {
 }
 
 describe('describeUrl', () => {
-  /** Credentials embedded in a connection URL never reach error messages or logs. */
-  it('strips userinfo from a URL that has an authority', () => {
+  /** The target stays useful: scheme, host and path all survive. */
+  it('keeps the scheme, host and path of a URL that has an authority', () => {
     expect(describeUrl('redis://user:secret@cache:6379/0')).toBe('redis://cache:6379/0');
     expect(describeUrl('redis://127.0.0.1:6379')).toBe('redis://127.0.0.1:6379');
   });
 
   /**
-   * Blanking the userinfo strips a password only when there is an authority to blank. An
-   * authority-less URL — which the environment schema accepts, because it is a valid URL — parses
-   * with an empty host and the whole `user:password@host` sitting in the path, so returning the
-   * input would put the password straight into the boot error. So would returning an outright
-   * unparseable input. Both are refused instead of echoed.
+   * A credential hides in more than the userinfo, and every spelling below is one the environment
+   * schema accepts, because it only asks `URL` to parse the value. The query matters most: ioredis
+   * reads query parameters as connection options, so `?password=` is a supported way to configure
+   * the password rather than a malformed URL. None of them may reach the boot error.
+   */
+  it.each([
+    ['userinfo', 'redis://ah:SUPERSECRETPW@cache:6379/0', 'redis://cache:6379/0'],
+    ['a query password', 'redis://cache:6379?password=SUPERSECRETPW&db=2', 'redis://cache:6379'],
+    ['a fragment', 'redis://cache:6379#SUPERSECRETPW', 'redis://cache:6379'],
+  ])('drops %s while naming the target', (_name, url, expected) => {
+    const described = describeUrl(url);
+    expect(described).toBe(expected);
+    expect(described).not.toContain('SUPERSECRETPW');
+  });
+
+  /**
+   * With no authority there is nothing safe left to name: an authority-less URL parses with an
+   * empty host and the whole `user:password@host` sitting in its path, so echoing the input would
+   * put the password straight into the boot error. So would echoing an unparseable value.
    */
   it.each([
     ['an authority-less URL', 'redis:/ah:SUPERSECRETPW@cache:6379'],
@@ -76,7 +90,7 @@ describe('describeUrl', () => {
     ['a non-URL', 'not a url SUPERSECRETPW'],
   ])('refuses to echo %s', (_name, url) => {
     const described = describeUrl(url);
-    expect(described).toBe(OPAQUE_URL);
+    expect(described).toBe(REDACTED_URL);
     expect(described).not.toContain('SUPERSECRETPW');
   });
 });
