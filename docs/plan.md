@@ -298,7 +298,7 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | W0 | 🟨 PR open | `feat/w0-foundation` · PR #4 | core 100 / web 100 / worker 100 (all four metrics) | TypeScript pinned `~6.0.3` |
 | W1-A | ⬜ | — | — | |
 | W1-B 🐳 | ⬜ | — | — | |
-| W1-C | 🟦 | `feat/w1c-openai-provider` | — | |
+| W1-C | 🟨 PR open | `feat/w1c-openai-provider` | core 100 / 100 / 100 / 100 | openai SDK 7.5.0 verified |
 | W1-D | ⬜ | — | — | Dockerfile COPY lines → orchestrator |
 | W1-E | ⬜ | — | — | |
 | W1-F | ⬜ | — | — | |

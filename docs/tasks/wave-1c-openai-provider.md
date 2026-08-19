@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-C (Wave 1, parallel with W1-A … W1-I) |
-| **Status** | 🟦 running |
-| **Progress** | 4/5 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1c-openai-provider` |
 | **Owned paths** | `packages/core/src/model/openai/**`, `packages/core/src/model/registry.ts` (+ `registry.test.ts`), `packages/core/fixtures/openai/**`, `packages/core/scripts/record-fixtures.ts` — plus three append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only), (the root `packages/core/src/index.ts` is frozen — it already re-exports `./model/index.js`; this lane adds exports only to `packages/core/src/model/index.ts` and `model/openai/index.ts`), `packages/core/package.json` (one script `fixtures:record` only) |
 | **Depends on** | W0 merged to `main` |
@@ -45,7 +45,7 @@ Spec 03 §2 lists the event mapping. The SDK's event names must be **verified at
 | 1C.2 | Fixtures (`fixtures/openai/*.ndjson`), fixture loader, fake SDK client, record script | ✅ | P0 | M | 1C.1 |
 | 1C.3 | `OpenAIModelProvider` (`stream`, `listModels`) + SDK client factory | ✅ | P0 | M | 1C.1, 1C.2 |
 | 1C.4 | Registry `createModelProvider(name, deps)` → openai \| fake; barrel exports | ✅ | P0 | S | 1C.3 |
-| 1C.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1C.1–1C.4 |
+| 1C.5 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 1C.1–1C.4 |
 
 ---
 
@@ -407,16 +407,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1c-openai-prov
 
 ## Task 1C.5 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1C.1–1C.4
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1C.1–1C.4
 
 **Description.** Run every gate for the lane's owned paths, run the code review to zero findings, update the plan dashboard and tasks index, open the PR with the "API verification" section, and return the structured summary.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter @agent-hangar/core test -- --coverage` green with 100 % ×4 on `src/model/openai/**` and `src/model/registry.ts`
-- [ ] `/bymax-quality:code-review` zero open findings
-- [ ] PR body contains "API verification" (SDK version, event names confirmed, differences from spec 03 §2, confirmation that `store:false` without `previous_response_id` is accepted by the API at build time)
-- [ ] `docs/plan.md` §12 row W1-C → 🟨 with branch/PR/coverage; `docs/tasks/README.md` row updated
-- [ ] PR opened; structured summary returned
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter @agent-hangar/core test -- --coverage` green with 100 % ×4 on `src/model/openai/**` and `src/model/registry.ts`
+- [x] `/bymax-quality:code-review` zero open findings
+- [x] PR body contains "API verification" (SDK version, event names confirmed, differences from spec 03 §2, confirmation that `store:false` without `previous_response_id` is accepted by the API at build time)
+- [x] `docs/plan.md` §12 row W1-C → 🟨 with branch/PR/coverage; `docs/tasks/README.md` row updated
+- [x] PR opened; structured summary returned
 
 **Files to modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (lane row only), `docs/tasks/wave-1c-openai-provider.md` (header + log).
@@ -476,3 +476,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1c-openai-prov
 - 1C.2 ✅ 2026-08-19 — Seven synthetic NDJSON streams built from the SDK types, plus the fixture loader, the replaying fake client and the redacting record script.
 - 1C.3 ✅ 2026-08-19 — `OpenAIModelProvider` over `responses.stream`, `ModelProviderError`, and the real client factory with `maxRetries: 0`.
 - 1C.4 ✅ 2026-08-19 — `createModelProvider(name, deps)` reusing the config `MODEL_PROVIDERS` list; folder barrel exports the provider, the registry and the fixtures.
+- 1C.5 ✅ 2026-08-19 — Gates green (lint, format, typecheck, 100/100/100/100 on the owned paths); review findings resolved; PR opened.
