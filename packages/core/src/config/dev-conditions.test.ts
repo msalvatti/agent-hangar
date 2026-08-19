@@ -53,22 +53,36 @@ describe('resolution of @agent-hangar/core from source', () => {
   });
 
   /**
-   * The worker runs from source through tsx, which does not enable the condition by default. The
-   * flag must also sit after the `watch` subcommand, or tsx reads it as the entry file.
+   * The worker runs from source through tsx, which does not enable the condition by default, and
+   * the whole token sequence matters: before `watch` the flag is read as the entry file, after the
+   * entry file it is forwarded to the application instead of enabling package resolution. The
+   * sequence is asserted directly rather than by comparing positions, because a positional check
+   * passes when a token is missing entirely (`indexOf` returns -1) and when the flag trails the
+   * entry file.
    */
-  it('asks tsx for the development condition in the worker dev script', () => {
+  it('runs tsx as `tsx watch --conditions=development <entry>` in the worker dev script', () => {
     const { scripts } = readManifest('apps/worker/package.json');
-    const dev = scripts?.dev ?? '';
-    expect(dev).toContain('--conditions=development');
-    expect(dev.indexOf('watch')).toBeLessThan(dev.indexOf('--conditions=development'));
+    expect(scripts?.dev?.split(/\s+/)).toEqual([
+      'tsx',
+      'watch',
+      '--conditions=development',
+      'src/main.ts',
+    ]);
   });
 
   /**
    * The root dev script exports the condition so any further child process — a tsx helper added by
-   * a later lane, for instance — inherits it instead of rediscovering this failure.
+   * a later lane, for instance — inherits it instead of rediscovering this failure. The export has
+   * to happen before the children are spawned, so its position relative to `concurrently` is part
+   * of the contract, and both tokens are asserted present rather than compared blindly.
    */
-  it('exports the development condition to every child of the root dev script', () => {
-    const { scripts } = readManifest('package.json');
-    expect(scripts?.dev ?? '').toContain('--conditions=development');
+  it('exports the development condition before spawning the children of the root dev script', () => {
+    const dev = readManifest('package.json').scripts?.dev ?? '';
+    const exportAt = dev.indexOf('NODE_OPTIONS');
+    const spawnAt = dev.indexOf('concurrently');
+    expect(dev).toContain('--conditions=development');
+    expect(exportAt, 'the dev script must export NODE_OPTIONS').toBeGreaterThanOrEqual(0);
+    expect(spawnAt, 'the dev script must spawn its children with concurrently').toBeGreaterThan(0);
+    expect(exportAt, 'the export must precede the children').toBeLessThan(spawnAt);
   });
 });
