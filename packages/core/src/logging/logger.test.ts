@@ -324,6 +324,143 @@ describe('createLogger', () => {
   });
 
   /**
+   * A credential does not stop being one because it was wrapped. The finished-line pass matches
+   * quote-delimited values, so an object or an array under a protected name slipped past it; the
+   * whole value has to go, not the strings inside it.
+   */
+  it.each([
+    ['object', { raw: OPAQUE_CREDENTIAL }],
+    ['array', [OPAQUE_CREDENTIAL]],
+    ['nested object', { a: { b: OPAQUE_CREDENTIAL } }],
+  ])('blanks a %s value under a protected name', (_label, wrapped) => {
+    const sink = capture();
+
+    sink.logger.info({ deep: { TOKEN: wrapped } }, 'req');
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+    expect((sink.records()[0]?.deep as Record<string, unknown>).TOKEN).toBe(REDACTED_TOKEN);
+  });
+
+  /**
+   * A list of request contexts is an ordinary shape, and the protected field sits inside the
+   * elements rather than under the array itself, so the walk has to descend through the array.
+   */
+  it('blanks a protected field inside an array element', () => {
+    const sink = capture();
+
+    sink.logger.info({ items: [{ id: 1 }, { Authorization: OPAQUE_CREDENTIAL }] }, 'batch');
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+    expect((sink.records()[0]?.items as Record<string, unknown>[])[0]?.id).toBe(1);
+  });
+
+  /**
+   * A null-prototype record is still a bare record — `Object.create(null)` is a common way to build
+   * a header bag — so it must be walked rather than mistaken for a class instance.
+   */
+  it('blanks a protected field inside a null-prototype record', () => {
+    const sink = capture();
+    const bag: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+    bag.Authorization = OPAQUE_CREDENTIAL;
+
+    sink.logger.info({ headers: bag }, 'req');
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+  });
+
+  /**
+   * pino replaces the bindings formatter on a child instance, so the configured one never sees
+   * child bindings, and its own redact paths reach them with the same case and depth limits as
+   * everywhere else. A grandchild must be covered too, or one `child()` call would shed the
+   * protection.
+   */
+  it('blanks a protected field in a child and in a grandchild binding', () => {
+    const sink = capture();
+
+    sink.logger.child({ ctx: { TOKEN: { raw: OPAQUE_CREDENTIAL } } }).info('child');
+    sink.logger
+      .child({ a: 1 })
+      .child({ ctx: { ApiKey: { raw: OPAQUE_CREDENTIAL } } })
+      .info('grand');
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+    expect(sink.records()).toHaveLength(2);
+  });
+
+  /**
+   * `child` takes an options argument as well; the overload that passes it must keep scrubbing
+   * rather than fall back to the untouched pino implementation.
+   */
+  it('blanks a child binding when child is called with options', () => {
+    const sink = capture();
+
+    sink.logger.child({ ctx: { TOKEN: OPAQUE_CREDENTIAL } }, { level: 'info' }).info('child');
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+  });
+
+  /**
+   * A child logger must still behave like a logger: its bindings reach the record and its level
+   * option is honoured.
+   */
+  it('keeps ordinary child bindings and options working', () => {
+    const sink = capture();
+
+    const child = sink.logger.child({ chatId: 'c1' }, { level: 'warn' });
+    child.info('filtered out');
+    child.warn('kept');
+
+    expect(sink.records()).toHaveLength(1);
+    expect(sink.records()[0]?.chatId).toBe('c1');
+    expect(sink.records()[0]?.msg).toBe('kept');
+  });
+
+  /**
+   * Serializers run after `formatters.log`, so the record the error serializer produces is never
+   * seen by the structural pass over the merge object. A library that attaches a credential-bearing
+   * context object to the error it throws would otherwise publish it whole.
+   */
+  it('blanks a protected field inside a serialised error', () => {
+    const sink = capture();
+
+    sink.logger.error(
+      { err: Object.assign(new Error('boom'), { ctx: { TOKEN: { raw: OPAQUE_CREDENTIAL } } }) },
+      'failed',
+    );
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+    expect((sink.records()[0]?.err as Record<string, unknown>).message).toBe('boom');
+  });
+
+  /**
+   * An interpolation argument is folded into `msg` and becomes text, so nothing after the argument
+   * hook could take it apart again to find the protected name inside it.
+   */
+  it('blanks a protected field inside an interpolation argument', () => {
+    const sink = capture();
+
+    sink.logger.info('saw %o', { deep: { TOKEN: { raw: OPAQUE_CREDENTIAL } } });
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+  });
+
+  /**
+   * The structural pass rebuilds objects, so it needs its own cycle guard: a record that refers
+   * back to itself must terminate and still lose the protected field.
+   */
+  it('terminates on a cyclic record and still blanks the protected field', () => {
+    const sink = capture();
+    const cyclic: Record<string, unknown> = { name: 'root' };
+    cyclic.self = cyclic;
+    cyclic.deep = { TOKEN: { raw: OPAQUE_CREDENTIAL } };
+
+    sink.logger.info(cyclic, 'cycle');
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+    expect(sink.records()[0]?.name).toBe('root');
+  });
+
+  /**
    * A credential parked on a class instance is invisible to the structural walk, but pino still
    * serialises the instance's own fields; the final scrub of the written line closes that gap.
    */
