@@ -75,11 +75,23 @@ export function describeErrorWithStack(error: unknown): string {
 }
 
 /**
- * Caps output at the turn's byte budget, appending a notice when anything was removed.
+ * Cuts text down to a byte budget without leaving a broken UTF-8 sequence at the end.
  *
  * The cut is made on bytes rather than characters because the budget protects the model's context
- * window, which is charged by bytes; a partially copied multi-byte sequence is dropped so the
- * result is always valid UTF-8.
+ * window, which is charged by bytes; a partially copied multi-byte sequence decodes to the
+ * replacement character and is dropped, so the result is always valid UTF-8.
+ *
+ * @param text - Text to cut.
+ * @param maxBytes - Bytes to keep at most.
+ * @returns The kept prefix.
+ */
+export function sliceToBytes(text: string, maxBytes: number): string {
+  const kept = Buffer.from(text).subarray(0, maxBytes).toString('utf8');
+  return kept.endsWith(REPLACEMENT_CHARACTER) ? kept.slice(0, -1) : kept;
+}
+
+/**
+ * Caps output at the turn's byte budget, appending a notice when anything was removed.
  *
  * @param text - Output collected from the tool. A caller that stopped collecting early passes
  *   what it kept, and reports the real size separately.
@@ -96,10 +108,8 @@ export function truncateOutput(
   if (collected <= maxBytes && collected === totalBytes) {
     return { text, bytes: totalBytes, truncated: false };
   }
-  const kept = Buffer.from(text).subarray(0, maxBytes).toString('utf8');
-  const whole = kept.endsWith(REPLACEMENT_CHARACTER) ? kept.slice(0, -1) : kept;
   return {
-    text: `${whole}\n[truncated: ${String(totalBytes)} bytes total]`,
+    text: `${sliceToBytes(text, maxBytes)}\n[truncated: ${String(totalBytes)} bytes total]`,
     bytes: totalBytes,
     truncated: true,
   };

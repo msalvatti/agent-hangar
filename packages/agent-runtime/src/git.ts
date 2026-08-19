@@ -10,7 +10,13 @@
  *
  * Credentials never appear here: the remote URL is credential-free and the token is released by
  * `askpass.sh`, which git calls itself.
+ *
+ * What a git command produces is capped for the same reason `run_shell` caps its child: `list_dir`
+ * runs `ls-files` in a directory the model chose, inside a checkout whose content is untrusted, so
+ * the size of the output is not something this process controls.
  */
+import type { Readable } from 'node:stream';
+
 import { nodeSpawn } from './spawn.js';
 import type { SpawnFunction } from './spawn.js';
 
@@ -21,9 +27,9 @@ export type GitArgs = readonly [string, ...string[]];
 export interface GitCommandResult {
   /** Exit code, or `null` when git was killed or never started. */
   code: number | null;
-  /** Standard output, verbatim. */
+  /** Standard output, capped at {@link MAX_GIT_OUTPUT_BYTES}. */
   stdout: string;
-  /** Standard error, verbatim. */
+  /** Standard error, capped at {@link MAX_GIT_OUTPUT_BYTES}. */
   stderr: string;
 }
 
@@ -57,8 +63,41 @@ export interface GitRunner {
  */
 export const DEFAULT_GIT_TIMEOUT_MS = 600_000;
 
+/**
+ * Bytes kept from each of a git command's streams.
+ *
+ * Every caller either reads a fixed-size value — an object name, a ref line — or truncates the
+ * output to the turn's byte budget before the model ever sees it, so nothing legitimate needs
+ * more than this, and `list_dir` caps its listing at 500 entries on top of it. What
+ * the cap removes is the case the callers cannot bound: `ls-files` listing a tree whose size the
+ * repository decides, which would otherwise be accumulated whole and exhaust the container long
+ * before the command's timeout could stop it.
+ */
+export const MAX_GIT_OUTPUT_BYTES = 8 * 1024 * 1024;
+
 /** Characters of stderr kept on a {@link GitError}. */
 const MAX_STDERR_CHARS = 500;
+
+/**
+ * Collects one of a child's streams, keeping at most {@link MAX_GIT_OUTPUT_BYTES}.
+ *
+ * @param source - The child's stdout or stderr; `null` when it was not piped.
+ * @returns A reader for whatever was kept, callable once the child has closed.
+ */
+function collectCapped(source: Readable | null): () => string {
+  const parts: string[] = [];
+  let kept = 0;
+  // Setting the encoding lets the stream carry a multi-byte character across a chunk boundary.
+  source?.setEncoding('utf8');
+  source?.on('data', (chunk: string) => {
+    if (kept >= MAX_GIT_OUTPUT_BYTES) {
+      return;
+    }
+    parts.push(chunk);
+    kept += Buffer.byteLength(chunk);
+  });
+  return () => parts.join('');
+}
 
 /** A git command that was expected to succeed did not. */
 export class GitError extends Error {
@@ -95,12 +134,8 @@ export function createGitRunner(spawnFn: SpawnFunction = nodeSpawn): GitRunner {
           env: options.env,
           stdio: ['ignore', 'pipe', 'pipe'],
         });
-        const stdout: string[] = [];
-        const stderr: string[] = [];
-        child.stdout?.setEncoding('utf8');
-        child.stdout?.on('data', (chunk: string) => stdout.push(chunk));
-        child.stderr?.setEncoding('utf8');
-        child.stderr?.on('data', (chunk: string) => stderr.push(chunk));
+        const stdout = collectCapped(child.stdout);
+        const stderr = collectCapped(child.stderr);
 
         const timer = setTimeout(() => {
           child.kill('SIGKILL');
@@ -113,7 +148,7 @@ export function createGitRunner(spawnFn: SpawnFunction = nodeSpawn): GitRunner {
           settle({ code: null, stdout: '', stderr: `failed to start git: ${error.message}` });
         });
         child.on('close', (code: number | null) => {
-          settle({ code, stdout: stdout.join(''), stderr: stderr.join('') });
+          settle({ code, stdout: stdout(), stderr: stderr() });
         });
       });
     },

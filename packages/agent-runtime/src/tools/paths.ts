@@ -7,10 +7,24 @@
  * attacker-influenced. Three escapes are closed: `..` segments, an absolute path outside the root,
  * and a symlink whose target leaves the root. The last one needs the real filesystem — a purely
  * lexical check would happily resolve `link/file` inside the root while the kernel writes to
- * wherever `link` points.
+ * wherever `link` points — and it has to treat a link whose target does not exist yet as the
+ * escape it is, because creating that target is precisely what `write_file` would do.
+ *
+ * What remains outside this helper's reach is the gap between the check and the operation: the
+ * shell tool can plant a symbolic link in between. Closing that needs the operation itself to
+ * refuse to follow links (`O_NOFOLLOW` against a directory descriptor), which is a change to how
+ * every tool opens its file rather than to how the path is judged.
  */
-import { realpath } from 'node:fs/promises';
+import { readlink, realpath } from 'node:fs/promises';
 import path from 'node:path';
+
+/**
+ * Symbolic links followed before a path is refused outright.
+ *
+ * A chain of links that never lands on a real location is either a cycle or an attempt to outrun
+ * the check; the kernel gives up at a comparable depth for the same reason.
+ */
+const MAX_SYMLINK_HOPS = 32;
 
 /** A path argument resolved outside the workspace root. */
 export class PathEscapeError extends Error {
@@ -38,35 +52,49 @@ function isInside(root: string, candidate: string): boolean {
 }
 
 /**
- * Resolves the deepest ancestor of `target` that exists, following symlinks.
+ * Resolves where the kernel would actually act for `target`, existing or not.
  *
- * Resolution has to stop at the deepest existing ancestor because the tools legitimately create
- * files and directories that do not exist yet; the ancestor is what the kernel will actually write
- * under, so it is what must be proven to be inside the workspace.
+ * Three cases, and the middle one is the whole reason this is not just `realpath`:
  *
- * The walk terminates at `root` rather than at the filesystem root: the caller has already
- * established lexically that `target` is `root` or sits under it, so the chain of parents reaches
- * `root` exactly.
+ * - The path resolves: `realpath` has followed every link and reports the real location.
+ * - The path is a **dangling** symbolic link — it exists, but its target does not. `realpath`
+ *   fails here exactly as it does for a path that is absent altogether, yet the two are not the
+ *   same: opening a dangling link with `O_CREAT` creates the file *at the link's target*. The
+ *   link is therefore read and the walk continues from where it points, so a link into `/etc`
+ *   whose target is missing is judged on `/etc`, not on the directory holding the link.
+ * - The path is simply absent: what decides the location is its parent, so the walk moves up.
  *
  * @param root - Workspace root as given, possibly through symbolic links.
  * @param realRoot - Already-resolved real path of `root`.
  * @param target - Absolute path under `root`, existing or not.
- * @returns The real path of the deepest existing ancestor.
+ * @returns The real path the operation would land on.
+ * @throws PathEscapeError when the chain of links is longer than {@link MAX_SYMLINK_HOPS}.
  */
-async function realDeepestAncestor(
-  root: string,
-  realRoot: string,
-  target: string,
-): Promise<string> {
+async function realResolvedTarget(root: string, realRoot: string, target: string): Promise<string> {
   let candidate = target;
-  while (candidate !== root) {
-    try {
-      return await realpath(candidate);
-    } catch {
-      candidate = path.dirname(candidate);
+  let hops = 0;
+  for (;;) {
+    if (candidate === root) {
+      return realRoot;
     }
+    const resolved = await realpath(candidate).catch(() => null);
+    if (resolved !== null) {
+      return resolved;
+    }
+    const link = await readlink(candidate).catch(() => null);
+    if (link === null) {
+      candidate = path.dirname(candidate);
+      continue;
+    }
+    hops += 1;
+    if (hops > MAX_SYMLINK_HOPS) {
+      throw new PathEscapeError(`too many symbolic links to resolve: ${target}`);
+    }
+    // The link exists, so the directory holding it does too and resolves; the target is read
+    // relative to that real directory, which is how the kernel reads a relative link.
+    const parent = await realpath(path.dirname(candidate));
+    candidate = path.resolve(parent, link);
   }
-  return realRoot;
 }
 
 /**
@@ -85,8 +113,8 @@ export async function resolveInsideWorkspace(root: string, userPath: string): Pr
     throw new PathEscapeError(`path escapes the workspace: ${userPath}`);
   }
   const realRoot = await realpath(root);
-  const realAncestor = await realDeepestAncestor(root, realRoot, absolute);
-  if (!isInside(realRoot, realAncestor)) {
+  const realTarget = await realResolvedTarget(root, realRoot, absolute);
+  if (!isInside(realRoot, realTarget)) {
     throw new PathEscapeError(`path escapes the workspace through a symbolic link: ${userPath}`);
   }
   return absolute;

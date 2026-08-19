@@ -41,6 +41,45 @@ export interface GitHead {
 }
 
 /**
+ * Global git options that consume the word after them.
+ *
+ * They are the reason the subcommand cannot simply be the word after `git`: in `git -C repo push`
+ * the second word is the option's value, not the subcommand.
+ */
+const GIT_OPTIONS_WITH_VALUE = new Set([
+  '-c',
+  '-C',
+  '--config-env',
+  '--exec-path',
+  '--git-dir',
+  '--namespace',
+  '--work-tree',
+]);
+
+/**
+ * Reports whether one command segment runs git with `push` as its subcommand.
+ *
+ * Taking the subcommand rather than looking for the word anywhere is what keeps `git branch push`
+ * and `git config alias.name push` from being reported as pushes: both succeed without a remote
+ * ever being contacted, and a spurious `git.pushed` tells the host that work landed when none did.
+ *
+ * @param segment - One command of the line, already split from its neighbours.
+ * @returns `true` when the segment's git subcommand is `push`.
+ */
+function segmentPushes(segment: string): boolean {
+  const words = segment.trim().split(WHITESPACE);
+  const git = words.indexOf('git');
+  if (git === -1) {
+    return false;
+  }
+  let index = git + 1;
+  for (let word = words[index]; word?.startsWith('-') === true; word = words[index]) {
+    index += GIT_OPTIONS_WITH_VALUE.has(word) ? 2 : 1;
+  }
+  return words[index] === 'push';
+}
+
+/**
  * Reports whether a command line invokes `git push`.
  *
  * Splitting into words rather than matching one pattern keeps this linear in the length of the
@@ -48,14 +87,10 @@ export interface GitHead {
  * repository content: a pattern with overlapping quantifiers would be a denial-of-service knob.
  *
  * @param command - Command as the model wrote it.
- * @returns `true` when some segment of the command runs git with a `push` argument.
+ * @returns `true` when some segment of the command runs `git push`.
  */
 function invokesGitPush(command: string): boolean {
-  return command.split(COMMAND_SEPARATORS).some((segment) => {
-    const words = segment.trim().split(WHITESPACE);
-    const git = words.indexOf('git');
-    return git !== -1 && words.includes('push', git + 1);
-  });
+  return command.split(COMMAND_SEPARATORS).some(segmentPushes);
 }
 
 /**

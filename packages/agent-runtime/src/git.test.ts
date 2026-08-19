@@ -4,7 +4,8 @@
  * Layer: unit.
  * Goal: a successful command yields its output, a failing one yields its code rather than an
  * exception, a binary that will not start and a command that never exits are both reported instead
- * of hanging, and `gitOrThrow` turns a non-zero exit into a `GitError` carrying a capped stderr.
+ * of hanging, output past the byte cap is dropped rather than accumulated, and `gitOrThrow` turns
+ * a non-zero exit into a `GitError` carrying a capped stderr.
  * Mocks: real `git` against a temporary directory, plus a scripted spawn for the paths a real
  * process cannot be made to take.
  */
@@ -13,7 +14,13 @@ import { PassThrough } from 'node:stream';
 
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { createGitRunner, DEFAULT_GIT_TIMEOUT_MS, GitError, gitOrThrow } from './git.js';
+import {
+  createGitRunner,
+  DEFAULT_GIT_TIMEOUT_MS,
+  GitError,
+  gitOrThrow,
+  MAX_GIT_OUTPUT_BYTES,
+} from './git.js';
 import type { SpawnFunction } from './spawn.js';
 import { makeTempDir, removeTempDir } from './testing/temp-dir.js';
 
@@ -25,11 +32,17 @@ const env: Record<string, string> = { PATH: process.env.PATH ?? '' };
 /**
  * A spawn double whose child behaves as the script says.
  *
- * @param script - `error` emits a start failure; `hang` never closes on its own; otherwise the
- *   child closes immediately with `exitCode`.
+ * @param script - `error` emits a start failure; `hang` never closes on its own; `stdout` is
+ *   written to the child's standard output before it closes; otherwise the child closes
+ *   immediately with `exitCode`.
  * @returns A spawn function and the signals its child received.
  */
-function scriptedSpawn(script: { error?: Error; hang?: boolean; exitCode?: number }): {
+function scriptedSpawn(script: {
+  error?: Error;
+  hang?: boolean;
+  exitCode?: number;
+  stdout?: readonly string[];
+}): {
   spawn: SpawnFunction;
   kills: (NodeJS.Signals | number | undefined)[];
 } {
@@ -51,9 +64,16 @@ function scriptedSpawn(script: { error?: Error; hang?: boolean; exitCode?: numbe
         child.emit('error', script.error);
         return;
       }
-      if (script.hang !== true) {
-        child.emit('close', script.exitCode ?? 0);
+      if (script.hang === true) {
+        return;
       }
+      for (const chunk of script.stdout ?? []) {
+        child.stdout?.write(chunk);
+      }
+      // A further turn of the loop, so the stream has delivered everything before the close.
+      setImmediate(() => {
+        child.emit('close', script.exitCode ?? 0);
+      });
     });
     return child;
   };
@@ -102,6 +122,24 @@ describe('createGitRunner', () => {
     const result = await createGitRunner(spawn).run(['clone', 'x'], { cwd, env, timeoutMs: 5 });
     expect(kills).toStrictEqual(['SIGKILL']);
     expect(result.code).toBeNull();
+  });
+
+  it('stops keeping output once a command passes the byte cap', async () => {
+    // `list_dir` runs `ls-files` in a directory the model chose, over a checkout whose size the
+    // repository decides: without the cap the whole listing is accumulated in the runtime's heap.
+    const chunk = 'x'.repeat(1024 * 1024);
+    const chunks = Array.from({ length: 9 }, () => chunk);
+    const { spawn } = scriptedSpawn({ stdout: chunks });
+    const result = await createGitRunner(spawn).run(['ls-files'], { cwd, env });
+    expect(chunks.join('').length).toBeGreaterThan(MAX_GIT_OUTPUT_BYTES);
+    expect(result.stdout.length).toBe(MAX_GIT_OUTPUT_BYTES);
+  });
+
+  it('keeps output that stays within the byte cap', async () => {
+    // The cap must be invisible to every legitimate command, which is all of them.
+    const { spawn } = scriptedSpawn({ stdout: ['a\0b\0'] });
+    const result = await createGitRunner(spawn).run(['ls-files', '-z'], { cwd, env });
+    expect(result.stdout).toBe('a\0b\0');
   });
 
   it('bounds a command that names no timeout', () => {

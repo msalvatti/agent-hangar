@@ -24,6 +24,7 @@ import type { EventWriter } from './protocol.js';
 import { createProvider, resolveProviderName } from './provider.js';
 import type { ProviderFactories } from './provider.js';
 import { createRuntimeRedactor } from './redact.js';
+import type { RuntimeRedactor } from './redact.js';
 import { createToolExecutor, TOOL_DEFINITIONS } from './tools/index.js';
 import { describeError, describeErrorWithStack } from './tools/result.js';
 
@@ -98,6 +99,13 @@ interface TurnContext {
   git: GitRunner;
   /** Cancellation for the whole turn. */
   signal: AbortSignal;
+  /**
+   * Removes secrets from text on its way out of this process.
+   *
+   * @param text - Text as it was produced.
+   * @returns The redacted text.
+   */
+  redactText: (text: string) => string;
 }
 
 /**
@@ -141,6 +149,7 @@ async function prepareAndRun(
     }),
     toolDefinitions: TOOL_DEFINITIONS,
     emit,
+    redactText: context.redactText,
     lastEmittedAt: sink.writer.lastEmittedAt,
   });
 }
@@ -151,12 +160,14 @@ async function prepareAndRun(
  * @param request - The validated request.
  * @param deps - Turn dependencies.
  * @param sink - Where a failure is reported.
+ * @param redactor - Redactor bound to this container's credentials.
  * @returns The process exit code.
  */
 async function runRequest(
   request: TurnRequest,
   deps: TurnDeps,
   sink: FailureSink,
+  redactor: RuntimeRedactor,
 ): Promise<number> {
   const { io } = deps;
   const controller = new AbortController();
@@ -171,6 +182,7 @@ async function runRequest(
       childEnv: createChildEnv(io.env, { tokenFile }),
       git: deps.git ?? createGitRunner(),
       signal: controller.signal,
+      redactText: redactor.redactText,
     });
     return EXIT.ok;
   } catch (error) {
@@ -205,5 +217,5 @@ export async function runTurnCommand(deps: TurnDeps): Promise<number> {
     sink.diag(describeError(error));
     return EXIT.protocolError;
   }
-  return runRequest(request, deps, sink);
+  return runRequest(request, deps, sink, redactor);
 }

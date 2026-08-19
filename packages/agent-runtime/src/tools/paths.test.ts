@@ -97,6 +97,35 @@ describe('resolveInsideWorkspace', () => {
     );
   });
 
+  it('rejects a dangling symbolic link whose target is outside the root', async () => {
+    // `realpath` fails for a dangling link exactly as it does for an absent path, but the two are
+    // not the same: writing to the link creates the file at its target, outside the workspace.
+    await symlink(path.join(outside, 'not-there-yet.txt'), path.join(root, 'dangling'));
+    await expect(resolveInsideWorkspace(root, 'dangling')).rejects.toThrow('symbolic link');
+  });
+
+  it('rejects a chain of dangling symbolic links that ends outside the root', async () => {
+    // Following only the first link would judge the chain on a location still inside the root.
+    await symlink(path.join(outside, 'not-there-yet.txt'), path.join(root, 'second'));
+    await symlink(path.join(root, 'second'), path.join(root, 'first'));
+    await expect(resolveInsideWorkspace(root, 'first')).rejects.toThrow('symbolic link');
+  });
+
+  it('accepts a dangling symbolic link whose target is inside the root', async () => {
+    // Repositories carry links to files a build has not produced yet; those are not escapes.
+    await symlink(path.join(root, 'generated.txt'), path.join(root, 'dangling'));
+    await expect(resolveInsideWorkspace(root, 'dangling')).resolves.toBe(
+      path.join(root, 'dangling'),
+    );
+  });
+
+  it('rejects a cycle of symbolic links instead of following it forever', async () => {
+    // Neither link resolves, and each names the other; the walk has to give up on its own.
+    await symlink(path.join(root, 'b'), path.join(root, 'a'));
+    await symlink(path.join(root, 'a'), path.join(root, 'b'));
+    await expect(resolveInsideWorkspace(root, 'a')).rejects.toThrow('too many symbolic links');
+  });
+
   it('accepts a root that is itself reached through a symbolic link', async () => {
     // macOS resolves the system temporary directory through /private; the root must still match.
     const alias = path.join(outside, 'root-alias');

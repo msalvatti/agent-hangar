@@ -3,8 +3,9 @@
  *
  * Layer: build.
  *
- * The image carries `dist/cli.js` alone — no `node_modules`, no manifest — so nothing may stay
- * external. `@agent-hangar/core` is a barrel over the whole domain, including modules that only
+ * The image carries `dist/cli.js` and the `dist/package.json` written beside it — no
+ * `node_modules`, and nothing but that one manifest, whose only job is to mark the bundle as ESM
+ * so Node does not have to guess — so no import may stay external. `@agent-hangar/core` is a barrel over the whole domain, including modules that only
  * a host process can load (Prisma, pg, pino, BullMQ, ioredis, dockerode); the plugin below marks
  * everything reached through that package side-effect-free so tree shaking removes what the
  * runtime never calls. `scripts/check-bundle.mjs` proves the result really is self-contained.

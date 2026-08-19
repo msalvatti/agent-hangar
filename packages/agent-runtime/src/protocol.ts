@@ -73,6 +73,13 @@ export function createEventWriter(
   let queue: Promise<void> = Promise.resolve();
   let lastAt = now();
 
+  // A `Writable` reports a failed write twice: through the callback below, and as an `error`
+  // event. With no listener for the event, Node turns it into an uncaught exception and the
+  // runtime dies without the exit code the worker reads — so a broken pipe on stdout would look
+  // like a crashed container rather than a finished turn. The callback stays the channel the
+  // caller acts on; this listener exists so the second report is observed rather than fatal.
+  stdout.on('error', () => undefined);
+
   const writeLine = (event: AgentEvent): Promise<void> =>
     new Promise<void>((resolve, reject) => {
       stdout.write(encodeLine(redactor.redactEvent(event)), (error) => {

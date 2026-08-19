@@ -54,6 +54,18 @@ export interface LoopDeps {
    * @param event - The event.
    */
   emit(event: AgentEvent): Promise<void>;
+  /**
+   * Removes secrets from text that is about to leave this process.
+   *
+   * The event writer redacts what it emits, but a tool result travels a second road: it is fed
+   * back to the provider as conversation input. A `run_shell` call can read the git token file,
+   * so without this the PAT would be sent to the model — and the model is steered by untrusted
+   * repository content, which is the whole reason the credential was taken out of its environment.
+   *
+   * @param text - Text as the tool produced it.
+   * @returns The same text with every registered value and secret shape replaced.
+   */
+  redactText: (text: string) => string;
   /** When the last event was written, for the heartbeat. */
   lastEmittedAt(): number;
   /** Absolute workspace root. */
@@ -332,7 +344,9 @@ async function runToolCall(
   }
   state.items.push(
     { type: 'tool_call', callId: call.callId, name: call.name, arguments: call.arguments },
-    { type: 'tool_result', callId: call.callId, output: result.output },
+    // Redacted here rather than at the tool: the model is the other consumer of this text, and
+    // it is the one consumer the event writer does not sit in front of.
+    { type: 'tool_result', callId: call.callId, output: deps.redactText(result.output) },
   );
   await maybeEmitGitPushed(deps, call.name, result);
 }

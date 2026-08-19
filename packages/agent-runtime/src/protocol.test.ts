@@ -156,13 +156,14 @@ describe('createEventWriter', () => {
 
   it('reports a write failure to its own caller and does not replay it on the next emit', async () => {
     // A poisoned promise chain would make every later event reject with the first failure and
-    // never be attempted, hiding the real state of the pipe from the loop.
+    // never be attempted, hiding the real state of the pipe from the loop. No `error` listener is
+    // added here on purpose: the writer installs its own, and without it the stream's own report
+    // of the same failure would reach the process as an uncaught exception.
     const stream = new Writable({
       write(_chunk: Buffer, _encoding, callback) {
         callback(new Error('pipe closed'));
       },
     });
-    stream.on('error', () => undefined);
     const writer = createEventWriter(stream, createRuntimeRedactor());
     await expect(writer.emit({ type: 'step.started', step: 1 })).rejects.toThrow('pipe closed');
     await expect(writer.emit({ type: 'step.started', step: 2 })).rejects.toThrow(

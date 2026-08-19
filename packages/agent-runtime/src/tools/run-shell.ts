@@ -16,7 +16,7 @@ import { nodeSpawn } from '../spawn.js';
 import type { SpawnedProcess, SpawnFunction } from '../spawn.js';
 
 import { displayPath, PathEscapeError, resolveInsideWorkspace } from './paths.js';
-import { failure, truncateOutput } from './result.js';
+import { failure, sliceToBytes, truncateOutput } from './result.js';
 import type { ToolResult } from './result.js';
 import type { RunShellArgs } from './schemas.js';
 
@@ -111,11 +111,17 @@ function collectStream(
     // Past the budget the output is counted and thrown away. A command the model wrote can emit
     // gigabytes in seconds, and buffering all of it would exhaust the container long before the
     // per-command timeout could stop it.
-    if (state.keptBytes < maxOutputBytes) {
-      state.parts.push(chunk);
-      state.keptBytes = state.totalBytes;
-      hooks.onOutput?.(name, chunk);
+    const remaining = maxOutputBytes - state.keptBytes;
+    if (remaining <= 0) {
+      return;
     }
+    // The chunk is cut to what is left rather than kept whole: a pipe hands over tens of kilobytes
+    // at a time, so keeping the chunk that crosses the line would overshoot the budget by all of
+    // it — which is what the budget exists to prevent on the streamed events as much as here.
+    const piece = sliceToBytes(chunk, remaining);
+    state.parts.push(piece);
+    state.keptBytes += Buffer.byteLength(piece);
+    hooks.onOutput?.(name, piece);
   });
 }
 

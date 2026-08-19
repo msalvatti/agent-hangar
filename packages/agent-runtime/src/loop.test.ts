@@ -102,6 +102,7 @@ async function run(
       events.push(event);
       await Promise.resolve();
     },
+    redactText: (text) => text,
     lastEmittedAt: () => 0,
     workspaceRoot: root,
     childEnv,
@@ -771,5 +772,36 @@ describe('runTurnLoop and git pushes', () => {
     };
     await run(request('fake a push'), scripted(script));
     expect(eventTypes()).not.toContain('git.pushed');
+  });
+});
+
+describe('runTurnLoop and what the model is shown', () => {
+  it('redacts a tool result before it becomes provider input', async () => {
+    // The event writer guards stdout, but the conversation is a second road out of this process
+    // and the only one the model reads. `run_shell` can print the git token file, so an
+    // unredacted tool result would send the PAT to the provider on the very next step.
+    const secret = 'ghp-canary-value-that-must-not-travel';
+    const provider = scripted({
+      default: toolThenAnswer(
+        {
+          callId: 'c1',
+          name: 'run_shell',
+          arguments: JSON.stringify({ command: `echo ${secret}`, cwd: null, timeoutMs: null }),
+        },
+        'Done.',
+      ),
+    });
+
+    await run(request('print it'), provider, {
+      redactText: (text) => text.split(secret).join('[REDACTED]'),
+    });
+
+    // Only the result is examined: the call's own arguments are text the model wrote itself.
+    const results = (provider.calls[1]?.items ?? []).filter(
+      (item) => 'type' in item && item.type === 'tool_result',
+    );
+    expect(results).toHaveLength(1);
+    expect(JSON.stringify(results)).toContain('[REDACTED]');
+    expect(JSON.stringify(results)).not.toContain(secret);
   });
 });

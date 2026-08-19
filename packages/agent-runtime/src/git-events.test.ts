@@ -39,9 +39,21 @@ describe('looksLikeGitPush', () => {
     ['a push after a directory change', 'cd packages/core && git push'],
     ['a push after a semicolon', 'echo done; git push origin HEAD'],
     ['a push with global git flags', 'git -c user.name=x push'],
+    ['a push behind a valueless global flag', 'git --no-pager push'],
   ])('recognises %s', (_name, command) => {
     // The host records where the work landed, so a missed push loses that link.
     expect(looksLikeGitPush({ command, output: '', exitCode: 0 })).toBe(true);
+  });
+
+  it.each([
+    ['a subcommand that merely takes a ref named push', 'git branch push'],
+    ['a configuration value that ends in push', 'git config alias.name push'],
+    ['a path option whose value is push', 'git -C push status'],
+    ['git with global flags and no subcommand at all', 'git --no-pager'],
+  ])('does not recognise %s as a push', (_name, command) => {
+    // These succeed without a remote ever being contacted; reporting `git.pushed` would tell the
+    // host that work landed when nothing left the container.
+    expect(looksLikeGitPush({ command, output: '', exitCode: 0 })).toBe(false);
   });
 
   it('recognises a push that only shows up in the output', () => {

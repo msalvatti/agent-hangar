@@ -4,8 +4,8 @@
  * Layer: utility.
  *
  * The value is baked in at bundle time by esbuild's `define`, so `dist/cli.js` reports the
- * package version without reading `package.json` — the bundle is copied into the image alone,
- * with no `node_modules` and no manifest beside it.
+ * package version without reading a manifest at run time. The `dist/package.json` copied into the
+ * image alongside it carries only `{"type": "module"}`, and is never read for a version.
  */
 
 declare const __AGENT_RUNTIME_VERSION__: string | undefined;

@@ -157,6 +157,21 @@ describe('runShell', () => {
     expect(Buffer.byteLength(streamed.join(''))).toBeLessThan(200_000);
   });
 
+  it('never keeps or streams more than the budget, not even by one chunk', async () => {
+    // A pipe hands over tens of kilobytes at a time. Checking the budget before appending the
+    // whole chunk would let the one that crosses the line through in full, which on a small
+    // budget is the difference between a kilobyte and everything the command produced.
+    const budget = 1024;
+    const streamed: string[] = [];
+    const result = await runShell(
+      { command: "head -c 500000 /dev/zero | tr '\\0' a", cwd: null, timeoutMs: null },
+      { ...context, maxOutputBytes: budget },
+      { onOutput: (_stream, text) => streamed.push(text) },
+    );
+    expect(Buffer.byteLength(streamed.join(''))).toBe(budget);
+    expect(result.bytes).toBe(500_000);
+  });
+
   it('gives the command an environment without either credential', async () => {
     // This is the guarantee that a command the model wrote cannot read the PAT or the API key.
     const result = await runShell(

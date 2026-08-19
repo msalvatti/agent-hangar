@@ -27,12 +27,18 @@ export const REDACTED = REDACTED_TOKEN;
  */
 const MIN_EXACT_VALUE_LENGTH = 8;
 
-/** Removes secrets from text and from the text-carrying fields of protocol events. */
+/**
+ * Removes secrets from text and from the text-carrying fields of protocol events.
+ *
+ * Both members are declared as function-valued properties rather than methods, for the reason the
+ * event writer's are: callers hand them straight to the loop, and a closure carries no `this`
+ * to lose on the way.
+ */
 export interface RuntimeRedactor {
   /** Replaces registered values and shape-pattern matches with {@link REDACTED}. Idempotent. */
-  redactText(text: string): string;
+  redactText: (text: string) => string;
   /** Returns a copy of `event` with every text-carrying field redacted. */
-  redactEvent(event: AgentEvent): AgentEvent;
+  redactEvent: (event: AgentEvent) => AgentEvent;
 }
 
 /** Options of {@link createRuntimeRedactor}. */
