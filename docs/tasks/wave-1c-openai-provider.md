@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-C (Wave 1, parallel with W1-A … W1-I) |
 | **Status** | 🟦 running |
-| **Progress** | 1/5 tasks |
+| **Progress** | 2/5 tasks |
 | **Branch** | `feat/w1c-openai-provider` |
 | **Owned paths** | `packages/core/src/model/openai/**`, `packages/core/src/model/registry.ts` (+ `registry.test.ts`), `packages/core/fixtures/openai/**`, `packages/core/scripts/record-fixtures.ts` — plus three append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only), (the root `packages/core/src/index.ts` is frozen — it already re-exports `./model/index.js`; this lane adds exports only to `packages/core/src/model/index.ts` and `model/openai/index.ts`), `packages/core/package.json` (one script `fixtures:record` only) |
 | **Depends on** | W0 merged to `main` |
@@ -42,7 +42,7 @@ Spec 03 §2 lists the event mapping. The SDK's event names must be **verified at
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
 | 1C.1 | Pure mapping: request params, stream events → `ModelEvent`, SDK errors → `ModelEvent.error` (verified against SDK types) | ✅ | P0 | M | — |
-| 1C.2 | Fixtures (`fixtures/openai/*.ndjson`), fixture loader, fake SDK client, record script | 📋 | P0 | M | 1C.1 |
+| 1C.2 | Fixtures (`fixtures/openai/*.ndjson`), fixture loader, fake SDK client, record script | ✅ | P0 | M | 1C.1 |
 | 1C.3 | `OpenAIModelProvider` (`stream`, `listModels`) + SDK client factory | 📋 | P0 | M | 1C.1, 1C.2 |
 | 1C.4 | Registry `createModelProvider(name, deps)` → openai \| fake; barrel exports | 📋 | P0 | S | 1C.3 |
 | 1C.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1C.1–1C.4 |
@@ -144,16 +144,16 @@ Completion Protocol (after you finish):
 
 ## Task 1C.2 — Fixtures, fixture loader, fake SDK client, record script
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 1C.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 1C.1
 
 **Description.** Create the recorded-style NDJSON fixtures (synthetic, shaped exactly like real `ResponseStreamEvent`s, redacted), a loader, a fake SDK client (`createFakeOpenAIClient`) that replays fixtures or throws configured errors and records calls, and the manual `record-fixtures.ts` script that captures real streams with a real key and redacts them.
 
 **Acceptance criteria**
-- [ ] `packages/core/fixtures/openai/{text,tool-call,text-and-tool-call,refusal,failed,incomplete,error-event}.ndjson` exist; each line parses as JSON with a `type` that is a member of the SDK union (a test asserts this for every file); ids look real (`resp_…`, `msg_…`, `fc_…`, `call_…`) but are synthetic; no secrets (`assertNoCanary` + shape grep pass)
-- [ ] `loadOpenAIFixture(name)` resolves the path relative to the module (`../../../fixtures/openai/`) so it works from `src/` and `dist/`; throws a readable error for an unknown name
-- [ ] `createFakeOpenAIClient(options)` satisfies the `OpenAIResponsesClient` interface (structural subset of the SDK client used by the provider); records `calls.stream[]` params and options; can yield events with optional per-event delay, throw before the first event, throw mid-stream, honour `signal` abort (stops yielding, throws `APIUserAbortError`-shaped error if configured), and serve `models.list()` from a configured id list or throw
-- [ ] `packages/core/scripts/record-fixtures.ts` runs with `OPENAI_API_KEY` set, writes raw events to the fixture files after redaction, refuses to run without a key, never prints the key; documented in `packages/core/fixtures/openai/README.md`; `pnpm --filter @agent-hangar/core fixtures:record` script wired
-- [ ] 100 % coverage on `src/model/openai/{fixtures,fake-client}.ts`
+- [x] `packages/core/fixtures/openai/{text,tool-call,text-and-tool-call,refusal,failed,incomplete,error-event}.ndjson` exist; each line parses as JSON with a `type` that is a member of the SDK union (a test asserts this for every file); ids look real (`resp_…`, `msg_…`, `fc_…`, `call_…`) but are synthetic; no secrets (`assertNoCanary` + shape grep pass)
+- [x] `loadOpenAIFixture(name)` resolves the path relative to the module (`../../../fixtures/openai/`) so it works from `src/` and `dist/`; throws a readable error for an unknown name
+- [x] `createFakeOpenAIClient(options)` satisfies the `OpenAIResponsesClient` interface (structural subset of the SDK client used by the provider); records `calls.stream[]` params and options; can yield events with optional per-event delay, throw before the first event, throw mid-stream, honour `signal` abort (stops yielding, throws `APIUserAbortError`-shaped error if configured), and serve `models.list()` from a configured id list or throw
+- [x] `packages/core/scripts/record-fixtures.ts` runs with `OPENAI_API_KEY` set, writes raw events to the fixture files after redaction, refuses to run without a key, never prints the key; documented in `packages/core/fixtures/openai/README.md`; `pnpm --filter @agent-hangar/core fixtures:record` script wired
+- [x] 100 % coverage on `src/model/openai/{fixtures,fake-client}.ts`
 
 **Files to create**
 `packages/core/fixtures/openai/*.ndjson`, `packages/core/fixtures/openai/README.md`, `packages/core/src/model/openai/fixtures.ts`, `packages/core/src/model/openai/fixtures.test.ts`, `packages/core/src/model/openai/client.ts` (interface `OpenAIResponsesClient` — implementation factory added in 1C.3), `packages/core/src/model/openai/fake-client.ts`, `packages/core/src/model/openai/fake-client.test.ts`, `packages/core/scripts/record-fixtures.ts`; modify `packages/core/package.json` (script `fixtures:record`).
@@ -473,3 +473,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1c-openai-prov
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 
 - 1C.1 ✅ 2026-08-19 — Responses mapping layer verified against `openai@7.5.0`; every consumed event name matches the shipped `ResponseStreamEvent` union.
+- 1C.2 ✅ 2026-08-19 — Seven synthetic NDJSON streams built from the SDK types, plus the fixture loader, the replaying fake client and the redacting record script.
