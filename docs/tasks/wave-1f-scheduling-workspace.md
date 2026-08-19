@@ -552,3 +552,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1f-scheduling-
 - 1F.2 ✅ 2026-08-19 — workspace and run transition tables, ensure-workspace decision with `WorkspaceBusyError`, idle-TTL selection and orphan reconcile; 33 unit tests, 100 % on `src/workspace/**`
 - 1F.3 ✅ 2026-08-19 — history window with anchor and compaction item, TOOL_SUMMARY text, workspace notices, restore-context and turn-request builders; schema failures report field paths only, proven with canaries; 57 unit tests, 100 % on `src/restore/**`
 - 1F.4 ✅ 2026-08-19 — BullMQ 6.1.2 / ioredis 6.0.0 connection, queue, worker and Job Scheduler factories; 30 unit tests reach 100 % without Redis, 7 `@redis` tests pass against compose Redis 8.10.0
+- 1F.5 ✅ 2026-08-19 — PR #12 opened; gates green, code review and security review at zero findings
