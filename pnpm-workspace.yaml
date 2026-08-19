@@ -1,0 +1,22 @@
+packages:
+  - 'apps/*'
+  - 'packages/*'
+
+# Dependencies whose install scripts are allowed to run (pnpm 11 blocks the rest).
+# Only the ones that need their postinstall to work are allowed; the others are optional
+# native accelerators (msgpackr-extract, cpu-features, ssh2) or informational (msw, protobufjs).
+allowBuilds:
+  '@prisma/engines': true
+  cpu-features: false
+  esbuild: true
+  msgpackr-extract: false
+  msw: false
+  prisma: true
+  protobufjs: false
+  ssh2: false
+  unrs-resolver: true
+
+# Security overrides for transitive dependencies (documented in README "Decisions").
+# deepmerge-ts <8 (pinned by @prisma/config) is affected by GHSA-ggr8-5vv4-36mx.
+overrides:
+  deepmerge-ts@<8.0.0: ^8.0.1

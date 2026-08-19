@@ -1,0 +1,256 @@
+# Continuous integration: every gate the project defines, on pull requests and on pushes to main.
+# No job is allowed to fail softly: a red job blocks the merge.
+# pnpm comes from `packageManager` in package.json via pnpm/action-setup (on the organisation's
+# allow-list of third-party actions); Node 24 via actions/setup-node.
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  NODE_OPTIONS: --max-old-space-size=4096
+  # Local compose Postgres credentials (not a secret: loopback-only service in CI and on laptops).
+  COMPOSE_DB_CREDENTIALS: 'ah:ah'
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm lint
+      - run: pnpm format:check
+      # ESLint reports neither a directive that actually suppresses a rule, nor a coverage-ignore
+      # comment, nor anything in a shell file, so the ban is only real if this runs over every
+      # tracked source and shell file.
+      - name: suppression ban
+        run: bash scripts/check-suppressions.sh
+
+  typecheck:
+    name: typecheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm typecheck
+
+  unit:
+    name: unit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm test -- --coverage
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: coverage
+          path: |
+            packages/*/coverage/coverage-summary.json
+            apps/*/coverage/coverage-summary.json
+          if-no-files-found: ignore
+          retention-days: 7
+
+  integration:
+    name: integration
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: ah
+          POSTGRES_PASSWORD: ah
+          # Named for the instance below: the test helpers refuse to truncate a database that is
+          # not called agent_hangar_<instance> with "test" as a word of the instance.
+          POSTGRES_DB: agent_hangar_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ah -d agent_hangar_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      AH_INSTANCE: test
+      REDIS_URL: redis://127.0.0.1:6379
+      DOCKER_AVAILABLE: '1'
+      # These suites truncate every table; the helpers refuse to run without this opt-in.
+      AH_ALLOW_DESTRUCTIVE_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Derive DATABASE_URL
+        run: echo "DATABASE_URL=postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:5432/agent_hangar_test" >> "$GITHUB_ENV"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @agent-hangar/core db:generate
+      - run: pnpm --filter @agent-hangar/core db:migrate
+      - run: docker build -t agent-hangar/workspace:dev infra/workspace
+      - run: pnpm test:integration
+
+  e2e:
+    name: e2e
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: ah
+          POSTGRES_PASSWORD: ah
+          # Named for the instance below: the test helpers refuse to truncate a database that is
+          # not called agent_hangar_<instance> with "test" as a word of the instance.
+          POSTGRES_DB: agent_hangar_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ah -d agent_hangar_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      AH_INSTANCE: test
+      REDIS_URL: redis://127.0.0.1:6379
+      AGENT_MODEL_PROVIDER: fake
+      # These suites truncate every table; the helpers refuse to run without this opt-in.
+      AH_ALLOW_DESTRUCTIVE_TESTS: '1'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Derive DATABASE_URL
+        run: echo "DATABASE_URL=postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:5432/agent_hangar_test" >> "$GITHUB_ENV"
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm --filter web exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: playwright-report
+          path: apps/web/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+  build:
+    name: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@v6
+        with:
+          cache: true
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm db:generate
+      - run: pnpm build
+      - run: docker build -t agent-hangar/workspace:dev infra/workspace
+      - run: docker run --rm agent-hangar/workspace:dev node --version
+
+  secret-scan:
+    name: secret-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      # The gitleaks GitHub Action needs an organisation licence key; the official container image
+      # does not, so the scan runs through it until a key exists.
+      #
+      # Neither scan may reach the remote: the checkout above persists no credentials, so any
+      # `git fetch` here fails on a private repository. Both modes work from what checkout already
+      # placed on disk — the working tree on pull requests, the full local history on pushes.
+      # Two scans on a pull request, because neither alone is enough: the tree scan sees a secret
+      # that is present now, and the range scan sees one that was committed and deleted again in a
+      # later commit of the same branch, which stays in history and which the tree scan cannot see.
+      # The base commit is the merge commit's first parent, so `fetch-depth: 0` above already has
+      # it and no fetch — hence no credential — is needed.
+      - name: gitleaks (working tree)
+        if: github.event_name == 'pull_request'
+        run: >-
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1
+          dir /repo --config /repo/.gitleaks.toml --redact --no-banner
+      - name: gitleaks (commits of this pull request)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1
+          git /repo --config /repo/.gitleaks.toml --redact --no-banner
+          --log-opts="$BASE_SHA..HEAD"
+      - name: gitleaks (full history)
+        if: github.event_name == 'push'
+        run: >-
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1
+          git /repo --config /repo/.gitleaks.toml --redact --no-banner

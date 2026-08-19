@@ -1,0 +1,9 @@
+{
+  "files": [],
+  "references": [
+    { "path": "packages/core" },
+    { "path": "packages/agent-runtime" },
+    { "path": "apps/worker" },
+    { "path": "apps/web" }
+  ]
+}

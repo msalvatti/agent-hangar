@@ -1,0 +1,19 @@
+# gitleaks configuration for the CI secret scan (and for local runs).
+# Extends the default rule set; the only allowed secret-shaped strings are the test canaries,
+# which always contain the TESTCANARY marker, and the local compose database credentials.
+title = "agent-hangar"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Test canaries and local compose credentials are not secrets"
+regexTarget = "match"
+regexes = [
+  '''TESTCANARY''',
+  '''postgres(ql)?://ah:ah@127\.0\.0\.1''',
+]
+paths = [
+  '''pnpm-lock\.yaml''',
+  '''node_modules/''',
+]

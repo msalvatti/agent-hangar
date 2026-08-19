@@ -1,0 +1,39 @@
+# Local infrastructure of one Agent Hangar instance: Postgres 18 and Redis 8, keyed by the
+# variables of .env.local (COMPOSE_PROJECT_NAME, POSTGRES_DB, POSTGRES_PORT, REDIS_PORT).
+# Web and worker run on the host; workspace containers are created by the worker via dockerode.
+# Usage: docker compose -f infra/docker-compose.yml --env-file .env.local up -d --wait
+name: ${COMPOSE_PROJECT_NAME:-agent-hangar-default}
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: ah
+      POSTGRES_PASSWORD: ah
+      POSTGRES_DB: ${POSTGRES_DB:-agent_hangar_default}
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-3001}:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U ah -d ${POSTGRES_DB:-agent_hangar_default}']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:8-alpine
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '127.0.0.1:${REDIS_PORT:-3002}:6379'
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata: {}
+  redisdata: {}

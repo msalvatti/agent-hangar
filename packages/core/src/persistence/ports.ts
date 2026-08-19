@@ -1,0 +1,297 @@
+/**
+ * Repository ports: the only way domain code reads or writes durable state.
+ *
+ * Layer: service (port).
+ *
+ * Inputs and outputs are domain types from `./entities.ts`; Prisma types never cross this
+ * boundary. Repositories are the only writers and redact every free-text column on write.
+ * Every method resolves with the fresh row it produced so callers never re-query.
+ */
+import type { SecretEnvelope, SecretKey, SecretStatus } from '../secrets/types.js';
+import type {
+  ChatStatus,
+  JobRunStatus,
+  JobRunTrigger,
+  MessageRole,
+  ToolCallStatus,
+  TurnStatus,
+  WorkspaceKind,
+  WorkspaceStatus,
+} from '../workspace/types.js';
+
+import type {
+  Chat,
+  JobRun,
+  Message,
+  ScheduledJob,
+  SecretRecord,
+  ToolCallLog,
+  Turn,
+  UsageTotals,
+  Workspace,
+} from './entities.js';
+
+/** Fields needed to create a chat. */
+export interface CreateChatInput {
+  title: string;
+  repoUrl: string;
+  baseBranch: string;
+}
+
+/** Restore hints written when the agent pushes. */
+export interface RestoreHints {
+  workBranch?: string | null;
+  lastPushedSha?: string | null;
+}
+
+/** Chat rows. */
+export interface ChatRepository {
+  /** Creates an `ACTIVE` chat. */
+  create(input: CreateChatInput): Promise<Chat>;
+  /** Returns the chat or `null` when it does not exist. */
+  getById(id: string): Promise<Chat | null>;
+  /** Lists chats, most recently updated first; all statuses when `status` is omitted. */
+  list(status?: ChatStatus): Promise<Chat[]>;
+  /** Renames the chat (title is editable inline in the header). */
+  rename(id: string, title: string): Promise<Chat>;
+  /** Sets the status; `ARCHIVED` stamps `archivedAt`, `ACTIVE` clears it. */
+  setStatus(id: string, status: ChatStatus): Promise<Chat>;
+  /** Updates `workBranch` / `lastPushedSha`; omitted fields are untouched. */
+  updateRestoreHints(id: string, hints: RestoreHints): Promise<Chat>;
+  /** Bumps `updatedAt` (sidebar ordering). */
+  touch(id: string): Promise<void>;
+  /** Deletes the chat and, by cascade, its messages, turns and tool-call logs. */
+  delete(id: string): Promise<void>;
+}
+
+/** Paging options for message history, ascending by `seq`. */
+export interface ListMessagesOptions {
+  /** Maximum number of messages; the most recent ones are returned when it cuts. */
+  limit?: number;
+  /** Only messages with `seq` strictly lower than this value. */
+  before?: number;
+}
+
+/** Message rows; `seq` is assigned gap-free per chat inside a transaction. */
+export interface MessageRepository {
+  /** Appends a message with the next `seq` of the chat; content is redacted on write. */
+  append(chatId: string, role: MessageRole, content: string, turnId?: string): Promise<Message>;
+  /** Ordered history of a chat, ascending by `seq`. */
+  listByChat(chatId: string, options?: ListMessagesOptions): Promise<Message[]>;
+}
+
+/** Fields needed to create a turn. */
+export interface CreateTurnInput {
+  chatId: string;
+  model: string;
+  queueJobId?: string;
+}
+
+/** Optional fields written together with a turn status change. */
+export interface TurnStatusUpdate {
+  workspaceId?: string | null;
+  queueJobId?: string | null;
+  /** Redacted on write. */
+  error?: string | null;
+}
+
+/** Terminal statuses of a turn or run. */
+export type TerminalStatus = 'SUCCEEDED' | 'FAILED' | 'CANCELLED';
+
+/** Turn rows. */
+export interface TurnRepository {
+  /** Creates a `QUEUED` turn. */
+  create(input: CreateTurnInput): Promise<Turn>;
+  /** Sets the status; `PREPARING` stamps `startedAt` when unset. */
+  setStatus(id: string, status: TurnStatus, update?: TurnStatusUpdate): Promise<Turn>;
+  /** Returns the turn or `null`. */
+  get(id: string): Promise<Turn | null>;
+  /** Sets a terminal status, usage and `finishedAt`; `error` is redacted on write. */
+  finish(id: string, status: TerminalStatus, usage: UsageTotals, error?: string): Promise<Turn>;
+  /** Turns of a chat, oldest first. */
+  listByChat(chatId: string): Promise<Turn[]>;
+}
+
+/** Fields needed to create a workspace row. */
+export interface CreateWorkspaceInput {
+  kind: WorkspaceKind;
+  chatId?: string;
+  runnerKind: string;
+  image: string;
+  repoUrl: string;
+  branch: string;
+}
+
+/** Optional fields written together with a workspace status change. */
+export interface WorkspaceStatusUpdate {
+  runnerRef?: string | null;
+  /** Redacted on write. */
+  failureReason?: string | null;
+}
+
+/** Workspace rows; at most one live workspace per chat. */
+export interface WorkspaceRepository {
+  /**
+   * Creates a `CREATING` workspace.
+   *
+   * @throws LiveWorkspaceExistsError when the chat already has a live workspace.
+   */
+  create(input: CreateWorkspaceInput): Promise<Workspace>;
+  /** The live (`CREATING`/`READY`/`BUSY`/`STOPPING`) workspace of a chat, or `null`. */
+  findLiveByChat(chatId: string): Promise<Workspace | null>;
+  /** Sets the status; `READY` stamps `readyAt` when unset, `DESTROYED` stamps `destroyedAt`. */
+  setStatus(
+    id: string,
+    status: WorkspaceStatus,
+    update?: WorkspaceStatusUpdate,
+  ): Promise<Workspace>;
+  /** Bumps `lastActiveAt` (idle-TTL clock). */
+  markActive(id: string): Promise<void>;
+  /** `READY` workspaces whose `lastActiveAt` is before `before` (idle GC candidates). */
+  listIdle(before: Date): Promise<Workspace[]>;
+  /** Every live workspace (orphan reconciliation, doctor). */
+  listLive(): Promise<Workspace[]>;
+  /** Returns the workspace or `null`. */
+  get(id: string): Promise<Workspace | null>;
+}
+
+/** Fields needed to create a scheduled job. */
+export interface CreateScheduledJobInput {
+  name: string;
+  cron: string;
+  timezone: string;
+  prompt: string;
+  repoUrl: string;
+  branch: string;
+  enabled: boolean;
+  nextRunAt?: Date | null;
+}
+
+/** Fields that can be edited on a scheduled job. */
+export type UpdateScheduledJobInput = Partial<CreateScheduledJobInput>;
+
+/** Run timestamps maintained by the worker. */
+export interface RunTimes {
+  lastRunAt?: Date | null;
+  nextRunAt?: Date | null;
+}
+
+/** Scheduled job rows. */
+export interface ScheduledJobRepository {
+  /** Creates a job. */
+  create(input: CreateScheduledJobInput): Promise<ScheduledJob>;
+  /** Returns the job or `null`. */
+  get(id: string): Promise<ScheduledJob | null>;
+  /** Every job, newest first. */
+  list(): Promise<ScheduledJob[]>;
+  /** Applies a partial edit. */
+  update(id: string, patch: UpdateScheduledJobInput): Promise<ScheduledJob>;
+  /** Deletes the job and, by cascade, its runs. */
+  delete(id: string): Promise<void>;
+  /** Enabled jobs (scheduler reconciliation). */
+  listEnabled(): Promise<ScheduledJob[]>;
+  /** Updates `lastRunAt` / `nextRunAt`; omitted fields are untouched. */
+  setRunTimes(id: string, times: RunTimes): Promise<ScheduledJob>;
+}
+
+/** Fields needed to create a job run. */
+export interface CreateJobRunInput {
+  jobId: string;
+  trigger: JobRunTrigger;
+  model: string;
+  /** The cron tick this run belongs to (now, for manual runs). */
+  scheduledFor: Date;
+}
+
+/** Optional fields written together with a run status change. */
+export interface JobRunStatusUpdate {
+  /** Unique across runs: a run never reuses a workspace. */
+  workspaceId?: string | null;
+  /** Redacted on write. */
+  error?: string | null;
+}
+
+/** Final state of a job run. */
+export interface FinishJobRunInput {
+  status: TerminalStatus;
+  usage: UsageTotals;
+  /** Final assistant message, redacted on write. */
+  output?: string | null;
+  /** Redacted on write. */
+  error?: string | null;
+}
+
+/** Job run rows. */
+export interface JobRunRepository {
+  /** Creates a `QUEUED` run. */
+  create(input: CreateJobRunInput): Promise<JobRun>;
+  /** Sets the status; `PREPARING` stamps `startedAt` when unset. */
+  setStatus(id: string, status: JobRunStatus, update?: JobRunStatusUpdate): Promise<JobRun>;
+  /** Sets a terminal status, output/error, usage and `finishedAt`. */
+  finish(id: string, input: FinishJobRunInput): Promise<JobRun>;
+  /** Runs of a job, newest first. */
+  listByJob(jobId: string, options?: { limit?: number }): Promise<JobRun[]>;
+  /** Returns the run or `null`. */
+  get(id: string): Promise<JobRun | null>;
+  /** The `PREPARING`/`RUNNING` run of a job, or `null` (overlap policy). */
+  findRunningByJob(jobId: string): Promise<JobRun | null>;
+}
+
+/** Fields recorded when a tool call starts. Exactly one of `turnId`/`jobRunId` is set. */
+export interface StartToolCallInput {
+  workspaceId: string;
+  turnId?: string;
+  jobRunId?: string;
+  callId: string;
+  seq: number;
+  toolName: string;
+  /** Redacted on write. */
+  args: unknown;
+}
+
+/** Fields recorded when a tool call finishes. */
+export interface FinishToolCallInput {
+  status: Exclude<ToolCallStatus, 'RUNNING'>;
+  exitCode: number | null;
+  /** First 8 KB of the result, redacted on write. */
+  resultHead: string | null;
+  /** Full length of the result. */
+  resultBytes: number | null;
+  durationMs: number;
+}
+
+/** Tool-call log rows. */
+export interface ToolCallLogRepository {
+  /** Records a `RUNNING` tool call. */
+  start(input: StartToolCallInput): Promise<ToolCallLog>;
+  /** Records the outcome and `finishedAt`. */
+  finish(id: string, input: FinishToolCallInput): Promise<ToolCallLog>;
+  /** Tool calls of a turn, ascending by `seq`. */
+  listByTurn(turnId: string): Promise<ToolCallLog[]>;
+  /** Tool calls of a job run, ascending by `seq`. */
+  listByJobRun(jobRunId: string): Promise<ToolCallLog[]>;
+}
+
+/** Secret rows; one per key, append-or-replace. */
+export interface SecretRepository {
+  /** Inserts or replaces the envelope for a key. */
+  upsert(key: SecretKey, envelope: SecretEnvelope): Promise<void>;
+  /** Returns the stored envelope or `null`. */
+  get(key: SecretKey): Promise<SecretRecord | null>;
+  /** Deletes the row; no-op when absent. */
+  remove(key: SecretKey): Promise<void>;
+  /** Masked status of every key. */
+  status(): Promise<Record<SecretKey, SecretStatus>>;
+}
+
+/** All repositories, as wired by the composition root. */
+export interface Repositories {
+  chats: ChatRepository;
+  messages: MessageRepository;
+  turns: TurnRepository;
+  workspaces: WorkspaceRepository;
+  scheduledJobs: ScheduledJobRepository;
+  jobRuns: JobRunRepository;
+  toolCalls: ToolCallLogRepository;
+  secrets: SecretRepository;
+}

@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W0 (single agent, sequential — critical path) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/8 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 8/8 tasks |
 | **Branch** | `feat/w0-foundation` |
 | **Owned paths** | everything (only lane in this wave) |
 | **Depends on** | — |
@@ -41,30 +41,30 @@ Quality bar that applies to every file created here and in every later lane: Typ
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 0.1 | Monorepo, TypeScript, lint/format, git hooks, CLAUDE.md | 📋 | P0 | M | — |
-| 0.2 | Complete dependency manifest (all workspaces) | 📋 | P0 | S | 0.1 |
-| 0.3 | Frozen core contracts: types, Zod, NDJSON codec, errors, config | 📋 | P0 | L | 0.2 |
-| 0.4 | Test doubles and canaries (`packages/core/src/testing`) | 📋 | P0 | M | 0.3 |
-| 0.5 | Prisma 7 schema, migration, client factory | 📋 | P0 | M | 0.2 |
-| 0.6 | Infra skeleton: compose, workspace Dockerfile base, env.sh, scripts, .env.example | 📋 | P0 | M | 0.1 |
-| 0.7 | Apps skeleton: Next.js shell with tokens + shadcn, worker boot, test configs | 📋 | P0 | L | 0.3, 0.5, 0.6 |
-| 0.8 | CI workflow, README skeleton, plan dashboard, close-out PR | 📋 | P0 | S | 0.1–0.7 |
+| 0.1 | Monorepo, TypeScript, lint/format, git hooks, CLAUDE.md | ✅ | P0 | M | — |
+| 0.2 | Complete dependency manifest (all workspaces) | ✅ | P0 | S | 0.1 |
+| 0.3 | Frozen core contracts: types, Zod, NDJSON codec, errors, config | ✅ | P0 | L | 0.2 |
+| 0.4 | Test doubles and canaries (`packages/core/src/testing`) | ✅ | P0 | M | 0.3 |
+| 0.5 | Prisma 7 schema, migration, client factory | ✅ | P0 | M | 0.2 |
+| 0.6 | Infra skeleton: compose, workspace Dockerfile base, env.sh, scripts, .env.example | ✅ | P0 | M | 0.1 |
+| 0.7 | Apps skeleton: Next.js shell with tokens + shadcn, worker boot, test configs | ✅ | P0 | L | 0.3, 0.5, 0.6 |
+| 0.8 | CI workflow, README skeleton, plan dashboard, close-out PR | ✅ | P0 | S | 0.1–0.7 |
 
 ---
 
 ## Task 0.1 — Monorepo, TypeScript, lint/format, git hooks, CLAUDE.md
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Create the pnpm-workspaces monorepo with strict TypeScript project references, ESLint flat config, Prettier, Husky + commitlint + lint-staged, and a `CLAUDE.md` that carries the ownership map and gates for every later agent.
 
 **Acceptance criteria**
-- [ ] `pnpm install` succeeds on Node 24 with pnpm 11 (`packageManager` pinned)
-- [ ] `pnpm typecheck` runs `tsc -b` over all workspaces (empty packages compile)
-- [ ] `pnpm lint` runs ESLint flat config with import-x ordering, security plugin, `no-restricted-imports` (dockerode outside runner/docker; `crypto` → `node:crypto`; `uuid`/`nanoid` banned) and `no-restricted-syntax` banning `TSEnumDeclaration`
-- [ ] Husky `pre-commit` runs lint-staged (eslint --fix + prettier), `commit-msg` runs commitlint (conventional)
-- [ ] `CLAUDE.md` contains: project one-liner, stack with versions, ownership map (plan §6/§7 lanes → paths), the gates list, canary rule, "no deps added in lanes" rule, English-only rule, no-attribution rule
-- [ ] `.gitignore` ignores `.env*` (except `.env.example`), `master.key`, `coverage/`, `reports/`, `.next/`, `dist/`, `node_modules/`, `playwright-report/`, `test-results/`
+- [x] `pnpm install` succeeds on Node 24 with pnpm 11 (`packageManager` pinned)
+- [x] `pnpm typecheck` runs `tsc -b` over all workspaces (empty packages compile)
+- [x] `pnpm lint` runs ESLint flat config with import-x ordering, security plugin, `no-restricted-imports` (dockerode outside runner/docker; `crypto` → `node:crypto`; `uuid`/`nanoid` banned) and `no-restricted-syntax` banning `TSEnumDeclaration`
+- [x] Husky `pre-commit` runs lint-staged (eslint --fix + prettier), `commit-msg` runs commitlint (conventional)
+- [x] `CLAUDE.md` contains: project one-liner, stack with versions, ownership map (plan §6/§7 lanes → paths), the gates list, canary rule, "no deps added in lanes" rule, English-only rule, no-attribution rule
+- [x] `.gitignore` ignores `.env*` (except `.env.example`), `master.key`, `coverage/`, `reports/`, `.next/`, `dist/`, `node_modules/`, `playwright-report/`, `test-results/`
 
 **Files to create**
 `package.json`, `pnpm-workspace.yaml`, `.npmrc`, `.nvmrc`, `tsconfig.base.json`, `tsconfig.json` (solution file with references), `eslint.config.js`, `.prettierrc`, `.prettierignore`, `.editorconfig`, `.gitignore`, `.husky/pre-commit`, `.husky/commit-msg`, `commitlint.config.js`, `.lintstagedrc.json`, `CLAUDE.md`, `apps/web/package.json`, `apps/worker/package.json`, `packages/core/package.json`, `packages/agent-runtime/package.json` (all four with `tsconfig.json` extending base, empty `src/index.ts`).
@@ -129,15 +129,15 @@ Completion Protocol (after you finish):
 
 ## Task 0.2 — Complete dependency manifest (all workspaces)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 0.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 0.1
 
 **Description.** Install every runtime and dev dependency any lane will need, at the latest stable versions, so no later lane touches `pnpm-lock.yaml`.
 
 **Acceptance criteria**
-- [ ] All packages below present in the correct workspace `package.json` with caret ranges on latest stable (verified with `npm view <pkg> version` at execution time)
-- [ ] `pnpm install --frozen-lockfile` passes from a clean clone
-- [ ] `pnpm audit --prod` shows no critical/high (document any unavoidable advisory in the PR)
-- [ ] `pnpm typecheck` still passes (type packages resolve)
+- [x] All packages below present in the correct workspace `package.json` with caret ranges on latest stable (verified with `npm view <pkg> version` at execution time)
+- [x] `pnpm install --frozen-lockfile` passes from a clean clone
+- [x] `pnpm audit --prod` shows no critical/high (document any unavoidable advisory in the PR)
+- [x] `pnpm typecheck` still passes (type packages resolve)
 
 **Files to modify**
 `package.json`, `apps/web/package.json`, `apps/worker/package.json`, `packages/core/package.json`, `packages/agent-runtime/package.json`, `pnpm-lock.yaml`.
@@ -187,20 +187,20 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 
 ## Task 0.3 — Frozen core contracts: types, Zod, NDJSON codec, errors, config
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 0.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 0.2
 
 **Description.** Implement every cross-lane contract in `packages/core` exactly as specified, with Zod schemas for boundary data, the shared NDJSON codec, typed errors, and the environment/instance configuration module — all unit-tested to 100 %.
 
 **Acceptance criteria**
-- [ ] `src/runner/types.ts` exports `WorkspaceSpec`, `WorkspaceHandle`, `ExecSpec`, `ExecEvent` (incl. `started`), `WorkspaceSnapshot`, `WorkspaceHealth`, `WorkspaceRunner` exactly as spec 03 §1
-- [ ] `src/model/types.ts` exports `ToolDefinition`, `ConversationItem`, `ModelTurnInput`, `ModelEvent`, `AgentModelProvider` as spec 03 §2
-- [ ] `src/agent-protocol/{schemas,types,ndjson}.ts`: Zod schemas for `TurnRequest` and every `AgentEvent` variant; types via `z.infer`; `encodeLine(obj)`, `createNdjsonParser()` (async transform handling partial lines, multiple events per chunk, invalid JSON → `{ type: 'protocol.error', line, reason }` without throwing)
-- [ ] `src/secrets/types.ts` (`SecretKey`, `SecretsService`, `Redactor`), `src/scheduling/types.ts` (`CronSpec`, `SchedulerKey`, `ReconcilePlan`), `src/workspace/types.ts` (`WorkspaceStatus`, `TurnStatus`, `JobRunStatus`, `RestoreContext`, `EnsureWorkspaceDecision`)
-- [ ] `src/persistence/ports.ts`: interfaces for Chat/Message/Turn/Workspace/ScheduledJob/JobRun/ToolCallLog/Secret repositories with method signatures sufficient for every flow in spec 04 (document each method)
-- [ ] `src/api/contracts.ts`: Zod request/response schemas for every route in spec 03 §4 + `SseFrame` type; `src/queues/contracts.ts`: queue names, job names, payload schemas (spec 03 §5)
-- [ ] `src/config/schema.ts` (Zod env schema with every variable in spec 05 §3 and defaults), `src/config/instance.ts` (`resolveInstance({ env })` → `{ instance, portBase, webPort, postgresPort, redisPort, postgresDb, composeProjectName, workspaceNamePrefix }` with precedence `AH_*` → `CONDUCTOR_*` → defaults, slugify `[a-z0-9-]` max 30)
-- [ ] `src/errors.ts`: `AgentHangarError` base + `WorkspaceImageMissing`, `SecretIntegrityError`, `ProtocolError`, `InvalidCronError`, `IllegalTransitionError`, `ConfigError`, each with `code` literal
-- [ ] `src/index.ts` barrel exports the public API (types, schemas, codec, errors, config); 100 % coverage on everything in this task
+- [x] `src/runner/types.ts` exports `WorkspaceSpec`, `WorkspaceHandle`, `ExecSpec`, `ExecEvent` (incl. `started`), `WorkspaceSnapshot`, `WorkspaceHealth`, `WorkspaceRunner` exactly as spec 03 §1
+- [x] `src/model/types.ts` exports `ToolDefinition`, `ConversationItem`, `ModelTurnInput`, `ModelEvent`, `AgentModelProvider` as spec 03 §2
+- [x] `src/agent-protocol/{schemas,types,ndjson}.ts`: Zod schemas for `TurnRequest` and every `AgentEvent` variant; types via `z.infer`; `encodeLine(obj)`, `createNdjsonParser()` (async transform handling partial lines, multiple events per chunk, invalid JSON → `{ type: 'protocol.error', reason, length }` without throwing, never echoing the rejected bytes)
+- [x] `src/secrets/types.ts` (`SecretKey`, `SecretsService`, `Redactor`), `src/scheduling/types.ts` (`CronSpec`, `SchedulerKey`, `ReconcilePlan`), `src/workspace/types.ts` (`WorkspaceStatus`, `TurnStatus`, `JobRunStatus`, `RestoreContext`, `EnsureWorkspaceDecision`)
+- [x] `src/persistence/ports.ts`: interfaces for Chat/Message/Turn/Workspace/ScheduledJob/JobRun/ToolCallLog/Secret repositories with method signatures sufficient for every flow in spec 04 (document each method)
+- [x] `src/api/contracts.ts`: Zod request/response schemas for every route in spec 03 §4 + `SseFrame` type; `src/queues/contracts.ts`: queue names, job names, payload schemas (spec 03 §5)
+- [x] `src/config/schema.ts` (Zod env schema with every variable in spec 05 §3 and defaults), `src/config/instance.ts` (`resolveInstance({ env })` → `{ instance, portBase, webPort, postgresPort, redisPort, postgresDb, composeProjectName, workspaceNamePrefix }` with precedence `AH_*` → `CONDUCTOR_*` → defaults, slugify `[a-z0-9-]` max 30)
+- [x] `src/errors.ts`: `AgentHangarError` base + `WorkspaceImageMissing`, `SecretIntegrityError`, `ProtocolError`, `InvalidCronError`, `IllegalTransitionError`, `ConfigError`, each with `code` literal
+- [x] `src/index.ts` barrel exports the public API (types, schemas, codec, errors, config); 100 % coverage on everything in this task
 
 **Files to create**
 `packages/core/src/{runner/types.ts, model/types.ts, agent-protocol/{schemas,types,ndjson,index}.ts, secrets/types.ts, scheduling/types.ts, workspace/types.ts, persistence/ports.ts, api/contracts.ts, queues/contracts.ts, config/{schema,instance,index}.ts, errors.ts, index.ts}` + `*.test.ts` next to each implementation file, `packages/core/vitest.config.ts`.
@@ -233,7 +233,7 @@ DELIVERABLES
 
 1. `packages/core/src/runner/types.ts` — transcribe spec 03 §1. Add `{ type: 'started'; execRef: string }` as the first `ExecEvent` variant and document that `exec()` always yields it first. No implementation here; create an empty folder `src/runner/docker/` with a `.gitkeep` (W1-B owns it).
 2. `packages/core/src/model/types.ts` — transcribe spec 03 §2 (`AgentModelProvider.stream`, `listModels`). Create `src/model/openai/.gitkeep` (W1-C owns it).
-3. `packages/core/src/agent-protocol/schemas.ts` — Zod: `toolNameSchema` (`run_shell|read_file|write_file|list_dir`), `conversationItemSchema`, `turnRequestSchema` (all fields of spec 03 §3 incl. `protocolVersion: z.literal(1)`, `limits`, `prepare`), `agentEventSchema` as a discriminated union over `type` covering every variant in the spec plus `{ type: 'protocol.error', line: string, reason: string }` and `turn.completed` gaining optional `stoppedBy?: 'limit'`. `types.ts` re-exports `z.infer` types (`TurnRequest`, `AgentEvent`, `ToolName`, …). `ndjson.ts`: `encodeLine(value: unknown): string` (JSON + "\n"), `createNdjsonParser<T>(schema: ZodType<T>)` returning an object with `push(chunk: Uint8Array | string): T[]` and `flush(): T[]` that buffers partial lines, splits on "\n", parses each line with the schema, and maps invalid lines to a `protocol.error`-shaped value (never throws; expose the raw line truncated to 200 chars). Also `parseNdjsonStream(source: AsyncIterable<Uint8Array>, schema)` → `AsyncIterable<T>` built on the parser.
+3. `packages/core/src/agent-protocol/schemas.ts` — Zod: `toolNameSchema` (`run_shell|read_file|write_file|list_dir`), `conversationItemSchema`, `turnRequestSchema` (all fields of spec 03 §3 incl. `protocolVersion: z.literal(1)`, `limits`, `prepare`), `agentEventSchema` as a discriminated union over `type` covering every variant in the spec plus `{ type: 'protocol.error', reason: 'invalid-json' | 'schema-violation' | 'line-too-long', length: number }` and `turn.completed` gaining optional `stoppedBy?: 'limit'`. `types.ts` re-exports `z.infer` types (`TurnRequest`, `AgentEvent`, `ToolName`, …). `ndjson.ts`: `encodeLine(value: unknown): string` (JSON + "\n"), `createNdjsonParser<T>(schema: ZodType<T>)` returning an object with `push(chunk: Uint8Array | string): T[]` and `flush(): T[]` that buffers partial lines, splits on "\n", parses each line with the schema, and maps invalid lines to a `protocol.error`-shaped value (never throws; the event carries only a fixed reason code and the line's length — the rejected bytes come from a process inside the workspace, so neither the line nor the JSON/Zod error text, both of which echo their input, may reach it). A line longer than `PROTOCOL_MAX_LINE_LENGTH` is reported once and discarded up to the next newline so an unterminated line cannot exhaust the heap. Also `parseNdjsonStream(source: AsyncIterable<Uint8Array>, schema)` → `AsyncIterable<T>` built on the parser.
 4. `packages/core/src/secrets/types.ts` — `SecretKey = 'GITHUB_PAT' | 'OPENAI_API_KEY'`, `SecretsService`, `Redactor` (spec 03 §6) + `SECRET_SHAPE_PATTERNS` constant (the regexes listed in spec 03 §6, as `readonly RegExp[]`) — the constant lives here so W1-A implements against it and tests reuse it.
 5. `packages/core/src/scheduling/types.ts` — `CronSpec { cron: string; timezone: string }`, `SchedulerKey = string` (job id), `ReconcilePlan { upsert: ScheduledJobRef[]; remove: SchedulerKey[] }`, `OverlapPolicy = 'skip'`.
 6. `packages/core/src/workspace/types.ts` — string-literal unions mirroring the Prisma enums: `ChatStatus`, `MessageRole`, `TurnStatus`, `WorkspaceKind`, `WorkspaceStatus`, `JobRunStatus`, `JobRunTrigger`, `ToolCallStatus`; `RestoreContext` (fields of spec 02 §4); `EnsureWorkspaceDecision = { action: 'reuse', workspaceId } | { action: 'create', clone: true, restore: RestoreContext }`.
@@ -262,16 +262,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 
 ## Task 0.4 — Test doubles and canaries (`packages/core/src/testing`)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 0.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 0.3
 
 **Description.** Provide the fakes every lane tests against: `FakeWorkspaceRunner`, `FakeAgentModelProvider`, in-memory repositories for every port, `FakeClock`, and the secret canaries.
 
 **Acceptance criteria**
-- [ ] `FakeWorkspaceRunner` implements `WorkspaceRunner` with an in-memory filesystem per handle, scripted `exec` responses (by command prefix), `signal` support that aborts a scripted long exec, `snapshot`, `destroy` idempotent, `list` by labels, `health` reflecting state; records every call for assertions
-- [ ] `FakeAgentModelProvider` implements `AgentModelProvider`; takes a script map keyed by the last user message (or a default) → ordered `ModelEvent[]` with optional per-event delay; supports tool-call sequences across steps; `listModels` returns `['fake-model']`
-- [ ] `InMemory*Repository` for all eight ports with the same invariants as Postgres (gap-free `seq`, one live workspace per chat throws, unique `JobRun.workspaceId`)
-- [ ] `FakeClock` (`now()`, `advance(ms)`) and `canaries.ts` (`GITHUB_CANARY = 'ghp_TESTCANARY0000000000000000000000000'`, `OPENAI_CANARY = 'sk-TESTCANARY00000000000000000000'`)
-- [ ] Exported from `@agent-hangar/core/testing` (package `exports` subpath); 100 % coverage
+- [x] `FakeWorkspaceRunner` implements `WorkspaceRunner` with an in-memory filesystem per handle, scripted `exec` responses (by command prefix), `signal` support that aborts a scripted long exec, `snapshot`, `destroy` idempotent, `list` by labels, `health` reflecting state; records every call for assertions
+- [x] `FakeAgentModelProvider` implements `AgentModelProvider`; takes a script map keyed by the last user message (or a default) → ordered `ModelEvent[]` with optional per-event delay; supports tool-call sequences across steps; `listModels` returns `['fake-model']`
+- [x] `InMemory*Repository` for all eight ports with the same invariants as Postgres (gap-free `seq`, one live workspace per chat throws, unique `JobRun.workspaceId`)
+- [x] `FakeClock` (`now()`, `advance(ms)`) and `canaries.ts` (`GITHUB_CANARY = 'ghp_TESTCANARY0000000000000000000000000'`, `OPENAI_CANARY = 'sk-TESTCANARY00000000000000000000'`)
+- [x] Exported from `@agent-hangar/core/testing` (package `exports` subpath); 100 % coverage
 
 **Files to create**
 `packages/core/src/testing/{fake-workspace-runner,fake-agent-model-provider,in-memory-repositories,fake-clock,canaries,index}.ts` + tests; `packages/core/package.json` exports `./testing`.
@@ -323,16 +323,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 
 ## Task 0.5 — Prisma 7 schema, migration, client factory
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 0.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 0.2
 
 **Description.** Add the Prisma 7 schema exactly as spec 02, the first migration (including the partial unique index), `prisma.config.ts`, and a client factory using `@prisma/adapter-pg` with a real-round-trip boot check.
 
 **Acceptance criteria**
-- [ ] `packages/core/prisma/schema.prisma` matches spec 02 §2 (generator `prisma-client`, output `../src/persistence/generated`, no datasource url)
-- [ ] `prisma.config.ts` reads `DATABASE_URL` via core config (`import 'dotenv/config'` is NOT used; the scripts pass env from `.env.local`)
-- [ ] Migration `0001_init` created with `prisma migrate dev --create-only` and hand-edited to add `CREATE UNIQUE INDEX "Workspace_one_live_per_chat" ON "Workspace"("chatId") WHERE status IN ('CREATING','READY','BUSY','STOPPING') AND "chatId" IS NOT NULL;`
-- [ ] `src/persistence/client.ts`: `createPrismaClient({ connectionString, max?, connectionTimeoutMillis? })` → `PrismaClient` with `PrismaPg` adapter; `assertDatabaseReachable(client)` runs `SELECT 1` (adapter `$connect()` is lazy — documented); `disconnect`
-- [ ] `src/persistence/generated/**` is git-ignored and produced by `pnpm db:generate`; unit tests cover the factory with an injected fake adapter/`$queryRaw`; integration test (tag `@db`) applies the migration to compose Postgres and asserts the partial index exists
+- [x] `packages/core/prisma/schema.prisma` matches spec 02 §2 (generator `prisma-client`, output `../src/persistence/generated`, no datasource url)
+- [x] `prisma.config.ts` reads `DATABASE_URL` via core config (`import 'dotenv/config'` is NOT used; the scripts pass env from `.env.local`)
+- [x] Migration `0001_init` created with `prisma migrate dev --create-only` and hand-edited to add `CREATE UNIQUE INDEX "Workspace_one_live_per_chat" ON "Workspace"("chatId") WHERE status IN ('CREATING','READY','BUSY','STOPPING') AND "chatId" IS NOT NULL;`
+- [x] `src/persistence/client.ts`: `createPrismaClient({ connectionString, max?, connectionTimeoutMillis? })` → `PrismaClient` with `PrismaPg` adapter; `assertDatabaseReachable(client)` runs `SELECT 1` (adapter `$connect()` is lazy — documented); `disconnect`
+- [x] `src/persistence/generated/**` is git-ignored and produced by `pnpm db:generate`; unit tests cover the factory with an injected fake adapter/`$queryRaw`; integration test (tag `@db`) applies the migration to compose Postgres and asserts the partial index exists
 
 **Files to create**
 `packages/core/prisma/schema.prisma`, `packages/core/prisma/migrations/0001_init/migration.sql`, `packages/core/prisma/migrations/migration_lock.toml`, `packages/core/prisma.config.ts`, `packages/core/src/persistence/{client,client.test,client.integration.test}.ts`, `packages/core/src/persistence/testing/db.ts` (connect helper for `AH_INSTANCE=test`, truncate all tables), `.gitignore` entry.
@@ -386,17 +386,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 
 ## Task 0.6 — Infra skeleton: compose, workspace Dockerfile base, env.sh, scripts, .env.example
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 0.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 0.1
 
 **Description.** Create the parameterised local infrastructure: docker-compose (Postgres 18, Redis 8), the workspace image base Dockerfile, the instance/port derivation shell helper, `.env.example`, and stub scripts that W1-I completes.
 
 **Acceptance criteria**
-- [ ] `infra/docker-compose.yml` matches spec 05 §5 (name from `COMPOSE_PROJECT_NAME`, ports bound to `127.0.0.1:${POSTGRES_PORT}` / `${REDIS_PORT}`, healthchecks, named volumes)
-- [ ] `infra/scripts/env.sh` derives the same values as `packages/core/src/config/instance.ts` (instance, ports, db, compose project, prefix) and writes `.env.local` if absent (`--force` to overwrite; `--print` to echo)
-- [ ] `infra/workspace/Dockerfile` builds a base image (node:24-bookworm-slim + git, ca-certificates, ripgrep, jq, python3, build-essential; user `agent` uid 1001; `/workspace`; `ENTRYPOINT ["sleep","infinity"]`); contains a clearly marked placeholder comment where W1-D's runtime `COPY` lines go; `infra/workspace/askpass.sh` present
-- [ ] `.env.example` lists every variable from spec 05 §3 with comments
-- [ ] Stub scripts `infra/scripts/{setup,run,archive,doctor}.sh` exist, are executable, print "not implemented yet (W1-I)" and exit 1 — except `setup.sh`, which already performs: `pnpm install`, `env.sh`, master key creation (`~/.agent-hangar/master.key`, 0600, `openssl rand -hex 32`), `docker compose up -d --wait`, `pnpm db:generate && pnpm db:migrate`, `docker build` of the workspace image
-- [ ] `pnpm setup` succeeds on a machine with Docker Desktop; `pnpm infra:down` stops the instance
+- [x] `infra/docker-compose.yml` matches spec 05 §5 (name from `COMPOSE_PROJECT_NAME`, ports bound to `127.0.0.1:${POSTGRES_PORT}` / `${REDIS_PORT}`, healthchecks, named volumes)
+- [x] `infra/scripts/env.sh` derives the same values as `packages/core/src/config/instance.ts` (instance, ports, db, compose project, prefix) and writes `.env.local` if absent (`--force` to overwrite; `--print` to echo)
+- [x] `infra/workspace/Dockerfile` builds a base image (node:24-bookworm-slim + git, ca-certificates, ripgrep, jq, python3, build-essential; user `agent` uid 1001; `/workspace`; `ENTRYPOINT ["sleep","infinity"]`); contains a clearly marked placeholder comment where W1-D's runtime `COPY` lines go; `infra/workspace/askpass.sh` present
+- [x] `.env.example` lists every variable from spec 05 §3 with comments
+- [x] Stub scripts `infra/scripts/{setup,run,archive,doctor}.sh` exist, are executable, print "not implemented yet (W1-I)" and exit 1 — except `setup.sh`, which already performs: `pnpm install`, `env.sh`, master key creation (`~/.agent-hangar/master.key`, 0600, `openssl rand -hex 32`), `docker compose up -d --wait`, `pnpm db:generate && pnpm db:migrate`, `docker build` of the workspace image
+- [x] `pnpm setup` succeeds on a machine with Docker Desktop; `pnpm infra:down` stops the instance
 
 **Files to create**
 `infra/docker-compose.yml`, `infra/scripts/{env,setup,run,archive,doctor}.sh`, `infra/workspace/{Dockerfile,askpass.sh,.dockerignore}`, `.env.example`; root `package.json` scripts wired (`setup` → `infra/scripts/setup.sh`, `infra:*`, `doctor`).
@@ -451,18 +451,18 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 
 ## Task 0.7 — Apps skeleton: Next.js shell with tokens + shadcn, worker boot, test configs
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 0.3, 0.5, 0.6
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 0.3, 0.5, 0.6
 
 **Description.** Stand up `apps/web` (Next 16 App Router, Tailwind v4 tokens from spec 10, shadcn components generated into `src/shared/ui`, fonts, route placeholders, typed API client, Vitest + Playwright configs) and `apps/worker` (boot: config, DB round-trip, Redis ping, graceful shutdown) with 100 % coverage on what exists.
 
 **Acceptance criteria**
-- [ ] `pnpm --filter web dev` serves `/chats/new`, `/chats/[id]`, `/scheduled`, `/scheduled/[id]`, `/settings` placeholders inside `(app)/layout.tsx` that has a 260 px sidebar slot and a header slot (empty components W1-G fills)
-- [ ] `app/globals.css` defines every token of spec 10 §2 for light and dark via `@theme` + `:root`/`.dark` variables, `next/font` Inter + JetBrains Mono wired as CSS variables
-- [ ] shadcn initialised (Base UI, new-york) with components from spec 10 §5 generated into `apps/web/src/shared/ui/` (Button, Input, Textarea, Dialog, AlertDialog, Sheet, Command, DropdownMenu, Tooltip, Switch, Table, Badge, Card, Separator, ScrollArea, Sonner, Skeleton, Collapsible, Tabs); `components.json` points aliases to `@/shared/ui`
-- [ ] `src/shared/api/client.ts`: typed `apiFetch(route, input)` using `@agent-hangar/core` api contracts (Zod parse of responses), plus `createEventSource(url, lastEventId?)` wrapper; unit-tested
-- [ ] `apps/web/vitest.config.ts` (jsdom, `@vitejs/plugin-react`, setup file with jest-dom, thresholds 100/100/100/100, `coverage.include: ['src/shared/api/**']` for now) and `playwright.config.ts` (baseURL from `WEB_PORT`, chromium, `webServer` disabled — harness in W2-C)
-- [ ] `apps/worker/src/main.ts` boots: `loadConfig`, `createPrismaClient` + `assertDatabaseReachable`, Redis ping via ioredis, pino logger, SIGINT/SIGTERM graceful shutdown, exits non-zero with a clear message if infra is down; `apps/worker/vitest.config.ts` 100 % on `src/**` with the boot wiring tested via injected fakes
-- [ ] `pnpm dev` runs web + worker concurrently with `.env.local`
+- [x] `pnpm --filter web dev` serves `/chats/new`, `/chats/[id]`, `/scheduled`, `/scheduled/[id]`, `/settings` placeholders inside `(app)/layout.tsx` that has a 260 px sidebar slot and a header slot (empty components W1-G fills)
+- [x] `app/globals.css` defines every token of spec 10 §2 for light and dark via `@theme` + `:root`/`.dark` variables, `next/font` Inter + JetBrains Mono wired as CSS variables
+- [x] shadcn initialised (Base UI, new-york) with components from spec 10 §5 generated into `apps/web/src/shared/ui/` (Button, Input, Textarea, Dialog, AlertDialog, Sheet, Command, DropdownMenu, Tooltip, Switch, Table, Badge, Card, Separator, ScrollArea, Sonner, Skeleton, Collapsible, Tabs); `components.json` points aliases to `@/shared/ui`
+- [x] `src/shared/api/client.ts`: typed `apiFetch(route, input)` using `@agent-hangar/core` api contracts (Zod parse of responses), plus `createEventSource(url, lastEventId?)` wrapper; unit-tested
+- [x] `apps/web/vitest.config.ts` (jsdom, `@vitejs/plugin-react`, setup file with jest-dom, thresholds 100/100/100/100, `coverage.include: ['src/shared/api/**']` for now) and `playwright.config.ts` (baseURL from `WEB_PORT`, chromium, `webServer` disabled — harness in W2-C)
+- [x] `apps/worker/src/main.ts` boots: `loadConfig`, `createPrismaClient` + `assertDatabaseReachable`, Redis ping via ioredis, pino logger, SIGINT/SIGTERM graceful shutdown, exits non-zero with a clear message if infra is down; `apps/worker/vitest.config.ts` 100 % on `src/**` with the boot wiring tested via injected fakes
+- [x] `pnpm dev` runs web + worker concurrently with `.env.local`
 
 **Files to create**
 `apps/web/{next.config.ts,postcss.config.mjs,components.json,app/layout.tsx,app/globals.css,app/(app)/layout.tsx,app/(app)/chats/new/page.tsx,app/(app)/chats/[id]/page.tsx,app/(app)/scheduled/page.tsx,app/(app)/scheduled/[id]/page.tsx,app/(app)/settings/page.tsx,app/page.tsx (redirect → /chats/new),src/shared/ui/**,src/shared/api/{client,client.test}.ts,src/shared/lib/cn.ts,src/test/setup.ts,vitest.config.ts,playwright.config.ts}`, `apps/worker/src/{main.ts,boot.ts,boot.test.ts,logger.ts}`, `apps/worker/vitest.config.ts`, root `dev` script.
@@ -527,15 +527,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 
 ## Task 0.8 — CI workflow, README skeleton, plan dashboard, close-out PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 0.1–0.7
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 0.1–0.7
 
 **Description.** Add the GitHub Actions pipeline (all jobs except mutation), the README skeleton with the decisions made here, update the plan dashboard, run the full gate set and code review, open the PR.
 
 **Acceptance criteria**
-- [ ] `.github/workflows/ci.yml` jobs: `lint`, `typecheck`, `unit` (coverage thresholds enforced), `integration` (services postgres:18 + redis:8; `DATABASE_URL`/`REDIS_URL` set; builds workspace image; runs `pnpm test:integration`), `e2e` (placeholder that runs `pnpm test:e2e` — passes with zero specs until W2-C), `build` (`pnpm build` + `docker build infra/workspace` + `docker run --rm <image> node --version`), `secret-scan` (gitleaks action); Node 24 + pnpm 11 via `pnpm/setup@v2` with store cache; concurrency group per ref
-- [ ] `README.md` skeleton with the section list of spec 05 §7, Quick start filled, "Decisions" section recording TypeScript `~6.0.3` pin (why), shadcn Base UI, Responses API, BullMQ over pg-boss (one line each), "Known gaps & plan to finish" listing Wave 1–4 lanes as pending
-- [ ] `docs/plan.md` §12 row W0 → 🟨 PR open with branch/PR number; `docs/tasks/README.md` index exists (table of lane files with status)
-- [ ] `pnpm lint && pnpm typecheck && pnpm test -- --coverage` green locally; `/bymax-quality:code-review` run with zero open findings; PR opened with the structured summary from plan §11
+- [x] `.github/workflows/ci.yml` jobs: `lint`, `typecheck`, `unit` (coverage thresholds enforced), `integration` (services postgres:18 + redis:8; `DATABASE_URL`/`REDIS_URL` set; builds workspace image; runs `pnpm test:integration`), `e2e` (placeholder that runs `pnpm test:e2e` — passes with zero specs until W2-C), `build` (`pnpm build` + `docker build infra/workspace` + `docker run --rm <image> node --version`), `secret-scan` (gitleaks action); Node 24 + pnpm 11 via `pnpm/setup@v2` with store cache; concurrency group per ref
+- [x] `README.md` skeleton with the section list of spec 05 §7, Quick start filled, "Decisions" section recording TypeScript `~6.0.3` pin (why), shadcn Base UI, Responses API, BullMQ over pg-boss (one line each), "Known gaps & plan to finish" listing Wave 1–4 lanes as pending
+- [x] `docs/plan.md` §12 row W0 → 🟨 PR open with branch/PR number; `docs/tasks/README.md` index exists (table of lane files with status)
+- [x] `pnpm lint && pnpm typecheck && pnpm test -- --coverage` green locally; `/bymax-quality:code-review` run with zero open findings; PR opened with the structured summary from plan §11
 
 **Files to create/modify**
 `.github/workflows/ci.yml`, `README.md`, `docs/plan.md` (§12), `docs/tasks/README.md`.
@@ -587,3 +587,11 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-0-foundation.m
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+- 0.1 ✅ 2026-08-19 — pnpm 11 monorepo with four workspaces, strict TS ~6.0.3 project references, ESLint 10 flat config, Prettier, Husky + commitlint + lint-staged suppression grep, CLAUDE.md
+- 0.2 ✅ 2026-08-19 — full dependency manifest at latest stable (Base UI as @base-ui/react 1.7, tw-animate-css added for shadcn), lockfile committed, audit clean via deepmerge-ts override
+- 0.3 ✅ 2026-08-19 — frozen contracts in packages/core (runner, model, agent protocol with Zod + NDJSON codec, secrets, scheduling, workspace, persistence ports and entities, API and queue contracts, config/instance, typed errors) with 100 % coverage
+- 0.4 ✅ 2026-08-19 — FakeWorkspaceRunner, FakeAgentModelProvider, in-memory repositories for all eight ports, FakeClock and runtime-assembled canaries under @agent-hangar/core/testing, 100 % coverage
+- 0.5 ✅ 2026-08-19 — Prisma 7 schema, 0001_init migration with the partial unique index, prisma.config.ts over core config, adapter-pg client factory with fail-fast SELECT 1, test DB helpers, @db integration test
+- 0.6 ✅ 2026-08-19 — parameterised compose (Postgres 18 + Redis 8), env.sh mirroring resolveInstance (contract-tested), workspace image base with non-root agent user and askpass helper, idempotent setup.sh, .env.example, stub scripts
+- 0.7 ✅ 2026-08-19 — Next 16 shell (tokens, fonts, theme bootstrap, shadcn base-nova components, security headers, loopback bind, placeholder routes, typed apiFetch) and worker boot with fail-fast DB/Redis checks; web and worker at 100 % coverage
+- 0.8 ✅ 2026-08-19 — CI workflow (lint, typecheck, unit, integration, e2e, build, secret-scan via gitleaks image), README and MIT LICENSE, dashboards updated; PR #4 opened

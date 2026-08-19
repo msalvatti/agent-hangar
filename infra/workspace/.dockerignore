@@ -1,0 +1,4 @@
+# Only the files the Dockerfile copies may enter the build context.
+*
+!askpass.sh
+!runtime/

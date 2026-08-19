@@ -1,0 +1,243 @@
+// Prisma 7 schema of Agent Hangar. The connection string is supplied at runtime through
+// @prisma/adapter-pg (no `url` in the datasource); the CLI reads it from prisma.config.ts.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/persistence/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ───────────────────────────── Chats ─────────────────────────────
+
+enum ChatStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+model Chat {
+  id            String     @id @default(cuid())
+  title         String // first prompt, trimmed, editable
+  status        ChatStatus @default(ACTIVE)
+  repoUrl       String // https://github.com/owner/repo (no credentials)
+  baseBranch    String // branch chosen at creation
+  workBranch    String? // branch the agent pushes to (agent/<short-id>)
+  lastPushedSha String? // last commit the agent pushed (restore hint)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+  archivedAt    DateTime?
+
+  messages   Message[]
+  turns      Turn[]
+  workspaces Workspace[]
+
+  @@index([status, updatedAt])
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM // restoration notes, workspace lifecycle notices
+  TOOL_SUMMARY // compact summary of a tool call, kept in history for the model
+}
+
+model Message {
+  id        String      @id @default(cuid())
+  chatId    String
+  chat      Chat        @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  turnId    String?
+  turn      Turn?       @relation(fields: [turnId], references: [id], onDelete: SetNull)
+  seq       Int // monotonic per chat; ordering key
+  role      MessageRole
+  content   String // redacted before write
+  createdAt DateTime    @default(now())
+
+  @@unique([chatId, seq])
+  @@index([chatId, createdAt])
+}
+
+enum TurnStatus {
+  QUEUED
+  PREPARING // workspace being created / restored
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+model Turn {
+  id           String     @id @default(cuid())
+  chatId       String
+  chat         Chat       @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  workspaceId  String?
+  workspace    Workspace? @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  status       TurnStatus @default(QUEUED)
+  model        String // model id actually used
+  queueJobId   String? // BullMQ job id for cancellation
+  inputTokens  Int?
+  outputTokens Int?
+  stepCount    Int        @default(0) // model round-trips in the loop
+  error        String? // redacted
+  queuedAt     DateTime   @default(now())
+  startedAt    DateTime?
+  finishedAt   DateTime?
+
+  messages  Message[]
+  toolCalls ToolCallLog[]
+
+  @@index([chatId, queuedAt])
+  @@index([status])
+}
+
+// ─────────────────────────── Workspaces ──────────────────────────
+
+enum WorkspaceKind {
+  CHAT
+  JOB
+}
+
+enum WorkspaceStatus {
+  CREATING
+  READY
+  BUSY // a turn or job run is executing inside
+  STOPPING
+  DESTROYED
+  FAILED
+}
+
+model Workspace {
+  id            String          @id @default(cuid())
+  kind          WorkspaceKind
+  status        WorkspaceStatus @default(CREATING)
+  chatId        String?
+  chat          Chat?           @relation(fields: [chatId], references: [id], onDelete: SetNull)
+  runnerKind    String // "docker" — the WorkspaceRunner implementation
+  runnerRef     String? // container id (opaque handle owned by the runner)
+  image         String // image reference incl. tag/digest
+  repoUrl       String
+  branch        String
+  createdAt     DateTime        @default(now())
+  readyAt       DateTime?
+  lastActiveAt  DateTime        @default(now()) // idle-TTL clock
+  destroyedAt   DateTime?
+  failureReason String? // redacted
+
+  turns     Turn[]
+  jobRun    JobRun?
+  toolCalls ToolCallLog[]
+
+  @@index([status, lastActiveAt])
+  @@index([chatId])
+}
+
+// ──────────────────────── Scheduled jobs ─────────────────────────
+
+model ScheduledJob {
+  id        String    @id @default(cuid())
+  name      String
+  cron      String // 5-field cron, validated with cron-parser
+  timezone  String    @default("UTC") // IANA tz
+  prompt    String
+  repoUrl   String
+  branch    String
+  enabled   Boolean   @default(true)
+  lastRunAt DateTime?
+  nextRunAt DateTime? // computed from cron; shown in UI
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  runs JobRun[]
+
+  @@index([enabled, nextRunAt])
+}
+
+enum JobRunStatus {
+  QUEUED
+  PREPARING
+  RUNNING
+  SUCCEEDED
+  FAILED
+  CANCELLED
+}
+
+enum JobRunTrigger {
+  SCHEDULE
+  MANUAL
+}
+
+model JobRun {
+  id           String        @id @default(cuid())
+  jobId        String
+  job          ScheduledJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  workspaceId  String?       @unique
+  workspace    Workspace?    @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  status       JobRunStatus  @default(QUEUED)
+  trigger      JobRunTrigger
+  model        String
+  output       String? // final assistant message, redacted
+  error        String? // redacted
+  inputTokens  Int?
+  outputTokens Int?
+  stepCount    Int           @default(0)
+  scheduledFor DateTime // the cron tick this run belongs to
+  queuedAt     DateTime      @default(now())
+  startedAt    DateTime?
+  finishedAt   DateTime?
+
+  toolCalls ToolCallLog[]
+
+  @@index([jobId, queuedAt])
+}
+
+// ───────────────────────── Tool call logs ────────────────────────
+
+enum ToolCallStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  TIMED_OUT
+}
+
+model ToolCallLog {
+  id          String         @id @default(cuid())
+  workspaceId String
+  workspace   Workspace      @relation(fields: [workspaceId], references: [id], onDelete: Cascade)
+  turnId      String?
+  turn        Turn?          @relation(fields: [turnId], references: [id], onDelete: Cascade)
+  jobRunId    String?
+  jobRun      JobRun?        @relation(fields: [jobRunId], references: [id], onDelete: Cascade)
+  callId      String // model-issued call id
+  seq         Int // order within the turn / run
+  toolName    String // run_shell | read_file | write_file | list_dir
+  args        Json // REDACTED before write
+  resultHead  String? // first 8 KB of result, redacted
+  resultBytes Int? // full length, for "truncated" indicator
+  exitCode    Int?
+  status      ToolCallStatus @default(RUNNING)
+  startedAt   DateTime       @default(now())
+  finishedAt  DateTime?
+  durationMs  Int?
+
+  @@index([turnId, seq])
+  @@index([jobRunId, seq])
+}
+
+// ───────────────────────────── Secrets ───────────────────────────
+
+enum SecretKey {
+  GITHUB_PAT
+  OPENAI_API_KEY
+}
+
+model Secret {
+  key        SecretKey @id
+  ciphertext Bytes // AES-256-GCM
+  iv         Bytes // 12 bytes, random per write
+  authTag    Bytes // 16 bytes
+  keyVersion Int       @default(1) // master key rotation hook
+  last4      String // for UI masking only
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+}
