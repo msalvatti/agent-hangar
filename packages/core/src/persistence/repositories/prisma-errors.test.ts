@@ -158,6 +158,22 @@ describe('translatePrismaError', () => {
     expect((caught as UniqueViolationError).field).toBe('unknown');
   });
 
+  /** The live-workspace error carries the chat when the caller knows only the workspace id. */
+  it('translates P2002 on the live-workspace index with ctx.chatId to that chat', () => {
+    const error = {
+      code: 'P2002',
+      message: 'Unique constraint failed on Workspace_one_live_per_chat',
+    };
+    let caught: unknown;
+    try {
+      translatePrismaError(error, { entity: 'Workspace', id: 'ws-1', chatId: 'chat-1' });
+    } catch (thrown) {
+      caught = thrown;
+    }
+    expect(caught).toBeInstanceOf(LiveWorkspaceExistsError);
+    expect((caught as LiveWorkspaceExistsError).chatId).toBe('chat-1');
+  });
+
   /** P2025 (record required by the write was not found) becomes NotFoundError. */
   it('translates P2025 to NotFoundError, defaulting the id to "unknown" when absent', () => {
     const error = { code: 'P2025', message: 'Record not found' };
@@ -172,9 +188,40 @@ describe('translatePrismaError', () => {
     expect((caught as NotFoundError).id).toBe('unknown');
   });
 
+  /** P2003 with a declared parent names that parent, not the row being written. */
+  it('translates P2003 to NotFoundError naming the parent the foreign key points at', () => {
+    const error = { code: 'P2003', message: 'Foreign key constraint failed' };
+    let caught: unknown;
+    try {
+      translatePrismaError(error, {
+        entity: 'JobRun',
+        parent: { entity: 'ScheduledJob', id: 'job-1' },
+      });
+    } catch (thrown) {
+      caught = thrown;
+    }
+    expect(caught).toBeInstanceOf(NotFoundError);
+    expect((caught as NotFoundError).entity).toBe('ScheduledJob');
+    expect((caught as NotFoundError).id).toBe('job-1');
+  });
+
+  /** Without a declared parent, P2003 falls back to the entity/id of the write. */
+  it('translates P2003 without a parent to NotFoundError naming the entity, id defaulting', () => {
+    const error = { code: 'P2003', message: 'Foreign key constraint failed' };
+    let caught: unknown;
+    try {
+      translatePrismaError(error, { entity: 'Turn' });
+    } catch (thrown) {
+      caught = thrown;
+    }
+    expect(caught).toBeInstanceOf(NotFoundError);
+    expect((caught as NotFoundError).entity).toBe('Turn');
+    expect((caught as NotFoundError).id).toBe('unknown');
+  });
+
   /** Any other Prisma error code is rethrown unchanged (same reference). */
   it('rethrows an unknown Prisma error code unchanged', () => {
-    const error = { code: 'P2003', message: 'Foreign key constraint failed' };
+    const error = { code: 'P2034', message: 'Transaction write conflict' };
     expect(() => translatePrismaError(error, { entity: 'Chat', id: 'c1' })).toThrow(error.message);
     try {
       translatePrismaError(error, { entity: 'Chat', id: 'c1' });

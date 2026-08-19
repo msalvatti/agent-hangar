@@ -47,16 +47,27 @@ const fakeRedactor: Redactor = {
 };
 
 function fakePrisma(
-  overrides: { updateMany?: ReturnType<typeof vi.fn>; update?: ReturnType<typeof vi.fn> } = {},
+  overrides: {
+    create?: ReturnType<typeof vi.fn>;
+    updateMany?: ReturnType<typeof vi.fn>;
+    update?: ReturnType<typeof vi.fn>;
+  } = {},
 ) {
   const turn = {
-    create: vi.fn(() => Promise.resolve(turnRow)),
+    create: overrides.create ?? vi.fn(() => Promise.resolve(turnRow)),
     findUnique: vi.fn(() => Promise.resolve(turnRow)),
     findMany: vi.fn(() => Promise.resolve([turnRow])),
     updateMany: overrides.updateMany ?? vi.fn(() => Promise.resolve({ count: 1 })),
     update: overrides.update ?? vi.fn(() => Promise.resolve(turnRow)),
   };
-  return { client: { turn } as unknown as PrismaClient, turn };
+  // `setStatus` runs its guarded timestamp write and its status update inside one
+  // interactive transaction; the double runs the callback against the same `turn`
+  // stub, so the assertions below still see every call the repository makes.
+  const client = {
+    turn,
+    $transaction: <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn({ turn }),
+  } as unknown as PrismaClient;
+  return { client, turn };
 }
 
 describe('PrismaTurnRepository', () => {
@@ -68,6 +79,22 @@ describe('PrismaTurnRepository', () => {
     expect(turn.create).toHaveBeenCalledWith({
       data: { chatId: 'chat-1', model: 'gpt-5.6-sol', queueJobId: null, status: 'QUEUED' },
     });
+  });
+
+  /** A missing chat surfaces from Postgres as P2003, translated to NotFoundError('Chat', id). */
+  it('create() translates a missing chat to NotFoundError naming the chat', async () => {
+    const p2003 = Object.assign(new Error('Foreign key constraint failed'), { code: 'P2003' });
+    const { client } = fakePrisma({ create: vi.fn(() => Promise.reject(p2003)) });
+    const repo = new PrismaTurnRepository(client, fakeRedactor);
+    let caught: unknown;
+    try {
+      await repo.create({ chatId: 'missing-chat', model: 'gpt-5.6-sol' });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(NotFoundError);
+    expect((caught as NotFoundError).entity).toBe('Chat');
+    expect((caught as NotFoundError).id).toBe('missing-chat');
   });
 
   /** get() maps a found row and returns null when absent. */

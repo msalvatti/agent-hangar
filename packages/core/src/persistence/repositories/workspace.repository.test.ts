@@ -6,7 +6,9 @@
  * `setStatus` stamps `readyAt` only on READY via a guarded `updateMany`, stamps `destroyedAt` only
  * on DESTROYED, applies `runnerRef`/`failureReason` only when present, redacts a non-null
  * `failureReason` and passes null through unchanged, and never touches `lastActiveAt` (only
- * `markActive` does); `listIdle`/`listLive`/`findLiveByChat` build the expected queries.
+ * `markActive` does); a live-workspace conflict raised by `setStatus` carries the owning chat, read
+ * from the row on the error path, and falls back to the workspace id when the row is gone;
+ * `listIdle`/`listLive`/`findLiveByChat` build the expected queries.
  * Mocks: a Prisma client double exposing only `workspace.*` — no database.
  */
 import { describe, expect, it, vi } from 'vitest';
@@ -70,7 +72,14 @@ function fakePrisma(
     updateMany: overrides.updateMany ?? vi.fn(() => Promise.resolve({ count: 1 })),
     update: overrides.update ?? vi.fn(() => Promise.resolve(workspaceRow)),
   };
-  return { client: { workspace } as unknown as PrismaClient, workspace };
+  // `setStatus` runs its guarded timestamp write and its status update inside one
+  // interactive transaction; the double runs the callback against the same `workspace`
+  // stub, so the assertions below still see every call the repository makes.
+  const client = {
+    workspace,
+    $transaction: <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn({ workspace }),
+  } as unknown as PrismaClient;
+  return { client, workspace };
 }
 
 describe('PrismaWorkspaceRepository', () => {
@@ -230,6 +239,37 @@ describe('PrismaWorkspaceRepository', () => {
     const { client } = fakePrisma({ update: vi.fn(() => Promise.reject(p2025())) });
     const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
     await expect(repo.setStatus('missing', 'READY')).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  /** A live-workspace conflict inside setStatus carries the owning chat, not the workspace id. */
+  it('setStatus() names the owning chat in LiveWorkspaceExistsError', async () => {
+    const { client } = fakePrisma({ update: vi.fn(() => Promise.reject(p2002LiveWorkspace())) });
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+    let caught: unknown;
+    try {
+      await repo.setStatus('ws-1', 'READY');
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(LiveWorkspaceExistsError);
+    expect((caught as LiveWorkspaceExistsError).chatId).toBe('chat-1');
+  });
+
+  /** With the row already gone, the conflict falls back to the workspace id it was given. */
+  it('setStatus() falls back to the workspace id when the row has no chat to read', async () => {
+    const { client, workspace } = fakePrisma({
+      update: vi.fn(() => Promise.reject(p2002LiveWorkspace())),
+    });
+    workspace.findUnique = vi.fn(() => Promise.resolve(null));
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+    let caught: unknown;
+    try {
+      await repo.setStatus('ws-1', 'READY');
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(LiveWorkspaceExistsError);
+    expect((caught as LiveWorkspaceExistsError).chatId).toBe('ws-1');
   });
 
   /** markActive() bumps lastActiveAt. */

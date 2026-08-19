@@ -47,7 +47,7 @@ export function createRepositories(prisma: PrismaClient, redactor: Redactor): Re
     messages: new PrismaMessageRepository(prisma, redactor),
     turns: new PrismaTurnRepository(prisma, redactor),
     workspaces: new PrismaWorkspaceRepository(prisma, redactor),
-    scheduledJobs: new PrismaScheduledJobRepository(prisma),
+    scheduledJobs: new PrismaScheduledJobRepository(prisma, redactor),
     jobRuns: new PrismaJobRunRepository(prisma, redactor),
     toolCalls: new PrismaToolCallLogRepository(prisma, redactor),
     secrets: new PrismaSecretRepository(prisma),

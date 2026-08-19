@@ -301,13 +301,13 @@ export function truncateResultHead(text: string): string {
   if (bytes.length <= RESULT_HEAD_MAX_BYTES) {
     return text;
   }
-  // A non-fatal decode of a cut that lands mid-character always emits exactly one trailing
-  // U+FFFD for the incomplete tail (per the WHATWG encoding spec), so stripping it — only when
-  // present — recovers the longest valid-UTF-8 prefix without ever throwing or looping.
-  const decoded = new TextDecoder('utf-8', { fatal: false }).decode(
-    bytes.slice(0, RESULT_HEAD_MAX_BYTES),
-  );
-  return decoded.endsWith('�') ? decoded.slice(0, -1) : decoded;
+  // `encodeInto` fills the buffer with whole code points only and reports how many bytes it
+  // wrote, so the cut is placed on a real UTF-8 boundary. Inspecting the decoded text instead
+  // cannot tell a decoder-inserted U+FFFD from one the payload genuinely ends with, and would
+  // drop that genuine character.
+  const buffer = new Uint8Array(RESULT_HEAD_MAX_BYTES);
+  const { written } = new TextEncoder().encodeInto(text, buffer);
+  return new TextDecoder().decode(buffer.subarray(0, written));
 }
 
 /**

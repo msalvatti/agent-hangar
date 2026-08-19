@@ -4,9 +4,11 @@
  * Layer: integration.
  * Goal: `create` starts QUEUED with `scheduledFor`; attaching the same workspace to two runs
  * (via `setStatus`'s `workspaceId`) throws `UniqueViolationError('JobRun', 'workspaceId')`;
- * `setStatus('RUNNING')` stamps `startedAt`; `finish` redacts canaries in `output`/`error`;
+ * `setStatus('PREPARING')` stamps `startedAt` and a later status leaves it alone; `finish` redacts canaries in `output`/`error`;
  * `findRunningByJob` finds the running run and returns null after it finishes; `listByJob` orders
- * newest first; deleting a run's workspace nulls `workspaceId` (SetNull).
+ * newest first; deleting a run's workspace nulls `workspaceId` (SetNull); `create` on a missing
+ * scheduled job raises `NotFoundError('ScheduledJob', …)`; a `setStatus` whose status update
+ * fails rolls the `startedAt` stamp back with it.
  * Mocks: none — a real compose Postgres.
  */
 import { beforeEach, expect, it } from 'vitest';
@@ -16,7 +18,7 @@ import { GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.js';
 import type { PrismaClient } from '../generated/client.js';
 import { connectTestDb, describeDb, rawSelect, sqlTemplate, truncateAll } from '../testing/db.js';
 
-import { UniqueViolationError } from './errors.js';
+import { NotFoundError, UniqueViolationError } from './errors.js';
 import { PrismaJobRunRepository } from './job-run.repository.js';
 
 const testRedactor: Redactor = {
@@ -88,6 +90,68 @@ describeDb('PrismaJobRunRepository', () => {
     await expect(
       repo.setStatus(runB.id, 'RUNNING', { workspaceId: workspace.id }),
     ).rejects.toBeInstanceOf(UniqueViolationError);
+  });
+
+  /**
+   * Postgres reports a missing scheduled job as a foreign-key violation (P2003), not P2025, so
+   * the translator must map that code; the in-memory double raises `NotFoundError` here.
+   */
+  it('create() on a missing scheduled job throws NotFoundError naming the job', async () => {
+    const repo = new PrismaJobRunRepository(client, testRedactor);
+    let caught: unknown;
+    try {
+      await repo.create({
+        jobId: 'no-such-job',
+        trigger: 'MANUAL',
+        model: 'gpt-5.6-sol',
+        scheduledFor: new Date(),
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(NotFoundError);
+    expect((caught as NotFoundError).entity).toBe('ScheduledJob');
+    expect((caught as NotFoundError).id).toBe('no-such-job');
+  });
+
+  /**
+   * The guarded `startedAt` stamp and the status update share one transaction: a PREPARING that
+   * attaches an already-taken workspace must fail without leaving a QUEUED run that looks started.
+   */
+  it('setStatus() rolls the startedAt stamp back when the status update fails', async () => {
+    const repo = new PrismaJobRunRepository(client, testRedactor);
+    const workspace = await client.workspace.create({
+      data: {
+        kind: 'JOB',
+        runnerKind: 'docker',
+        image: 'agent-hangar/workspace:dev',
+        repoUrl: 'https://github.com/acme/repo',
+        branch: 'main',
+      },
+    });
+    const taken = await repo.create({
+      jobId,
+      trigger: 'MANUAL',
+      model: 'gpt-5.6-sol',
+      scheduledFor: new Date(),
+    });
+    await repo.setStatus(taken.id, 'RUNNING', { workspaceId: workspace.id });
+    const run = await repo.create({
+      jobId,
+      trigger: 'MANUAL',
+      model: 'gpt-5.6-sol',
+      scheduledFor: new Date(),
+    });
+    await expect(
+      repo.setStatus(run.id, 'PREPARING', { workspaceId: workspace.id }),
+    ).rejects.toBeInstanceOf(UniqueViolationError);
+    const rows = await rawSelect<{ startedAt: Date | null; status: string }>(
+      client,
+      sqlTemplate('SELECT "startedAt", status FROM "JobRun" WHERE id = '),
+      run.id,
+    );
+    expect(rows[0]?.startedAt).toBeNull();
+    expect(rows[0]?.status).toBe('QUEUED');
   });
 
   /** setStatus(PREPARING) stamps startedAt (the same rule Turn follows: PREPARING only). */

@@ -3,9 +3,12 @@
  *
  * Layer: service (persistence).
  *
- * Nothing here is redacted: `prompt` is user input echoed back to its author, and `name`, `cron`,
- * `timezone`, `repoUrl`, `branch` are identifiers, not agent/tool output.
+ * `prompt` is redacted on write. It is free text a person types, so it can carry a PAT or an API
+ * key exactly like a chat message does, and `Message.content` is redacted for that reason; the
+ * repository is the only writer, so redacting here is what keeps a credential out of the row.
+ * `name`, `cron`, `timezone`, `repoUrl` and `branch` are identifiers and are never redacted.
  */
+import type { Redactor } from '../../secrets/types.js';
 import type { ScheduledJob } from '../entities.js';
 import type { PrismaClient } from '../generated/client.js';
 import type {
@@ -22,8 +25,12 @@ import { translatePrismaError } from './prisma-errors.js';
 export class PrismaScheduledJobRepository implements ScheduledJobRepository {
   /**
    * @param prisma - Connected Prisma client.
+   * @param redactor - Redacts `prompt` before it is written.
    */
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma: PrismaClient,
+    private readonly redactor: Redactor,
+  ) {}
 
   /** @inheritDoc */
   async create(input: CreateScheduledJobInput): Promise<ScheduledJob> {
@@ -32,7 +39,7 @@ export class PrismaScheduledJobRepository implements ScheduledJobRepository {
         name: input.name,
         cron: input.cron,
         timezone: input.timezone,
-        prompt: input.prompt,
+        prompt: this.redactor.redact(input.prompt),
         repoUrl: input.repoUrl,
         branch: input.branch,
         enabled: input.enabled,
@@ -61,7 +68,11 @@ export class PrismaScheduledJobRepository implements ScheduledJobRepository {
       // cannot rely on Prisma's `@updatedAt` directive alone).
       const row = await this.prisma.scheduledJob.update({
         where: { id },
-        data: { ...patch, updatedAt: new Date() },
+        data: {
+          ...patch,
+          ...(patch.prompt === undefined ? {} : { prompt: this.redactor.redact(patch.prompt) }),
+          updatedAt: new Date(),
+        },
       });
       return toScheduledJob(row);
     } catch (error) {

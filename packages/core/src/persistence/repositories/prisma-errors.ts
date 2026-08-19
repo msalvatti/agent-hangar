@@ -18,6 +18,16 @@ export interface PrismaErrorContext {
   entity: string;
   /** Identifier of the row involved, when known. */
   id?: string;
+  /**
+   * Chat the row belongs to. A `LiveWorkspaceExistsError` carries the owning chat, not the
+   * workspace, so a write that knows only the workspace id supplies the chat separately.
+   */
+  chatId?: string;
+  /**
+   * Row a foreign key of this write points at. A P2003 means that parent does not exist, so the
+   * translated `NotFoundError` names the parent rather than the row being written.
+   */
+  parent?: { entity: string; id: string };
 }
 
 /**
@@ -103,7 +113,7 @@ function constraintMentionText(error: KnownRequestErrorShape): string {
  */
 function translateUniqueViolation(error: KnownRequestErrorShape, ctx: PrismaErrorContext): never {
   if (constraintMentionText(error).includes(LIVE_WORKSPACE_INDEX)) {
-    throw new LiveWorkspaceExistsError(ctx.id ?? 'unknown');
+    throw new LiveWorkspaceExistsError(ctx.chatId ?? ctx.id ?? 'unknown');
   }
   const target = targetText(error.meta);
   throw new UniqueViolationError(ctx.entity, target.length > 0 ? target : 'unknown');
@@ -116,7 +126,8 @@ function translateUniqueViolation(error: KnownRequestErrorShape, ctx: PrismaErro
  * @param ctx - Entity/id context used to build the translated error's message.
  * @throws LiveWorkspaceExistsError for the partial-unique-index violation.
  * @throws UniqueViolationError for any other P2002.
- * @throws NotFoundError for P2025 (record required by the operation was not found).
+ * @throws NotFoundError for P2003 (foreign key violation: the parent row does not exist) and for
+ *   P2025 (record required by the operation was not found).
  * @throws The original `error`, unchanged, for anything else (including non-Prisma errors).
  */
 export function translatePrismaError(error: unknown, ctx: PrismaErrorContext): never {
@@ -129,6 +140,12 @@ export function translatePrismaError(error: unknown, ctx: PrismaErrorContext): n
   }
   if (error.code === 'P2002') {
     translateUniqueViolation(error, ctx);
+  }
+  if (error.code === 'P2003') {
+    const parent = ctx.parent;
+    throw parent === undefined
+      ? new NotFoundError(ctx.entity, ctx.id ?? 'unknown')
+      : new NotFoundError(parent.entity, parent.id);
   }
   if (error.code === 'P2025') {
     throw new NotFoundError(ctx.entity, ctx.id ?? 'unknown');

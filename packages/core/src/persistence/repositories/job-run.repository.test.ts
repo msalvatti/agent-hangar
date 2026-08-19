@@ -2,7 +2,8 @@
  * Unit tests for `PrismaJobRunRepository`.
  *
  * Layer: unit.
- * Goal: `create` starts a run QUEUED and translates a scheduled-job failure; `setStatus` stamps
+ * Goal: `create` starts a run QUEUED and translates a missing scheduled-job parent (P2003) to
+ * `NotFoundError('ScheduledJob', jobId)`; `setStatus` stamps
  * `startedAt` only on PREPARING via a guarded `updateMany`, applies `workspaceId`/`error` only
  * when present, redacts a non-null `error`; `finish` redacts `output`/`error` only when provided
  * and leaves them untouched when omitted; `listByJob`/`findRunningByJob` build the expected
@@ -71,7 +72,14 @@ function fakePrisma(
     updateMany: overrides.updateMany ?? vi.fn(() => Promise.resolve({ count: 1 })),
     update: overrides.update ?? vi.fn(() => Promise.resolve(runRow)),
   };
-  return { client: { jobRun } as unknown as PrismaClient, jobRun };
+  // `setStatus` runs its guarded timestamp write and its status update inside one
+  // interactive transaction; the double runs the callback against the same `jobRun`
+  // stub, so the assertions below still see every call the repository makes.
+  const client = {
+    jobRun,
+    $transaction: <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn({ jobRun }),
+  } as unknown as PrismaClient;
+  return { client, jobRun };
 }
 
 describe('PrismaJobRunRepository', () => {
@@ -96,13 +104,25 @@ describe('PrismaJobRunRepository', () => {
     });
   });
 
-  /** create() translates a missing scheduled job to NotFoundError. */
-  it('create() translates a missing scheduled job to NotFoundError', async () => {
-    const { client } = fakePrisma({ create: vi.fn(() => Promise.reject(p2025())) });
+  /** Postgres reports a missing parent as P2003, translated to NotFoundError('ScheduledJob', id). */
+  it('create() translates a missing scheduled job to NotFoundError naming the job', async () => {
+    const p2003 = Object.assign(new Error('Foreign key constraint failed'), { code: 'P2003' });
+    const { client } = fakePrisma({ create: vi.fn(() => Promise.reject(p2003)) });
     const repo = new PrismaJobRunRepository(client, fakeRedactor);
-    await expect(
-      repo.create({ jobId: 'missing', trigger: 'MANUAL', model: 'gpt-5.6-sol', scheduledFor: NOW }),
-    ).rejects.toBeInstanceOf(NotFoundError);
+    let caught: unknown;
+    try {
+      await repo.create({
+        jobId: 'missing',
+        trigger: 'MANUAL',
+        model: 'gpt-5.6-sol',
+        scheduledFor: NOW,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(NotFoundError);
+    expect((caught as NotFoundError).entity).toBe('ScheduledJob');
+    expect((caught as NotFoundError).id).toBe('missing');
   });
 
   /** PREPARING guards startedAt with updateMany; other statuses never call it. */

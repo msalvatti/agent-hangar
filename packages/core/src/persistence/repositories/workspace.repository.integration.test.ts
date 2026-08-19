@@ -6,7 +6,8 @@
  * (`Workspace_one_live_per_chat`) so `prisma-errors.ts` can be trusted against it; a second live
  * workspace for one chat is refused, a workspace that has moved on (DESTROYED) frees the slot for
  * a new one, and two `JOB` workspaces with no chat coexist; `listIdle`/`listLive` build the right
- * result sets; a canary in `failureReason` is redacted before the write.
+ * result sets; a canary in `failureReason` is redacted before the write; a `setStatus` refused by
+ * the partial index names the owning chat and rolls its `readyAt` stamp back.
  * Mocks: none — a real compose Postgres.
  */
 import { beforeEach, expect, it } from 'vitest';
@@ -84,6 +85,36 @@ describeDb('PrismaWorkspaceRepository', () => {
     await repo.setStatus(first.id, 'DESTROYED');
     const second = await repo.create({ ...baseInput, chatId });
     expect(second.id).not.toBe(first.id);
+  });
+
+  /**
+   * Reviving a DESTROYED workspace while a sibling is live is refused by the partial index. The
+   * error must name the chat (`setStatus` only knows the workspace id), and the guarded `readyAt`
+   * stamp must roll back with the rejected status update rather than stay committed.
+   */
+  it('setStatus(READY) refused by the live index names the chat and leaves readyAt null', async () => {
+    const chatId = await seedChat(client);
+    const repo = new PrismaWorkspaceRepository(client, testRedactor);
+    const first = await repo.create({ ...baseInput, chatId });
+    await repo.setStatus(first.id, 'DESTROYED');
+    await repo.create({ ...baseInput, chatId });
+
+    let caught: unknown;
+    try {
+      await repo.setStatus(first.id, 'READY');
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(LiveWorkspaceExistsError);
+    expect((caught as LiveWorkspaceExistsError).chatId).toBe(chatId);
+
+    const rows = await rawSelect<{ readyAt: Date | null; status: string }>(
+      client,
+      sqlTemplate('SELECT "readyAt", status FROM "Workspace" WHERE id = '),
+      first.id,
+    );
+    expect(rows[0]?.readyAt).toBeNull();
+    expect(rows[0]?.status).toBe('DESTROYED');
   });
 
   /** Two JOB workspaces with no chat coexist: the partial index only constrains a non-null chatId. */

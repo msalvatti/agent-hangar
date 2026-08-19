@@ -4,7 +4,8 @@
  * Layer: unit.
  * Goal: every enum guard accepts its literals and rejects anything else; every row mapper copies
  * a fully populated row and an all-null row field-for-field; `truncateResultHead` never splits a
- * UTF-8 code point; `toInputJson` drops `undefined`.
+ * UTF-8 code point and never drops a replacement character the payload itself contains;
+ * `toInputJson` drops `undefined`.
  * Mocks: none — plain object rows stand in for Prisma results (mappers do no I/O).
  */
 import { describe, expect, it } from 'vitest';
@@ -423,6 +424,19 @@ describe('truncateResultHead', () => {
     expect(bytes.length).toBeLessThanOrEqual(RESULT_HEAD_MAX_BYTES);
     // Re-encoding the result must reproduce it exactly - proof no half code point survived.
     expect(new TextDecoder('utf-8', { fatal: true }).decode(bytes)).toBe(result);
+  });
+
+  /**
+   * A replacement character the payload genuinely contains is data, not decoder damage, so it
+   * must survive when it is the last character that fits. Inspecting decoded text cannot tell the
+   * two apart and would drop it, returning less than the documented longest prefix.
+   */
+  it('keeps a genuine U+FFFD that ends the prefix that fits', () => {
+    // 8189 ASCII bytes + a real U+FFFD (3 bytes) fills the budget exactly; the tail overflows.
+    const prefix = `${'a'.repeat(RESULT_HEAD_MAX_BYTES - 3)}\uFFFD`;
+    const result = truncateResultHead(`${prefix}tail`);
+    expect(result).toBe(prefix);
+    expect(new TextEncoder().encode(result).length).toBe(RESULT_HEAD_MAX_BYTES);
   });
 });
 

@@ -2,13 +2,15 @@
  * Unit tests for `PrismaScheduledJobRepository`.
  *
  * Layer: unit.
- * Goal: every method builds the right Prisma call and maps the result; `setRunTimes` changes only
- * the fields explicitly present; `update`/`delete`/`setRunTimes` failures translate through
- * `translatePrismaError`. Nothing here is redacted (see the file header of the repository).
+ * Goal: every method builds the right Prisma call and maps the result; `prompt` is redacted on
+ * `create` and on an `update` that carries one, and left alone by an `update` that does not;
+ * `setRunTimes` changes only the fields explicitly present; `update`/`delete`/`setRunTimes`
+ * failures translate through `translatePrismaError`.
  * Mocks: a Prisma client double exposing only `scheduledJob.*` — no database.
  */
 import { describe, expect, it, vi } from 'vitest';
 
+import type { Redactor } from '../../secrets/types.js';
 import type { PrismaClient } from '../generated/client.js';
 
 import { NotFoundError } from './errors.js';
@@ -20,6 +22,12 @@ function p2025(): Error & { code: string } {
 }
 
 const NOW = new Date('2026-01-01T00:00:00.000Z');
+
+const fakeRedactor: Redactor = {
+  register: vi.fn(),
+  redact: vi.fn((value: string) => `[REDACTED:${value}]`),
+  redactJson: vi.fn((value: unknown) => value),
+};
 
 const jobRow = {
   id: 'job-1',
@@ -53,7 +61,7 @@ describe('PrismaScheduledJobRepository', () => {
   /** create() inserts every field, defaulting nextRunAt to null when omitted. */
   it('create() inserts the job, defaulting nextRunAt to null', async () => {
     const { client, scheduledJob } = fakePrisma();
-    const repo = new PrismaScheduledJobRepository(client);
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
     await repo.create({
       name: 'Nightly report',
       cron: '0 0 * * *',
@@ -68,7 +76,7 @@ describe('PrismaScheduledJobRepository', () => {
         name: 'Nightly report',
         cron: '0 0 * * *',
         timezone: 'UTC',
-        prompt: 'print date',
+        prompt: '[REDACTED:print date]',
         repoUrl: 'https://github.com/acme/repo',
         branch: 'main',
         enabled: true,
@@ -80,7 +88,7 @@ describe('PrismaScheduledJobRepository', () => {
   /** get() maps a found row and returns null when absent. */
   it('get() returns the mapped job or null', async () => {
     const { client, scheduledJob } = fakePrisma();
-    const repo = new PrismaScheduledJobRepository(client);
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
     expect((await repo.get('job-1'))?.id).toBe('job-1');
     scheduledJob.findUnique = vi.fn(() => Promise.resolve(null));
     expect(await repo.get('missing')).toBeNull();
@@ -89,7 +97,7 @@ describe('PrismaScheduledJobRepository', () => {
   /** list() orders newest first. */
   it('list() orders createdAt desc', async () => {
     const { client, scheduledJob } = fakePrisma();
-    const repo = new PrismaScheduledJobRepository(client);
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
     await repo.list();
     expect(scheduledJob.findMany).toHaveBeenCalledWith({ orderBy: { createdAt: 'desc' } });
   });
@@ -97,7 +105,7 @@ describe('PrismaScheduledJobRepository', () => {
   /** update() forwards the partial patch and explicitly bumps updatedAt. */
   it('update() forwards the patch and bumps updatedAt', async () => {
     const { client, scheduledJob } = fakePrisma();
-    const repo = new PrismaScheduledJobRepository(client);
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
     await repo.update('job-1', { enabled: false });
     expect(scheduledJob.update).toHaveBeenCalledWith({
       where: { id: 'job-1' },
@@ -105,17 +113,37 @@ describe('PrismaScheduledJobRepository', () => {
     });
   });
 
+  /** update() redacts a prompt it carries, and never invents one it does not. */
+  it('update() redacts the prompt only when the patch carries one', async () => {
+    const { client, scheduledJob } = fakePrisma();
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
+    await repo.update('job-1', { prompt: 'ship it', name: 'Renamed' });
+    expect(scheduledJob.update).toHaveBeenLastCalledWith({
+      where: { id: 'job-1' },
+      data: {
+        prompt: '[REDACTED:ship it]',
+        name: 'Renamed',
+        updatedAt: expect.any(Date) as Date,
+      },
+    });
+    await repo.update('job-1', { name: 'Renamed again' });
+    expect(scheduledJob.update).toHaveBeenLastCalledWith({
+      where: { id: 'job-1' },
+      data: { name: 'Renamed again', updatedAt: expect.any(Date) as Date },
+    });
+  });
+
   /** update() on a missing row translates P2025 to NotFoundError. */
   it('update() translates a missing row to NotFoundError', async () => {
     const { client } = fakePrisma({ update: vi.fn(() => Promise.reject(p2025())) });
-    const repo = new PrismaScheduledJobRepository(client);
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
     await expect(repo.update('missing', { enabled: false })).rejects.toBeInstanceOf(NotFoundError);
   });
 
   /** delete() removes the row. */
   it('delete() removes the job', async () => {
     const { client, scheduledJob } = fakePrisma();
-    const repo = new PrismaScheduledJobRepository(client);
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
     await repo.delete('job-1');
     expect(scheduledJob.delete).toHaveBeenCalledWith({ where: { id: 'job-1' } });
   });
@@ -123,14 +151,14 @@ describe('PrismaScheduledJobRepository', () => {
   /** delete() on a missing row translates P2025 to NotFoundError. */
   it('delete() translates a missing row to NotFoundError', async () => {
     const { client } = fakePrisma({ delete: vi.fn(() => Promise.reject(p2025())) });
-    const repo = new PrismaScheduledJobRepository(client);
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
     await expect(repo.delete('missing')).rejects.toBeInstanceOf(NotFoundError);
   });
 
   /** listEnabled() filters enabled jobs ordered by nextRunAt asc. */
   it('listEnabled() filters enabled jobs', async () => {
     const { client, scheduledJob } = fakePrisma();
-    const repo = new PrismaScheduledJobRepository(client);
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
     await repo.listEnabled();
     expect(scheduledJob.findMany).toHaveBeenCalledWith({
       where: { enabled: true },
@@ -141,7 +169,7 @@ describe('PrismaScheduledJobRepository', () => {
   /** setRunTimes() sets both fields when both are present. */
   it('setRunTimes() sets both fields when both are present', async () => {
     const { client, scheduledJob } = fakePrisma();
-    const repo = new PrismaScheduledJobRepository(client);
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
     const lastRunAt = new Date('2026-01-02T00:00:00.000Z');
     const nextRunAt = new Date('2026-01-03T00:00:00.000Z');
     await repo.setRunTimes('job-1', { lastRunAt, nextRunAt });
@@ -154,7 +182,7 @@ describe('PrismaScheduledJobRepository', () => {
   /** setRunTimes() with only one field present leaves the other untouched. */
   it('setRunTimes() sets only the field present in the input', async () => {
     const { client, scheduledJob } = fakePrisma();
-    const repo = new PrismaScheduledJobRepository(client);
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
     const lastRunAt = new Date('2026-01-02T00:00:00.000Z');
     await repo.setRunTimes('job-1', { lastRunAt });
     expect(scheduledJob.update).toHaveBeenCalledWith({
@@ -166,7 +194,7 @@ describe('PrismaScheduledJobRepository', () => {
   /** setRunTimes() on a missing row translates P2025 to NotFoundError. */
   it('setRunTimes() translates a missing row to NotFoundError', async () => {
     const { client } = fakePrisma({ update: vi.fn(() => Promise.reject(p2025())) });
-    const repo = new PrismaScheduledJobRepository(client);
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
     await expect(repo.setRunTimes('missing', {})).rejects.toBeInstanceOf(NotFoundError);
   });
 });

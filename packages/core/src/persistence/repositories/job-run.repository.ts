@@ -5,12 +5,16 @@
  *
  * `output` and `error` are redacted on write. `workspaceId` is unique across runs (a run never
  * reuses a workspace); the database enforces it, and a P2002 on that constraint is translated to
- * `UniqueViolationError('JobRun', 'workspaceId')`.
+ * `UniqueViolationError('JobRun', 'workspaceId')`. A missing scheduled-job parent surfaces as
+ * Postgres foreign-key violation P2003 (not P2025), translated to `NotFoundError('ScheduledJob',
+ * jobId)` so callers see what `InMemoryJobRunRepository` raises. `setStatus` runs its guarded
+ * `startedAt` stamp and the status update in one transaction, so a failing status update never
+ * leaves a QUEUED run that looks started.
  */
 import type { Redactor } from '../../secrets/types.js';
 import type { JobRunStatus } from '../../workspace/types.js';
 import type { JobRun } from '../entities.js';
-import type { PrismaClient } from '../generated/client.js';
+import type { Prisma, PrismaClient } from '../generated/client.js';
 import type {
   CreateJobRunInput,
   FinishJobRunInput,
@@ -46,7 +50,10 @@ export class PrismaJobRunRepository implements JobRunRepository {
       });
       return toJobRun(row);
     } catch (error) {
-      translatePrismaError(error, { entity: 'ScheduledJob', id: input.jobId });
+      translatePrismaError(error, {
+        entity: 'JobRun',
+        parent: { entity: 'ScheduledJob', id: input.jobId },
+      });
     }
   }
 
@@ -57,24 +64,26 @@ export class PrismaJobRunRepository implements JobRunRepository {
     update: JobRunStatusUpdate = {},
   ): Promise<JobRun> {
     try {
-      if (status === 'PREPARING') {
-        await this.prisma.jobRun.updateMany({
-          where: { id, startedAt: null },
-          data: { startedAt: new Date() },
-        });
-      }
-      const data: {
-        status: JobRunStatus;
-        workspaceId?: string | null;
-        error?: string | null;
-      } = { status: toPrismaJobRunStatus(status) };
-      if (update.workspaceId !== undefined) {
-        data.workspaceId = update.workspaceId;
-      }
-      if (update.error !== undefined) {
-        data.error = update.error === null ? null : this.redactor.redact(update.error);
-      }
-      const row = await this.prisma.jobRun.update({ where: { id }, data });
+      const row = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        if (status === 'PREPARING') {
+          await tx.jobRun.updateMany({
+            where: { id, startedAt: null },
+            data: { startedAt: new Date() },
+          });
+        }
+        const data: {
+          status: JobRunStatus;
+          workspaceId?: string | null;
+          error?: string | null;
+        } = { status: toPrismaJobRunStatus(status) };
+        if (update.workspaceId !== undefined) {
+          data.workspaceId = update.workspaceId;
+        }
+        if (update.error !== undefined) {
+          data.error = update.error === null ? null : this.redactor.redact(update.error);
+        }
+        return tx.jobRun.update({ where: { id }, data });
+      });
       return toJobRun(row);
     } catch (error) {
       translatePrismaError(error, { entity: 'JobRun', id });

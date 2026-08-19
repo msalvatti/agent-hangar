@@ -6,15 +6,18 @@
  * "At most one live workspace per chat" is enforced by the database (the hand-written partial
  * unique index `Workspace_one_live_per_chat`), on UPDATEs as well as INSERTs, so `create` and
  * `setStatus` both translate a P2002 on that index into `LiveWorkspaceExistsError` instead of
- * re-checking the invariant in application code. `setStatus` intentionally does not touch
- * `lastActiveAt` — only `markActive` does — matching `InMemoryWorkspaceRepository`, which every
- * later lane's tests run against.
+ * re-checking the invariant in application code. Because that error names the owning *chat*, and
+ * `setStatus` only knows the workspace id, the chat is read on the error path and passed to the
+ * translator. `setStatus` runs its guarded `readyAt` stamp and the status update in one
+ * transaction, so a rejected READY transition never leaves a timestamp behind. `setStatus`
+ * intentionally does not touch `lastActiveAt` — only `markActive` does — matching
+ * `InMemoryWorkspaceRepository`, which every later lane's tests run against.
  */
 import type { Redactor } from '../../secrets/types.js';
 import { LIVE_WORKSPACE_STATUSES } from '../../workspace/types.js';
 import type { WorkspaceStatus } from '../../workspace/types.js';
 import type { Workspace } from '../entities.js';
-import type { PrismaClient } from '../generated/client.js';
+import type { Prisma, PrismaClient } from '../generated/client.js';
 import type { CreateWorkspaceInput, WorkspaceRepository, WorkspaceStatusUpdate } from '../ports.js';
 
 import { toPrismaWorkspaceKind, toPrismaWorkspaceStatus, toWorkspace } from './mappers.js';
@@ -47,7 +50,7 @@ export class PrismaWorkspaceRepository implements WorkspaceRepository {
       });
       return toWorkspace(row);
     } catch (error) {
-      translatePrismaError(error, { entity: 'Workspace', id: input.chatId ?? 'none' });
+      translatePrismaError(error, { entity: 'Workspace', chatId: input.chatId ?? 'none' });
     }
   }
 
@@ -66,34 +69,59 @@ export class PrismaWorkspaceRepository implements WorkspaceRepository {
     update: WorkspaceStatusUpdate = {},
   ): Promise<Workspace> {
     try {
-      if (status === 'READY') {
-        // Only stamps `readyAt` the first time, same guarded-`updateMany` pattern as Turn.
-        await this.prisma.workspace.updateMany({
-          where: { id, readyAt: null },
-          data: { readyAt: new Date() },
-        });
-      }
-      const data: {
-        status: WorkspaceStatus;
-        destroyedAt?: Date;
-        runnerRef?: string | null;
-        failureReason?: string | null;
-      } = { status: toPrismaWorkspaceStatus(status) };
-      if (status === 'DESTROYED') {
-        data.destroyedAt = new Date();
-      }
-      if (update.runnerRef !== undefined) {
-        data.runnerRef = update.runnerRef;
-      }
-      if (update.failureReason !== undefined) {
-        data.failureReason =
-          update.failureReason === null ? null : this.redactor.redact(update.failureReason);
-      }
-      const row = await this.prisma.workspace.update({ where: { id }, data });
+      const row = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        if (status === 'READY') {
+          // Only stamps `readyAt` the first time, same guarded-`updateMany` pattern as Turn.
+          await tx.workspace.updateMany({
+            where: { id, readyAt: null },
+            data: { readyAt: new Date() },
+          });
+        }
+        const data: {
+          status: WorkspaceStatus;
+          destroyedAt?: Date;
+          runnerRef?: string | null;
+          failureReason?: string | null;
+        } = { status: toPrismaWorkspaceStatus(status) };
+        if (status === 'DESTROYED') {
+          data.destroyedAt = new Date();
+        }
+        if (update.runnerRef !== undefined) {
+          data.runnerRef = update.runnerRef;
+        }
+        if (update.failureReason !== undefined) {
+          data.failureReason =
+            update.failureReason === null ? null : this.redactor.redact(update.failureReason);
+        }
+        return tx.workspace.update({ where: { id }, data });
+      });
       return toWorkspace(row);
     } catch (error) {
-      translatePrismaError(error, { entity: 'Workspace', id });
+      const chatId = await this.chatIdOf(id);
+      translatePrismaError(error, {
+        entity: 'Workspace',
+        id,
+        ...(chatId === null ? {} : { chatId }),
+      });
     }
+  }
+
+  /**
+   * Reads the chat a workspace belongs to, on the error path of {@link setStatus} only.
+   *
+   * `LiveWorkspaceExistsError` carries the chat that already owns a live workspace, but the
+   * violated partial unique index reports neither; the row itself is the only place the chat can
+   * be recovered from, and reading it lazily keeps the successful path at one round trip.
+   *
+   * @param id - Workspace whose owning chat is needed.
+   * @returns The chat id, or `null` for a job workspace or a row that no longer exists.
+   */
+  private async chatIdOf(id: string): Promise<string | null> {
+    const row = await this.prisma.workspace.findUnique({
+      where: { id },
+      select: { chatId: true },
+    });
+    return row?.chatId ?? null;
   }
 
   /** @inheritDoc */

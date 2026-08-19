@@ -5,7 +5,9 @@
  * Goal: `create` starts QUEUED with `stepCount` 0; `setStatus('PREPARING')` stamps `startedAt`
  * once, and a later `RUNNING` never overwrites it; `finish` sets usage/`finishedAt` and redacts a
  * canary in `error` before the write; `listByChat` orders by `queuedAt` asc; unknown ids resolve
- * per the port (`get` → null, `setStatus` → `NotFoundError`).
+ * per the port (`get` → null, `setStatus` → `NotFoundError`, `create` on a missing chat →
+ * `NotFoundError('Chat', …)`); a `setStatus` whose status update fails rolls the `startedAt` stamp
+ * back with it.
  * Mocks: none — a real compose Postgres.
  */
 import { beforeEach, expect, it } from 'vitest';
@@ -47,6 +49,41 @@ describeDb('PrismaTurnRepository', () => {
     expect(turn.status).toBe('QUEUED');
     expect(turn.stepCount).toBe(0);
     expect(turn.startedAt).toBeNull();
+  });
+
+  /** A turn whose chat does not exist is a foreign-key violation, reported as NotFoundError. */
+  it('create() on a missing chat throws NotFoundError naming the chat', async () => {
+    const repo = new PrismaTurnRepository(client, testRedactor);
+    let caught: unknown;
+    try {
+      await repo.create({ chatId: 'no-such-chat', model: 'gpt-5.6-sol' });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(NotFoundError);
+    expect((caught as NotFoundError).entity).toBe('Chat');
+    expect((caught as NotFoundError).id).toBe('no-such-chat');
+  });
+
+  /**
+   * The guarded `startedAt` stamp and the status update share one transaction, so a PREPARING
+   * that fails on an unknown `workspaceId` must leave the turn QUEUED with `startedAt` still null
+   * rather than a QUEUED turn that looks started.
+   */
+  it('setStatus() rolls the startedAt stamp back when the status update fails', async () => {
+    const chatId = await seedChat(client);
+    const repo = new PrismaTurnRepository(client, testRedactor);
+    const turn = await repo.create({ chatId, model: 'gpt-5.6-sol' });
+    await expect(
+      repo.setStatus(turn.id, 'PREPARING', { workspaceId: 'no-such-workspace' }),
+    ).rejects.toThrow();
+    const rows = await rawSelect<{ startedAt: Date | null; status: string }>(
+      client,
+      sqlTemplate('SELECT "startedAt", status FROM "Turn" WHERE id = '),
+      turn.id,
+    );
+    expect(rows[0]?.startedAt).toBeNull();
+    expect(rows[0]?.status).toBe('QUEUED');
   });
 
   /** PREPARING stamps startedAt once; a later RUNNING never overwrites it. */
