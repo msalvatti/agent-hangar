@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-A (Wave 1, parallel with W1-B … W1-I) |
-| **Status** | 🟦 running |
-| **Progress** | 4/5 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1a-secrets-redaction` |
 | **Owned paths** | `packages/core/src/secrets/**` (except the frozen `types.ts`), `packages/core/src/redaction/**`, `packages/core/src/logging/**` — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./secrets/index.js`, `./redaction/index.js`, `./logging/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
@@ -45,7 +45,7 @@ Plaintext secrets exist only in memory inside `set()`/`reveal()` and in the work
 | 1A.2 | AES-256-GCM envelope crypto + `SecretsService` over `SecretRepository` | ✅ | P0 | M | 1A.1 |
 | 1A.3 | `Redactor`: exact registered values + shape patterns, `redactJson`, idempotent | ✅ | P0 | M | — |
 | 1A.4 | pino logger factory with redact paths + `Redactor` serializer/hook | ✅ | P0 | S | 1A.3 |
-| 1A.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1A.1–1A.4 |
+| 1A.5 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 1A.1–1A.4 |
 
 ---
 
@@ -405,16 +405,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1a-secrets-red
 
 ## Task 1A.5 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1A.1–1A.4
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1A.1–1A.4
 
 **Description.** Run every gate for the lane's owned paths, run the code review to zero findings, update the plan dashboard and the tasks index, open the PR and return the structured summary to the orchestrator.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter @agent-hangar/core test -- --coverage` green with 100 % lines/branches/functions/statements on `src/secrets/**`, `src/redaction/**`, `src/logging/**`
-- [ ] `pnpm --filter @agent-hangar/core test 2>&1 | grep -c TESTCANARY` prints 0
-- [ ] `/bymax-quality:code-review` run on the branch with zero open findings (CRITICAL/HIGH/MEDIUM/LOW all resolved or explicitly justified in the PR)
-- [ ] `docs/plan.md` §12 row W1-A → 🟨 with branch + PR number + coverage; `docs/tasks/README.md` row for this lane updated
-- [ ] PR opened against `main`; structured summary `{ pr, branch, headSha, gates, coverage, contractChangeRequests }` returned
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter @agent-hangar/core test -- --coverage` green with 100 % lines/branches/functions/statements on `src/secrets/**`, `src/redaction/**`, `src/logging/**`
+- [x] `pnpm --filter @agent-hangar/core test 2>&1 | grep -c TESTCANARY` prints 0
+- [x] `/bymax-quality:code-review` run on the branch with zero open findings (CRITICAL/HIGH/MEDIUM/LOW all resolved or explicitly justified in the PR)
+- [x] `docs/plan.md` §12 row W1-A → 🟨 with branch + PR number + coverage; `docs/tasks/README.md` row for this lane updated
+- [x] PR opened against `main`; structured summary `{ pr, branch, headSha, gates, coverage, contractChangeRequests }` returned
 
 **Files to modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (lane row only), `docs/tasks/wave-1a-secrets-redaction.md` (header + log).

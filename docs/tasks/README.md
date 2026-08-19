@@ -7,7 +7,7 @@ Every task inside a lane file carries a self-contained English agent prompt: an 
 | Wave | Lane | File | Owned area | Depends on | Status |
 |---|---|---|---|---|---|
 | 0 | W0 | [wave-0-foundation.md](wave-0-foundation.md) | everything (monorepo, contracts, doubles, Prisma, infra base, app shells, CI) | — | 🟨 |
-| 1 | W1-A | [wave-1a-secrets-redaction.md](wave-1a-secrets-redaction.md) | `packages/core/src/{secrets,redaction,logging}` | W0 | 🟦 |
+| 1 | W1-A | [wave-1a-secrets-redaction.md](wave-1a-secrets-redaction.md) | `packages/core/src/{secrets,redaction,logging}` | W0 | 🟨 |
 | 1 | W1-B 🐳 | [wave-1b-docker-runner.md](wave-1b-docker-runner.md) | `packages/core/src/runner/docker`, `infra/workspace` | W0 | 📋 |
 | 1 | W1-C | [wave-1c-openai-provider.md](wave-1c-openai-provider.md) | `packages/core/src/model/openai`, fixtures | W0 | 📋 |
 | 1 | W1-D | [wave-1d-agent-runtime.md](wave-1d-agent-runtime.md) | `packages/agent-runtime` | W0 | 📋 |
