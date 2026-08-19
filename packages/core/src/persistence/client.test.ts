@@ -114,6 +114,29 @@ describe('assertDatabaseReachable', () => {
   });
 
   /**
+   * `client` is an injectable interface, so the sanitising branch cannot be skipped on the strength
+   * of the rejection's type: a wrapper rejecting a `ConfigError` of its own — built from the
+   * connection string and carrying the driver error as `cause` — would otherwise travel through
+   * untouched. Only the timeout error this function raises itself is passed through, and it is
+   * recognised by identity.
+   */
+  it('sanitizes a ConfigError raised by the client instead of passing it through', async () => {
+    const secret = 'SUPERSECRETPW';
+    const driverError = new Error(`connect ECONNREFUSED postgresql://ah:${secret}@127.0.0.1/db`);
+    const impostor = new ConfigError(`postgresql://ah:${secret}@127.0.0.1/db`, {
+      cause: driverError,
+    });
+    const client = { $queryRaw: vi.fn().mockRejectedValue(impostor) };
+    const attempt = assertDatabaseReachable(client);
+    await expect(attempt).rejects.toThrow('database unreachable (unknown)');
+    await attempt.catch((error: unknown) => {
+      expect(error).not.toBe(impostor);
+      expect((error as ConfigError).cause).toBeUndefined();
+      expect(inspect(error, { depth: null })).not.toContain(secret);
+    });
+  });
+
+  /**
    * Timeout path: a query that never answers is abandoned after `timeoutMs` with a message naming
    * the limit; the default limit is exported.
    */

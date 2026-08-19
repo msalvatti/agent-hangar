@@ -61,19 +61,22 @@ export async function assertDatabaseReachable(
   timeoutMs: number = DEFAULT_REACHABILITY_TIMEOUT_MS,
 ): Promise<void> {
   let timer: NodeJS.Timeout | undefined;
+  // Held by identity so the catch can recognise this exact object. Testing `instanceof ConfigError`
+  // instead would also wave through a ConfigError raised by the client — and `client` is an
+  // injectable interface, so a wrapper rejecting `new ConfigError(connectionString, { cause })`
+  // would carry both the string and the chain straight past the sanitising branch below.
+  const timedOut = new ConfigError(
+    `database unreachable: no answer to SELECT 1 within ${String(timeoutMs)} ms`,
+  );
   const timeout = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
-      reject(
-        new ConfigError(
-          `database unreachable: no answer to SELECT 1 within ${String(timeoutMs)} ms`,
-        ),
-      );
+      reject(timedOut);
     }, timeoutMs);
   });
   try {
     await Promise.race([client.$queryRaw`SELECT 1`, timeout]);
   } catch (error) {
-    if (error instanceof ConfigError) {
+    if (error === timedOut) {
       throw error;
     }
     // Neither the driver's message nor the error itself may travel: both carry the connection
