@@ -388,17 +388,23 @@ validation on every input), W2-B (`reveal()` scope, redact-before-publish,
      if a fix push is needed it is the last one.
   3. After round 2 is handled (threads all resolved, CI green on the final
      HEAD) the PR is **merged immediately** — no grace window, no waiting
-     for a third review. If a pending review request is still listed at that
-     point, it is removed (`gh pr edit --remove-reviewer`) with the factual
-     audit comment, as in the unresponsive-bot procedure.
+     for a third review. If round 1 needed **no** fix push (zero findings,
+     or only false positives resolved with evidence), there is no round 2:
+     the PR proceeds to merge as soon as CI is green and every thread is
+     resolved. If a pending review request is still listed at merge time,
+     it is removed (`gh pr edit <PR#> --remove-reviewer
+     copilot-pull-request-reviewer[bot]`) with the factual audit comment,
+     as in the unresponsive-bot procedure.
   4. A Copilot review that lands *after* the merge (or during the final CI
      run) is still triaged — `gh api graphql … reviewThreads` after every
      merge: real finding → fixed in the next PR touching that area (or a
      small follow-up PR) and the old thread gets a reply citing the commit;
      everything is answered and resolved. No thread is ever left open.
-  5. Watchers poll every **30 s** (`gh pr view … --json reviews,
-     reviewRequests,reviewThreads` via GraphQL + `gh pr checks`) so a review
-     is acted on within a minute of landing; the `ScheduleWakeup` fallback
+  5. Watchers poll every **30 s** (`gh pr view <PR#> --json
+     state,reviews,reviewRequests,commits`, `gh pr checks <PR#> --json
+     name,bucket`, and the unresolved-thread count via the GraphQL
+     `reviewThreads` query from the playbook) so a review is acted on within
+     a minute of landing; the `ScheduleWakeup` fallback
      stays ≥ 1200 s. While a watcher runs the orchestrator keeps working
      (spawns, merges, dashboards, reading the next lane).
 - **Stall limit**: 3 full fix cycles on the same lane → 🟥 (or 🟩 with
