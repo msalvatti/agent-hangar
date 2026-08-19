@@ -56,6 +56,7 @@ export default defineConfig({
         'src/logging/**',
         'src/model/openai/**',
         'src/model/registry.ts',
+        'src/runner/docker/**',
         'src/scheduling/**',
         'src/workspace/**',
         'src/restore/**',

@@ -67,12 +67,24 @@ case "$prompt" in
     printf '%s\n' "x-access-token"
     ;;
   *)
-    # Token source. W1-B replaces this block with a tmpfs token file so the shell tool's children
-    # can run with a scrubbed environment; the host check above is deliberately independent of it.
-    if [ -z "${GITHUB_TOKEN:-}" ]; then
+    # Token source, in order: a tmpfs file named by AH_GIT_TOKEN_FILE, then GITHUB_TOKEN. The file
+    # exists so the agent runtime can keep the PAT out of the environment it hands to the shell
+    # tool's children while git, which runs with that same scrubbed environment, can still
+    # authenticate. The host check above is deliberately independent of where the token came from.
+    token=${GITHUB_TOKEN:-}
+    if [ -n "${AH_GIT_TOKEN_FILE:-}" ] && [ -r "$AH_GIT_TOKEN_FILE" ]; then
+      # `read` is a shell builtin, so no PATH lookup happens: a workspace that controls PATH cannot
+      # interpose a program between the token file and this script. It reports failure on a file
+      # with no trailing newline while still assigning the value, hence the `|| :`.
+      IFS= read -r token < "$AH_GIT_TOKEN_FILE" || :
+    fi
+
+    # An empty token is not a token. Printing it would hand git a valid empty password and turn a
+    # misconfiguration into a confusing authentication failure against the real GitHub.
+    if [ -z "$token" ]; then
       echo "askpass: no GitHub token available" >&2
       exit 1
     fi
-    printf '%s\n' "$GITHUB_TOKEN"
+    printf '%s\n' "$token"
     ;;
 esac
