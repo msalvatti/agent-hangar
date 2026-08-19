@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W1-A (Wave 1, parallel with W1-B … W1-I) |
 | **Status** | 🟦 running |
-| **Progress** | 3/5 tasks |
+| **Progress** | 4/5 tasks |
 | **Branch** | `feat/w1a-secrets-redaction` |
 | **Owned paths** | `packages/core/src/secrets/**` (except the frozen `types.ts`), `packages/core/src/redaction/**`, `packages/core/src/logging/**` — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./secrets/index.js`, `./redaction/index.js`, `./logging/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
@@ -44,7 +44,7 @@ Plaintext secrets exist only in memory inside `set()`/`reveal()` and in the work
 | 1A.1 | Master key provider: `MasterKeyFile` (0600 create/verify) + `StaticMasterKey` | ✅ | P0 | S | — |
 | 1A.2 | AES-256-GCM envelope crypto + `SecretsService` over `SecretRepository` | ✅ | P0 | M | 1A.1 |
 | 1A.3 | `Redactor`: exact registered values + shape patterns, `redactJson`, idempotent | ✅ | P0 | M | — |
-| 1A.4 | pino logger factory with redact paths + `Redactor` serializer/hook | 📋 | P0 | S | 1A.3 |
+| 1A.4 | pino logger factory with redact paths + `Redactor` serializer/hook | ✅ | P0 | S | 1A.3 |
 | 1A.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1A.1–1A.4 |
 
 ---
@@ -320,16 +320,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1a-secrets-red
 
 ## Task 1A.4 — pino logger factory with redact paths + `Redactor` serializer/hook
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1A.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1A.3
 
 **Description.** Provide `createLogger` (pino) for apps/worker and apps/web API routes: pino `redact` on known secret-bearing paths, a `formatters.log`/`formatters.bindings` pass through `redactor.redactJson`, a `hooks.logMethod` that redacts message strings and interpolation args, and an `err` serializer that redacts message/stack. No PII, no plaintext, ever.
 
 **Acceptance criteria**
-- [ ] `createLogger({ level, redactor, name?, destination?, base? })` exported from `packages/core/src/logging/logger.ts`; returns a pino `Logger`
-- [ ] `LOG_REDACT_PATHS` constant exported (`env.GITHUB_TOKEN`, `env.OPENAI_API_KEY`, `*.env.GITHUB_TOKEN`, `*.env.OPENAI_API_KEY`, `headers.authorization`, `*.headers.authorization`, `req.headers.authorization`, `secret`, `*.secret`, `plaintext`, `*.plaintext`, `apiKey`, `*.apiKey`, `token`, `*.token`) with censor `[REDACTED]`
-- [ ] Canaries passed as message, as interpolation arg, inside merge objects at any depth, inside child bindings, inside `err.message`/`err.stack`, and under a redact path never appear in the output stream (`assertNoCanary` on the captured output)
-- [ ] Level, `name` and `base` are honoured; `destination` defaults to stdout (pino default) and can be any `DestinationStream`
-- [ ] 100 % coverage on `src/logging/**`
+- [x] `createLogger({ level, redactor, name?, destination?, base? })` exported from `packages/core/src/logging/logger.ts`; returns a pino `Logger`
+- [x] `LOG_REDACT_PATHS` constant exported (`env.GITHUB_TOKEN`, `env.OPENAI_API_KEY`, `*.env.GITHUB_TOKEN`, `*.env.OPENAI_API_KEY`, `headers.authorization`, `*.headers.authorization`, `req.headers.authorization`, `secret`, `*.secret`, `plaintext`, `*.plaintext`, `apiKey`, `*.apiKey`, `token`, `*.token`) with censor `[REDACTED]`
+- [x] Canaries passed as message, as interpolation arg, inside merge objects at any depth, inside child bindings, inside `err.message`/`err.stack`, and under a redact path never appear in the output stream (`assertNoCanary` on the captured output)
+- [x] Level, `name` and `base` are honoured; `destination` defaults to stdout (pino default) and can be any `DestinationStream`
+- [x] 100 % coverage on `src/logging/**`
 
 **Files to create**
 `packages/core/src/logging/logger.ts`, `packages/core/src/logging/logger.test.ts`, `packages/core/src/logging/index.ts`; modify `packages/core/vitest.config.ts` (`coverage.include` += `src/logging/**`), (folder barrel only — root `src/index.ts` is frozen).
@@ -473,3 +473,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1a-secrets-red
 - 1A.1 ✅ 2026-08-19 — master key providers: 0600 atomic key file with owner-only enforcement, hex validation and caching, plus StaticMasterKey.
 - 1A.2 ✅ 2026-08-19 — AES-256-GCM envelope crypto with fail-closed integrity checks and the SecretsService over the SecretRepository port.
 - 1A.3 ✅ 2026-08-19 — redactor over registered values (raw, percent-encoded and JSON-escaped) plus the contract shape patterns, with cycle-safe redactJson.
+- 1A.4 ✅ 2026-08-19 — redacting pino factory: name-based redact paths, argument hook, record and binding formatters, error serializer and a final scrub of the written line.
