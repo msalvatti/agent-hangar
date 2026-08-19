@@ -5,7 +5,7 @@
   "description": "BullMQ consumers, scheduler reconciliation and workspace garbage collection.",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/main.ts",
+    "dev": "tsx watch --conditions=development src/main.ts",
     "build": "tsc -b",
     "start": "node dist/main.js",
     "lint": "eslint .",
