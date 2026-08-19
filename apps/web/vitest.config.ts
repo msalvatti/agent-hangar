@@ -48,6 +48,7 @@ export default defineConfig({
         'src/shared/transcript/**',
         'src/shared/feedback/**',
         'src/features/chats/**',
+        'src/features/shell/**',
         'src/mocks/**',
         'src/shared/repo-picker/**',
         'src/shared/shell/PageHeader.tsx',
@@ -63,6 +64,7 @@ export default defineConfig({
         'src/mocks/handlers.ts',
         'src/mocks/vitest.ts',
         'src/shared/repo-picker/testing/setup.ts',
+        'src/features/shell/testing/**',
       ],
       thresholds: {
         lines: 100,
