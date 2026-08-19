@@ -14,7 +14,14 @@ import { beforeEach, expect, it } from 'vitest';
 import type { Redactor } from '../../secrets/types.js';
 import { OPENAI_CANARY } from '../../testing/canaries.js';
 import type { PrismaClient } from '../generated/client.js';
-import { connectTestDb, describeDb, rawSelect, seedChat, truncateAll } from '../testing/db.js';
+import {
+  connectTestDb,
+  describeDb,
+  rawSelect,
+  seedChat,
+  sqlTemplate,
+  truncateAll,
+} from '../testing/db.js';
 
 import { LiveWorkspaceExistsError, NotFoundError } from './errors.js';
 import { PrismaWorkspaceRepository } from './workspace.repository.js';
@@ -107,9 +114,7 @@ describeDb('PrismaWorkspaceRepository', () => {
     });
     const rows = await rawSelect<{ failureReason: string }>(
       client,
-      Object.assign(['SELECT "failureReason" FROM "Workspace" WHERE id = ', ''], {
-        raw: ['SELECT "failureReason" FROM "Workspace" WHERE id = ', ''],
-      }),
+      sqlTemplate('SELECT "failureReason" FROM "Workspace" WHERE id = '),
       workspace.id,
     );
     expect(rows[0]?.failureReason).toContain('[REDACTED]');

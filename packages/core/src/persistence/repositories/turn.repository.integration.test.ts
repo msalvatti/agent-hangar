@@ -13,7 +13,14 @@ import { beforeEach, expect, it } from 'vitest';
 import type { Redactor } from '../../secrets/types.js';
 import { GITHUB_CANARY } from '../../testing/canaries.js';
 import type { PrismaClient } from '../generated/client.js';
-import { connectTestDb, describeDb, rawSelect, seedChat, truncateAll } from '../testing/db.js';
+import {
+  connectTestDb,
+  describeDb,
+  rawSelect,
+  seedChat,
+  sqlTemplate,
+  truncateAll,
+} from '../testing/db.js';
 
 import { NotFoundError } from './errors.js';
 import { PrismaTurnRepository } from './turn.repository.js';
@@ -83,9 +90,7 @@ describeDb('PrismaTurnRepository', () => {
     );
     const rows = await rawSelect<{ error: string }>(
       client,
-      Object.assign(['SELECT error FROM "Turn" WHERE id = ', ''], {
-        raw: ['SELECT error FROM "Turn" WHERE id = ', ''],
-      }),
+      sqlTemplate('SELECT error FROM "Turn" WHERE id = '),
       turn.id,
     );
     expect(rows[0]?.error).toContain('[REDACTED]');

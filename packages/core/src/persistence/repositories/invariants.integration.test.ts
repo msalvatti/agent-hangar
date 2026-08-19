@@ -16,7 +16,14 @@ import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../../testing/cana
 import { FakeClock } from '../../testing/fake-clock.js';
 import { createInMemoryRepositories } from '../../testing/in-memory-repositories.js';
 import type { PrismaClient } from '../generated/client.js';
-import { connectTestDb, describeDb, rawSelect, seedChat, truncateAll } from '../testing/db.js';
+import {
+  connectTestDb,
+  describeDb,
+  rawSelect,
+  seedChat,
+  sqlTemplate,
+  truncateAll,
+} from '../testing/db.js';
 
 import { createRepositories } from './index.js';
 
@@ -36,6 +43,111 @@ const testRedactor: Redactor = {
 
 let client: PrismaClient;
 
+/**
+ * Writes a canary into every redacted column, one per repository, and returns the raw stored
+ * value of each — so the test body only has to assert, not orchestrate eight repositories.
+ *
+ * @param repos - Repositories under test.
+ */
+async function writeCanaryThroughEveryRepository(
+  repos: ReturnType<typeof createRepositories>,
+): Promise<(string | undefined)[]> {
+  const chat = await repos.chats.create({
+    title: 'X',
+    repoUrl: 'https://github.com/acme/repo',
+    baseBranch: 'main',
+  });
+  const message = await repos.messages.append(chat.id, 'USER', BOTH_CANARIES);
+  const turn = await repos.turns.create({ chatId: chat.id, model: 'gpt-5.6-sol' });
+  await repos.turns.finish(
+    turn.id,
+    'FAILED',
+    { inputTokens: 0, outputTokens: 0, stepCount: 1 },
+    BOTH_CANARIES,
+  );
+  const workspace = await repos.workspaces.create({
+    kind: 'CHAT',
+    chatId: chat.id,
+    runnerKind: 'docker',
+    image: 'agent-hangar/workspace:dev',
+    repoUrl: 'https://github.com/acme/repo',
+    branch: 'main',
+  });
+  await repos.workspaces.setStatus(workspace.id, 'FAILED', { failureReason: BOTH_CANARIES });
+  const job = await repos.scheduledJobs.create({
+    name: 'Nightly',
+    cron: '0 0 * * *',
+    timezone: 'UTC',
+    prompt: 'print date',
+    repoUrl: 'https://github.com/acme/repo',
+    branch: 'main',
+    enabled: true,
+  });
+  const run = await repos.jobRuns.create({
+    jobId: job.id,
+    trigger: 'MANUAL',
+    model: 'gpt-5.6-sol',
+    scheduledFor: new Date(),
+  });
+  await repos.jobRuns.finish(run.id, {
+    status: 'FAILED',
+    usage: { inputTokens: 0, outputTokens: 0, stepCount: 1 },
+    output: BOTH_CANARIES,
+    error: BOTH_CANARIES,
+  });
+  const toolCall = await repos.toolCalls.start({
+    workspaceId: workspace.id,
+    turnId: turn.id,
+    callId: 'call-1',
+    seq: 1,
+    toolName: 'run_shell',
+    args: { command: `echo ${GITHUB_CANARY} ${OPENAI_CANARY}` },
+  });
+  await repos.toolCalls.finish(toolCall.id, {
+    status: 'SUCCEEDED',
+    exitCode: 0,
+    resultHead: BOTH_CANARIES,
+    resultBytes: BOTH_CANARIES.length,
+    durationMs: 1,
+  });
+
+  const messageRow = await rawSelect<{ content: string }>(
+    client,
+    sqlTemplate('SELECT content FROM "Message" WHERE id = '),
+    message.id,
+  );
+  const turnRow = await rawSelect<{ error: string }>(
+    client,
+    sqlTemplate('SELECT error FROM "Turn" WHERE id = '),
+    turn.id,
+  );
+  const workspaceRow = await rawSelect<{ failureReason: string }>(
+    client,
+    sqlTemplate('SELECT "failureReason" FROM "Workspace" WHERE id = '),
+    workspace.id,
+  );
+  const jobRunRow = await rawSelect<{ output: string; error: string }>(
+    client,
+    sqlTemplate('SELECT output, error FROM "JobRun" WHERE id = '),
+    run.id,
+  );
+  const toolCallRow = await rawSelect<{ args: string; resultHead: string }>(
+    client,
+    sqlTemplate('SELECT args::text AS args, "resultHead" FROM "ToolCallLog" WHERE id = '),
+    toolCall.id,
+  );
+
+  return [
+    messageRow[0]?.content,
+    turnRow[0]?.error,
+    workspaceRow[0]?.failureReason,
+    jobRunRow[0]?.output,
+    jobRunRow[0]?.error,
+    toolCallRow[0]?.args,
+    toolCallRow[0]?.resultHead,
+  ];
+}
+
 describeDb('persistence invariants', () => {
   beforeEach(async () => {
     client = connectTestDb();
@@ -48,111 +160,7 @@ describeDb('persistence invariants', () => {
    */
   it('redacts a canary written through any repository, never leaking it to a raw row', async () => {
     const repos = createRepositories(client, testRedactor);
-    const chat = await repos.chats.create({
-      title: 'X',
-      repoUrl: 'https://github.com/acme/repo',
-      baseBranch: 'main',
-    });
-    const message = await repos.messages.append(chat.id, 'USER', BOTH_CANARIES);
-    const turn = await repos.turns.create({ chatId: chat.id, model: 'gpt-5.6-sol' });
-    await repos.turns.finish(
-      turn.id,
-      'FAILED',
-      { inputTokens: 0, outputTokens: 0, stepCount: 1 },
-      BOTH_CANARIES,
-    );
-    const workspace = await repos.workspaces.create({
-      kind: 'CHAT',
-      chatId: chat.id,
-      runnerKind: 'docker',
-      image: 'agent-hangar/workspace:dev',
-      repoUrl: 'https://github.com/acme/repo',
-      branch: 'main',
-    });
-    await repos.workspaces.setStatus(workspace.id, 'FAILED', { failureReason: BOTH_CANARIES });
-    const job = await repos.scheduledJobs.create({
-      name: 'Nightly',
-      cron: '0 0 * * *',
-      timezone: 'UTC',
-      prompt: 'print date',
-      repoUrl: 'https://github.com/acme/repo',
-      branch: 'main',
-      enabled: true,
-    });
-    const run = await repos.jobRuns.create({
-      jobId: job.id,
-      trigger: 'MANUAL',
-      model: 'gpt-5.6-sol',
-      scheduledFor: new Date(),
-    });
-    await repos.jobRuns.finish(run.id, {
-      status: 'FAILED',
-      usage: { inputTokens: 0, outputTokens: 0, stepCount: 1 },
-      output: BOTH_CANARIES,
-      error: BOTH_CANARIES,
-    });
-    const toolCall = await repos.toolCalls.start({
-      workspaceId: workspace.id,
-      turnId: turn.id,
-      callId: 'call-1',
-      seq: 1,
-      toolName: 'run_shell',
-      args: { command: `echo ${GITHUB_CANARY} ${OPENAI_CANARY}` },
-    });
-    await repos.toolCalls.finish(toolCall.id, {
-      status: 'SUCCEEDED',
-      exitCode: 0,
-      resultHead: BOTH_CANARIES,
-      resultBytes: BOTH_CANARIES.length,
-      durationMs: 1,
-    });
-
-    const messageRow = await rawSelect<{ content: string }>(
-      client,
-      Object.assign(['SELECT content FROM "Message" WHERE id = ', ''], {
-        raw: ['SELECT content FROM "Message" WHERE id = ', ''],
-      }),
-      message.id,
-    );
-    const turnRow = await rawSelect<{ error: string }>(
-      client,
-      Object.assign(['SELECT error FROM "Turn" WHERE id = ', ''], {
-        raw: ['SELECT error FROM "Turn" WHERE id = ', ''],
-      }),
-      turn.id,
-    );
-    const workspaceRow = await rawSelect<{ failureReason: string }>(
-      client,
-      Object.assign(['SELECT "failureReason" FROM "Workspace" WHERE id = ', ''], {
-        raw: ['SELECT "failureReason" FROM "Workspace" WHERE id = ', ''],
-      }),
-      workspace.id,
-    );
-    const jobRunRow = await rawSelect<{ output: string; error: string }>(
-      client,
-      Object.assign(['SELECT output, error FROM "JobRun" WHERE id = ', ''], {
-        raw: ['SELECT output, error FROM "JobRun" WHERE id = ', ''],
-      }),
-      run.id,
-    );
-    const toolCallRow = await rawSelect<{ args: string; resultHead: string }>(
-      client,
-      Object.assign(
-        ['SELECT args::text AS args, "resultHead" FROM "ToolCallLog" WHERE id = ', ''],
-        { raw: ['SELECT args::text AS args, "resultHead" FROM "ToolCallLog" WHERE id = ', ''] },
-      ),
-      toolCall.id,
-    );
-
-    const values = [
-      messageRow[0]?.content,
-      turnRow[0]?.error,
-      workspaceRow[0]?.failureReason,
-      jobRunRow[0]?.output,
-      jobRunRow[0]?.error,
-      toolCallRow[0]?.args,
-      toolCallRow[0]?.resultHead,
-    ];
+    const values = await writeCanaryThroughEveryRepository(repos);
     for (const value of values) {
       expect(value).toBeDefined();
       const text = value ?? '';

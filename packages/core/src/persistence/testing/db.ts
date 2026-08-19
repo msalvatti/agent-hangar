@@ -338,6 +338,18 @@ export async function rawSelect<T>(
   return client.$queryRaw<T[]>(sql, ...values);
 }
 
+/**
+ * Wraps a plain SQL string ending in a single placeholder position (e.g.
+ * `'SELECT content FROM "Message" WHERE id = '`) as the `TemplateStringsArray` `rawSelect`
+ * expects, so call sites building a one-parameter lookup query do not each repeat the
+ * `Object.assign` shim a tagged template requires when it is not written as a literal.
+ *
+ * @param sql - SQL text up to (not including) the single interpolated value.
+ */
+export function sqlTemplate(sql: string): TemplateStringsArray {
+  return Object.assign([sql, ''], { raw: [sql, ''] });
+}
+
 /** The subset of the Prisma client {@link countRows} relies on. */
 export interface RawUnsafeQueryClient {
   $queryRawUnsafe<T = unknown>(query: string): Promise<T>;

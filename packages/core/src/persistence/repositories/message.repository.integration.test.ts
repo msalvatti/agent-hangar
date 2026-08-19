@@ -13,7 +13,14 @@ import { beforeEach, expect, it } from 'vitest';
 import type { Redactor } from '../../secrets/types.js';
 import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.js';
 import type { PrismaClient } from '../generated/client.js';
-import { connectTestDb, describeDb, rawSelect, seedChat, truncateAll } from '../testing/db.js';
+import {
+  connectTestDb,
+  describeDb,
+  rawSelect,
+  seedChat,
+  sqlTemplate,
+  truncateAll,
+} from '../testing/db.js';
 
 import { NotFoundError } from './errors.js';
 import { PrismaMessageRepository } from './message.repository.js';
@@ -97,9 +104,7 @@ describeDb('PrismaMessageRepository', () => {
     );
     const rows = await rawSelect<{ content: string }>(
       client,
-      Object.assign(['SELECT content FROM "Message" WHERE id = ', ''], {
-        raw: ['SELECT content FROM "Message" WHERE id = ', ''],
-      }),
+      sqlTemplate('SELECT content FROM "Message" WHERE id = '),
       message.id,
     );
     const content = rows[0]?.content ?? '';

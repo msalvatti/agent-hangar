@@ -13,7 +13,14 @@ import { beforeEach, expect, it } from 'vitest';
 import type { Redactor } from '../../secrets/types.js';
 import { GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.js';
 import type { PrismaClient } from '../generated/client.js';
-import { connectTestDb, describeDb, rawSelect, seedChat, truncateAll } from '../testing/db.js';
+import {
+  connectTestDb,
+  describeDb,
+  rawSelect,
+  seedChat,
+  sqlTemplate,
+  truncateAll,
+} from '../testing/db.js';
 
 import { NotFoundError } from './errors.js';
 import { RESULT_HEAD_MAX_BYTES } from './mappers.js';
@@ -84,9 +91,7 @@ describeDb('PrismaToolCallLogRepository', () => {
     expect(log.status).toBe('RUNNING');
     const rows = await rawSelect<{ args: string }>(
       client,
-      Object.assign(['SELECT args::text AS args FROM "ToolCallLog" WHERE id = ', ''], {
-        raw: ['SELECT args::text AS args FROM "ToolCallLog" WHERE id = ', ''],
-      }),
+      sqlTemplate('SELECT args::text AS args FROM "ToolCallLog" WHERE id = '),
       log.id,
     );
     expect(rows[0]?.args).toContain('[REDACTED]');

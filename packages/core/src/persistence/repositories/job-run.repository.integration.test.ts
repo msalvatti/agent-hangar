@@ -14,7 +14,7 @@ import { beforeEach, expect, it } from 'vitest';
 import type { Redactor } from '../../secrets/types.js';
 import { GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.js';
 import type { PrismaClient } from '../generated/client.js';
-import { connectTestDb, describeDb, rawSelect, truncateAll } from '../testing/db.js';
+import { connectTestDb, describeDb, rawSelect, sqlTemplate, truncateAll } from '../testing/db.js';
 
 import { UniqueViolationError } from './errors.js';
 import { PrismaJobRunRepository } from './job-run.repository.js';
@@ -120,9 +120,7 @@ describeDb('PrismaJobRunRepository', () => {
     });
     const rows = await rawSelect<{ output: string; error: string }>(
       client,
-      Object.assign(['SELECT output, error FROM "JobRun" WHERE id = ', ''], {
-        raw: ['SELECT output, error FROM "JobRun" WHERE id = ', ''],
-      }),
+      sqlTemplate('SELECT output, error FROM "JobRun" WHERE id = '),
       run.id,
     );
     expect(rows[0]?.output).toContain('[REDACTED]');

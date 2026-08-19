@@ -23,6 +23,7 @@ import {
   rawSelect,
   seedChat,
   shouldRunDbSuite,
+  sqlTemplate,
   truncateAll,
   withTestDb,
 } from './db.js';
@@ -403,13 +404,20 @@ describe('rawSelect', () => {
     const client = { $queryRaw: queryRaw } as unknown as Parameters<typeof rawSelect>[0];
     const rows = await rawSelect<{ content: string }>(
       client,
-      Object.assign(['SELECT content FROM "Message" WHERE id = ', ''], {
-        raw: ['SELECT content FROM "Message" WHERE id = ', ''],
-      }),
+      sqlTemplate('SELECT content FROM "Message" WHERE id = '),
       'msg-1',
     );
     expect(rows).toEqual([{ content: '[REDACTED]' }]);
     expect(queryRaw).toHaveBeenCalledWith(expect.anything(), 'msg-1');
+  });
+});
+
+describe('sqlTemplate', () => {
+  /** The wrapped array has both a text part and a matching `raw` part, as a real tag expects. */
+  it('wraps a SQL string as a two-part TemplateStringsArray ending in a placeholder', () => {
+    const template = sqlTemplate('SELECT id FROM "Chat" WHERE id = ');
+    expect(Array.from(template)).toEqual(['SELECT id FROM "Chat" WHERE id = ', '']);
+    expect(Array.from(template.raw)).toEqual(['SELECT id FROM "Chat" WHERE id = ', '']);
   });
 });
 
