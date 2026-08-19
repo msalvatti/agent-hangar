@@ -8,8 +8,9 @@
  *
  * Output goes to `fixtures/openai/recorded-<name>.ndjson`, beside — never over — the hand-built
  * fixtures the tests replay: a developer diffs the two and updates the committed files by hand.
- * Every recorded string is redacted against the shared credential patterns and against the literal
- * key before it reaches disk, and the key itself is never printed.
+ * Every recorded string passes through the shared redactor before it reaches disk, with the live
+ * key registered, so the key is removed in its raw, URL-encoded and JSON-escaped forms as well as
+ * by shape. The key itself is never printed.
  */
 import { writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
@@ -17,7 +18,8 @@ import { fileURLToPath } from 'node:url';
 import OpenAI from 'openai';
 import type { ResponseStreamEvent, Tool } from 'openai/resources/responses/responses';
 
-import { REDACTED_TOKEN, SECRET_SHAPE_PATTERNS } from '../src/secrets/types.js';
+import { createRedactor } from '../src/redaction/redactor.js';
+import type { Redactor } from '../src/secrets/types.js';
 
 /** Writes a fixture file; injected so the module owns no file-system access of its own. */
 type FixtureWriter = (path: string, data: string, encoding: 'utf8') => void;
@@ -81,33 +83,22 @@ const RECORDINGS: Recording[] = [
 ];
 
 /**
- * Removes credential material from a recorded line.
+ * Builds the redactor that every recorded byte passes through.
  *
- * The key is removed in both of the forms it can appear in. A recorded line is the output of
- * `JSON.stringify`, so a key containing a quote, a backslash or a control character sits there in
- * its escaped form and does not match the raw value — and a compatible gateway reached through
- * `OPENAI_BASE_URL` may use exactly such a key. Shape matching is no safety net for it either,
- * which is the whole reason the key is also removed literally.
+ * The shared redactor is used rather than a local pass because it already knows the forms a
+ * credential takes on the way out: the raw value, its `encodeURIComponent` form, and the JSON
+ * string escaping that a recorded line is written in. A hand-rolled version here covered the first
+ * two of those and missed the URL-encoded one, which a gateway that accepts the key as a query
+ * parameter would echo back. Shape patterns still run underneath, for credentials this process
+ * never saw.
  *
- * Mirrors the shape redaction of the model mapping layer. `createRedactor` in `src/redaction/`
- * now covers both passes — registered exact values and shape patterns — and replacing this
- * function with it is a worthwhile change on its own terms.
- *
- * @param line - Serialised event, or a plain message.
- * @param apiKey - The live key, removed literally, in its JSON-escaped form, and by shape.
- * @returns The line with every credential replaced by the redaction token.
+ * @param apiKey - The live key, registered so it is removed in every one of those forms.
+ * @returns A redactor to apply to each serialised event and to any failure message.
  */
-function redact(line: string, apiKey: string): string {
-  // `JSON.stringify` of a string wraps it in quotes; the slice is the escaped body alone.
-  const escaped = JSON.stringify(apiKey).slice(1, -1);
-  let result = line.split(apiKey).join(REDACTED_TOKEN);
-  result = result.split(escaped).join(REDACTED_TOKEN);
-  for (const pattern of SECRET_SHAPE_PATTERNS) {
-    while (pattern.test(result)) {
-      result = result.replace(pattern, REDACTED_TOKEN);
-    }
-  }
-  return result;
+function createFixtureRedactor(apiKey: string): Redactor {
+  const redactor = createRedactor();
+  redactor.register([apiKey]);
+  return redactor;
 }
 
 /**
@@ -183,6 +174,7 @@ export async function main(write: FixtureWriter = writeFileSync): Promise<void> 
   const model = process.env.OPENAI_MODEL ?? DEFAULT_MODEL;
   const baseURL = process.env.OPENAI_BASE_URL;
   const dir = fileURLToPath(new URL('../fixtures/openai/', import.meta.url));
+  const redactor = createFixtureRedactor(apiKey);
   try {
     const client = new OpenAI({
       apiKey,
@@ -191,12 +183,12 @@ export async function main(write: FixtureWriter = writeFileSync): Promise<void> 
     });
     for (const recording of RECORDINGS) {
       const events = await collect(client, recording, model);
-      const body = events.map((event) => redact(JSON.stringify(event), apiKey)).join('\n');
+      const body = events.map((event) => redactor.redact(JSON.stringify(event))).join('\n');
       write(`${dir}recorded-${recording.name}.ndjson`, `${body}\n`, 'utf8');
       process.stdout.write(`recorded-${recording.name}: ${String(events.length)} events\n`);
     }
   } catch (error) {
-    process.stderr.write(`Recording failed: ${redact(describeFailure(error), apiKey)}\n`);
+    process.stderr.write(`Recording failed: ${redactor.redact(describeFailure(error))}\n`);
     process.exitCode = 1;
   }
 }
