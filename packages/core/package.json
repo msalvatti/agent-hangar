@@ -26,6 +26,7 @@
     "typecheck": "tsc -b",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration --coverage.enabled=false",
+    "fixtures:record": "tsx scripts/record-fixtures.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
     "db:migrate:dev": "prisma migrate dev",

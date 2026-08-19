@@ -1,0 +1,2 @@
+{"type":"response.created","response":{"id":"resp_0b1c2d3e4f5061728394a5b6","created_at":1766000000,"output_text":"","error":null,"incomplete_details":null,"instructions":null,"metadata":null,"model":"gpt-5.6-sol","object":"response","output":[],"parallel_tool_calls":true,"temperature":1,"tool_choice":"auto","tools":[],"top_p":1,"status":"in_progress"},"sequence_number":0}
+{"type":"error","code":"server_error","message":"The server had an error while processing your request","param":null,"sequence_number":1}
