@@ -88,8 +88,65 @@ async function reportFailure(error: unknown, sink: FailureSink): Promise<number>
   return EXIT.runtimeFailure;
 }
 
+/** Everything one turn is run against, once the credentials and the paths are settled. */
+interface TurnContext {
+  /** Absolute workspace root. */
+  workspaceRoot: string;
+  /** Child environment, already scrubbed of the credentials. */
+  childEnv: Record<string, string>;
+  /** Git runner shared by preparation, the tools and push detection. */
+  git: GitRunner;
+  /** Cancellation for the whole turn. */
+  signal: AbortSignal;
+}
+
 /**
- * Runs a validated request: prepare the workspace, then run the loop.
+ * Announces the turn, prepares the workspace and runs the loop.
+ *
+ * @param request - The validated request.
+ * @param deps - Turn dependencies.
+ * @param sink - Where events are written.
+ * @param context - Paths, environment and collaborators for this turn.
+ */
+async function prepareAndRun(
+  request: TurnRequest,
+  deps: TurnDeps,
+  sink: FailureSink,
+  context: TurnContext,
+): Promise<void> {
+  const { emit } = sink.writer;
+  await emit({ type: 'turn.started', turnId: request.turnId, at: new Date().toISOString() });
+  const provider = createProvider(
+    resolveProviderName(deps.io.env),
+    deps.io.env,
+    deps.providerFactories,
+  );
+  await prepare(request.repo, request.prepare, {
+    workspaceRoot: context.workspaceRoot,
+    git: context.git,
+    env: context.childEnv,
+    emit,
+    urlPolicy: deps.urlPolicy ?? 'github-https',
+  });
+  await runTurnLoop({
+    ...context,
+    request,
+    provider,
+    tools: createToolExecutor({
+      workspaceRoot: context.workspaceRoot,
+      childEnv: context.childEnv,
+      toolTimeoutMs: request.limits.toolTimeoutMs,
+      maxToolOutputBytes: request.limits.maxToolOutputBytes,
+      git: context.git,
+    }),
+    toolDefinitions: TOOL_DEFINITIONS,
+    emit,
+    lastEmittedAt: sink.writer.lastEmittedAt,
+  });
+}
+
+/**
+ * Runs a validated request, owning the credential file and the cancellation subscription.
  *
  * @param request - The validated request.
  * @param deps - Turn dependencies.
@@ -102,43 +159,17 @@ async function runRequest(
   sink: FailureSink,
 ): Promise<number> {
   const { io } = deps;
-  const workspaceRoot = deps.workspaceRoot ?? DEFAULT_WORKSPACE_ROOT;
-  const runtimeDir = deps.runtimeDir ?? DEFAULT_RUNTIME_DIR;
-  const git = deps.git ?? createGitRunner();
   const controller = new AbortController();
   const unsubscribe = io.signals.onSigint(() => {
     controller.abort();
   });
   let tokenFile: string | null = null;
   try {
-    tokenFile = await materializeGitToken(io.env, runtimeDir);
-    const childEnv = createChildEnv(io.env, { tokenFile });
-    const { emit } = sink.writer;
-    await emit({ type: 'turn.started', turnId: request.turnId, at: new Date().toISOString() });
-    const provider = createProvider(resolveProviderName(io.env), io.env, deps.providerFactories);
-    await prepare(request.repo, request.prepare, {
-      workspaceRoot,
-      git,
-      env: childEnv,
-      emit,
-      urlPolicy: deps.urlPolicy ?? 'github-https',
-    });
-    await runTurnLoop({
-      request,
-      provider,
-      tools: createToolExecutor({
-        workspaceRoot,
-        childEnv,
-        toolTimeoutMs: request.limits.toolTimeoutMs,
-        maxToolOutputBytes: request.limits.maxToolOutputBytes,
-        git,
-      }),
-      toolDefinitions: TOOL_DEFINITIONS,
-      emit,
-      lastEmittedAt: sink.writer.lastEmittedAt,
-      workspaceRoot,
-      childEnv,
-      git,
+    tokenFile = await materializeGitToken(io.env, deps.runtimeDir ?? DEFAULT_RUNTIME_DIR);
+    await prepareAndRun(request, deps, sink, {
+      workspaceRoot: deps.workspaceRoot ?? DEFAULT_WORKSPACE_ROOT,
+      childEnv: createChildEnv(io.env, { tokenFile }),
+      git: deps.git ?? createGitRunner(),
       signal: controller.signal,
     });
     return EXIT.ok;

@@ -116,6 +116,16 @@ describe('readFile', () => {
     expect(result).toMatchObject({ status: 'FAILED', output: 'path could not be resolved' });
   });
 
+  it('refuses a file too large to load, pointing at the shell instead', async () => {
+    // The file has to be read whole before it can be numbered, and a large artefact in the
+    // checkout would exhaust the container's memory limit.
+    await writeFile(path.join(root, 'huge.bin'), Buffer.alloc(4 * 1024 * 1024 + 1));
+    const result = await readFile({ path: 'huge.bin', startLine: null, endLine: null }, context);
+    expect(result.status).toBe('FAILED');
+    expect(result.output).toContain('too large to read whole');
+    expect(result.output).toContain('run_shell with head or sed');
+  });
+
   it('truncates a long file and still reports its real size', async () => {
     // The budget protects the model's context; the notice tells it what it is missing.
     await writeFile(path.join(root, 'big.txt'), 'x'.repeat(5000), 'utf8');

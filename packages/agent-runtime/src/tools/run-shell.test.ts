@@ -142,17 +142,19 @@ describe('runShell', () => {
     expect(result.output).toContain('[cancelled]');
   });
 
-  it('caps the output and stops streaming once the budget is spent', async () => {
-    // Both the model's context and the persisted event stream are finite.
+  it('caps the output, keeps counting it, and stops streaming once the budget is spent', async () => {
+    // Buffering everything a command produces would exhaust the container long before the
+    // per-command timeout could stop it, so past the budget the output is counted and dropped.
     const streamed: string[] = [];
     const result = await runShell(
-      { command: "head -c 100000 /dev/zero | tr '\\0' a", cwd: null, timeoutMs: null },
+      { command: "head -c 2000000 /dev/zero | tr '\\0' a", cwd: null, timeoutMs: null },
       { ...context, maxOutputBytes: 1024 },
       { onOutput: (_stream, text) => streamed.push(text) },
     );
-    expect(result.bytes).toBe(100_000);
-    expect(result.output).toContain('[truncated: 100000 bytes total]');
-    expect(Buffer.byteLength(streamed.join(''))).toBeLessThan(100_000);
+    expect(result.bytes).toBe(2_000_000);
+    expect(result.output).toContain('[truncated: 2000000 bytes total]');
+    expect(Buffer.byteLength(result.output)).toBeLessThan(200_000);
+    expect(Buffer.byteLength(streamed.join(''))).toBeLessThan(200_000);
   });
 
   it('gives the command an environment without either credential', async () => {
@@ -184,9 +186,10 @@ describe('runShell', () => {
         pid: undefined,
         stdout: null,
         stderr: null,
+        kill: () => true,
       });
       setImmediate(() => child.emit('error', new Error('spawn bash ENOENT')));
-      return child as unknown as ReturnType<SpawnFunction>;
+      return child;
     };
     const result = await runShell(
       { command: 'echo hi', cwd: null, timeoutMs: null },
@@ -208,9 +211,10 @@ describe('runShell', () => {
         pid: undefined,
         stdout: new PassThrough(),
         stderr: new PassThrough(),
+        kill: () => true,
       });
       setTimeout(() => child.emit('close', null), 80);
-      return child as unknown as ReturnType<SpawnFunction>;
+      return child;
     };
     const result = await runShell(
       { command: 'sleep 30', cwd: null, timeoutMs: 10 },

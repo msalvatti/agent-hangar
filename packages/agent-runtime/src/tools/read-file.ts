@@ -5,6 +5,10 @@
  *
  * Line numbers are what makes the output usable: the model quotes them back when it asks for an
  * edit, and they survive truncation, so a partial read is still unambiguous.
+ *
+ * The whole file has to be read before it can be numbered, so an oversized one is refused rather
+ * than loaded: the path comes from a model that has read untrusted repository content, and a
+ * multi-gigabyte artefact in the checkout would exhaust the container's memory limit.
  */
 import { readFile as readFileFromDisk, stat } from 'node:fs/promises';
 
@@ -12,6 +16,15 @@ import { displayPath, PathEscapeError, resolveInsideWorkspace } from './paths.js
 import { failure, truncateOutput } from './result.js';
 import type { ToolResult } from './result.js';
 import type { ReadFileArgs } from './schemas.js';
+
+/**
+ * Largest file this tool will load, in bytes.
+ *
+ * Far above any source file the agent has business reading whole, and far below what would
+ * threaten the container: anything larger is a build artefact or a data dump, and the model is
+ * told to read it in pieces through the shell instead.
+ */
+const MAX_READABLE_BYTES = 4 * 1024 * 1024;
 
 /** Everything `read_file` needs from the turn. */
 export interface ReadFileContext {
@@ -55,6 +68,11 @@ export async function readFile(args: ReadFileArgs, context: ReadFileContext): Pr
   }
   if (entry.isDirectory()) {
     return failure(`is a directory: ${shown}`);
+  }
+  if (entry.size > MAX_READABLE_BYTES) {
+    return failure(
+      `file is too large to read whole (${String(entry.size)} bytes); use run_shell with head or sed to read part of ${shown}`,
+    );
   }
   const content = await readFileFromDisk(absolute, 'utf8');
   const lines = content === '' ? [] : content.split('\n');

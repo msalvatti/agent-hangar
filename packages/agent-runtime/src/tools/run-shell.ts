@@ -13,7 +13,7 @@ import { stat } from 'node:fs/promises';
 import type { Readable } from 'node:stream';
 
 import { nodeSpawn } from '../spawn.js';
-import type { SpawnFunction } from '../spawn.js';
+import type { SpawnedProcess, SpawnFunction } from '../spawn.js';
 
 import { displayPath, PathEscapeError, resolveInsideWorkspace } from './paths.js';
 import { failure, truncateOutput } from './result.js';
@@ -58,8 +58,12 @@ export interface RunShellResult extends ToolResult {
 
 /** Mutable state of one run. */
 interface RunState {
+  /** Output kept for the result; capped, so a runaway command cannot fill the heap. */
   parts: string[];
-  streamedBytes: number;
+  /** Bytes kept so far. */
+  keptBytes: number;
+  /** Bytes the command produced in total, including everything that was dropped. */
+  totalBytes: number;
   timedOut: boolean;
   cancelled: boolean;
 }
@@ -88,7 +92,7 @@ function killGroup(pid: number | undefined, signal: NodeJS.Signals): void {
  * @param name - Which stream this is, for the hook.
  * @param state - Run state, mutated in place.
  * @param hooks - Per-call hooks.
- * @param maxOutputBytes - Budget after which output is still collected but no longer streamed.
+ * @param maxOutputBytes - Budget after which output is counted but neither kept nor streamed.
  */
 function collectStream(
   source: Readable | null,
@@ -103,9 +107,13 @@ function collectStream(
   // Setting the encoding lets the stream carry a multi-byte character across a chunk boundary.
   source.setEncoding('utf8');
   source.on('data', (chunk: string) => {
-    state.parts.push(chunk);
-    if (state.streamedBytes < maxOutputBytes) {
-      state.streamedBytes += Buffer.byteLength(chunk);
+    state.totalBytes += Buffer.byteLength(chunk);
+    // Past the budget the output is counted and thrown away. A command the model wrote can emit
+    // gigabytes in seconds, and buffering all of it would exhaust the container long before the
+    // per-command timeout could stop it.
+    if (state.keptBytes < maxOutputBytes) {
+      state.parts.push(chunk);
+      state.keptBytes = state.totalBytes;
       hooks.onOutput?.(name, chunk);
     }
   });
@@ -126,8 +134,9 @@ function buildResult(
   state: RunState,
   code: number | null,
 ): RunShellResult {
-  const collected = state.cancelled ? `${state.parts.join('')}\n[cancelled]` : state.parts.join('');
-  const { text, bytes } = truncateOutput(collected, maxOutputBytes);
+  const joined = state.parts.join('');
+  const collected = state.cancelled ? `${joined}\n[cancelled]` : joined;
+  const { text, bytes } = truncateOutput(collected, maxOutputBytes, state.totalBytes);
   const completed = code === 0 ? 'SUCCEEDED' : 'FAILED';
   return {
     output: text,
@@ -166,6 +175,50 @@ async function resolveWorkingDirectory(
 }
 
 /**
+ * Arms the timeout and the cancellation for a running command.
+ *
+ * @param child - The running child.
+ * @param state - Run state, marked when either fires.
+ * @param timeoutMs - How long the command may run.
+ * @param signal - Cancellation, when the caller supplied one.
+ * @returns A teardown that clears the timers and unsubscribes the signal.
+ */
+function armTermination(
+  child: SpawnedProcess,
+  state: RunState,
+  timeoutMs: number,
+  signal: AbortSignal | undefined,
+): () => void {
+  const timers = [
+    setTimeout(() => {
+      state.timedOut = true;
+      killGroup(child.pid, 'SIGKILL');
+    }, timeoutMs),
+  ];
+  const onAbort = (): void => {
+    state.cancelled = true;
+    killGroup(child.pid, 'SIGTERM');
+    timers.push(
+      setTimeout(() => {
+        killGroup(child.pid, 'SIGKILL');
+      }, ABORT_GRACE_MS),
+    );
+  };
+  signal?.addEventListener('abort', onAbort, { once: true });
+  // A listener added to an already-aborted signal is never called, so a cancellation that
+  // arrived before the command started would otherwise let it run to completion.
+  if (signal?.aborted === true) {
+    onAbort();
+  }
+  return () => {
+    for (const timer of timers) {
+      clearTimeout(timer);
+    }
+    signal?.removeEventListener('abort', onAbort);
+  };
+}
+
+/**
  * Starts the command and resolves once it has closed, been killed or failed to start.
  *
  * @param args - The call's arguments.
@@ -181,7 +234,13 @@ function execute(
   cwd: string,
 ): Promise<RunShellResult> {
   const spawnFn = context.spawn ?? nodeSpawn;
-  const state: RunState = { parts: [], streamedBytes: 0, timedOut: false, cancelled: false };
+  const state: RunState = {
+    parts: [],
+    keptBytes: 0,
+    totalBytes: 0,
+    timedOut: false,
+    cancelled: false,
+  };
 
   return new Promise<RunShellResult>((resolve) => {
     const child = spawnFn('bash', ['-lc', args.command], {
@@ -193,42 +252,18 @@ function execute(
     });
     collectStream(child.stdout, 'stdout', state, hooks, context.maxOutputBytes);
     collectStream(child.stderr, 'stderr', state, hooks, context.maxOutputBytes);
-
-    const timers: ReturnType<typeof setTimeout>[] = [];
-    timers.push(
-      setTimeout(() => {
-        state.timedOut = true;
-        killGroup(child.pid, 'SIGKILL');
-      }, args.timeoutMs ?? context.defaultTimeoutMs),
+    const disarm = armTermination(
+      child,
+      state,
+      args.timeoutMs ?? context.defaultTimeoutMs,
+      hooks.signal,
     );
-    const onAbort = (): void => {
-      state.cancelled = true;
-      killGroup(child.pid, 'SIGTERM');
-      timers.push(
-        setTimeout(() => {
-          killGroup(child.pid, 'SIGKILL');
-        }, ABORT_GRACE_MS),
-      );
-    };
-    hooks.signal?.addEventListener('abort', onAbort, { once: true });
-    // A listener added to an already-aborted signal is never called, so a cancellation that
-    // arrived before the command started would otherwise let it run to completion.
-    if (hooks.signal?.aborted === true) {
-      onAbort();
-    }
-
-    const stop = (): void => {
-      for (const timer of timers) {
-        clearTimeout(timer);
-      }
-      hooks.signal?.removeEventListener('abort', onAbort);
-    };
     child.on('error', (error: Error) => {
-      stop();
+      disarm();
       resolve({ ...failure(`failed to start command: ${error.message}`), command: args.command });
     });
     child.on('close', (code: number | null) => {
-      stop();
+      disarm();
       resolve(buildResult(args, context.maxOutputBytes, state, code));
     });
   });

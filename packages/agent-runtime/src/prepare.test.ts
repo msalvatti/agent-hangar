@@ -17,7 +17,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createChildEnv } from './child-env.js';
 import { createGitRunner } from './git.js';
 import type { GitArgs, GitRunOptions, GitRunner } from './git.js';
-import { assertGithubHttpsUrl, prepare, PrepareError } from './prepare.js';
+import { assertBranchName, assertGithubHttpsUrl, prepare, PrepareError } from './prepare.js';
 import type { PrepareDeps } from './prepare.js';
 import { createBareRepoWithSeed } from './testing/bare-repo.js';
 import type { BareRepo } from './testing/bare-repo.js';
@@ -129,6 +129,42 @@ describe('assertGithubHttpsUrl', () => {
     // A caller that forgets the policy must get the strict one, not the permissive one.
     const { urlPolicy: _ignored, ...strict } = deps;
     await expect(prepare(repoSection(), { clone: true }, strict)).rejects.toThrow(PrepareError);
+  });
+});
+
+describe('branch names', () => {
+  it.each([
+    ['an ordinary branch', 'main'],
+    ['a namespaced branch', 'agent/work-1.2_x'],
+  ])('accepts %s', (_name, branch) => {
+    // These are the shapes the host actually produces.
+    expect(() => {
+      assertBranchName(branch, 'workBranch');
+    }).not.toThrow();
+  });
+
+  it.each([
+    ['a name git would read as an option', '--upload-pack=/bin/sh'],
+    ['a leading dash', '-f'],
+    ['a shell metacharacter', 'main;rm -rf /'],
+    ['an empty name', ''],
+  ])('refuses %s', (_name, branch) => {
+    // Two of the git invocations take a branch positionally, where a leading dash becomes an
+    // option — `--upload-pack` is how that turns into command execution on a non-https remote.
+    expect(() => {
+      assertBranchName(branch, 'workBranch');
+    }).toThrow(PrepareError);
+  });
+
+  it.each([
+    ['the base branch', { baseBranch: '--upload-pack=/bin/sh' }],
+    ['the work branch', { workBranch: '-f' }],
+  ])('refuses %s before running any git command', async (_name, overrides) => {
+    // The check runs ahead of the clone, so nothing reaches git at all.
+    await expect(prepare(repoSection(overrides), { clone: true }, deps)).rejects.toThrow(
+      PrepareError,
+    );
+    expect(seenEnvs).toHaveLength(0);
   });
 });
 

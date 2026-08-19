@@ -81,16 +81,26 @@ export function describeErrorWithStack(error: unknown): string {
  * window, which is charged by bytes; a partially copied multi-byte sequence is dropped so the
  * result is always valid UTF-8.
  *
- * @param text - Full output collected from the tool.
+ * @param text - Output collected from the tool. A caller that stopped collecting early passes
+ *   what it kept, and reports the real size separately.
  * @param maxBytes - Budget from the turn's limits.
- * @returns The capped text, the original size and whether it was cut.
+ * @param totalBytes - Size of the complete output; defaults to the size of `text`.
+ * @returns The capped text, the complete size and whether anything was cut.
  */
-export function truncateOutput(text: string, maxBytes: number): TruncatedOutput {
-  const bytes = Buffer.byteLength(text);
-  if (bytes <= maxBytes) {
-    return { text, bytes, truncated: false };
+export function truncateOutput(
+  text: string,
+  maxBytes: number,
+  totalBytes = Buffer.byteLength(text),
+): TruncatedOutput {
+  const collected = Buffer.byteLength(text);
+  if (collected <= maxBytes && collected === totalBytes) {
+    return { text, bytes: totalBytes, truncated: false };
   }
   const kept = Buffer.from(text).subarray(0, maxBytes).toString('utf8');
   const whole = kept.endsWith(REPLACEMENT_CHARACTER) ? kept.slice(0, -1) : kept;
-  return { text: `${whole}\n[truncated: ${String(bytes)} bytes total]`, bytes, truncated: true };
+  return {
+    text: `${whole}\n[truncated: ${String(totalBytes)} bytes total]`,
+    bytes: totalBytes,
+    truncated: true,
+  };
 }

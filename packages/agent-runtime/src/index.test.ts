@@ -20,6 +20,7 @@ describe('@agent-hangar/agent-runtime barrel', () => {
       'REDACTED',
       'RUNTIME_VERSION',
       'TOOL_DEFINITIONS',
+      'assertBranchName',
       'assertGithubHttpsUrl',
       'builtInFakeScript',
       'createDiagnostics',

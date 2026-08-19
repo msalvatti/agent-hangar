@@ -55,7 +55,7 @@ function scriptedSpawn(script: { error?: Error; hang?: boolean; exitCode?: numbe
         child.emit('close', script.exitCode ?? 0);
       }
     });
-    return child as unknown as ReturnType<SpawnFunction>;
+    return child;
   };
   return { spawn, kills };
 }

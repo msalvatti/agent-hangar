@@ -78,6 +78,17 @@ describe('truncateOutput', () => {
     });
   });
 
+  it('reports the real size when the caller stopped collecting early', () => {
+    // `run_shell` throws away output past the budget, so the size it kept is not the size the
+    // command produced, and the model needs to be told the real one.
+    const result = truncateOutput('kept', 100, 5_000_000);
+    expect(result).toStrictEqual({
+      text: 'kept\n[truncated: 5000000 bytes total]',
+      bytes: 5_000_000,
+      truncated: true,
+    });
+  });
+
   it('drops a multi-byte character the cut would have split', () => {
     // Half a UTF-8 sequence would reach the model as a replacement character.
     // "aé" is three bytes, so a two-byte cut lands in the middle of the second character.

@@ -24,6 +24,17 @@ const ALLOWED_HOST = 'github.com';
 /** Owner and repository name, with an optional `.git` suffix and nothing else. */
 const REPOSITORY_PATH = /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?$/;
 
+/**
+ * Branch names this lane will hand to git.
+ *
+ * Deliberately narrower than what git itself accepts. Two of the invocations below take a branch
+ * as a positional argument, where a name beginning with `-` would be read as an option instead —
+ * `--upload-pack=…` is the classic way that turns into command execution on a non-https remote.
+ * The names come from the host rather than from the model, so this is defence in depth, but it
+ * costs one regular expression and removes the whole class.
+ */
+const BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+
 /** Preparation could not bring the workspace to a usable state. */
 export class PrepareError extends Error {
   /** Stable identifier; the loop maps it to `turn.failed { code: 'prepare' }`. */
@@ -89,6 +100,21 @@ export function assertGithubHttpsUrl(url: string): void {
   if (!acceptable) {
     throw new PrepareError(
       `repository URL must be https://${ALLOWED_HOST}/<owner>/<repo> without credentials`,
+    );
+  }
+}
+
+/**
+ * Rejects a branch name git could read as an option.
+ *
+ * @param branch - Branch name from the turn request.
+ * @param field - Which field it came from, for the message.
+ * @throws PrepareError when the name is not one this lane will pass to git.
+ */
+export function assertBranchName(branch: string, field: string): void {
+  if (!BRANCH_NAME.test(branch)) {
+    throw new PrepareError(
+      `${field} must start with a letter or digit and contain only letters, digits, dot, dash, underscore and slash`,
     );
   }
 }
@@ -240,6 +266,8 @@ export async function prepare(
   if ((deps.urlPolicy ?? 'github-https') === 'github-https') {
     assertGithubHttpsUrl(repo.url);
   }
+  assertBranchName(repo.baseBranch, 'baseBranch');
+  assertBranchName(repo.workBranch, 'workBranch');
   try {
     await cloneOrFetch(repo, prepareOptions, deps);
     await checkoutWorkBranch(repo, deps);

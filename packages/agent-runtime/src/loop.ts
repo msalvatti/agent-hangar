@@ -83,6 +83,8 @@ interface LoopState {
   seq: number;
   steps: number;
   finalMessage: string;
+  /** Stops the heartbeat; called before a terminal event so none can follow it. */
+  stopHeartbeat: () => void;
 }
 
 /** Clock captured at the start of the turn. */
@@ -132,6 +134,22 @@ async function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
  */
 function emitDetached(deps: LoopDeps, event: AgentEvent): void {
   void deps.emit(event).catch(() => undefined);
+}
+
+/**
+ * Emits the event that ends the turn.
+ *
+ * The heartbeat is stopped first rather than in the caller's `finally`: the interval could
+ * otherwise fire while this write is in flight and put a `heartbeat` after the terminal event,
+ * which the transcript reads as a turn that never ended. Stopping it twice is harmless.
+ *
+ * @param deps - Loop dependencies.
+ * @param state - Loop state.
+ * @param event - The terminal event.
+ */
+async function emitTerminal(deps: LoopDeps, state: LoopState, event: AgentEvent): Promise<void> {
+  state.stopHeartbeat();
+  await deps.emit(event);
 }
 
 /**
@@ -356,7 +374,7 @@ async function stopForLimit(deps: LoopDeps, state: LoopState): Promise<LoopOutco
   const text = `Stopped after ${String(state.steps)} steps / ${String(minutes)} min (limit reached). Work so far: ${soFar}`;
   await deps.emit({ type: 'assistant.message', text });
   state.finalMessage = text;
-  await deps.emit({
+  await emitTerminal(deps, state, {
     type: 'turn.completed',
     usage: state.usage,
     steps: state.steps,
@@ -370,10 +388,11 @@ async function stopForLimit(deps: LoopDeps, state: LoopState): Promise<LoopOutco
  * Ends the turn because it was cancelled.
  *
  * @param deps - Loop dependencies.
+ * @param state - Loop state.
  * @returns The cancelled outcome.
  */
-async function cancelTurn(deps: LoopDeps): Promise<LoopOutcome> {
-  await deps.emit({ type: 'turn.cancelled' });
+async function cancelTurn(deps: LoopDeps, state: LoopState): Promise<LoopOutcome> {
+  await emitTerminal(deps, state, { type: 'turn.cancelled' });
   return { kind: 'cancelled' };
 }
 
@@ -392,10 +411,10 @@ async function runStep(
 ): Promise<LoopOutcome | null> {
   const outcome = await runModelStep(deps, state);
   if (outcome.kind === 'cancelled') {
-    return cancelTurn(deps);
+    return cancelTurn(deps, state);
   }
   if (outcome.kind === 'failed') {
-    await deps.emit({
+    await emitTerminal(deps, state, {
       type: 'turn.failed',
       error: { code: outcome.code, message: outcome.message },
     });
@@ -409,7 +428,7 @@ async function runStep(
     state.finalMessage = outcome.text;
   }
   if (outcome.toolCalls.length === 0) {
-    await deps.emit({
+    await emitTerminal(deps, state, {
       type: 'turn.completed',
       usage: state.usage,
       steps: state.steps,
@@ -417,7 +436,9 @@ async function runStep(
     });
     return { kind: 'completed' };
   }
-  return (await runToolCalls(deps, state, outcome.toolCalls, clock)) ? cancelTurn(deps) : null;
+  return (await runToolCalls(deps, state, outcome.toolCalls, clock))
+    ? cancelTurn(deps, state)
+    : null;
 }
 
 /**
@@ -432,7 +453,7 @@ async function runSteps(deps: LoopDeps, state: LoopState, clock: LoopClock): Pro
   const { maxSteps, maxTurnMs } = deps.request.limits;
   for (let step = 1; step <= maxSteps; step += 1) {
     if (deps.signal.aborted) {
-      return cancelTurn(deps);
+      return cancelTurn(deps, state);
     }
     if (clock.now() - clock.startedAt >= maxTurnMs) {
       return stopForLimit(deps, state);
@@ -456,21 +477,25 @@ async function runSteps(deps: LoopDeps, state: LoopState, clock: LoopClock): Pro
 export async function runTurnLoop(deps: LoopDeps): Promise<LoopOutcome> {
   const now = deps.now ?? Date.now;
   const heartbeatMs = deps.heartbeatMs ?? DEFAULT_HEARTBEAT_MS;
+  const heartbeat = setInterval(() => {
+    if (now() - deps.lastEmittedAt() >= heartbeatMs) {
+      emitDetached(deps, { type: 'heartbeat', at: new Date(now()).toISOString() });
+    }
+  }, heartbeatMs);
+  const stopHeartbeat = (): void => {
+    clearInterval(heartbeat);
+  };
   const state: LoopState = {
     items: [...deps.request.items],
     usage: { inputTokens: 0, outputTokens: 0 },
     seq: 0,
     steps: 0,
     finalMessage: '',
+    stopHeartbeat,
   };
-  const heartbeat = setInterval(() => {
-    if (now() - deps.lastEmittedAt() >= heartbeatMs) {
-      emitDetached(deps, { type: 'heartbeat', at: new Date(now()).toISOString() });
-    }
-  }, heartbeatMs);
   try {
     return await runSteps(deps, state, { now, startedAt: now() });
   } finally {
-    clearInterval(heartbeat);
+    stopHeartbeat();
   }
 }

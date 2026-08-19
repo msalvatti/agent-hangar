@@ -110,49 +110,38 @@ describe('createRuntimeRedactor / redactEvent', () => {
 
   it.each([
     [
-      'prepare.progress',
-      { type: 'prepare.progress', message: `pushed with ${GITHUB_CANARY}` } as const,
-      'message',
-      `pushed with ${REDACTED}`,
+      { type: 'prepare.progress', message: `pushed with ${GITHUB_CANARY}` },
+      { type: 'prepare.progress', message: `pushed with ${REDACTED}` },
     ],
     [
-      'assistant.delta',
-      { type: 'assistant.delta', text: `key ${OPENAI_CANARY}` } as const,
-      'text',
-      `key ${REDACTED}`,
+      { type: 'assistant.delta', text: `key ${OPENAI_CANARY}` },
+      { type: 'assistant.delta', text: `key ${REDACTED}` },
     ],
     [
-      'assistant.message',
-      { type: 'assistant.message', text: `key ${OPENAI_CANARY}` } as const,
-      'text',
-      `key ${REDACTED}`,
+      { type: 'assistant.message', text: `key ${OPENAI_CANARY}` },
+      { type: 'assistant.message', text: `key ${REDACTED}` },
     ],
     [
-      'tool.output.delta',
-      {
-        type: 'tool.output.delta',
-        callId: 'c1',
-        stream: 'stdout',
-        text: GITHUB_CANARY,
-      } as const,
-      'text',
-      REDACTED,
+      { type: 'tool.output.delta', callId: 'c1', stream: 'stdout', text: GITHUB_CANARY },
+      { type: 'tool.output.delta', callId: 'c1', stream: 'stdout', text: REDACTED },
     ],
     [
-      'turn.completed',
       {
         type: 'turn.completed',
         usage: { inputTokens: 1, outputTokens: 2 },
         steps: 1,
         finalMessage: `done ${GITHUB_CANARY}`,
-      } as const,
-      'finalMessage',
-      `done ${REDACTED}`,
+      },
+      {
+        type: 'turn.completed',
+        usage: { inputTokens: 1, outputTokens: 2 },
+        steps: 1,
+        finalMessage: `done ${REDACTED}`,
+      },
     ],
-  ])('redacts the %s text field', (_name, event, field, expected) => {
+  ] satisfies [AgentEvent, AgentEvent][])('redacts the text of $0.type', (event, expected) => {
     // Each of these fields carries model or tool output and can contain a credential.
-    const result = redactor.redactEvent(event) as unknown as Record<string, unknown>;
-    expect(result[field]).toBe(expected);
+    expect(redactor.redactEvent(event)).toStrictEqual(expected);
   });
 
   it('redacts the message of a failed turn without touching its code', () => {
