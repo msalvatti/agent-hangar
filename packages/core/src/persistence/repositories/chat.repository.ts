@@ -3,10 +3,13 @@
  *
  * Layer: service (persistence).
  *
- * `title`, `repoUrl`, `baseBranch`, `workBranch` and `lastPushedSha` are user-controlled
- * identifiers, not agent output, so nothing here is redacted — matching the lane rule that only
- * free-text agent/tool output columns go through the `Redactor`.
+ * `title` is redacted on write. Both the schema and spec 02 define it as the first prompt,
+ * trimmed, so it is the same free text as `Message.content` and can carry a PAT or an API key;
+ * `create` and `rename` are the only two ways a title enters, and both go through the `Redactor`.
+ * `repoUrl`, `baseBranch`, `workBranch` and `lastPushedSha` are identifiers and are never
+ * redacted — the lane rule forbids redacting those.
  */
+import type { Redactor } from '../../secrets/types.js';
 import type { ChatStatus } from '../../workspace/types.js';
 import type { Chat } from '../entities.js';
 import type { PrismaClient } from '../generated/client.js';
@@ -15,18 +18,22 @@ import type { ChatRepository, CreateChatInput, RestoreHints } from '../ports.js'
 import { toChat, toPrismaChatStatus } from './mappers.js';
 import { translatePrismaError } from './prisma-errors.js';
 
-/** Chat rows; the only repository that never redacts a column it writes. */
+/** Chat rows. */
 export class PrismaChatRepository implements ChatRepository {
   /**
    * @param prisma - Connected Prisma client.
+   * @param redactor - Redacts `title` before it is written.
    */
-  constructor(private readonly prisma: PrismaClient) {}
+  constructor(
+    private readonly prisma: PrismaClient,
+    private readonly redactor: Redactor,
+  ) {}
 
   /** @inheritDoc */
   async create(input: CreateChatInput): Promise<Chat> {
     const row = await this.prisma.chat.create({
       data: {
-        title: input.title,
+        title: this.redactor.redact(input.title),
         repoUrl: input.repoUrl,
         baseBranch: input.baseBranch,
         status: 'ACTIVE',
@@ -52,7 +59,7 @@ export class PrismaChatRepository implements ChatRepository {
 
   /** @inheritDoc */
   async rename(id: string, title: string): Promise<Chat> {
-    return this.update(id, { title });
+    return this.update(id, { title: this.redactor.redact(title) });
   }
 
   /** @inheritDoc */

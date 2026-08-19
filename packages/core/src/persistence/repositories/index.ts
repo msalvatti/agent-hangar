@@ -43,7 +43,7 @@ export { PrismaWorkspaceRepository } from './workspace.repository.js';
  */
 export function createRepositories(prisma: PrismaClient, redactor: Redactor): Repositories {
   return {
-    chats: new PrismaChatRepository(prisma),
+    chats: new PrismaChatRepository(prisma, redactor),
     messages: new PrismaMessageRepository(prisma, redactor),
     turns: new PrismaTurnRepository(prisma, redactor),
     workspaces: new PrismaWorkspaceRepository(prisma, redactor),

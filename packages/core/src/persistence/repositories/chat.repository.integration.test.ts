@@ -5,16 +5,31 @@
  * Goal: create/getById round-trips every field; `list` orders by `updatedAt` desc and filters by
  * status; `setStatus` stamps/clears `archivedAt`; `updateRestoreHints` changes only the field
  * present; `delete` cascades messages/turns and nulls a workspace's `chatId`; unknown ids throw
- * `NotFoundError`.
+ * `NotFoundError`; a canary in the title never reaches the stored row, on create or on rename.
  * Mocks: none — a real compose Postgres (`AH_ALLOW_DESTRUCTIVE_TESTS=1`, a test-named database).
  */
 import { beforeEach, expect, it } from 'vitest';
 
+import type { Redactor } from '../../secrets/types.js';
+import { assertNoCanary, GITHUB_CANARY } from '../../testing/canaries.js';
 import type { PrismaClient } from '../generated/client.js';
-import { connectTestDb, countRows, describeDb, truncateAll } from '../testing/db.js';
+import {
+  connectTestDb,
+  countRows,
+  describeDb,
+  rawSelect,
+  sqlTemplate,
+  truncateAll,
+} from '../testing/db.js';
 
 import { PrismaChatRepository } from './chat.repository.js';
 import { NotFoundError } from './errors.js';
+
+const testRedactor: Redactor = {
+  register: () => undefined,
+  redact: (input: string) => input.replaceAll(GITHUB_CANARY, '[REDACTED]'),
+  redactJson: (input: unknown) => input,
+};
 
 let client: PrismaClient;
 
@@ -24,9 +39,37 @@ describeDb('PrismaChatRepository', () => {
     await truncateAll(client);
   });
 
+  /** A canary in the title never reaches the stored row, on create or on rename. */
+  it('never stores a canary in title', async () => {
+    const repo = new PrismaChatRepository(client, testRedactor);
+    const chat = await repo.create({
+      title: `fix auth with ${GITHUB_CANARY}`,
+      repoUrl: 'https://github.com/acme/repo',
+      baseBranch: 'main',
+    });
+    const created = await rawSelect<{ title: string }>(
+      client,
+      sqlTemplate('SELECT title FROM "Chat" WHERE id = '),
+      chat.id,
+    );
+    const createdTitle = created[0]?.title ?? '';
+    expect(createdTitle).toContain('[REDACTED]');
+    assertNoCanary(createdTitle);
+
+    await repo.rename(chat.id, `renamed with ${GITHUB_CANARY}`);
+    const renamed = await rawSelect<{ title: string }>(
+      client,
+      sqlTemplate('SELECT title FROM "Chat" WHERE id = '),
+      chat.id,
+    );
+    const renamedTitle = renamed[0]?.title ?? '';
+    expect(renamedTitle).toContain('[REDACTED]');
+    assertNoCanary(renamedTitle);
+  });
+
   /** create() round-trips every field; getById() returns the same row. */
   it('create() then getById() round-trip every field', async () => {
-    const repo = new PrismaChatRepository(client);
+    const repo = new PrismaChatRepository(client, testRedactor);
     const chat = await repo.create({
       title: 'Fix the bug',
       repoUrl: 'https://github.com/acme/repo',
@@ -40,7 +83,7 @@ describeDb('PrismaChatRepository', () => {
 
   /** list() orders by updatedAt desc: touching the older chat moves it first. */
   it('list() orders by updatedAt desc', async () => {
-    const repo = new PrismaChatRepository(client);
+    const repo = new PrismaChatRepository(client, testRedactor);
     const first = await repo.create({
       title: 'First',
       repoUrl: 'https://github.com/a/a',
@@ -57,7 +100,7 @@ describeDb('PrismaChatRepository', () => {
 
   /** list(status) filters, and setStatus/ACTIVE round-trip archivedAt. */
   it('setStatus(ARCHIVED) stamps archivedAt and list("ARCHIVED") finds it; ACTIVE clears it', async () => {
-    const repo = new PrismaChatRepository(client);
+    const repo = new PrismaChatRepository(client, testRedactor);
     const chat = await repo.create({
       title: 'X',
       repoUrl: 'https://github.com/a/a',
@@ -73,7 +116,7 @@ describeDb('PrismaChatRepository', () => {
 
   /** updateRestoreHints() with only one field present leaves the other untouched. */
   it('updateRestoreHints() with only lastPushedSha leaves workBranch untouched', async () => {
-    const repo = new PrismaChatRepository(client);
+    const repo = new PrismaChatRepository(client, testRedactor);
     const chat = await repo.create({
       title: 'X',
       repoUrl: 'https://github.com/a/a',
@@ -87,7 +130,7 @@ describeDb('PrismaChatRepository', () => {
 
   /** delete() cascades messages/turns and nulls the chatId of a workspace it owned. */
   it('delete() cascades messages and turns, and nulls a workspace chatId', async () => {
-    const repo = new PrismaChatRepository(client);
+    const repo = new PrismaChatRepository(client, testRedactor);
     const chat = await repo.create({
       title: 'X',
       repoUrl: 'https://github.com/a/a',
@@ -119,7 +162,7 @@ describeDb('PrismaChatRepository', () => {
 
   /** setStatus/delete on an unknown id throw NotFoundError. */
   it('setStatus() and delete() on an unknown id throw NotFoundError', async () => {
-    const repo = new PrismaChatRepository(client);
+    const repo = new PrismaChatRepository(client, testRedactor);
     await expect(repo.setStatus('missing', 'ARCHIVED')).rejects.toBeInstanceOf(NotFoundError);
     await expect(repo.delete('missing')).rejects.toBeInstanceOf(NotFoundError);
   });
