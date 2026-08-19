@@ -21,10 +21,13 @@ const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9._-]+$/;
  * Whether a URL carries no credential-bearing component.
  *
  * Userinfo, a query string and a fragment are each a place a token hides
- * (`https://user:ghp_…@…`, `?token=…`, `#access_token=…`), and a non-default port sends the clone
- * somewhere other than the host's usual service. The query and fragment are tested on the raw text
- * rather than on `URL`'s parsed components, because a bare `?` or `#` normalises to an empty
- * component while remaining part of the stored string.
+ * (`https://user:ghp_…@…`, `?token=…`, `#access_token=…`). The query and fragment are tested on
+ * the raw text rather than on `URL`'s parsed components, because a bare `?` or `#` normalises to
+ * an empty component while remaining part of the stored string.
+ *
+ * Scheme, host and port are deliberately NOT judged here: they are transport policy, decided by
+ * the host through `ALLOWED_REPO_HOSTS`, not places a credential hides. The end-to-end harness
+ * clones `http://<local-git-server>:<port>/sample.git`, which is legitimate and must pass.
  *
  * @param value - A URL string.
  * @returns `true` when the URL carries nothing that could hold a credential.
@@ -48,7 +51,7 @@ function parseCredentialFreeUrl(value: string): URL | null {
   if (parsed === null) {
     return null;
   }
-  if (parsed.username !== '' || parsed.password !== '' || parsed.port !== '') {
+  if (parsed.username !== '' || parsed.password !== '') {
     return null;
   }
   if (value.includes('?') || value.includes('#')) {
@@ -72,6 +75,12 @@ export function isPlainRepoUrl(value: string): boolean {
   if (parsed === null) {
     return false;
   }
+  // `URL` blanks the port when it is the scheme's default, so anything left here redirects the
+  // clone away from github.com:443. Checked at this rule rather than in the credential-free one,
+  // which serves boundaries where a port is legitimate.
+  if (parsed.port !== '') {
+    return false;
+  }
   const path = parsed.pathname;
   const withoutSuffix = path.endsWith(GIT_URL_SUFFIX)
     ? path.slice(0, -GIT_URL_SUFFIX.length)
@@ -81,14 +90,19 @@ export function isPlainRepoUrl(value: string): boolean {
 }
 
 /**
- * An https URL that carries no credential, with no policy on which host it names.
+ * An http(s) URL that carries no credential, with no policy on which host or port it names.
  *
  * Used where the host is decided elsewhere — the agent-runtime protocol takes whatever repository
  * the host resolved, and enforcing the forge there would duplicate a policy it does not own — but
- * where a credential in the URL would still end up in a clone command.
+ * where a credential in the URL would still end up in a clone command and in the container's
+ * process arguments.
+ *
+ * The scheme is still narrowed to what this product clones over, because `git` would otherwise
+ * accept `file://`, `git://` and `ssh://` here; which of http and https is acceptable for a given
+ * host is the host's decision.
  */
-export const credentialFreeUrl = z.url({ protocol: /^https$/ }).refine(isCredentialFreeUrl, {
-  message: 'URL must carry no credentials, port, query string or fragment',
+export const credentialFreeUrl = z.url({ protocol: /^https?$/ }).refine(isCredentialFreeUrl, {
+  message: 'URL must carry no credentials, query string or fragment',
 });
 
 /** Repository URL accepted by the API: `https://github.com/<owner>/<repository>[.git]`, nothing else. */

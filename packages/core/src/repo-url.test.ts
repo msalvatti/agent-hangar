@@ -17,7 +17,11 @@ describe('credentialFreeUrl', () => {
     'https://github.com/acme/widgets',
     'https://github.com/acme/widgets.git',
     'https://git.example.test/team/project.git',
-  ])('accepts the credential-free https URL %s', (value) => {
+    // The end-to-end harness clones from a local git server over plain http on a chosen port.
+    // Scheme, host and port are the host's policy (`ALLOWED_REPO_HOSTS`), not a credential.
+    'http://127.0.0.1:3907/sample.git',
+    'http://gitserver:8080/sample.git',
+  ])('accepts the credential-free URL %s', (value) => {
     expect(credentialFreeUrl.safeParse(value).success).toBe(true);
   });
 
@@ -28,8 +32,10 @@ describe('credentialFreeUrl', () => {
     ['a fragment', `https://github.com/acme/widgets#access_token=${GITHUB_CANARY}`],
     ['a bare question mark', 'https://github.com/acme/widgets?'],
     ['a bare hash', 'https://github.com/acme/widgets#'],
-    ['a non-default port', 'https://github.com:8443/acme/widgets'],
-    ['cleartext http', 'http://github.com/acme/widgets'],
+    // Not credential-bearing, but not a scheme this product ever clones over either.
+    ['an ssh URL', 'ssh://git@github.com/acme/widgets.git'],
+    ['a file URL', 'file:///etc/passwd'],
+    ['the unauthenticated git protocol', 'git://github.com/acme/widgets.git'],
     ['a non-URL', 'not a url'],
   ])('rejects %s', (_name, value) => {
     expect(credentialFreeUrl.safeParse(value).success).toBe(false);
@@ -60,6 +66,9 @@ describe('repoUrl', () => {
     ['another forge', 'https://git.example.test/acme/widgets'],
     ['an extra path segment', 'https://github.com/acme/widgets/tree/main'],
     ['a missing segment', 'https://github.com/acme'],
+    // The API rule keeps the port and scheme restrictions the credential-free rule dropped.
+    ['a non-default port', 'https://github.com:8443/acme/widgets'],
+    ['cleartext http', 'http://github.com/acme/widgets'],
   ])('rejects %s', (_name, value) => {
     expect(repoUrl.safeParse(value).success).toBe(false);
   });
