@@ -130,11 +130,34 @@ async function collect(
   return events;
 }
 
+/** Reported when a failure carries no message of its own. */
+const UNKNOWN_FAILURE_MESSAGE = 'unknown error';
+
+/**
+ * Describes a failure in one line, with no stack and nothing of a non-error value.
+ *
+ * The SDK echoes part of the submitted key in some authentication failures, so the caller redacts
+ * whatever this returns before it reaches a stream.
+ *
+ * @param error - Anything caught around an SDK call.
+ * @returns The message to report.
+ */
+function describeFailure(error: unknown): string {
+  if (error instanceof Error && error.message.length > 0) {
+    return error.message;
+  }
+  return UNKNOWN_FAILURE_MESSAGE;
+}
+
 /**
  * Records every stream and writes the redacted fixtures.
  *
+ * A failing request is caught here rather than left to the runtime: an unhandled rejection would
+ * print the raw SDK error and its stack, and an authentication failure can carry part of the
+ * submitted key, which would break this script's promise never to print it.
+ *
  * @param write - File writer; defaults to Node's synchronous writer.
- * @returns Nothing; sets a non-zero exit code when the key is missing.
+ * @returns Nothing; sets a non-zero exit code when the key is missing or a recording fails.
  */
 export async function main(write: FixtureWriter = writeFileSync): Promise<void> {
   const apiKey = process.env.OPENAI_API_KEY;
@@ -145,17 +168,22 @@ export async function main(write: FixtureWriter = writeFileSync): Promise<void> 
   }
   const model = process.env.OPENAI_MODEL ?? DEFAULT_MODEL;
   const baseURL = process.env.OPENAI_BASE_URL;
-  const client = new OpenAI({
-    apiKey,
-    maxRetries: 0,
-    ...(baseURL === undefined ? {} : { baseURL }),
-  });
   const dir = fileURLToPath(new URL('../fixtures/openai/', import.meta.url));
-  for (const recording of RECORDINGS) {
-    const events = await collect(client, recording, model);
-    const body = events.map((event) => redact(JSON.stringify(event), apiKey)).join('\n');
-    write(`${dir}recorded-${recording.name}.ndjson`, `${body}\n`, 'utf8');
-    process.stdout.write(`recorded-${recording.name}: ${String(events.length)} events\n`);
+  try {
+    const client = new OpenAI({
+      apiKey,
+      maxRetries: 0,
+      ...(baseURL === undefined ? {} : { baseURL }),
+    });
+    for (const recording of RECORDINGS) {
+      const events = await collect(client, recording, model);
+      const body = events.map((event) => redact(JSON.stringify(event), apiKey)).join('\n');
+      write(`${dir}recorded-${recording.name}.ndjson`, `${body}\n`, 'utf8');
+      process.stdout.write(`recorded-${recording.name}: ${String(events.length)} events\n`);
+    }
+  } catch (error) {
+    process.stderr.write(`Recording failed: ${redact(describeFailure(error), apiKey)}\n`);
+    process.exitCode = 1;
   }
 }
 

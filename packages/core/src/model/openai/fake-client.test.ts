@@ -115,6 +115,20 @@ describe('createFakeOpenAIClient', () => {
     await expect(iterator.next()).rejects.toThrow('dropped');
   });
 
+  it('still throws when the count reaches the end of the stream', async () => {
+    // A count at or beyond the length of the stream used to end it normally, which turned a
+    // failure-path test into an assertion about ordinary exhaustion.
+    const atEnd = createFakeOpenAIClient({
+      events: EVENTS,
+      throwAfterEvents: { count: EVENTS.length, error: new Error('dropped at the end') },
+    });
+    await expect(drain(atEnd.responses.stream(PARAMS))).rejects.toThrow('dropped at the end');
+    const empty = createFakeOpenAIClient({
+      throwAfterEvents: { count: 0, error: new Error('dropped immediately') },
+    });
+    await expect(drain(empty.responses.stream(PARAMS))).rejects.toThrow('dropped immediately');
+  });
+
   it('refuses to yield anything when the signal is already aborted', async () => {
     // A turn cancelled before the request went out must not replay a single event.
     const controller = new AbortController();

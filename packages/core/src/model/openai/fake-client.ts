@@ -29,7 +29,11 @@ export interface FakeOpenAIClientOptions {
   delayMs?: number;
   /** Thrown instead of opening the stream. */
   throwBeforeStream?: Error;
-  /** Thrown while iterating, once the given number of events has been yielded. */
+  /**
+   * Thrown while iterating, once the given number of events has been yielded. A `count` at or
+   * beyond the length of the stream fails when the stream runs out, so a failure-path test can
+   * never silently degrade into an ordinary exhaustion.
+   */
   throwAfterEvents?: { count: number; error: Error };
   /** Model ids served by `models.list()`. */
   models?: readonly string[];
@@ -112,6 +116,11 @@ async function* replay(
       await wait(options.delayMs, streamOptions?.signal);
     }
     yield event;
+  }
+  if (options.throwAfterEvents !== undefined) {
+    // Reached only when the count was never hit inside the loop, i.e. it is at or beyond the
+    // length of the stream. Failing here keeps `throwAfterEvents` from becoming a silent no-op.
+    throw options.throwAfterEvents.error;
   }
 }
 

@@ -109,13 +109,28 @@ function isSdkApiError(value: unknown): value is SdkApiErrorShape {
 }
 
 /**
+ * Identifiers a cancelled request carries: the platform's `AbortError` sets `name`, while the
+ * SDK's `APIUserAbortError` inherits `name === 'Error'` and is only distinguishable by its class.
+ */
+const ABORT_ERROR_NAMES: readonly string[] = ['AbortError', 'APIUserAbortError'];
+
+/**
  * Detects a cancellation so the caller can end the stream without surfacing an error.
  *
+ * The SDK raises `APIUserAbortError` whenever the underlying request is aborted, including when a
+ * consumer stops iterating early — that is, without the caller's own signal being aborted. Reading
+ * it as a transport failure would let the agent runtime retry a request somebody cancelled, so it
+ * is recognised here. The class is matched by its constructor name rather than by `instanceof`:
+ * this module holds SDK **types** only and must not load the package at runtime.
+ *
  * @param value - Anything caught around an SDK call.
- * @returns `true` for the `AbortError` raised by an aborted `AbortSignal`.
+ * @returns `true` for a platform `AbortError` and for the SDK's `APIUserAbortError`.
  */
 function isAbortError(value: unknown): boolean {
-  return value instanceof Error && value.name === 'AbortError';
+  return (
+    value instanceof Error &&
+    (ABORT_ERROR_NAMES.includes(value.name) || ABORT_ERROR_NAMES.includes(value.constructor.name))
+  );
 }
 
 /**

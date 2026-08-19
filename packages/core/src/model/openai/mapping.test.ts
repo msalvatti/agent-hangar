@@ -552,10 +552,13 @@ describe('createEventMapper', () => {
 
 describe('mapErrorToModelEvent', () => {
   it('reports a cancellation as no event at all', () => {
-    // Aborting is a user action, not a failure; the stream just ends.
+    // Aborting is a user action, not a failure; the stream just ends. The platform sets `name`,
+    // while the SDK class inherits `name === 'Error'` and is recognised by its constructor.
     const aborted = new Error('The operation was aborted.');
     aborted.name = 'AbortError';
     expect(mapErrorToModelEvent(aborted)).toBeNull();
+    expect(new APIUserAbortError().name).toBe('Error');
+    expect(mapErrorToModelEvent(new APIUserAbortError())).toBeNull();
   });
 
   it('maps 401 and 403 to a non-retryable auth error', () => {
@@ -620,7 +623,6 @@ describe('mapErrorToModelEvent', () => {
       retryable: true,
     });
     expect(mapErrorToModelEvent(new APIConnectionTimeoutError())?.code).toBe('network');
-    expect(mapErrorToModelEvent(new APIUserAbortError())?.code).toBe('network');
   });
 
   it('maps a bare fetch failure to a retryable network error', () => {
