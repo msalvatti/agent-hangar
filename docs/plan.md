@@ -299,7 +299,7 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | W1-A | ⬜ | — | — | |
 | W1-B 🐳 | ⬜ | — | — | |
 | W1-C | ⬜ | — | — | |
-| W1-D | 🟦 | `feat/w1d-agent-runtime` | — | Dockerfile COPY lines → orchestrator |
+| W1-D | 🟨 PR open | `feat/w1d-agent-runtime` · PR #11 | 100/100/100/100 (agent-runtime src/**) | Dockerfile COPY lines + infra:image change in PR body; openai provider seam for W3-A |
 | W1-E | ⬜ | — | — | |
 | W1-F | ⬜ | — | — | |
 | W1-G | ⬜ | — | — | creates `shared/transcript` first |

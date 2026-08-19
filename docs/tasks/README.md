@@ -10,7 +10,7 @@ Every task inside a lane file carries a self-contained English agent prompt: an 
 | 1 | W1-A | [wave-1a-secrets-redaction.md](wave-1a-secrets-redaction.md) | `packages/core/src/{secrets,redaction,logging}` | W0 | 📋 |
 | 1 | W1-B 🐳 | [wave-1b-docker-runner.md](wave-1b-docker-runner.md) | `packages/core/src/runner/docker`, `infra/workspace` | W0 | 📋 |
 | 1 | W1-C | [wave-1c-openai-provider.md](wave-1c-openai-provider.md) | `packages/core/src/model/openai`, fixtures | W0 | 📋 |
-| 1 | W1-D | [wave-1d-agent-runtime.md](wave-1d-agent-runtime.md) | `packages/agent-runtime` | W0 | 🟦 |
+| 1 | W1-D | [wave-1d-agent-runtime.md](wave-1d-agent-runtime.md) | `packages/agent-runtime` | W0 | 🟨 |
 | 1 | W1-E | [wave-1e-persistence.md](wave-1e-persistence.md) | `packages/core/src/persistence/repositories` | W0 | 📋 |
 | 1 | W1-F | [wave-1f-scheduling-workspace.md](wave-1f-scheduling-workspace.md) | `packages/core/src/{scheduling,workspace,restore,queues}` | W0 | 📋 |
 | 1 | W1-G | [wave-1g-web-chats.md](wave-1g-web-chats.md) | `apps/web/src/features/{shell,chats}`, `src/shared/transcript`, chat pages, mocks | W0 | 📋 |

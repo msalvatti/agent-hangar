@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-D (no Docker, no Postgres, no Redis — pure Node + git in a temp dir) |
-| **Status** | 🟦 running |
-| **Progress** | 4/5 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1d-agent-runtime` |
 | **Owned paths** | `packages/agent-runtime/**` (src, tests, `esbuild.config.mjs`, `vitest.config.ts`, `package.json` scripts of this package, `scripts/`) · the two Dockerfile `COPY` lines and the `infra:image` root-script change are **requested via the PR description** (W1-B owns `infra/workspace/**`, W1-I owns root `package.json` scripts) |
 | **Depends on** | W0 merged to `main` |
@@ -49,7 +49,7 @@ Quality bar: TypeScript strict, zero `any`, zero suppression comments, no `enum`
 | 1D.2 | Tools: path confinement, `run_shell`, `read_file`, `write_file`, `list_dir`, registry + JSON schemas, child env scrubbing | ✅ | P0 | L | 1D.1 |
 | 1D.3 | `prepare.ts` (clone/checkout/expectedHeadSha) + `git-events.ts` (push detection) | ✅ | P0 | M | 1D.2 |
 | 1D.4 | `loop.ts` step loop + provider seam + `turn` command wiring (cancel, heartbeat, limits, retries) | ✅ | P0 | L | 1D.2, 1D.3 |
-| 1D.5 | Close-out: gates, bundle size, code review, plan dashboard, PR with orchestrator instructions | 📋 | P0 | S | 1D.1–1D.4 |
+| 1D.5 | Close-out: gates, bundle size, code review, plan dashboard, PR with orchestrator instructions | ✅ | P0 | S | 1D.1–1D.4 |
 
 ---
 
@@ -488,15 +488,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1d-agent-runti
 
 ## Task 1D.5 — Close-out: gates, bundle size, code review, plan dashboard, PR with orchestrator instructions
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1D.1–1D.4
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1D.1–1D.4
 
 **Description.** Run every gate including the bundle check, take `/bymax-quality:code-review` to zero findings, optionally smoke the bundle inside the workspace image if Docker is available, update the plan dashboard and task index, and open the PR whose description carries the exact Dockerfile lines, the `infra:image` script change and the CI step for the orchestrator, plus the provider seam note. Return the result object.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck && pnpm --filter @agent-hangar/agent-runtime test` green, 100/100/100/100 on `src/**` (only `src/bin.ts` excluded)
-- [ ] `pnpm --filter @agent-hangar/agent-runtime build && pnpm --filter @agent-hangar/agent-runtime check:bundle` green; size recorded in the PR (< 2 MB)
-- [ ] `/bymax-quality:code-review` zero open findings
-- [ ] PR body contains verbatim: the two Dockerfile `COPY` lines, the `infra:image` script text, the CI step, the provider seam note; `docs/plan.md` §12 W1-D → 🟨 with branch/PR; `docs/tasks/README.md` updated; result object returned
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck && pnpm --filter @agent-hangar/agent-runtime test` green, 100/100/100/100 on `src/**` (only `src/bin.ts` excluded)
+- [x] `pnpm --filter @agent-hangar/agent-runtime build && pnpm --filter @agent-hangar/agent-runtime check:bundle` green; size recorded in the PR (< 2 MB)
+- [x] `/bymax-quality:code-review` zero open findings
+- [x] PR body contains verbatim: the two Dockerfile `COPY` lines, the `infra:image` script text, the CI step, the provider seam note; `docs/plan.md` §12 W1-D → 🟨 with branch/PR; `docs/tasks/README.md` updated; result object returned
 
 **Files to create/modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (W1-D row only), this file (header + log).
@@ -575,3 +575,4 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1d-agent-runti
 - 1D.2 ✅ 2026-08-19 — confined tools, scrubbed child env with the git token file, strict tool schemas and an executor that never throws; the shared git runner landed here because `list_dir` needs it
 - 1D.3 ✅ 2026-08-19 — repository preparation with a validated GitHub https URL, clone/refresh and the three work-branch cases, plus git remote-update detection tested against local bare repositories
 - 1D.4 ✅ 2026-08-19 — the step loop with limits, cancellation and rate-limit retries, the built-in fake scripts, the provider seam and the real `turn` command
+- 1D.5 ✅ 2026-08-19 — gates green, reviews at zero findings, PR #11 opened
