@@ -231,11 +231,24 @@ jobs:
       # Neither scan may reach the remote: the checkout above persists no credentials, so any
       # `git fetch` here fails on a private repository. Both modes work from what checkout already
       # placed on disk — the working tree on pull requests, the full local history on pushes.
+      # Two scans on a pull request, because neither alone is enough: the tree scan sees a secret
+      # that is present now, and the range scan sees one that was committed and deleted again in a
+      # later commit of the same branch, which stays in history and which the tree scan cannot see.
+      # The base commit is the merge commit's first parent, so `fetch-depth: 0` above already has
+      # it and no fetch — hence no credential — is needed.
       - name: gitleaks (working tree)
         if: github.event_name == 'pull_request'
         run: >-
           docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1
           dir /repo --config /repo/.gitleaks.toml --redact --no-banner
+      - name: gitleaks (commits of this pull request)
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: >-
+          docker run --rm -v "$PWD:/repo" ghcr.io/gitleaks/gitleaks:v8.30.1
+          git /repo --config /repo/.gitleaks.toml --redact --no-banner
+          --log-opts="$BASE_SHA..HEAD"
       - name: gitleaks (full history)
         if: github.event_name == 'push'
         run: >-
