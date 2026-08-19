@@ -309,8 +309,9 @@ for f in $(grep -rlE "export async function (POST|PUT|PATCH|DELETE)" apps/web/ap
 # 4. the Markdown renderer keeps its unsafe-URL tests and never gains rehype-raw (owner: W1-G)
 [ -d apps/web/src/shared/transcript ] && { grep -rq "javascript:" apps/web/src/shared/transcript/**/AssistantMarkdown.test.tsx 2>/dev/null || echo "MISSING: unsafe-href tests for AssistantMarkdown"; }
 grep -rn "rehype-raw" apps packages --include='*.ts' --include='*.tsx' --include='*.json' 2>/dev/null
-# 5. workspace containers still grouped in the Docker tree (owner: W1-B)
-[ -f packages/core/src/runner/docker/container-spec.ts ] && { grep -q "com.docker.compose.project" packages/core/src/runner/docker/container-spec.ts || echo "MISSING: compose project label on workspace containers"; }
+# 5. workspace containers still grouped AND still in their own compose project (owner: W1-B)
+F=packages/core/src/runner/docker/container-spec.ts
+[ -f "$F" ] && { grep -q "com.docker.compose.project" "$F" || echo "MISSING: compose project label on workspace containers"; grep -q "com.docker.compose.service" "$F" || echo "MISSING: compose service label on workspace containers"; grep -q -- "-ws" "$F" || echo "MISSING: -ws suffix — workspaces would share the stack compose project and become --remove-orphans targets"; grep -q -- "-ws" "${F%.ts}.test.ts" 2>/dev/null || echo "MISSING: unit test pinning the -ws project value"; }
 ```
 
 (The "every `it()` carries a block comment" and "JSDoc on every export"
@@ -427,6 +428,15 @@ container also carries
 |---|---|
 | `com.docker.compose.project` | `agent-hangar-<instance>-ws` |
 | `com.docker.compose.service` | the workspace kind, lowercased (`chat`, `job`) |
+
+**What actually guarantees the value is a test, not the grep.** A grep can
+assert that a label key is present; it cannot pin the value it is set to, and
+the value is the whole point here. W1-B therefore ships a unit test asserting
+that the project label (a) ends with `-ws` and (b) is **not** equal to
+`agent-hangar-<instance>`, alongside the container-spec snapshots that pin both
+labels for the CHAT and JOB cases. Presence check 5 is a tripwire for the
+obvious regressions — key deleted, suffix deleted, test deleted — and the test
+is the real contract.
 
 **The `-ws` suffix is load-bearing, not cosmetic.** Reusing the stack's own
 project name would group them, but `infra/scripts/archive.sh` runs
