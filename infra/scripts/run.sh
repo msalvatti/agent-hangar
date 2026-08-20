@@ -5,6 +5,10 @@
 # Redis: a plain `pnpm start` that skipped this would silently serve the default port block against
 # the default database, whatever the instance is configured for.
 #
+# Refuses to start while a master key rotation holds its lock: the app would cache the key it finds
+# and go on writing under it, and a secret saved mid-rotation is lost whichever side of the swap it
+# lands on. `--print-only` is exempt, since it starts nothing.
+#
 # Flags:
 #   --production  run the built output (`next start`, `node dist/main.js`) instead of the sources
 #   --print-only  print the command instead of running it (used by tests)
@@ -36,6 +40,23 @@ done
 env_file="${AH_ENV_FILE:-$root/.env.local}"
 [ -f "$env_file" ] || bash "$here/env.sh"
 eval "$(bash "$here/env.sh" --print-effective)"
+
+# A rotation re-encrypts every stored secret and then swaps the key file. Starting the app in the
+# middle of that loses credentials both ways: a secret saved from Settings between the rotation's
+# reveal and its write is silently replaced by the value revealed earlier, and one saved after the
+# write is sealed under the old key, which nothing reads again once the files swap. rotate-key.sh
+# refuses to start while this app answers on its web port; this is the other half of that, and
+# together they are exclusion rather than two point-in-time checks.
+#
+# Only a lock whose owner is alive blocks: one left behind by a killed rotation must not keep the
+# app down forever. Nothing is reclaimed here — removing rotation state is rotate-key.sh's job.
+if [ $print_only -eq 0 ] && [ -f "$MASTER_KEY_PATH.lock" ]; then
+  rotation_owner="$(cat "$MASTER_KEY_PATH.lock" 2>/dev/null || printf '')"
+  if [ -n "$rotation_owner" ] && kill -0 "$rotation_owner" 2>/dev/null; then
+    echo "A master key rotation is in progress (pid $rotation_owner). Wait for it to finish before starting Agent Hangar: a process started now would cache the old key and any secret it wrote would be sealed under a key nothing reads again." >&2
+    exit 1
+  fi
+fi
 
 echo "Agent Hangar · instance=$AH_INSTANCE · http://localhost:$WEB_PORT"
 

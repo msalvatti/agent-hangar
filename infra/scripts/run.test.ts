@@ -3,11 +3,13 @@
  *
  * Layer: unit (spawns bash with PATH shims; no real Docker, no real Next.js/tsx).
  * Goal: instance/port derivation flows into the printed URL and the `--print-only` command line,
- * `AH_*` beats `CONDUCTOR_*`, the env file is created only when absent, and `--production` runs
- * the built output on the instance's own port with the development resolution condition off.
+ * `AH_*` beats `CONDUCTOR_*`, the env file is created only when absent, `--production` runs
+ * the built output on the instance's own port with the development resolution condition off, and
+ * the app refuses to start while a master key rotation holds its lock.
  * Mocks: docker/pnpm/openssl/node/concurrently via `infra/scripts/testing/shims.ts`.
  */
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -205,5 +207,88 @@ describe('run.sh --print-only', () => {
       env: { HOME: dir, AH_ENV_FILE: envFile, AH_SHIM_LOG: log },
     });
     expect(readFileSync(envFile, 'utf8')).toBe(before);
+  });
+});
+
+describe('run.sh during a master key rotation', () => {
+  /**
+   * Starting the app mid-rotation loses credentials whichever side of the swap the write lands on:
+   * a secret saved between the rotation's reveal and its write is replaced by the value revealed
+   * earlier, and one saved after the write is sealed under the old key, which nothing reads again
+   * once the files swap. rotate-key.sh refuses while the app answers on its web port; this is the
+   * other half, so the two together are exclusion rather than two point-in-time checks.
+   */
+  it('refuses to start while a live rotation holds the lock', () => {
+    const dir = sandbox();
+    sandboxes.push(dir);
+    const log = join(dir, 'log');
+    const keyPath = join(dir, 'master.key');
+    // This test process is unquestionably running, so it stands in for a live rotation.
+    writeFileSync(`${keyPath}.lock`, `${String(process.pid)}\n`);
+    const result = spawnScript(scriptPath, {
+      shimDir: createShimDir({ log }),
+      env: {
+        HOME: dir,
+        AH_ENV_FILE: join(dir, '.env.local'),
+        MASTER_KEY_PATH: keyPath,
+        AH_SHIM_LOG: log,
+      },
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('rotation is in progress');
+    expect(readShimLog(log).some((line) => line.includes('concurrently'))).toBe(false);
+  });
+
+  /**
+   * A lock left behind by a killed rotation must not keep the app down forever, and clearing
+   * rotation state is not this script's job — so it starts and leaves the file exactly where it is
+   * for rotate-key.sh to reclaim.
+   */
+  it('starts anyway when the lock owner is gone, without removing the lock', () => {
+    const dir = sandbox();
+    sandboxes.push(dir);
+    const log = join(dir, 'log');
+    const keyPath = join(dir, 'master.key');
+    const finished = spawnSync('bash', ['-c', 'exit 0']);
+    writeFileSync(`${keyPath}.lock`, `${String(finished.pid)}\n`);
+    const result = spawnScript(scriptPath, {
+      shimDir: createShimDir({ log }),
+      env: {
+        HOME: dir,
+        AH_ENV_FILE: join(dir, '.env.local'),
+        MASTER_KEY_PATH: keyPath,
+        AH_SHIM_LOG: log,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(readShimLog(log).some((line) => line.includes('concurrently'))).toBe(true);
+    expect(existsSync(`${keyPath}.lock`)).toBe(true);
+  });
+
+  /**
+   * `--print-only` starts nothing, so it has nothing to refuse; the contract test that reads this
+   * script's command line must keep working whatever is on disk.
+   */
+  it('still prints the command while a rotation holds the lock', () => {
+    const dir = sandbox();
+    sandboxes.push(dir);
+    const log = join(dir, 'log');
+    const keyPath = join(dir, 'master.key');
+    writeFileSync(`${keyPath}.lock`, `${String(process.pid)}\n`);
+    const result = spawnScript(scriptPath, {
+      shimDir: createShimDir({ log }),
+      args: ['--print-only'],
+      env: {
+        HOME: dir,
+        AH_ENV_FILE: join(dir, '.env.local'),
+        MASTER_KEY_PATH: keyPath,
+        AH_SHIM_LOG: log,
+      },
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('worker');
   });
 });
