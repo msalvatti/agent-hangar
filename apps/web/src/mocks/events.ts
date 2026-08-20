@@ -333,6 +333,30 @@ export function turnFramesToStore(chatId: string, frames: readonly SseScriptFram
   }
 }
 
+/**
+ * Stores a push the way the worker does: as the chat's restore hints and as a transcript line.
+ *
+ * The hints alone carry only the newest push. The worker also writes a `SYSTEM` message so a
+ * reloaded transcript still shows where the agent pushed, and this double writes one too — a
+ * double that skipped it would render a chat the API cannot produce.
+ *
+ * @param entry - The stored chat.
+ * @param turnId - Turn the push belongs to.
+ * @param branch - Branch the push landed on.
+ * @param sha - Commit that is now at its head.
+ */
+function recordPush(entry: StoredChat, turnId: string, branch: string, sha: string): void {
+  entry.chat = { ...entry.chat, workBranch: branch, lastPushedSha: sha };
+  entry.messages.push({
+    id: `${turnId}-pushed-${sha}`,
+    turnId,
+    seq: entry.messages.length + 1,
+    role: 'SYSTEM',
+    content: pushedNoticeText(branch, sha),
+    createdAt: nowIso(),
+  });
+}
+
 function applyFrameToStore(entry: StoredChat, frame: SseScriptFrame): void {
   if (frame.event === 'expired') {
     return;
@@ -378,21 +402,9 @@ function applyFrameToStore(entry: StoredChat, frame: SseScriptFrame): void {
       }
       return;
     }
-    case 'git.pushed': {
-      const now = nowIso();
-      entry.chat = { ...entry.chat, workBranch: event.branch, lastPushedSha: event.sha };
-      // The worker stores the push as a SYSTEM message so a reloaded transcript still shows it;
-      // the double stores it too, or mock mode would render a chat the API cannot produce.
-      entry.messages.push({
-        id: `${turn.id}-pushed-${event.sha}`,
-        turnId: turn.id,
-        seq: entry.messages.length + 1,
-        role: 'SYSTEM',
-        content: pushedNoticeText(event.branch, event.sha),
-        createdAt: now,
-      });
+    case 'git.pushed':
+      recordPush(entry, turn.id, event.branch, event.sha);
       return;
-    }
     case 'turn.completed': {
       const now = nowIso();
       turn.status = 'SUCCEEDED';

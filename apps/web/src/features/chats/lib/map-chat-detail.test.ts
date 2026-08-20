@@ -72,18 +72,17 @@ const WORK_BRANCH = 'agent/1a2b3c4d';
 
 /** Commit the first turn pushed. */
 const PUSHED_SHA = '9f8e7d6c5b4a39281706';
-
 /**
- * Builds the payload of a chat that ran two turns: one that read the repository and pushed, and
- * one the operator stopped part way through.
+ * The chat's messages, in the order the API writes them.
  *
- * Every row carries the timestamp the database would have given it, and no user message names a
- * turn — which is what the schema produces, since the message is written before the turn row.
+ * No user message names a turn: the API writes the message and the turn as two rows, and only
+ * the rows the worker adds afterwards — the push notice, the summary, the answer — carry the
+ * turn id.
  *
- * @returns The `GET /api/chats/:id` payload.
+ * @returns The messages of the two-turn chat.
  */
-function twoTurnChat(): ChatDetail {
-  const messages: MessageView[] = [
+function twoTurnMessages(): MessageView[] {
+  return [
     {
       id: 'm1',
       turnId: null,
@@ -125,7 +124,15 @@ function twoTurnChat(): ChatDetail {
       createdAt: '2026-08-19T10:01:00.000Z',
     },
   ];
-  const turns: TurnView[] = [
+}
+
+/**
+ * The two turns: one that finished and pushed, one the operator stopped part way through.
+ *
+ * @returns The turns of the two-turn chat, oldest first.
+ */
+function twoTurnTurns(): TurnView[] {
+  return [
     {
       id: 'turn-1',
       status: 'SUCCEEDED',
@@ -149,7 +156,21 @@ function twoTurnChat(): ChatDetail {
       finishedAt: '2026-08-19T10:01:21.300Z',
     },
   ];
-  const toolCalls: ToolCallView[] = [
+}
+
+/**
+ * The tool calls of both turns, listed the way the API flattens them: turn by turn, each of
+ * them in `seq` order.
+ *
+ * @returns The tool-call rows of the two-turn chat.
+ */
+/**
+ * The two calls the first turn made: a listing, then the push that followed it.
+ *
+ * @returns Its tool-call rows, in `seq` order.
+ */
+function firstTurnCalls(): ToolCallView[] {
+  return [
     {
       id: 't1',
       turnId: 'turn-1',
@@ -182,6 +203,16 @@ function twoTurnChat(): ChatDetail {
       finishedAt: '2026-08-19T10:00:11.900Z',
       durationMs: 2_800,
     },
+  ];
+}
+
+/**
+ * The one call the second turn had started when the operator stopped it.
+ *
+ * @returns Its tool-call row.
+ */
+function secondTurnCalls(): ToolCallView[] {
+  return [
     {
       id: 't3',
       turnId: 'turn-2',
@@ -199,6 +230,22 @@ function twoTurnChat(): ChatDetail {
       durationMs: 17_300,
     },
   ];
+}
+
+function twoTurnCalls(): ToolCallView[] {
+  return [...firstTurnCalls(), ...secondTurnCalls()];
+}
+
+/**
+ * Builds the payload of a chat that ran two turns: one that read the repository and pushed, and
+ * one the operator stopped part way through.
+ *
+ * Every row carries the timestamp the database would have given it, and no user message names a
+ * turn — which is what the schema produces, since the message is written before the turn row.
+ *
+ * @returns The `GET /api/chats/:id` payload.
+ */
+function twoTurnChat(): ChatDetail {
   return detailWith({
     chat: {
       ...detailWith({}).chat,
@@ -206,9 +253,9 @@ function twoTurnChat(): ChatDetail {
       lastPushedSha: PUSHED_SHA,
       lastTurnStatus: 'CANCELLED',
     },
-    messages,
-    turns,
-    toolCalls,
+    messages: twoTurnMessages(),
+    turns: twoTurnTurns(),
+    toolCalls: twoTurnCalls(),
   });
 }
 
