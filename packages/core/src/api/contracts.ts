@@ -63,22 +63,6 @@ export { repoUrl, repoUrlForHosts } from '../repo-url.ts';
 /** `GET /api/repos?query=` */
 export const listReposQuery = z.object({ query: z.string().max(MAX_TITLE_LENGTH).optional() });
 
-/**
- * What the stored token can do with one repository, as the forge reported it.
- *
- * The two facts are kept apart rather than collapsed into a single verdict because they fail for
- * different reasons and are fixed in different places: a read-only token is widened in Settings,
- * while an archived repository has to be unarchived on the forge and cannot be pushed to by
- * anybody. How the pair is worded to a user is presentation, and stays out of the contract.
- */
-export const repoAccess = z.object({
-  /** Whether the token may push to the repository. */
-  canPush: z.boolean(),
-  /** Whether the forge has archived the repository, which rejects every write regardless of the
-   * token's permissions. */
-  archived: z.boolean(),
-});
-
 /** One repository the PAT can access. */
 export const repoSummary = z.object({
   fullName: z.string().min(1),
@@ -90,19 +74,39 @@ export const repoSummary = z.object({
   private: z.boolean(),
   description: z.string().nullable(),
   /**
-   * What the token may do with this repository, or absent when the forge did not say.
+   * Whether the token may push here, or absent when the forge did not say.
    *
-   * Optional because absence is a real answer, not a gap to be filled in: the fields it is built
-   * from are required on the repository schema GitHub documents for `/user/repos` but optional on
-   * the minimal-repository schema other listings return, and the API base URL is configurable, so
-   * a forge that reports nothing about permissions must be describable. A reader treats the
-   * absence as "unknown" and never as "writable".
+   * Optional because absence is a real answer, not a gap to be filled in: `permissions` is
+   * required on the repository schema GitHub documents for `/user/repos` but optional on the
+   * minimal-repository schema other listings return, and the API base URL is configurable, so a
+   * forge that reports nothing about permissions has to be describable. A reader treats the
+   * absence as "unknown" and never as "may push".
    */
-  access: repoAccess.optional(),
+  canPush: z.boolean().optional(),
+  /**
+   * Whether the forge has archived the repository, or absent when it did not say.
+   *
+   * An archived repository rejects every write regardless of what the token may do, so this is a
+   * fact in its own right and not a detail of {@link repoSummary.canPush}. The two are separate
+   * optional fields rather than one optional pair precisely so that a forge reporting only one of
+   * them loses neither: bundling them would discard a stated `archived` whenever `permissions`
+   * was missing, and invent an unstated one whenever it was present.
+   */
+  archived: z.boolean().optional(),
 });
 
 /** `GET /api/repos` response. */
-export const listReposResponse = z.object({ repos: z.array(repoSummary) });
+export const listReposResponse = z.object({
+  repos: z.array(repoSummary),
+  /**
+   * Whether the listing stopped at the client's page limit rather than at the end of the account.
+   *
+   * A truncated listing is not merely incomplete, it answers searches wrongly: the query is
+   * applied to what was read, so a repository past the limit cannot be found however it is spelt.
+   * The picker says so instead of blaming the token's scope. Optional so the field is additive.
+   */
+  truncated: z.boolean().optional(),
+});
 
 /** `GET /api/repos/branches?repo=` */
 export const listBranchesQuery = z.object({ repo: z.string().min(1) });
