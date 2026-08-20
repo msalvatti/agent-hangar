@@ -304,6 +304,7 @@ Scripts come in two styles. Setup, run and lifecycle scripts (`setup`, `dev`, `s
 | `pnpm test:integration` 🐳                           | `@db`/`@redis`/`@docker` suites against this instance's compose stack; see [Testing](#-testing)                                                |
 | `pnpm test:e2e`                                      | Brings a `test` instance up, then runs Playwright over eight spec files; see [Testing](#-testing)                                              |
 | `pnpm test:mutation`                                 | Reserved for Stryker; no package implements it yet, so it exits 0 doing nothing. See [Testing](#-testing)                                      |
+| `pnpm smoke:openai` 🐳                               | One real turn against the real model, using the keys saved in Settings; see [Testing](#-testing)                                               |
 | `prepare`                                            | Lifecycle hook `pnpm install` runs automatically (`husky`) — sets up the Git hooks; never run by hand                                          |
 
 ---
@@ -410,6 +411,26 @@ The rotation writes its phase to a state file before each step and keeps a times
 | **Integration** | `pnpm test:integration` | a running stack, a test instance, and two opt-in variables (see below) | < 5 min | repositories against real PostgreSQL, queues against real Redis, the runner against a real Docker daemon                                      |
 | **End to end**  | `pnpm test:e2e`         | Chromium; `real` mode also needs the full stack                        | < 5 min | eight spec files over the interface: pages, chat creation and run, cancellation, archive and restore, a scheduled run, and the settings paths |
 | **Mutation**    | `pnpm test:mutation`    | —                                                                      | —       | planned, not implemented: no package defines the script, so the command exits 0 doing nothing                                                 |
+| **Smoke**       | `pnpm smoke:openai`     | the stack up, and both credentials saved in Settings                   | ≈ 20 s  | one real turn against the real model and a real repository — the only check that exercises the live provider                                  |
+
+### Running the real-model smoke
+
+Every automated check runs against a scripted model provider — deterministic, free, and needing no
+credentials, which is what continuous integration requires. The cost is that **nothing automated
+exercises the real provider**, and that path has failed silently before: the provider was once not
+wired into the binary the container runs, so every real turn failed at composition while every test
+stayed green.
+
+```bash
+pnpm smoke:openai
+```
+
+It drives the running instance through the same HTTP API a browser uses, so the credentials come
+from what you saved in **Settings** and are decrypted by the product's own path — never from an
+environment variable, a file or an argument. With a key missing it says so and stops. One turn runs
+against a real repository, reading and writing a file, and the script prints what it observed:
+the model, the steps, each tool call with its exit code, the duration and the token counts. It
+destroys the workspace it created, including when it fails.
 
 ### Running the end-to-end suite
 
