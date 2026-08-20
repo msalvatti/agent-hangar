@@ -222,6 +222,12 @@ export function useApiQuery<T>(
     }
     const controller = new AbortController();
     const interval = setInterval(() => {
+      // A tab nobody is looking at learns nothing from a poll, and these queries are the ones the
+      // app leaves running for hours. `refetchOnWindowFocus` brings the visible tab back up to
+      // date the moment it is looked at again; a query without it is at most one interval stale.
+      if (document.hidden) {
+        return;
+      }
       void run(keyString, controller.signal, true);
     }, refetchIntervalMs);
     return () => {

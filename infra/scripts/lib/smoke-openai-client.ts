@@ -166,9 +166,9 @@ function failingChecks(checks: Record<string, { ok: boolean }>): string[] {
 /**
  * Asserts the instance can run a turn at all, and reports the model it will use.
  *
- * The health route covers the database, Redis, Docker and the workspace image. It says nothing
- * about the worker, which has no row: a stopped worker shows up later as a turn that never leaves
- * the queue, and the timeout message names that possibility rather than pretending it was checked.
+ * The health route covers the database, Redis, the worker, Docker and the workspace image, so a
+ * stopped worker is refused here rather than surfacing minutes later as a turn that never left the
+ * queue. Every failing row is named, because the smoke is run by someone who then has to fix one.
  *
  * @param options - Resolved command line.
  * @param deps - Injected collaborators.

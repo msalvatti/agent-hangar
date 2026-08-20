@@ -342,6 +342,7 @@ function seedHealth(): HealthResponse {
       redis: { ok: true },
       docker: { ok: true },
       image: { ok: true },
+      worker: { ok: true, lastSeenAt: new Date().toISOString() },
     },
   };
 }

@@ -4,7 +4,8 @@
  *
  * Layer: unit.
  * Goal: every dependency is reported without the route ever throwing, the worker heartbeat is the
- * only source of the Docker facts, and no failure detail carries text a driver produced.
+ * only source of the Docker facts, a silent worker is named as the silent one rather than blamed
+ * on Docker, and no failure detail carries text a driver produced.
  * Mocks: the `bullmq` module; fake timers where a probe has to time out.
  */
 import { healthResponse, workerHeartbeatKey } from '@agent-hangar/core';
@@ -20,6 +21,7 @@ import {
   getHealth,
   IMAGE_MISSING,
   PROBE_TIMEOUT_MS,
+  UNKNOWN_WITHOUT_WORKER,
   WORKER_SILENT,
 } from './health';
 
@@ -86,19 +88,35 @@ describe('getHealth', () => {
       redis: { ok: true },
       docker: { ok: true },
       image: { ok: true },
+      worker: { ok: true, lastSeenAt: NOW.toISOString() },
     });
   });
 
   /**
-   * Without a heartbeat the web process knows nothing about Docker; saying so beats guessing, and
-   * the environment card tells the user the worker is not running.
+   * Without a heartbeat the web process knows nothing about Docker. The worker is the check that
+   * fails, and Docker and the image say they are unknown rather than broken: reporting a stopped
+   * worker as `docker: false` sends the user to repair a daemon that was answering all along.
    */
-  it('reports Docker and the image as unknown while the worker is silent', async () => {
+  it('blames the silent worker rather than Docker', async () => {
     const harness = createTestContainer({ now: NOW });
     const { body } = await report(harness);
     expect(body.ok).toBe(false);
-    expect(body.checks.docker).toEqual({ ok: false, detail: WORKER_SILENT });
-    expect(body.checks.image).toEqual({ ok: false, detail: WORKER_SILENT });
+    expect(body.checks.worker).toEqual({ ok: false, detail: WORKER_SILENT });
+    expect(body.checks.docker).toEqual({ ok: false, detail: UNKNOWN_WITHOUT_WORKER });
+    expect(body.checks.image).toEqual({ ok: false, detail: UNKNOWN_WITHOUT_WORKER });
+  });
+
+  /**
+   * A heartbeat that arrived reports the worker alive and says when it last spoke, which is what
+   * separates "never started" from "died a moment ago".
+   */
+  it('reports the worker alive with its last sighting', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const at = new Date(NOW.getTime() - 5000).toISOString();
+    await writeHeartbeat(harness, { at, dockerOk: false });
+    const { body } = await report(harness);
+    expect(body.checks.worker).toEqual({ ok: true, lastSeenAt: at });
+    expect(body.checks.docker).toEqual({ ok: false, detail: DOCKER_UNREACHABLE });
   });
 
   /**
@@ -109,7 +127,7 @@ describe('getHealth', () => {
     const harness = createTestContainer({ now: NOW });
     await writeHeartbeat(harness, { at: new Date(NOW.getTime() - 120_000).toISOString() });
     const { body } = await report(harness);
-    expect(body.checks.docker.detail).toBe(WORKER_SILENT);
+    expect(body.checks.worker).toEqual({ ok: false, detail: WORKER_SILENT });
   });
 
   /**
@@ -120,9 +138,9 @@ describe('getHealth', () => {
     const harness = createTestContainer({ now: NOW });
     const key = workerHeartbeatKey(harness.container.config.AH_INSTANCE);
     await harness.doubles.redis.set(key, 'not json');
-    expect((await report(harness)).body.checks.docker.detail).toBe(WORKER_SILENT);
+    expect((await report(harness)).body.checks.worker.detail).toBe(WORKER_SILENT);
     await harness.doubles.redis.set(key, JSON.stringify({ at: 'yesterday' }));
-    expect((await report(harness)).body.checks.docker.detail).toBe(WORKER_SILENT);
+    expect((await report(harness)).body.checks.worker.detail).toBe(WORKER_SILENT);
   });
 
   /**
@@ -195,7 +213,7 @@ describe('getHealth', () => {
       const pending = getHealth(harness.container);
       await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS);
       const body = healthResponse.parse(await (await pending).json());
-      expect(body.checks.docker.detail).toBe(WORKER_SILENT);
+      expect(body.checks.worker.detail).toBe(WORKER_SILENT);
     } finally {
       vi.useRealTimers();
     }
@@ -210,6 +228,6 @@ describe('getHealth', () => {
     vi.spyOn(harness.doubles.redis, 'get').mockRejectedValue(new Error('down'));
     const { status, body } = await report(harness);
     expect(status).toBe(200);
-    expect(body.checks.docker.detail).toBe(WORKER_SILENT);
+    expect(body.checks.worker.detail).toBe(WORKER_SILENT);
   });
 });

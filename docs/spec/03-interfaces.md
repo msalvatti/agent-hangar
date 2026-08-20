@@ -259,7 +259,7 @@ All JSON; Zod-validated; errors `{ error: { code, message } }`.
 | `POST /api/runs/:id/cancel` | Stop a job run; same two shapes as the turn cancel, addressed by `JobRun.id` |
 | `GET /api/settings` | `{ githubPat: { set, last4 }, openaiKey: { set, last4 }, model }` |
 | `PUT /api/settings/:key` · `DELETE /api/settings/:key` | Save (encrypts) / remove |
-| `GET /api/health` | DB, Redis, Docker reachability, image present |
+| `GET /api/health` | DB, Redis and worker reachability, Docker reachability, image present. Docker and the image are the worker's own readings, taken from its heartbeat, so a silent worker reports `worker: false` and leaves those two unknown rather than blaming the daemon; the worker check carries `lastSeenAt` when it is alive |
 
 **SSE framing:** `id: <redis-stream-id>`, `event: <AgentEvent.type>`, `data: <json>`. Heartbeat comment `: ping` every 15 s. No compression. Reconnect replays from `Last-Event-ID` via `XRANGE` on `events:turn:<turnId>` (1 h TTL), then tails with `XREAD BLOCK`.
 

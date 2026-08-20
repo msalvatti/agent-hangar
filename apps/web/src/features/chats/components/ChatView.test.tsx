@@ -8,6 +8,7 @@ import { http, HttpResponse } from 'msw';
 import { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { setScenario } from '@/mocks/scenario';
 import { server } from '@/mocks/server';
 import { store } from '@/mocks/store';
 import { createFakeEventSourceFactory } from '@/shared/transcript/testing/fake-event-source';
@@ -381,6 +382,31 @@ describe('ChatView', () => {
     expect(await screen.findByText(/still finishing/)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
     expect(screen.getByLabelText('Prompt')).not.toBeDisabled();
+  });
+
+  /*
+   * The follow-up composer answers to the same environment the home one does: with a dependency
+   * down there is nothing to run the turn, so the composer locks and the notice names what to fix.
+   */
+  it('locks the follow-up composer and names the dependency while infrastructure is down', async () => {
+    setScenario('infra-down');
+    renderChat('chat-finished');
+    expect(await screen.findByText(/Redis is not available, so a turn cannot run\./)).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getByLabelText('Prompt')).toBeDisabled();
+    });
+  });
+
+  /*
+   * An archived chat is not told about the environment: its composer is already locked for a
+   * reason of its own, and the banner above states it. Two notices would name two different
+   * reasons for one disabled field.
+   */
+  it('leaves the infrastructure notice off an archived chat', async () => {
+    setScenario('infra-down');
+    renderChat('chat-archived');
+    expect(await screen.findByText(/This chat is archived/)).toBeInTheDocument();
+    expect(screen.queryByText(/is not available, so a turn cannot run\./)).not.toBeInTheDocument();
   });
 
   // An archived chat is read-only until it is restored.

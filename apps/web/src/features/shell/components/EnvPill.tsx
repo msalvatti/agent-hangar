@@ -8,9 +8,8 @@
 import { Container } from 'lucide-react';
 import { useState } from 'react';
 
+import { useHealth } from '@/shared/health';
 import { cn } from '@/shared/lib/cn';
-
-import { useHealth } from '../hooks/useHealth';
 
 import { HealthDialog } from './HealthDialog';
 

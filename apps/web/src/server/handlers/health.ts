@@ -32,6 +32,9 @@ export const PROBE_TIMEOUT_MS = 2000;
 /** Detail reported when the worker has not written a heartbeat this instance can read. */
 export const WORKER_SILENT = 'worker has not reported';
 
+/** Detail reported for Docker and the image while the worker that measures them is silent. */
+export const UNKNOWN_WITHOUT_WORKER = 'unknown while the worker is down';
+
 /** Detail reported when the heartbeat says Docker did not answer. */
 export const DOCKER_UNREACHABLE = 'docker did not answer the worker';
 
@@ -113,22 +116,30 @@ function toCheck(result: ProbeResult): { ok: boolean; detail?: string } {
 }
 
 /**
- * Describes what the heartbeat says about Docker and the workspace image.
+ * Describes what the heartbeat says about the worker, Docker and the workspace image.
+ *
+ * Docker and the image are the worker's readings, so a silent worker leaves both unknown rather
+ * than failed. They are still reported as not-ok — an unconfirmed dependency cannot be called
+ * healthy — but the detail says which of the three is actually missing, so the operator starts the
+ * worker instead of restarting a daemon that was answering all along.
  *
  * @param heartbeat - The worker's last reading, or `null` when it has not reported.
  * @returns One check per fact.
  */
 function fromHeartbeat(heartbeat: WorkerHeartbeat | null): {
+  worker: { ok: boolean; detail?: string; lastSeenAt?: string };
   docker: { ok: boolean; detail?: string };
   image: { ok: boolean; detail?: string };
 } {
   if (heartbeat === null) {
     return {
-      docker: { ok: false, detail: WORKER_SILENT },
-      image: { ok: false, detail: WORKER_SILENT },
+      worker: { ok: false, detail: WORKER_SILENT },
+      docker: { ok: false, detail: UNKNOWN_WITHOUT_WORKER },
+      image: { ok: false, detail: UNKNOWN_WITHOUT_WORKER },
     };
   }
   return {
+    worker: { ok: true, lastSeenAt: heartbeat.at },
     docker: heartbeat.dockerOk ? { ok: true } : { ok: false, detail: DOCKER_UNREACHABLE },
     image: heartbeat.imagePresent ? { ok: true } : { ok: false, detail: IMAGE_MISSING },
   };
@@ -147,18 +158,18 @@ export function getHealth(container: ServerContainer): Promise<Response> {
       probe(container, 'redis', () => container.redis.ping()),
       readHeartbeat(container),
     ]);
-    const { docker, image } = fromHeartbeat(heartbeat);
+    const { worker, docker, image } = fromHeartbeat(heartbeat);
     return jsonResponse(
       healthResponse,
       {
-        ok: db.ok && redis.ok && docker.ok && image.ok,
+        ok: db.ok && redis.ok && worker.ok && docker.ok && image.ok,
         instance: container.config.AH_INSTANCE,
         ports: {
           web: container.config.WEB_PORT,
           postgres: container.config.POSTGRES_PORT,
           redis: container.config.REDIS_PORT,
         },
-        checks: { db: toCheck(db), redis: toCheck(redis), docker, image },
+        checks: { db: toCheck(db), redis: toCheck(redis), docker, image, worker },
       },
       { headers: { 'Cache-Control': 'no-store' } },
     );

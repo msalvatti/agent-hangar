@@ -8,10 +8,12 @@
 import type { RefObject } from 'react';
 
 import { ErrorCard } from '@/shared/feedback';
+import { useHealth } from '@/shared/health';
 import { Transcript } from '@/shared/transcript';
 import type { TranscriptItem, TurnPhase } from '@/shared/transcript';
 
 import { Composer } from './Composer';
+import { InfraDownNotice } from './InfraDownNotice';
 import { TurnErrorCard } from './TurnErrorCard';
 
 /** Props of {@link ChatBody}. */
@@ -52,6 +54,10 @@ export interface ChatBodyProps {
  * and nowhere else — with the retry and the code-specific next step attached, which is what makes
  * a failed turn actionable again after a reload.
  *
+ * Infrastructure that is down locks the composer and says which dependency is missing. An archived
+ * chat is not told: its composer is already locked for a reason of its own, and the banner above
+ * states it.
+ *
  * @param props - The transcript, the draft and the lock state.
  */
 export function ChatBody({
@@ -69,6 +75,11 @@ export function ChatBody({
   turnLive,
   model,
 }: ChatBodyProps) {
+  const health = useHealth();
+  // A report that has not arrived yet leaves the composer open: the send itself is what proves
+  // the environment, and locking on an unanswered probe would block a working instance.
+  const infraDown = health.data !== undefined && health.failingChecks.length > 0;
+
   return (
     <>
       <Transcript
@@ -91,13 +102,14 @@ export function ChatBody({
             className="mb-2"
           />
         )}
+        {!archived && <InfraDownNotice failing={health.failingChecks} className="mb-2" />}
         <Composer
           mode="followup"
           value={draft}
           onChange={onDraftChange}
           onSubmit={onSubmit}
           busy={sending}
-          disabled={archived || turnLive}
+          disabled={archived || turnLive || infraDown}
           model={model}
         />
       </div>

@@ -70,6 +70,60 @@ describe('EnvPill', () => {
     expect(dialog).not.toHaveTextContent('Run `pnpm doctor`');
   });
 
+  /*
+   * A failing probe carries the command that repairs it. The healthy ones do not: an environment
+   * that works needs no instructions, and five commands beside five ticks would hide the one that
+   * matters on the day something breaks.
+   */
+  it('shows the fix command only beside a failing probe', async () => {
+    setScenario('infra-down');
+    render(<EnvPill />);
+    await userEvent.click(await screen.findByRole('button', { name: /Environment status/ }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => {
+      expect(dialog).toHaveTextContent('Postgres');
+    });
+    // Redis and Docker are the two the scenario takes down.
+    expect(dialog).toHaveTextContent('pnpm infra:up');
+    expect(dialog).toHaveTextContent('start Docker Desktop');
+    // The worker and the image are healthy in this scenario, so neither names a command.
+    expect(dialog).not.toHaveTextContent('pnpm infra:image');
+    expect(dialog).not.toHaveTextContent('pnpm dev');
+  });
+
+  /*
+   * The worker is a probe of its own. Without it a worker that is simply not running reports as
+   * `docker ✗`, and the operator is sent to repair a daemon that was answering all along.
+   */
+  it('names the worker rather than Docker when the worker is the one that is down', async () => {
+    server.use(
+      http.get('/api/health', () =>
+        HttpResponse.json({
+          ok: false,
+          instance: 'default',
+          checks: {
+            db: { ok: true },
+            redis: { ok: true },
+            docker: { ok: false, detail: 'unknown while the worker is down' },
+            image: { ok: false, detail: 'unknown while the worker is down' },
+            worker: { ok: false, detail: 'worker has not reported' },
+          },
+        }),
+      ),
+    );
+    render(<EnvPill />);
+    const pill = await screen.findByRole('button', {
+      name: 'Environment status: Worker, Docker, Workspace image failing',
+    });
+    expect(pill).toHaveTextContent('docker ✗');
+    await userEvent.click(pill);
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() => {
+      expect(dialog).toHaveTextContent('Worker');
+    });
+    expect(dialog).toHaveTextContent('pnpm dev');
+  });
+
   // The dialog re-checks on demand, which is the next action after a failure.
   it('re-checks from the dialog', async () => {
     let failing = true;

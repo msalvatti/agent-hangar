@@ -65,6 +65,7 @@ describe('runSmoke, preconditions', () => {
             redis: { ok: true },
             docker: { ok: false },
             image: { ok: false },
+            worker: { ok: true },
           },
         }),
     });

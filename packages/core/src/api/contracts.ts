@@ -385,6 +385,20 @@ export const SETTINGS_FIELD_BY_KEY = {
 export const healthCheck = z.object({ ok: z.boolean(), detail: z.string().optional() });
 
 /**
+ * The worker probe, which carries when the worker last reported.
+ *
+ * A probe of its own rather than a fact folded into the Docker one, because the two answer
+ * different questions and only the worker can answer either: it owns the single Docker connection,
+ * so `docker` and `image` are readings it publishes rather than measurements the web process can
+ * take. Without this check a worker that is simply not running reports as `docker: false`, and the
+ * operator is told to repair a daemon that was never broken.
+ *
+ * `lastSeenAt` is present exactly when `ok` is true — a worker that has not reported has no last
+ * sighting to give — and is what distinguishes "never started" from "died a moment ago".
+ */
+export const workerCheck = healthCheck.extend({ lastSeenAt: z.iso.datetime().optional() });
+
+/**
  * Ports the running instance resolved to.
  *
  * Reported so the Environment card can answer "which instance am I looking at" when several
@@ -418,6 +432,7 @@ export const healthResponse = z.object({
     redis: healthCheck,
     docker: healthCheck,
     image: healthCheck,
+    worker: workerCheck,
   }),
 });
 

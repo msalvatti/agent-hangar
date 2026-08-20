@@ -8,50 +8,25 @@
  * polled by every open tab. A key that stops being rewritten is therefore how a dead worker
  * becomes visible, which is why the lifetime is short and the rewrite is frequent.
  *
- * The key, its lifetime and the payload shape are the web app's read contract; they are spelled
- * here until the shared queue contract carries them.
+ * The key, its lifetime and the payload shape are the web app's read contract, so they are
+ * imported from it rather than restated: two copies of a key are two keys the day one is edited,
+ * and the failure that follows is a health card reporting a worker that is running perfectly.
  */
-import { describeClientFailure } from '@agent-hangar/core';
-import type { AppConfig, Clock, WorkspaceRunner } from '@agent-hangar/core';
+import {
+  describeClientFailure,
+  WORKER_HEARTBEAT_INTERVAL_SEC,
+  WORKER_HEARTBEAT_TTL_SEC,
+  workerHeartbeatKey,
+  workerHeartbeatSchema,
+} from '@agent-hangar/core';
+import type { AppConfig, Clock, WorkerHeartbeat, WorkspaceRunner } from '@agent-hangar/core';
 import type { Logger } from 'pino';
-import { z } from 'zod';
 
 import type { WorkspaceImageStatus } from './image-status.js';
 import { LABELS } from './processors/constants.js';
 
-/** Lifetime of the heartbeat key, in seconds; three writes fit inside it. */
-export const WORKER_HEARTBEAT_TTL_SEC = 90;
-
-/** How often the heartbeat is rewritten, in seconds. */
-export const WORKER_HEARTBEAT_INTERVAL_SEC = 30;
-
 /** Seconds to milliseconds. */
 const SECOND_MS = 1000;
-
-/**
- * Redis key holding one instance's worker heartbeat.
- *
- * @param instance - `AH_INSTANCE`.
- * @returns The key the web app reads.
- */
-export function workerHeartbeatKey(instance: string): string {
-  return `health:worker:${instance}`;
-}
-
-/** What the worker publishes about its own health. */
-export const workerHeartbeatSchema = z.object({
-  /** When the worker took these readings. */
-  at: z.iso.datetime(),
-  /** Whether the Docker daemon answered. */
-  dockerOk: z.boolean(),
-  /** Whether the workspace image is present on the Docker host. */
-  imagePresent: z.boolean(),
-  /** Workspace containers the instance owned at that moment. */
-  containers: z.number().int().nonnegative(),
-});
-
-/** A worker heartbeat. */
-export type WorkerHeartbeat = z.infer<typeof workerHeartbeatSchema>;
 
 /** The Redis surface the heartbeat needs; ioredis' `Redis` satisfies it. */
 export interface HeartbeatRedis {

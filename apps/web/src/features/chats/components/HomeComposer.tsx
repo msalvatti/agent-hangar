@@ -3,6 +3,10 @@
  * failure the settings status calls for.
  *
  * Layer: feature (component).
+ *
+ * Two things can hold a chat back, and they are not the same thing. Missing credentials replace
+ * the composer, because nothing can be sent until they are entered. Infrastructure that is down
+ * only locks it: the draft is still worth keeping while `pnpm infra:up` runs in another window.
  */
 'use client';
 
@@ -10,6 +14,7 @@ import type { RepoSummary } from '@agent-hangar/core';
 import type { RefObject } from 'react';
 
 import { ErrorCard } from '@/shared/feedback';
+import { useHealth } from '@/shared/health';
 import { assertPresent } from '@/shared/transcript';
 import { Button } from '@/shared/ui/button';
 import { Skeleton } from '@/shared/ui/skeleton';
@@ -17,6 +22,7 @@ import { Skeleton } from '@/shared/ui/skeleton';
 import type { UseSettingsStatusResult } from '../hooks/useSettingsStatus';
 
 import { Composer } from './Composer';
+import { InfraDownNotice } from './InfraDownNotice';
 import { SettingsMissingNotice } from './SettingsMissingNotice';
 
 /** Props of {@link HomeComposer}. */
@@ -55,6 +61,8 @@ export function HomeComposer({
   createError,
   textareaRef,
 }: HomeComposerProps) {
+  const health = useHealth();
+
   if (settings.status === 'idle' || settings.status === 'loading') {
     return <Skeleton className="h-36 w-full rounded-xl" data-testid="composer-skeleton" />;
   }
@@ -84,10 +92,16 @@ export function HomeComposer({
     return <SettingsMissingNotice />;
   }
 
+  // A report that has not arrived yet leaves the composer open: the send itself is what proves
+  // the environment, and locking on an unanswered probe would block a working instance.
+  const infraDown = health.data !== undefined && health.failingChecks.length > 0;
+
   return (
     <div className="flex w-full flex-col gap-3">
+      <InfraDownNotice failing={health.failingChecks} />
       <Composer
         mode="new"
+        disabled={infraDown}
         repo={repo}
         onRepoChange={onRepoChange}
         branch={branch}
