@@ -27,6 +27,15 @@ export interface UseChatResult {
   error: Error | undefined;
   /** `true` when the failure was specifically an unknown chat id. */
   notFound: boolean;
+  /**
+   * Newest persisted turn of the chat, or `null` when it has none.
+   *
+   * The transcript keeps only the phase of that turn, and a turn that has finished is not one the
+   * stream follows, so a failure reloaded from history would otherwise leave the screen with no id
+   * to retry. Read from the payload rather than from the mapped transcript because it is a fact
+   * about the chat, not a row of it.
+   */
+  lastTurnId: string | null;
   refetch: () => Promise<void>;
 }
 
@@ -49,6 +58,7 @@ export function useChat(id: string): UseChatResult {
     mapped,
     error: query.error,
     notFound: query.error instanceof ApiClientError && query.error.status === HTTP_NOT_FOUND,
+    lastTurnId: detail?.turns.at(-1)?.id ?? null,
     refetch: query.refetch,
   };
 }

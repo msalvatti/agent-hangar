@@ -13,8 +13,6 @@ import { postMessage } from '../services/chats-api';
 export interface UseSendMessageResult {
   /** Posts `prompt`; resolves to the queued turn id, or `null` when the request failed. */
   send: (prompt: string) => Promise<string | null>;
-  /** Re-sends the last prompt, for the Retry action of a failed turn. */
-  retryLast: () => Promise<string | null>;
   busy: boolean;
   error: string | undefined;
   /** The most recent prompt sent through this hook, or seeded from history. */
@@ -25,9 +23,9 @@ export interface UseSendMessageResult {
  * Sends follow-up prompts to one chat.
  *
  * @param id - Chat id.
- * @param initialPrompt - Newest prompt already in the persisted history, for Retry. Read once:
- * the hook mounts with the loaded chat, and every later prompt comes through `send`.
- * @returns The send action, its retry, and their state.
+ * @param initialPrompt - Newest prompt already in the persisted history. Read once: the hook
+ * mounts with the loaded chat, and every later prompt comes through `send`.
+ * @returns The send action and its state.
  */
 export function useSendMessage(id: string, initialPrompt: string | null): UseSendMessageResult {
   const [busy, setBusy] = useState(false);
@@ -52,10 +50,5 @@ export function useSendMessage(id: string, initialPrompt: string | null): UseSen
     [id],
   );
 
-  const retryLast = useCallback(
-    async () => (lastPrompt === null ? null : send(lastPrompt)),
-    [lastPrompt, send],
-  );
-
-  return { send, retryLast, busy, error, lastPrompt };
+  return { send, busy, error, lastPrompt };
 }

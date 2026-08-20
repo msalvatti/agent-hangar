@@ -18,6 +18,7 @@ import { useChat } from '../hooks/useChat';
 import { useChatActions } from '../hooks/useChatActions';
 import { useChatStream } from '../hooks/useChatStream';
 import { useEscapeToStop } from '../hooks/useEscapeToStop';
+import { useRetryTurn } from '../hooks/useRetryTurn';
 import { useSendMessage } from '../hooks/useSendMessage';
 import { useSettingsStatus } from '../hooks/useSettingsStatus';
 
@@ -42,7 +43,7 @@ export interface ChatViewProps {
  * @param props - Chat id and the optional `EventSource` factory.
  */
 export function ChatView({ chatId, createEventSource }: ChatViewProps) {
-  const { status, chat, mapped, error, notFound, refetch } = useChat(chatId);
+  const { status, chat, mapped, error, notFound, lastTurnId, refetch } = useChat(chatId);
 
   if (status === 'idle' || status === 'loading') {
     return <ChatSkeleton />;
@@ -94,6 +95,7 @@ export function ChatView({ chatId, createEventSource }: ChatViewProps) {
   const loaded: LoadedChat = {
     chat: assertPresent(chat, 'A loaded chat carries a summary'),
     mapped: assertPresent(mapped, 'A loaded chat carries a mapped transcript'),
+    lastTurnId,
     refetch,
   };
   return <LoadedChatView chatId={chatId} loaded={loaded} createEventSource={createEventSource} />;
@@ -112,11 +114,12 @@ interface LoadedChatViewProps {
  * @param props - Chat id, the loaded chat and the optional `EventSource` factory.
  */
 function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewProps) {
-  const { chat, mapped, refetch } = loaded;
+  const { chat, mapped, lastTurnId, refetch } = loaded;
   const archived = chat.status === 'ARCHIVED';
   const stream = useChatStream(chatId, mapped, refetch, createEventSource);
   const actions = useChatActions(chatId);
   const send = useSendMessage(chatId, mapped.lastPrompt);
+  const retryAction = useRetryTurn();
   const settings = useSettingsStatus();
 
   const [draft, setDraft] = useState('');
@@ -154,9 +157,38 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
     stream.followTurn(turnId);
   }
 
-  /** Re-sends the prompt of the turn that failed; a failure always has one. */
+  /**
+   * Runs the failed turn again, in place.
+   *
+   * The turn is the one the stream is following when the failure just happened, and the chat's
+   * newest persisted turn when the failure was loaded from history — the stream stops following a
+   * turn that has finished. Nothing is added to the transcript: the prompt is already in it, and
+   * the retry writes no message, so the only change on success is that the failure row goes and
+   * the turn is queued again.
+   */
   function retry(): void {
-    void submit(assertPresent(send.lastPrompt, 'A failed turn was started by a prompt'));
+    const turnId = assertPresent(
+      stream.activeTurnId ?? lastTurnId,
+      'A failure on screen belongs to a turn',
+    );
+    void (async () => {
+      if (!(await retryAction.retry(turnId))) {
+        return;
+      }
+      const wasFollowing = stream.activeTurnId === turnId;
+      stream.dispatch({
+        type: 'reset',
+        items: stream.state.items.filter((item) => item.kind !== 'error'),
+        phase: 'queued',
+      });
+      stream.followTurn(turnId);
+      if (wasFollowing) {
+        // The stream is per chat and the turn keeps its id, so nothing above reopens the
+        // connection the server closed when the turn ended. A failure loaded from history is not
+        // followed at all, and `followTurn` opens it there by flipping the url away from `null`.
+        stream.reconnect();
+      }
+    })();
   }
 
   return (
@@ -191,7 +223,8 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
         onSubmit={() => {
           void submit(draft);
         }}
-        sending={send.busy}
+        sending={send.busy || retryAction.busy}
+        actionError={send.error ?? retryAction.error}
         turnLive={running}
         model={settings.data?.model}
       />

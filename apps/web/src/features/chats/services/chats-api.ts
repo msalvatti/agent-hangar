@@ -114,6 +114,19 @@ export function cancelTurn(turnId: string): Promise<ApiResponse<'cancelTurn'>> {
 }
 
 /**
+ * Runs a failed turn again, against the prompt already attached to it.
+ *
+ * Sends no prompt: the one the turn ran on is already persisted, so the retry adds nothing to the
+ * chat's history.
+ *
+ * @param turnId - Turn id.
+ * @returns The acknowledgement body.
+ */
+export function retryTurn(turnId: string): Promise<ApiResponse<'retryTurn'>> {
+  return apiFetch('retryTurn', { params: { id: turnId } });
+}
+
+/**
  * Reads which credentials are configured and which model is in use. Never carries plaintext.
  *
  * @param signal - Aborts the request.

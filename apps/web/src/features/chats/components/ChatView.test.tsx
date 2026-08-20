@@ -9,10 +9,51 @@ import { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { server } from '@/mocks/server';
+import { store } from '@/mocks/store';
 import { createFakeEventSourceFactory } from '@/shared/transcript/testing/fake-event-source';
 import type { FakeEventSource } from '@/shared/transcript/testing/fake-event-source';
 
 import { ChatView } from './ChatView';
+
+/**
+ * Counts the USER messages the mock API has actually persisted for a chat.
+ *
+ * The duplicate this screen used to produce lived in the store, not on screen, so it is the store
+ * a regression test has to read.
+ *
+ * @param chatId - Chat to read.
+ * @returns How many USER rows it holds.
+ */
+function userRows(chatId: string): number {
+  const entry = store.chats.find((candidate) => candidate.chat.id === chatId);
+  return (entry?.messages ?? []).filter((message) => message.role === 'USER').length;
+}
+
+/**
+ * Reads the ids of every turn the mock API holds for a chat.
+ *
+ * @param chatId - Chat to read.
+ * @returns The turn ids, oldest first.
+ */
+function turnIds(chatId: string): string[] {
+  const entry = store.chats.find((candidate) => candidate.chat.id === chatId);
+  return (entry?.turns ?? []).map((turn) => turn.id);
+}
+
+/**
+ * Records a turn as failed in the mock API, as the server does when it streams a `turn.failed`.
+ *
+ * @param chatId - Chat holding the turn.
+ * @param turnId - Turn to fail.
+ */
+function failStoredTurn(chatId: string, turnId: string): void {
+  const entry = store.chats.find((candidate) => candidate.chat.id === chatId);
+  const turn = entry?.turns.find((candidate) => candidate.id === turnId);
+  if (turn === undefined) {
+    throw new Error(`No turn ${turnId} in ${chatId}`);
+  }
+  Object.assign(turn, { status: 'FAILED', error: 'OpenAI rejected the API key (401)' });
+}
 
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
@@ -122,8 +163,10 @@ describe('ChatView', () => {
     expect(await screen.findByText('Reconnecting…')).toBeInTheDocument();
   });
 
-  // A failed turn shows the card with the action that fits the code.
-  it('shows the failure card and retries the last prompt', async () => {
+  // A failed turn shows the card with the action that fits the code, and retrying it reopens the
+  // stream on that same turn. The stored turn is failed alongside the event because the server
+  // persists the failure it just streamed; the retry route reads the row, not the stream.
+  it('shows the failure card and retries the failed turn', async () => {
     const { instances } = renderChat('chat-running');
     const source = await firstSource(instances);
     act(() => {
@@ -136,10 +179,14 @@ describe('ChatView', () => {
     });
     expect(await screen.findByText('OpenAI rejected the key')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Open Settings' })).toBeInTheDocument();
+    failStoredTurn('chat-running', 'turn-running-1');
+
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
     await waitFor(() => {
       expect(instances.length).toBeGreaterThan(1);
     });
+    expect(turnIds('chat-running')).toEqual(['turn-running-1']);
   });
 
   // The reducer already appends the failure as a transcript row, so rendering a second card for
@@ -161,20 +208,47 @@ describe('ChatView', () => {
   });
 
   // A failed turn reloaded from persistence is as actionable as a live one: without the retry the
-  // only way out of a failed chat that was reopened would be to start a new one.
+  // only way out of a failed chat that was reopened would be to start a new one. Retrying re-runs
+  // that same turn, so the one prompt the user sent stays one bubble — it used to become two,
+  // because Retry posted the prompt again and the second copy was persisted.
   it('offers Retry for a failure loaded from history', async () => {
     renderChat('chat-failed');
     expect(await screen.findByText('The turn failed')).toBeInTheDocument();
     const retry = screen.getByRole('button', { name: 'Retry' });
     await userEvent.click(retry);
-    await waitFor(() => {
-      expect(
-        screen.getAllByText(/Walk me through how the caching layer invalidates stale entries\./),
-      ).toHaveLength(2);
-    });
     // The retried failure is superseded, not stacked: a second attempt must not leave two error
     // cards — and two Retry buttons — on the screen.
-    expect(screen.queryByRole('alert')).toBeNull();
+    await waitFor(() => {
+      expect(screen.queryByRole('alert')).toBeNull();
+    });
+    expect(
+      screen.getAllByText(/Walk me through how the caching layer invalidates stale entries\./),
+    ).toHaveLength(1);
+    expect(userRows('chat-failed')).toBe(1);
+    expect(turnIds('chat-failed')).toEqual(['turn-failed-1']);
+  });
+
+  // The retry request itself can be refused — a missing credential answers 409 before any turn is
+  // queued — and nothing else on the screen moves when it is. Without a rendered message the
+  // button would simply look inert, which is what it used to do.
+  it('shows why a refused retry did nothing', async () => {
+    server.use(
+      http.post('/api/turns/:id/retry', () =>
+        HttpResponse.json(
+          { error: { code: 'SECRETS_MISSING', message: 'Configure the missing credentials' } },
+          { status: 409 },
+        ),
+      ),
+    );
+    renderChat('chat-failed');
+    expect(await screen.findByText('The turn failed')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText('Could not start the turn')).toBeInTheDocument();
+    expect(screen.getByText(/Configure the missing credentials/)).toBeInTheDocument();
+    expect(userRows('chat-failed')).toBe(1);
+    expect(turnIds('chat-failed')).toEqual(['turn-failed-1']);
   });
 
   // An archived chat is read-only until it is restored.
