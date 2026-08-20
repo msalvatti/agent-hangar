@@ -198,32 +198,48 @@ function createShutdown(
 /**
  * Everything that must happen before the first consumer starts.
  *
- * The order is what matters, not the steps: the schedulers are reconciled and the rows a previous
- * incarnation left half-written are closed out while nothing is consuming yet. That is what lets
- * the recovery conclude that a workspace still marked `STOPPING` belongs to a worker that is gone
- * rather than to a teardown that is merely slow — a distinction its age can never make.
+ * Running before the consumers is what lets the recovery conclude that a workspace still held is
+ * held by an incarnation that is gone rather than by work that is merely slow — a distinction its
+ * age can never make.
  *
- * A missing image is reported and not fatal: the user fixes it from the banner the health card
- * shows while the process keeps running.
+ * The three steps do not need the same things, so they run in order of what they depend on and a
+ * step is never gated behind a dependency it does not use:
+ *
+ * 1. Closing out what a dead incarnation left needs the database and nothing else. It therefore
+ *    goes first, because a daemon that is down is the likeliest reason a worker died holding those
+ *    rows, and gating that repair on Docker would withhold it exactly when it is needed.
+ * 2. Reconciling the schedulers needs Redis as well. A failure is fatal, and should be: this
+ *    process exists to consume Redis queues, and a worker that started without its schedulers would
+ *    silently never fire a cron job.
+ * 3. Probing the runner needs Docker. Its two halves are deliberately not alike, and
+ *    {@link probeRunnerReachable} is where that is argued: a *missing image* is reported and not
+ *    fatal, because the user fixes it from the health card's banner while the process keeps
+ *    running, whereas an *unreachable daemon* rejects and takes the boot down.
+ *
+ * A failure of the database is fatal at step 1 for the same reason Redis is at step 2, and does not
+ * need saying twice: nothing the worker does is possible without it.
  *
  * @param container - The dependency container.
- * @param probe - Reports whether the runner is reachable and the workspace image is present.
+ * @param probe - Reports whether the workspace image is present.
+ * @throws unknown Whatever the runner rejected with when the daemon is unreachable, and whatever
+ *   the database or Redis rejected with; each step's dependency is load-bearing for the steps after
+ *   it and for the consumers.
  */
 async function prepareBoot<TDatabase extends ContainerDatabase, TRedis extends WorkerRedisClient>(
   container: WorkerContainer<TDatabase, TRedis>,
   probe: ImageProbe,
 ): Promise<void> {
   const { config, logger } = container;
+  const recovered = await recoverAbandonedWorkspaces(container);
+  if (recovered > 0) {
+    logger.warn({ recovered }, 'closed out workspaces the last incarnation was still holding');
+  }
+  await reconcileSchedulers(container);
   if (!(await probe(container.runner, config.WORKSPACE_IMAGE, config.AH_INSTANCE))) {
     logger.error(
       { image: config.WORKSPACE_IMAGE },
       'workspace image missing — build it with: pnpm infra:image',
     );
-  }
-  await reconcileSchedulers(container);
-  const recovered = await recoverAbandonedWorkspaces(container);
-  if (recovered > 0) {
-    logger.warn({ recovered }, 'closed out workspaces whose teardown never came back');
   }
 }
 

@@ -113,8 +113,10 @@ function abandonedReason(workspace: Workspace): string | null {
  * names when it says an abandoned job leaves a container the next boot has to reconcile.
  *
  * It closes the row out and stops. Destroying the container is left to {@link reconcileOrphans},
- * which is what that pass is for and which will find it the moment the row stops being live — so the
- * recovery needs no Docker connection, and still works on a boot where the daemon is down.
+ * which is what that pass is for and which will find it the moment the row stops being live. So this
+ * needs the database and nothing else — which only helps if nothing ahead of it needs more, and a
+ * daemon that is down is the likeliest reason a worker died holding these rows. `prepareBoot` is
+ * where that ordering is kept, and where it is asserted.
  *
  * @param deps - Repositories, claims and logger.
  * @returns How many rows were closed out.
