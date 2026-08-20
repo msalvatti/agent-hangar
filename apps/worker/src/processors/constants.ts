@@ -83,6 +83,9 @@ export const WORKER_RELIABILITY = {
 /** `Workspace.failureReason` written when a turn's predecessor was found still holding it. */
 export const STALLED_RECOVERY_REASON = 'stalled turn recovery';
 
+/** `Workspace.failureReason` written for the container a run's dead worker left behind. */
+export const STALLED_RUN_REASON = 'stalled run recovery';
+
 /** SYSTEM message telling the model its previous filesystem is gone. */
 export const STALLED_RECOVERY_NOTE =
   'Previous workspace was lost while a turn was running; a fresh workspace was created.';

@@ -6,6 +6,7 @@ export * from './fake-secrets.js';
 export * from './fake-worker-factory.js';
 export * from './in-memory-commands.js';
 export * from './in-memory-publisher.js';
+export * from './job-fixtures.js';
 export * from './scripted-runtime.js';
 export * from './test-container.js';
 export * from './turn-fixtures.js';

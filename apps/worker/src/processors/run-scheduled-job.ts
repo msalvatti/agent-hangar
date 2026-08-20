@@ -5,15 +5,32 @@
  *
  * Two guarantees shape the whole file. Every run gets its own container and that container is
  * destroyed in a `finally`, whatever happened — a job that leaked one workspace per tick would eat
- * the machine within a day. And a tick that fires while the previous run is still executing is
+ * the machine within a day. And a tick that fires while the previous run is *still executing* is
  * recorded as a failed run rather than queued, because queueing would let a slow job accumulate
  * exactly those containers.
+ *
+ * The second guarantee is about a live predecessor, not a dead one, and the difference decides
+ * whether a crash is survivable. A worker that dies mid-run leaves its `JobRun` in `RUNNING` and
+ * its workspace in `BUSY`, and nothing else in the system reclaims either — the collector
+ * reconciles only `READY` and `STOPPING` rows, the idle selector takes only `READY`, and orphan
+ * reconciliation correctly leaves a container alone while a live row points at it. Treating that
+ * abandoned row as an overlap would make every later tick of the job skip for ever and leak one
+ * container per crash, so a redelivery closes its predecessor out first and then runs the tick.
+ *
+ * What marks a redelivery is `stalledCounter`, not `attemptsMade`: BullMQ's stalled script
+ * increments a counter of its own (`stc` on the job hash) and never touches the attempt count, and
+ * nothing here configures `attempts`, so a job that came back from the stalled set still reports
+ * zero attempts. The two are only ever one delivery apart because the queue runs with a
+ * concurrency of one and an instance runs a single worker: the redelivery waits for the slot the
+ * original occupies, so by the time it is read the original is genuinely gone. A second worker
+ * process would need the claim this lane keeps in memory to live in Postgres or Redis instead.
  */
 import {
   buildJobTurnRequest,
   decideOverlap,
   defaultWorkBranch,
   InvalidCronError,
+  isLiveWorkspaceStatus,
   isTerminalRunStatus,
   JOB_WORK_BRANCH_PREFIX,
   nextRunAt,
@@ -24,7 +41,7 @@ import { z } from 'zod';
 
 import { openCancellationWatch } from './cancellation.js';
 import type { CancellationWatch } from './cancellation.js';
-import { NO_USAGE, WORKER_ERROR_PREFIX } from './constants.js';
+import { NO_USAGE, STALLED_RUN_REASON, WORKER_ERROR_PREFIX } from './constants.js';
 import { buildTurnInstructions } from './instructions.js';
 import { provisionWorkspace } from './provision-workspace.js';
 import { formatRunError, publishCancellation, publishFailure } from './run-outcome.js';
@@ -52,6 +69,13 @@ export type ScheduledDelivery = z.infer<typeof scheduledDeliveryPayload>;
 
 /** Failure code recorded on a tick dropped because the previous run was still executing. */
 export const OVERLAP_SKIP_CODE = 'overlapping_run';
+
+/** Failure code recorded on a run whose worker died while it was executing. */
+export const STALLED_RUN_CODE = 'stalled_run';
+
+/** What the user is told about a run no worker is driving any more. */
+export const STALLED_RUN_MESSAGE =
+  'The worker stopped while this run was executing; its workspace has been reclaimed.';
 
 /** Failure code recorded on a manual run whose job no longer exists. */
 export const JOB_MISSING_CODE = 'job_not_found';
@@ -360,6 +384,79 @@ async function closeUnrunnableRun(
 }
 
 /**
+ * Destroys the container an abandoned run left behind.
+ *
+ * The row is re-read rather than trusted from the run: a workspace already closed out — by a
+ * teardown that got far enough, or by an earlier recovery — must not be destroyed twice or walked
+ * back out of a terminal status the lifecycle forbids leaving.
+ *
+ * @param deps - Runner, repositories and logger.
+ * @param workspaceId - The workspace the abandoned run was using.
+ */
+async function destroyAbandonedWorkspace(deps: ProcessorDeps, workspaceId: string): Promise<void> {
+  const workspace = await deps.repos.workspaces.get(workspaceId);
+  if (workspace === null || !isLiveWorkspaceStatus(workspace.status)) {
+    return;
+  }
+  try {
+    await deps.runner.destroy({
+      workspaceId: workspace.id,
+      runnerRef: workspace.runnerRef ?? '',
+    });
+  } catch (error) {
+    deps.logger.error(
+      { err: error, workspaceId },
+      'destroying the workspace of an abandoned run failed',
+    );
+  }
+  await deps.repos.workspaces.setStatus(workspace.id, 'DESTROYED', {
+    failureReason: STALLED_RUN_REASON,
+  });
+}
+
+/**
+ * Closes out the run a dead worker left behind, so this delivery can run its tick.
+ *
+ * The terminal event goes out like any other failure: a manual run may still have a browser
+ * attached to its stream from before the worker died.
+ *
+ * @param deps - Runner, publisher, repositories and logger.
+ * @param abandoned - The run found still executing, whose executor is gone.
+ */
+async function recoverAbandonedRun(deps: ProcessorDeps, abandoned: JobRun): Promise<void> {
+  deps.logger.warn(
+    { jobId: abandoned.jobId, runId: abandoned.id },
+    'recovering a run whose worker stopped while it was executing',
+  );
+  if (abandoned.workspaceId !== null) {
+    await destroyAbandonedWorkspace(deps, abandoned.workspaceId);
+  }
+  await failRun(deps, abandoned.id, STALLED_RUN_CODE, STALLED_RUN_MESSAGE);
+}
+
+/**
+ * Tells a run that is genuinely still executing apart from one a dead worker abandoned.
+ *
+ * @param deps - The processor's collaborators.
+ * @param jobId - The job this delivery belongs to.
+ * @param stalledCounter - How many times BullMQ recovered this delivery from the stalled set.
+ * @returns The run that is really still running, or `null` — either because there is none, or
+ *   because the one that was there has just been closed out.
+ */
+async function resolveRunningRun(
+  deps: ProcessorDeps,
+  jobId: string,
+  stalledCounter: number,
+): Promise<JobRun | null> {
+  const running = await deps.repos.jobRuns.findRunningByJob(jobId);
+  if (running === null || stalledCounter === 0) {
+    return running;
+  }
+  await recoverAbandonedRun(deps, running);
+  return null;
+}
+
+/**
  * Finds the run this delivery belongs to, or opens one.
  *
  * A manual run already has its row — the API created it so it could answer with an id the browser
@@ -541,7 +638,7 @@ export function createRunScheduledJobProcessor(
     const scheduledFor =
       delivery.timestamp === undefined ? deps.clock.now() : new Date(delivery.timestamp);
 
-    const running = await deps.repos.jobRuns.findRunningByJob(job.id);
+    const running = await resolveRunningRun(deps, job.id, delivery.stalledCounter ?? 0);
     // The run this delivery drives is either brand new or an adopted `QUEUED` row, and neither is
     // what `findRunningByJob` answers with, so the two can never be the same record.
     const run = await openRun(deps, job, payload, scheduledFor);

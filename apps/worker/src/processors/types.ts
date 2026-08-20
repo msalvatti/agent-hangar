@@ -61,8 +61,24 @@ export interface ProcessorJob<TData> {
   name: string;
   /** Raw payload; every processor validates it with its Zod contract. */
   data: TData;
-  /** How many times this job was already attempted; above zero means a retry or a stall. */
+  /**
+   * How many times this job was already attempted.
+   *
+   * It counts *failed* attempts, and nothing else: stalled recovery has its own counter and never
+   * touches this one, so a job redelivered because its worker died still reports zero here. Use
+   * {@link ProcessorJob.stalledCounter} to recognise that case.
+   */
   attemptsMade: number;
+  /**
+   * How many times BullMQ moved this job out of the stalled set and back onto the queue.
+   *
+   * Above zero means a previous execution stopped renewing the job's lock — the worker died, or
+   * blocked long enough to look dead — so whatever that execution left half-written is nobody's
+   * any more. Optional because the structural type is the part of a BullMQ job the processors
+   * read, and a test constructs the deliveries it needs; absent counts as zero, which is the
+   * reading that changes nothing.
+   */
+  stalledCounter?: number | undefined;
   /** When BullMQ produced the job, in epoch milliseconds. */
   timestamp?: number | undefined;
 }

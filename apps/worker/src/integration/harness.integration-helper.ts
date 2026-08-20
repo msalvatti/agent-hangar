@@ -29,6 +29,8 @@ import type { WorkerContainer } from '../container.js';
 import { TURN_EVENT_FIELD } from '../events.js';
 import { LABELS } from '../processors/constants.js';
 
+import { assertRedisErasable } from './redis-guard.js';
+
 /** Repository the suite works against; small, public, and cloneable without a token. */
 export const TEST_REPO_URL = process.env.TEST_REPO_URL ?? 'https://github.com/octocat/Hello-World';
 
@@ -140,6 +142,9 @@ export async function createIntegrationHarness(options: {
   const inspect = createQueueConnection(config.REDIS_URL);
 
   await truncateAll(container.prisma);
+  // The line above fails closed on the database; this one does the same for Redis, which no other
+  // check in the suite covers and which `FLUSHDB` cannot narrow once it has run.
+  assertRedisErasable(config);
   await inspect.flushdb();
   await seedCanaryCredentials(container, options.masterKeyPath);
 
