@@ -1,7 +1,7 @@
 # Workspace image: the disposable container an agent runs in (one per chat / per scheduled run).
 # Base only: toolchain, non-root user, git helper. No secrets, no .env, no application source;
 # credentials arrive as container environment at `create` time and git reads the token through
-# GIT_ASKPASS. The agent runtime bundle is copied in by a later build step (see placeholder).
+# GIT_ASKPASS. The agent runtime bundle is copied in below, root-owned like askpass.sh.
 FROM node:24-bookworm-slim
 
 LABEL org.opencontainers.image.title="agent-hangar-workspace"
@@ -36,15 +36,15 @@ RUN git config --global credential.helper "" \
     && git config --global init.defaultBranch main
 
 # The runtime bundle joins askpass.sh under the same rule: root-owned, readable and executable by
-# `agent`, writable by nobody. The lane that built it asked for `--chown=agent:agent`, which is
-# refused here on purpose — the directory being root-owned stops the bundle being unlinked, but an
-# agent-owned FILE can still be rewritten in place, and this bundle is what reads the token file
-# and confines every tool path. Rewriting it would bypass both.
+# `agent`, writable by nobody. `--chown=agent:agent` would be self-defeating here — the directory
+# being root-owned stops the bundle being unlinked, but an agent-owned FILE can still be rewritten
+# in place, and this bundle is what reads the token file and confines every tool path. An
+# agent-owned file would let a compromised tool bypass both protections by editing it directly.
 #
-# Three files, not two: the bundle is ESM in a file named `cli.js`, and Node only started it by
-# re-parsing a file that had failed as CommonJS — behaviour `--no-experimental-detect-module`
-# turns off. The manifest beside it declares the module type outright, so starting the runtime
-# does not depend on a heuristic.
+# The bundle is ESM in a file named `cli.js`. Node runs it via automatic module detection —
+# re-parsing the file after it fails as CommonJS — which `--no-experimental-detect-module` turns
+# off. The manifest beside it declares the module type outright, so starting the runtime does not
+# depend on that heuristic being enabled.
 COPY --chmod=755 runtime/cli.js /opt/agent-runtime/cli.js
 COPY --chmod=644 runtime/cli.js.map /opt/agent-runtime/cli.js.map
 COPY --chmod=644 runtime/package.json /opt/agent-runtime/package.json

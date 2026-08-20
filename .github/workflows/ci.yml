@@ -259,7 +259,10 @@ jobs:
       # `pnpm infra:image` also stages the agent-runtime bundle into the build context, which a
       # bare `docker build` would leave out — the image would then have no runtime to exec.
       - run: pnpm infra:image
-      - run: docker run --rm agent-hangar/workspace:dev node /opt/agent-runtime/cli.js --version
+      # `--no-experimental-detect-module` disables Node's module-syntax heuristic, so this only
+      # succeeds because /opt/agent-runtime/package.json declares `"type": "module"` — proving the
+      # manifest was actually copied and is effective, not merely that cli.js happens to run.
+      - run: docker run --rm agent-hangar/workspace:dev node --no-experimental-detect-module /opt/agent-runtime/cli.js --version
 
   secret-scan:
     name: secret-scan
