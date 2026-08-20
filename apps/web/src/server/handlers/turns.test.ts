@@ -177,6 +177,49 @@ describe('cancelTurn', () => {
   });
 
   /**
+   * The job is removed from Redis before the terminal status reaches Postgres, and the two stores
+   * cannot commit together. The rule this protects is that a failure of the second write does not
+   * strand the turn: without the undo the queue entry is gone while the row still says `QUEUED`,
+   * so nothing would ever run it and a later cancel would only publish a command for work that can
+   * never start. The job goes back with the same id and payload, so a retry finds what it started
+   * from.
+   */
+  it('puts the queued job back when the cancelled status cannot be written', async () => {
+    const harness = createTestContainer();
+    const turnId = await seedTurn(harness);
+    vi.spyOn(harness.doubles.repos.turns, 'finish').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+
+    const response = await cancelTurn(harness.container, cancelRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(500);
+    expect(harness.doubles.queues.chatTurns.jobs.has(turnId)).toBe(true);
+    expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({ status: 'QUEUED' });
+    expect(harness.doubles.redis.published).toEqual([]);
+  });
+
+  /**
+   * Both the status write and the undo failing is the one case compensation cannot repair: the
+   * request still fails with the error that explains it rather than with the undo's, and the log
+   * line naming the turn is the only record that a queued turn has no job behind it.
+   */
+  it('reports a cancel it could not undo', async () => {
+    const harness = createTestContainer();
+    const turnId = await seedTurn(harness);
+    vi.spyOn(harness.doubles.repos.turns, 'finish').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+    harness.doubles.queues.chatTurns.addFailure = new Error('redis unreachable');
+
+    const response = await cancelTurn(harness.container, cancelRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(500);
+    expect(harness.doubles.queues.chatTurns.jobs.has(turnId)).toBe(false);
+    expect(harness.doubles.logOutput()).toContain('could not undo a partial turn cancel');
+  });
+
+  /**
    * An unknown turn is a missing resource.
    */
   it('reports an unknown turn as missing', async () => {
