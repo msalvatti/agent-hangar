@@ -3,12 +3,13 @@
  *
  * Layer: unit (no subprocesses; the filesystem is the only thing touched).
  * Goal: a base is never handed to two live claimants, a marker left behind by a run that was
- * killed stops holding its base once it is old enough, a range whose every base is held fails
- * loudly instead of returning a base somebody else owns, and a `mkdir` or `rename` that failed for
- * any other reason is not mistaken for a base being taken.
+ * killed stops holding its base once it is old enough, a reclaim never inspects or deletes a
+ * marker another reclaim is already deciding about, a range whose every base is held fails loudly
+ * instead of returning a base somebody else owns, and a `mkdir` that failed for any other reason
+ * is not mistaken for a base being taken.
  * Mocks: none for the claim itself — the markers are real directories under the temporary
- * directory, which is what makes the claim atomic in the first place; `renameSync` is spied on
- * only to inject the one interleaving two independent processes racing each other would produce.
+ * directory, which is what makes the claim atomic in the first place; `mkdirSync` is spied on only
+ * to inject the one interleaving two independent processes racing each other would produce.
  *
  * The allocator names markers from nothing but the base, so two processes running this same file
  * at once would plant and inspect identical paths and make the suite that proves determinism
@@ -138,18 +139,6 @@ describe('reservePortBase', () => {
   });
 
   /**
-   * A marker whose age still reads as recent belongs to a live run, so the reclaim puts it back
-   * exactly as found rather than deleting a claim somebody is using.
-   */
-  it('restores a marker that turns out not to be abandoned', () => {
-    const only = TEST_FLOOR + 21 * PORT_BASE_STRIDE;
-    const marker = plantMarker(only);
-
-    expect(() => reservePortBase(only, PORT_BASE_STRIDE)).toThrow(/No free port base/u);
-    expect(existsSync(marker)).toBe(true);
-  });
-
-  /**
    * A marker that no longer resolves — a dangling link from a half-finished cleanup, or an owner
    * that released it between the failed `mkdir` and the age check — reads as abandoned rather than
    * as an error. Letting it throw would take a whole run down over a base that had just become
@@ -183,37 +172,39 @@ describe('reservePortBase', () => {
   });
 
   /**
-   * The reclaim is a rename-then-inspect, not a stat-then-remove, precisely so a second claimant
-   * reading the same marker cannot delete a fresh claim the first just made in the gap. Simulated
-   * here: the marker standing at the moment of the rename is somebody else's reclaim already in
-   * flight, so this attempt's rename loses that race — `ENOENT` — and must fold quietly into "not
-   * mine to take" rather than crash or misreport the base as free.
+   * The reclaim is serialized by a sibling `.reclaim` lock, claimed with the same atomic `mkdir`
+   * test-and-set the base itself uses, precisely so a second claimant can never be mid-inspection
+   * of the same marker at the same time as the first — and so the canonical path is never vacated
+   * for the length of an inspection, which is what an earlier rename-then-inspect version did and
+   * why it introduced a worse race than the one it closed. Simulated here: the lock is already
+   * held (standing in for a concurrent reclaimer's own `mkdirSync(lock)` having won it first), so
+   * this attempt must defer rather than act on a marker it has no exclusive claim to inspect.
    */
-  it('does not treat a marker somebody else already reclaimed as an error', () => {
+  it('leaves a marker alone while another reclaim already holds its lock', () => {
     const only = TEST_FLOOR + 15 * PORT_BASE_STRIDE;
-    const marker = plantMarker(only);
-    const raced = new Error('already reclaimed');
-    (raced as NodeJS.ErrnoException).code = 'ENOENT';
-    vi.spyOn(fsPort, 'renameSync').mockImplementationOnce(() => {
-      throw raced;
-    });
+    const marker = plantMarker(only, ABANDONED_MS);
+    mkdirSync(`${marker}.reclaim`);
+    planted.push(`${marker}.reclaim`);
 
     expect(() => reservePortBase(only, PORT_BASE_STRIDE)).toThrow(/No free port base/u);
     expect(existsSync(marker)).toBe(true);
   });
 
   /**
-   * Only a race loss (`ENOENT`) is swallowed by the reclaim. Any other reason the rename failed —
-   * here a permission error — is a broken machine, not a concurrent claimant, and burying it would
-   * hide a real fault behind "somebody else has this base".
+   * Only a race loss (`EEXIST`) on the lock is swallowed by the reclaim. Any other reason the
+   * lock's own `mkdir` failed — here a permission error — is a broken machine, not a concurrent
+   * claimant, and burying it would hide a real fault behind "somebody else has this base".
    */
-  it('propagates a rename failure that is not a race loss', () => {
+  it('propagates a lock failure that is not a race loss', () => {
     const only = TEST_FLOOR + 18 * PORT_BASE_STRIDE;
     plantMarker(only);
     const broken = new Error('permission denied');
     (broken as NodeJS.ErrnoException).code = 'EACCES';
-    vi.spyOn(fsPort, 'renameSync').mockImplementationOnce(() => {
-      throw broken;
+    vi.spyOn(fsPort, 'mkdirSync').mockImplementation((path, options) => {
+      if (String(path).endsWith('.reclaim')) {
+        throw broken;
+      }
+      return mkdirSync(path, options);
     });
 
     expect(() => reservePortBase(only, PORT_BASE_STRIDE)).toThrow(/permission denied/u);
@@ -226,8 +217,8 @@ describe('reservePortBase', () => {
   it('propagates a non-Error thrown by the claim', () => {
     const only = TEST_FLOOR + 24 * PORT_BASE_STRIDE;
     // Typed `unknown` rather than thrown as a bare literal: a driver that rejects with a plain
-    // object is the case being covered, and the classification has to survive it without
-    // pretending the value is an `Error`.
+    // object is the case being covered, and "somebody else holds this base" is a claim only an
+    // `Error` carrying EEXIST may make, however much the value resembles one.
     const notAnError: unknown = { code: 'EEXIST', message: 'looks like contention' };
     vi.spyOn(fsPort, 'mkdirSync').mockImplementationOnce(() => {
       throw notAnError;
