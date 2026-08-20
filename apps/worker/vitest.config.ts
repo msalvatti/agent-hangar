@@ -5,23 +5,61 @@
  *
  * Coverage is always on with 100 % thresholds over `src/**`; `src/main.ts` is the composition
  * root (real clients, process signals, `process.exit`) and is excluded — its logic lives in
- * `boot.ts`, which is fully tested with fakes.
+ * `boot.ts`, `container.ts` and `app.ts`, which are fully tested with fakes.
+ *
+ * The `@docker @db @redis` suite lives in `src/integration` and is its own project. It collects
+ * files only when `DOCKER_AVAILABLE=1`, which `pnpm --filter worker test:integration` sets, so a
+ * plain `vitest run` never loads it and the unit gate stays runnable on a machine — or a CI job —
+ * without a Docker daemon. Once it is loaded it refuses to skip silently: see
+ * `src/integration/describe-docker.ts`.
  */
 import { defineConfig } from 'vitest/config';
 
-export default defineConfig({
+/** Whether the caller asked for the Docker suite. */
+const dockerSuiteRequested = process.env.DOCKER_AVAILABLE === '1';
+
+/** The unit project: everything except the integration suite. */
+const unitProject = {
   test: {
-    name: 'worker',
+    name: 'unit',
     environment: 'node',
     include: ['src/**/*.test.ts'],
+    exclude: ['src/**/*.integration.test.ts'],
     maxWorkers: 3,
+  },
+};
+
+/**
+ * The integration project: real Docker, Postgres and Redis.
+ *
+ * Always registered so `--project integration` names something that exists, but it collects no
+ * files until the caller opts in.
+ */
+const integrationProject = {
+  test: {
+    name: 'integration',
+    environment: 'node',
+    include: dockerSuiteRequested ? ['src/**/*.integration.test.ts'] : [],
+    maxWorkers: 1,
+    testTimeout: 180_000,
+    hookTimeout: 180_000,
+  },
+};
+
+export default defineConfig({
+  test: {
+    maxWorkers: 3,
+    projects: [unitProject, integrationProject],
     coverage: {
       enabled: true,
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary'],
       reportsDirectory: './coverage',
       include: ['src/**'],
-      exclude: ['**/*.test.ts', 'src/main.ts'],
+      // `*.integration-helper.ts` is the harness the Docker suite composes itself from: it runs
+      // only under that suite, which coverage is not collected over, so counting it would demand
+      // unit tests for wiring whose whole point is to touch real infrastructure.
+      exclude: ['**/*.test.ts', '**/*.integration-helper.ts', 'src/main.ts'],
       thresholds: {
         lines: 100,
         branches: 100,

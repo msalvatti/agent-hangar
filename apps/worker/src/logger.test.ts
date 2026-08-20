@@ -2,54 +2,69 @@
  * Unit tests for the worker logger factory.
  *
  * Layer: unit.
- * Goal: pretty transport only in interactive development; plain JSON otherwise; `createLogger`
- * returns a working pino instance at the requested level.
- * Mocks: none (environment hints are passed explicitly).
+ * Goal: the factory returns a pino logger at the requested level, names it `worker`, writes to an
+ * injected destination, and routes everything it writes through the redactor it was given.
+ * Mocks: an in-memory destination stream and a redactor that replaces a canary.
  */
+import { GITHUB_CANARY } from '@agent-hangar/core/testing';
+import type { DestinationStream } from 'pino';
 import { describe, expect, it } from 'vitest';
 
-import { buildLoggerOptions, createLogger } from './logger.js';
+import { createLogger, WORKER_LOGGER_NAME } from './logger.js';
 
-describe('buildLoggerOptions', () => {
-  /**
-   * Development on a TTY: human-readable output via pino-pretty.
-   */
-  it('uses the pretty transport in development on a TTY', () => {
-    const options = buildLoggerOptions({ level: 'debug', nodeEnv: 'development', isTty: true });
-    expect(options.level).toBe('debug');
-    expect(options.transport).toEqual({ target: 'pino-pretty', options: { colorize: true } });
-  });
+/** Collects the finished lines pino writes, so a test can assert on the serialised record. */
+function collectingDestination(): { lines: string[]; stream: DestinationStream } {
+  const lines: string[] = [];
+  return {
+    lines,
+    stream: {
+      write(line: string): void {
+        lines.push(line);
+      },
+    },
+  };
+}
 
-  /**
-   * Production, or a non-TTY stdout (logs piped to a file/collector), stays JSON — no transport.
-   */
-  it('stays JSON in production or when stdout is not a TTY', () => {
-    expect(
-      buildLoggerOptions({ level: 'info', nodeEnv: 'production', isTty: true }).transport,
-    ).toBeUndefined();
-    expect(
-      buildLoggerOptions({ level: 'info', nodeEnv: 'development', isTty: false }).transport,
-    ).toBeUndefined();
-  });
-
-  /**
-   * Defaults read `NODE_ENV` and `process.stdout.isTTY`; under the test runner stdout is not a
-   * TTY, so the default is the JSON configuration.
-   */
-  it('reads the environment by default', () => {
-    const options = buildLoggerOptions({ level: 'warn' });
-    expect(options.name).toBe('worker');
-    expect(options.transport).toBeUndefined();
-  });
-});
+/** A redactor that only knows the GitHub canary, which is enough to prove it is consulted. */
+const redactor = {
+  redact: (input: string): string => input.replaceAll(GITHUB_CANARY, '[REDACTED]'),
+  redactJson: (input: unknown): unknown =>
+    typeof input === 'string' ? input.replaceAll(GITHUB_CANARY, '[REDACTED]') : input,
+};
 
 describe('createLogger', () => {
   /**
-   * Returns a pino logger at the requested level.
+   * The level is forwarded to pino and the process name is attached to every record.
    */
-  it('creates a pino logger at the requested level', () => {
-    const logger = createLogger('silent');
+  it('creates a pino logger at the requested level, named for the worker', () => {
+    const logger = createLogger({ level: 'silent', redactor });
     expect(logger.level).toBe('silent');
     expect(typeof logger.info).toBe('function');
+  });
+
+  /**
+   * With a destination the records land there, carrying the worker name, which is what makes the
+   * logger assertable in the tests of every other module.
+   */
+  it('writes named records to an injected destination', () => {
+    const { lines, stream } = collectingDestination();
+    createLogger({ level: 'info', redactor, destination: stream }).info('ready');
+    expect(lines).toHaveLength(1);
+    const record: unknown = JSON.parse(lines[0]!);
+    expect(record).toMatchObject({ name: WORKER_LOGGER_NAME, msg: 'ready' });
+  });
+
+  /**
+   * The redactor is wired into the factory rather than left to call sites: a credential logged by
+   * accident must never reach the destination.
+   */
+  it('scrubs a credential out of everything it writes', () => {
+    const { lines, stream } = collectingDestination();
+    createLogger({ level: 'info', redactor, destination: stream }).info(
+      { clone: `https://${GITHUB_CANARY}@github.com/o/r.git` },
+      `cloning with ${GITHUB_CANARY}`,
+    );
+    expect(lines[0]).not.toContain(GITHUB_CANARY);
+    expect(lines[0]).toContain('[REDACTED]');
   });
 });

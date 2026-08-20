@@ -2,33 +2,55 @@
  * Worker entry point: boots with the real dependencies and exits cleanly on SIGINT/SIGTERM.
  *
  * Layer: entry point (composition root; excluded from unit coverage as pure wiring).
+ *
+ * Security: a startup failure that is not a `ConfigError` comes from Prisma, ioredis or the
+ * scheduler reconciliation, and those build their messages from the connection strings they were
+ * configured with — passwords included, none of them known to the runtime-secret redactor. Such a
+ * failure is logged by classification only. A `ConfigError` is the opposite case: its text is
+ * written for the operator, naming the variable at fault or the host with its credentials already
+ * stripped, and it is the message that makes a first run diagnosable.
  */
-import { assertDatabaseReachable, createPrismaClient, loadConfig } from '@agent-hangar/core';
-import { Redis } from 'ioredis';
+import {
+  assertDatabaseReachable,
+  ConfigError,
+  createPrismaClient,
+  createQueueConnection,
+  createRedactor,
+  describeClientFailure,
+  loadConfig,
+} from '@agent-hangar/core';
 
+import { defaultWorkerFactories, startWorker } from './app.js';
 import { boot } from './boot.js';
+import { createContainer, defaultContainerFactories, factoriesFor } from './container.js';
 import { createLogger } from './logger.js';
 
-const logger = createLogger(process.env.LOG_LEVEL ?? 'info');
+const redactor = createRedactor();
+const logger = createLogger({ level: process.env.LOG_LEVEL ?? 'info', redactor });
 
 try {
-  const booted = await boot({
+  const { config, prisma, redis } = await boot({
     loadConfig,
     createPrismaClient,
     assertDatabaseReachable,
-    createRedis: (url) => new Redis(url, { maxRetriesPerRequest: 1, lazyConnect: false }),
+    createRedis: createQueueConnection,
     logger,
   });
-  logger.info(
-    { instance: booted.config.AH_INSTANCE, webPort: booted.config.WEB_PORT },
-    `worker ready (instance=${booted.config.AH_INSTANCE}, web port ${String(booted.config.WEB_PORT)})`,
-  );
-  const stop = (signal: string) => {
+  const container = await createContainer({
+    config,
+    factories: factoriesFor(defaultContainerFactories, { prisma, redis, redactor, logger }),
+  });
+  const app = await startWorker(container, defaultWorkerFactories);
+  const stop = (signal: string): void => {
     logger.info({ signal }, 'signal received');
-    booted.shutdown().then(
-      () => process.exit(0),
+    void app.shutdown().then(
+      () => {
+        process.exit(0);
+      },
       (error: unknown) => {
-        logger.error({ err: error }, 'shutdown failed');
+        // The container was already released by the shutdown's own `finally`; what is left is to
+        // say so and leave a nonzero status behind, rather than an unhandled rejection.
+        logger.error({ signal, failure: describeClientFailure(error) }, 'shutdown failed');
         process.exit(1);
       },
     );
@@ -40,6 +62,7 @@ try {
     stop('SIGTERM');
   });
 } catch (error) {
-  logger.error(error instanceof Error ? error.message : String(error));
+  const failure = error instanceof ConfigError ? error.message : describeClientFailure(error);
+  logger.error({ failure }, 'the worker could not start');
   process.exit(1);
 }
