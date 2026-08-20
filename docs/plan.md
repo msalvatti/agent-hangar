@@ -304,6 +304,12 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | Tasks merged | **51 of 94** |
 | Tasks written but not yet merged | **18** on the three open lane branches, so 69 of 94 exist as code |
 | Routed findings still open | **17**, in §14 below, each naming one lane |
+| Orchestrator fixes | **12 merged, 2 open** — defects found while shepherding, listed under the lane table |
+
+Three tables in this section describe the same build and are updated together, because one of them
+being stale is how a reader ends up with the wrong answer: the lane table, the orchestrator-fix
+table beneath it, and the task-progress table at the end. The lane index in `docs/tasks/README.md`
+mirrors the first of them and moves with it.
 
 The task counts come from the per-lane task indexes in `docs/tasks/`. A lane's tasks only count as
 merged once its pull request lands, so the gap between 51 and 69 is exactly the three lanes in
@@ -338,12 +344,20 @@ the three pull requests currently in review, in no particular order among themse
 
 | PR | Status | The defect |
 |---|---|---|
-| #9 | 🟩 merged | The `e2e` job installed a browser to run an empty suite, taking 111–1367 s and gating every merge |
+| #1 · #2 · #3 | 🟩 merged | The launch decisions, the web security defaults and the container grouping were agreed in conversation and existed nowhere a lane could read them |
 | #5 | 🟩 merged | `@agent-hangar/core` was unresolvable from source, so a fresh worktree could not run the worker; repository URLs hardened |
+| #9 | 🟩 merged | The `e2e` job installed a browser to run an empty suite, taking 111–1367 s and gating every merge |
 | #13 | 🟩 merged | A connection failure repeated the driver message and attached the driver error as `cause`, leaking the database password twice over |
 | #14 | 🟩 merged | The destructive-test guard printed the password back when the connection URL had no authority |
 | #15 | 🟩 merged | This dashboard had drifted six merges behind reality |
-| #16 | 🟨 PR open | The workspace image had no agent runtime in it: the bundle was described in a pull request body and never applied |
+| #16 | 🟩 merged | The workspace image had no agent runtime in it: the bundle was described in a pull request body and never applied |
+| #17 | 🟩 merged | Updating this dashboard was treated as an errand to schedule rather than the last step of the merge in front of it |
+| #20 | 🟩 merged | The development server could not resolve the shared package at all: it requests the source condition unconditionally and resolves the NodeNext specifiers literally |
+| #23 | 🟩 merged | Findings that no lane could close had no record outside a conversation |
+| #25 | 🟩 merged | A routed row stated a contract change as though it had landed, and named the wrong remedy for it |
+| #26 | 🟨 PR open | `pnpm typecheck` emits without rewriting, so it leaves a `dist` whose declarations name files that do not exist |
+| #27 | 🟩 merged | The dashboard and the task index disagreed about which lanes were ready |
+| #28 | 🟨 PR open | The dashboard listed every lane's state but never what it added up to |
 
 Legend: ⬜ not started · 🟦 running (branch) · 🟨 PR open · 🟩 merged · 🟥 blocked.
 
