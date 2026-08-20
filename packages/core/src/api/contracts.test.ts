@@ -332,16 +332,41 @@ describe('settings and health schemas', () => {
    */
   it('validates healthResponse', () => {
     const ok = { ok: true };
+    const ports = { web: 3000, postgres: 3001, redis: 3002 };
     expect(
       healthResponse.safeParse({
         ok: true,
         instance: 'default',
+        ports,
         checks: { db: ok, redis: ok, docker: ok, image: { ok: false, detail: 'missing' } },
       }).success,
     ).toBe(true);
     expect(
-      healthResponse.safeParse({ ok: true, instance: 'default', checks: { db: ok, redis: ok } })
-        .success,
+      healthResponse.safeParse({
+        ok: true,
+        instance: 'default',
+        ports,
+        checks: { db: ok, redis: ok },
+      }).success,
+    ).toBe(false);
+  });
+
+  /**
+   * The Environment card names the instance by the ports it resolved to, so every port is
+   * required and has to be a real port number: a card that showed `undefined` for one of three
+   * side-by-side checkouts would be worse than no card.
+   */
+  it('requires all three instance ports', () => {
+    const ok = { ok: true };
+    const checks = { db: ok, redis: ok, docker: ok, image: ok };
+    expect(healthResponse.safeParse({ ok: true, instance: 'default', checks }).success).toBe(false);
+    expect(
+      healthResponse.safeParse({
+        ok: true,
+        instance: 'default',
+        ports: { web: 3000, postgres: 3001, redis: 0 },
+        checks,
+      }).success,
     ).toBe(false);
   });
 

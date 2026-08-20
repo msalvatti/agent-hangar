@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W2-A (one agent; runs in parallel with W2-B 🐳 and W2-C) |
 | **Status** | 🟦 running |
-| **Progress** | 0/6 tasks |
+| **Progress** | 1/6 tasks |
 | **Branch** | `feat/w2a-web-api-sse` |
 | **Owned paths** | `apps/web/app/api/**`, `apps/web/src/server/**` · plus, by explicit exception: `apps/web/vitest.config.ts` (`coverage.include` + test `include` globs only), `apps/web/package.json` (`scripts.test:integration` only), and **additive** lines in `packages/core/src/queues/contracts.ts`, `packages/core/src/api/contracts.ts`, `packages/core/src/config/schema.ts` (listed in Task 2A.1; every such addition is reported under `contractChangeRequests`) |
 | **Depends on** | W0, W1-A (secrets/redaction/logging), W1-E (persistence repositories), W1-F (scheduling, queues) — all merged to `main` |
@@ -47,7 +47,7 @@ Two decisions are taken here and must be stated in the PR description:
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 2A.1 | Server DI container, HTTP helpers, test container, GitHub client, additive core contracts | 📋 | P0 | M | — |
+| 2A.1 | Server DI container, HTTP helpers, test container, GitHub client, additive core contracts | ✅ | P0 | M | — |
 | 2A.2 | Chats, messages, archive/restore, delete, turn cancel routes | 📋 | P0 | M | 2A.1 |
 | 2A.3 | Jobs CRUD + manual run, runs list/detail, repos + branches routes | 📋 | P0 | M | 2A.1 |
 | 2A.4 | Settings (status/set/remove, no request logging) and health routes | 📋 | P0 | S | 2A.1 |
@@ -58,17 +58,18 @@ Two decisions are taken here and must be stated in the PR description:
 
 ## Task 2A.1 — Server DI container, HTTP helpers, test container, GitHub client, additive core contracts
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Build the server-side foundation every route uses: a per-process DI container (`getServerContainer()`, HMR-safe), HTTP helpers (JSON responses, Zod body/query parsing, error → status mapping), the injectable test container with fakes, the GitHub client (single permitted `reveal` site), and the small **additive** core contract changes this lane depends on (worker heartbeat key/schema, cancel command schema, `ALLOWED_REPO_HOSTS` + `GITHUB_API_BASE_URL` config vars, response schemas the routes need).
 
 **Acceptance criteria**
-- [ ] `apps/web/src/server/container.ts` exports `ServerContainer`, `createServerContainer(deps?)`, `getServerContainer()` (cached on `globalThis` under a symbol so Next dev HMR reuses one Prisma/Redis/BullMQ set), `disposeServerContainer()`
-- [ ] `apps/web/src/server/http.ts` exports `json`, `noContent`, `errorResponse`, `parseJsonBody`, `parseQuery`, `withErrorHandling`, `ApiHttpError`, `NotFoundError`, `ConflictError`, and maps core errors to status/code as specified
-- [ ] `apps/web/src/server/github.ts` exports `createGithubClient` with `listRepos(query)` / `listBranches(repo)`; PAT obtained via `secrets.reveal('GITHUB_PAT')` inside the call, never stored; errors are `GithubApiError { status }` with redacted messages; a test asserts no other web file calls `.reveal(`
-- [ ] `apps/web/src/server/testing/{test-container,fake-queue,fake-redis,fake-secrets}.ts` provide `createTestContainer(overrides?)` built on `@agent-hangar/core/testing`
-- [ ] Additive core changes: `workerHeartbeatKey(instance)`, `WORKER_HEARTBEAT_TTL_SEC = 90`, `WORKER_HEARTBEAT_INTERVAL_SEC = 30`, `workerHeartbeatSchema`, `turnCommandSchema` in `packages/core/src/queues/contracts.ts`; `ALLOWED_REPO_HOSTS` (comma-separated, default `github.com`) and `GITHUB_API_BASE_URL` (default `https://api.github.com`) in `packages/core/src/config/schema.ts`; any missing response schema in `packages/core/src/api/contracts.ts` (see prompt) — each with tests in core, 100 %
-- [ ] `apps/web/vitest.config.ts` `coverage.include` extended with `'app/api/**'`, `'src/server/**'`; unit tests green at 100 % for everything created here
+- [x] `apps/web/src/server/container.ts` exports `ServerContainer`, `createServerContainer(deps?)`, `getServerContainer()` (cached on `globalThis` under a symbol so Next dev HMR reuses one Prisma/Redis/BullMQ set), `disposeServerContainer()`
+- [x] `apps/web/src/server/http.ts` exports `json`, `noContent`, `errorResponse`, `parseJsonBody`, `parseQuery`, `withErrorHandling`, `ApiHttpError`, `ResourceNotFoundError`, `ConflictError`, and maps core errors to status/code as specified
+- [x] `apps/web/src/server/same-origin.ts` exports `assertSameOrigin(request)` (403 `FORBIDDEN_ORIGIN`), called by every state-changing handler
+- [x] `apps/web/src/server/github.ts` exports `createGithubClient` with `listRepos(query)` / `listBranches(repo)`; PAT obtained via `secrets.reveal('GITHUB_PAT')` inside the call, never stored; errors are `GithubApiError { status }` with redacted messages; a test asserts no other web file calls `.reveal(`
+- [x] `apps/web/src/server/testing/{test-container,fake-queue,fake-redis,fake-secrets}.ts` provide `createTestContainer(overrides?)` built on `@agent-hangar/core/testing`
+- [x] Additive core changes: `workerHeartbeatKey(instance)`, `WORKER_HEARTBEAT_TTL_SEC = 90`, `WORKER_HEARTBEAT_INTERVAL_SEC = 30`, `workerHeartbeatSchema`, `TURN_EVENT_FIELD`, `parseTurnEventEntry` in `packages/core/src/queues/contracts.ts`; `ALLOWED_REPO_HOSTS` and `GITHUB_API_BASE_URL` in `packages/core/src/config/schema.ts`; `getJob` operation and `healthResponse.ports` in `packages/core/src/api/contracts.ts` — each with tests in core, 100 %
+- [x] `apps/web/vitest.config.ts` `coverage.include` extended with `'app/api/**'`, `'src/server/**'`; unit tests green at 100 % for everything created here
 
 **Files to create/modify**
 `apps/web/src/server/{container,http,github,repo-url,index}.ts` + `*.test.ts`; `apps/web/src/server/testing/{test-container,fake-queue,fake-redis,fake-secrets,index}.ts` + tests; `apps/web/src/server/reveal-policy.test.ts`; `packages/core/src/queues/contracts.ts` (+ test), `packages/core/src/config/schema.ts` (+ test), `packages/core/src/api/contracts.ts` (+ test, only if schemas are missing); `apps/web/vitest.config.ts`.
@@ -604,3 +605,5 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 2A.1 ✅ 2026-08-19 — server container, HTTP helpers, same-origin guard, GitHub client, test doubles and the additive core contracts

@@ -345,10 +345,25 @@ export const SETTINGS_FIELD_BY_KEY = {
 /** One health probe. */
 export const healthCheck = z.object({ ok: z.boolean(), detail: z.string().optional() });
 
+/**
+ * Ports the running instance resolved to.
+ *
+ * Reported so the Environment card can answer "which instance am I looking at" when several
+ * checkouts run side by side, which is the everyday case this product is built around. Ports only:
+ * the response is unauthenticated, and a connection string or a host name would say more about
+ * the machine than a browser on that machine needs to be told.
+ */
+export const instancePorts = z.object({
+  web: z.number().int().positive(),
+  postgres: z.number().int().positive(),
+  redis: z.number().int().positive(),
+});
+
 /** `GET /api/health` response. */
 export const healthResponse = z.object({
   ok: z.boolean(),
   instance: z.string().min(1),
+  ports: instancePorts,
   checks: z.object({
     db: healthCheck,
     redis: healthCheck,

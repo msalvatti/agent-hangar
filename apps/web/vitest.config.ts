@@ -52,6 +52,8 @@ export default defineConfig({
         'src/mocks/**',
         'src/shared/repo-picker/**',
         'src/shared/shell/PageHeader.tsx',
+        'app/api/**',
+        'src/server/**',
       ],
       exclude: [
         '**/*.test.{ts,tsx}',
