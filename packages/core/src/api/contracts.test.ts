@@ -352,14 +352,24 @@ describe('settings and health schemas', () => {
   });
 
   /**
-   * The Environment card names the instance by the ports it resolved to, so every port is
-   * required and has to be a real port number: a card that showed `undefined` for one of three
-   * side-by-side checkouts would be worse than no card.
+   * `ports` was added after clients already parsed this response, so it is optional and a report
+   * without it still validates. What is not optional is a half-filled block: the Environment card
+   * names the instance by the ports it resolved to, and one `undefined` of three side-by-side
+   * checkouts would be worse than no card, so the three ports stand or fall together and each has
+   * to be a real port number.
    */
-  it('requires all three instance ports', () => {
+  it('accepts a report without ports and rejects an incomplete or invalid block', () => {
     const ok = { ok: true };
     const checks = { db: ok, redis: ok, docker: ok, image: ok };
-    expect(healthResponse.safeParse({ ok: true, instance: 'default', checks }).success).toBe(false);
+    expect(healthResponse.safeParse({ ok: true, instance: 'default', checks }).success).toBe(true);
+    expect(
+      healthResponse.safeParse({
+        ok: true,
+        instance: 'default',
+        ports: { web: 3000, postgres: 3001 },
+        checks,
+      }).success,
+    ).toBe(false);
     expect(
       healthResponse.safeParse({
         ok: true,

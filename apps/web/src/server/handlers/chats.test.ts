@@ -35,6 +35,7 @@ import {
   TITLE_LENGTH,
   titleFromPrompt,
 } from './chats';
+import { LIVE_STATUSES } from './guards';
 
 vi.mock('bullmq', () => import('../testing/fake-queue'));
 
@@ -445,6 +446,135 @@ describe('postMessage', () => {
     );
     expect(response.status).toBe(404);
   });
+
+  /**
+   * Two messages sent at the same instant both find the chat idle, because the live-turn check and
+   * the turn that answers the message are separate writes. The rule this protects is that the chat
+   * never ends up with two live turns racing the worker for one container: at most one request is
+   * accepted, and the transcript gains exactly as many messages as were accepted.
+   */
+  it('never lets two simultaneous messages both queue a turn', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    const send = (prompt: string): Promise<Response> =>
+      postMessage(
+        harness.container,
+        writeRequest(`/api/chats/${chatId}/messages`, 'POST', { prompt }),
+        { id: chatId },
+      );
+
+    const responses = await Promise.all([send('first'), send('second')]);
+
+    const accepted = responses.filter((response) => response.status === 201);
+    expect(responses.every((response) => response.status === 201 || response.status === 409)).toBe(
+      true,
+    );
+    expect(accepted.length).toBeLessThanOrEqual(1);
+    const live = (await harness.doubles.repos.turns.listByChat(chatId)).filter((turn) =>
+      LIVE_STATUSES.includes(turn.status),
+    );
+    expect(live).toHaveLength(accepted.length);
+    // The seed's own turn is the first entry; anything past it belongs to an accepted message.
+    expect(harness.doubles.queues.chatTurns.added).toHaveLength(1 + accepted.length);
+    expect(await harness.doubles.repos.messages.listByChat(chatId)).toHaveLength(
+      1 + accepted.length,
+    );
+  });
+
+  /**
+   * The losing side of that race, made deterministic: the live-turn check is blinded once, so the
+   * request creates its claim while a rival turn is already live. It must give the claim back
+   * rather than leave a `QUEUED` turn holding the chat's work slot for ever, and it must not have
+   * written the user's message.
+   */
+  it('gives its claim back when another turn is already live', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    const turnsRepo = harness.doubles.repos.turns;
+    // Only the pre-check is blinded; the claim check that follows reads the real rows.
+    vi.spyOn(turnsRepo, 'listByChat').mockResolvedValueOnce([]);
+
+    const response = await postMessage(
+      harness.container,
+      writeRequest(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'hello' }),
+      { id: chatId },
+    );
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: 'TURN_IN_PROGRESS' } });
+    const turns = await turnsRepo.listByChat(chatId);
+    expect(
+      turns.filter((turn) => LIVE_STATUSES.includes(turn.status)).map((turn) => turn.id),
+    ).toEqual([turnId]);
+    expect(turns.find((turn) => turn.id !== turnId)).toMatchObject({ status: 'CANCELLED' });
+    expect(await harness.doubles.repos.messages.listByChat(chatId)).toHaveLength(1);
+    expect(harness.doubles.queues.chatTurns.added).toHaveLength(1);
+  });
+
+  /**
+   * The claim is taken before the message is appended, so an append that fails has to release it
+   * too: otherwise a failed request would leave the chat unable to accept any later message.
+   */
+  it('gives its claim back when the message cannot be appended', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    vi.spyOn(harness.doubles.repos.messages, 'append').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+
+    const response = await postMessage(
+      harness.container,
+      writeRequest(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'hello' }),
+      { id: chatId },
+    );
+
+    expect(response.status).toBe(500);
+    const live = (await harness.doubles.repos.turns.listByChat(chatId)).filter((turn) =>
+      LIVE_STATUSES.includes(turn.status),
+    );
+    expect(live).toEqual([]);
+    expect(harness.doubles.queues.chatTurns.added).toHaveLength(1);
+  });
+
+  /**
+   * Both the append and the release failing is the case nothing here can repair: the request still
+   * fails with the append's own error and the log line naming the chat is the only record that a
+   * turn is left holding the slot.
+   */
+  it('reports a claim it could not release', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    vi.spyOn(harness.doubles.repos.messages, 'append').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+    vi.spyOn(harness.doubles.repos.turns, 'finish').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+
+    const response = await postMessage(
+      harness.container,
+      writeRequest(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'hello' }),
+      { id: chatId },
+    );
+
+    expect(response.status).toBe(500);
+    expect(harness.doubles.logOutput()).toContain('could not release a chat turn claim');
+  });
 });
 
 describe('archiveChat and restoreChat', () => {
@@ -656,8 +786,8 @@ describe('deleteChat', () => {
   });
 
   /**
-   * With a live workspace the teardown job goes out before the row disappears, while the chat id
-   * still resolves to one.
+   * With a live workspace the teardown job goes out once the row is gone; the workspace is read
+   * before the delete, because the cascade clears its chat reference.
    */
   it('enqueues the teardown when a workspace is live', async () => {
     const harness = createTestContainer();
@@ -677,6 +807,40 @@ describe('deleteChat', () => {
     });
     await deleteChat(harness.container, writeRequest('/api/chats', 'DELETE'), { id: chatId });
     expect(harness.doubles.queues.workspaceGc.added).toHaveLength(1);
+  });
+
+  /**
+   * The teardown is enqueued only after the delete commits. The rule this protects is that a job
+   * the worker can see never names a chat that is still `ACTIVE`: with the enqueue first, a delete
+   * that failed left a queued teardown that would destroy a live chat's workspace.
+   */
+  it('enqueues no teardown when the delete fails', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    await harness.doubles.repos.workspaces.create({
+      kind: 'CHAT',
+      chatId,
+      runnerKind: 'docker',
+      image: 'agent-hangar/workspace:dev',
+      repoUrl: REPO_URL,
+      branch: 'main',
+    });
+    vi.spyOn(harness.doubles.repos.chats, 'delete').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+
+    const response = await deleteChat(harness.container, writeRequest('/api/chats', 'DELETE'), {
+      id: chatId,
+    });
+
+    expect(response.status).toBe(500);
+    expect(harness.doubles.queues.workspaceGc.added).toEqual([]);
+    expect(await harness.doubles.repos.chats.getById(chatId)).toMatchObject({ status: 'ACTIVE' });
   });
 
   /**

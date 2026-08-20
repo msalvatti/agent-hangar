@@ -352,6 +352,10 @@ export const healthCheck = z.object({ ok: z.boolean(), detail: z.string().option
  * checkouts run side by side, which is the everyday case this product is built around. Ports only:
  * the response is unauthenticated, and a connection string or a host name would say more about
  * the machine than a browser on that machine needs to be told.
+ *
+ * All three ports are required together: a card that showed `undefined` for one of three
+ * side-by-side checkouts would be worse than no card. The block as a whole is optional on
+ * {@link healthResponse} — see the note there.
  */
 export const instancePorts = z.object({
   web: z.number().int().positive(),
@@ -359,11 +363,17 @@ export const instancePorts = z.object({
   redis: z.number().int().positive(),
 });
 
-/** `GET /api/health` response. */
+/**
+ * `GET /api/health` response.
+ *
+ * `ports` is optional so that a producer written against the earlier shape still parses: the
+ * field was added after clients already existed, and a response without it is a valid, if less
+ * informative, health report rather than a broken one. The live route always sends it.
+ */
 export const healthResponse = z.object({
   ok: z.boolean(),
   instance: z.string().min(1),
-  ports: instancePorts,
+  ports: instancePorts.optional(),
   checks: z.object({
     db: healthCheck,
     redis: healthCheck,

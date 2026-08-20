@@ -4,9 +4,20 @@
  * Layer: service (server).
  *
  * Each handler is a pure function of the container, a `Request` and the resolved path params, so
- * it runs under Vitest without Next.js. Rows are always written before anything is enqueued: a job
- * that arrives at the worker before its row exists has nothing to work on, while a row without a
- * job is visible and recoverable.
+ * it runs under Vitest without Next.js. Every row a job depends on is settled in Postgres before
+ * the job is enqueued, deletions included: a job that arrives at the worker before the store agrees
+ * with it acts on a state nobody asked for, while a row whose job never went out is visible and
+ * recoverable.
+ *
+ * Sending a message claims the chat's single work slot with the turn row itself. The row is
+ * `QUEUED` from the instant it is created, so a second request that creates one sees the first and
+ * gives its own back instead of enqueueing a rival turn. The claim is a committed row rather than
+ * an in-process lock, so it holds between two web processes reading the same database. Two limits
+ * are worth naming: when each request observes the other, both give their claim back and neither
+ * message is accepted, which the caller resolves by sending it again; and if giving the claim back
+ * fails, the chat keeps a `QUEUED` turn no worker will run until it is cancelled through
+ * `POST /api/turns/:id/cancel`. Postgres has no partial unique index over a chat's live turn, so
+ * the invariant is enforced here rather than declared once in the schema.
  *
  * Archiving and restoring each write the chat's status before a second operation that can fail —
  * enqueuing the teardown job, appending the restoration notice — and each is a status the guards
@@ -52,7 +63,7 @@ import { allowedRepoHosts, assertRepoUrlAllowed } from '../repo-url';
 import { assertSameOrigin } from '../same-origin';
 
 import { compensate } from './compensate';
-import { NO_USAGE, requireNoLiveTurn, requireSecrets } from './guards';
+import { isLive, NO_USAGE, requireNoLiveTurn, requireSecrets } from './guards';
 import { lastTurnStatus, toChatDetail, toChatSummary } from './mappers';
 
 /** Longest title derived from a prompt; the rest of the prompt is the first message. */
@@ -89,23 +100,63 @@ async function requireChat(container: ServerContainer, id: string): Promise<Chat
   return chat;
 }
 
+/** Error recorded on a turn whose claim on the chat was given back before any work started. */
+const CLAIM_RELEASED = 'Released: another message claimed the chat at the same moment';
+
 /**
- * Creates a queued turn and hands it to the worker.
+ * Creates the turn row that claims the chat's single work slot.
  *
- * The turn's `queueJobId` is set to its own id, which is also the BullMQ job id, so a retried
- * request enqueues the same work once. If the enqueue fails the turn is marked `FAILED` before the
- * error propagates: a `QUEUED` turn no worker will ever see would spin the UI forever.
+ * The row is `QUEUED` the moment it exists, which is what makes the claim visible to a concurrent
+ * request before anything has been handed to the worker.
  *
  * @param container - The server container.
  * @param chatId - Chat the turn belongs to.
  * @returns The created turn.
+ */
+function claimTurn(container: ServerContainer, chatId: string): Promise<Turn> {
+  return container.repos.turns.create({ chatId, model: container.config.OPENAI_MODEL });
+}
+
+/**
+ * Refuses to continue when the chat carries a live turn other than the caller's own claim.
+ *
+ * Losing on sight rather than by comparing ids is what keeps the rule single-valued under every
+ * interleaving: the request that never saw a rival is the only one that can win, so two requests
+ * can both refuse but can never both proceed.
+ *
+ * @param container - The server container.
+ * @param chatId - Chat the claim was made against.
+ * @param turnId - The caller's own claim, excluded from the check.
+ * @throws ConflictError 409 `TURN_IN_PROGRESS` when another live turn exists.
+ */
+async function requireSoleClaim(
+  container: ServerContainer,
+  chatId: string,
+  turnId: string,
+): Promise<void> {
+  const turns = await container.repos.turns.listByChat(chatId);
+  if (turns.some((turn) => turn.id !== turnId && isLive(turn.status))) {
+    throw new ConflictError(
+      'TURN_IN_PROGRESS',
+      'Another message claimed this chat at the same moment; send it again',
+    );
+  }
+}
+
+/**
+ * Hands an already-claimed turn to the worker.
+ *
+ * The turn's `queueJobId` is set to its own id, which is also the BullMQ job id, so a retried
+ * request enqueues the same work once. If the enqueue fails the turn is marked `FAILED` before the
+ * error propagates: a `QUEUED` turn no worker will ever see would spin the UI forever, and would
+ * hold the chat's work slot against every later message.
+ *
+ * @param container - The server container.
+ * @param turn - The claimed turn.
+ * @returns The same turn.
  * @throws Error Whatever the queue rejected with, after the turn was failed.
  */
-async function queueTurn(container: ServerContainer, chatId: string): Promise<Turn> {
-  const turn = await container.repos.turns.create({
-    chatId,
-    model: container.config.OPENAI_MODEL,
-  });
+async function dispatchTurn(container: ServerContainer, turn: Turn): Promise<Turn> {
   await container.repos.turns.setStatus(turn.id, 'QUEUED', { queueJobId: turn.id });
   try {
     await enqueueRunTurn(container.queues.chatTurns, { turnId: turn.id });
@@ -142,6 +193,9 @@ async function readChatDetail(
 /**
  * `POST /api/chats` — creates a chat, its first message and its first turn, then enqueues it.
  *
+ * The turn is claimed and dispatched without the check {@link postMessage} runs, because the chat
+ * id is minted by this request: no other request can name it until this one has answered.
+ *
  * @param container - The server container.
  * @param request - The incoming request.
  * @returns `201` with `{ chatId, turnId }`.
@@ -158,7 +212,7 @@ export function createChat(container: ServerContainer, request: Request): Promis
       baseBranch: body.baseBranch,
     });
     await container.repos.messages.append(chat.id, 'USER', body.prompt);
-    const turn = await queueTurn(container, chat.id);
+    const turn = await dispatchTurn(container, await claimTurn(container, chat.id));
     return jsonResponse(createChatResponse, { chatId: chat.id, turnId: turn.id }, { status: 201 });
   });
 }
@@ -233,6 +287,13 @@ export function renameChat(
 /**
  * `POST /api/chats/:id/messages` — appends a user message and queues the turn that answers it.
  *
+ * {@link requireNoLiveTurn} reads the chat's turns and the turn that answers this message is
+ * written afterwards, so two simultaneous requests can both find the chat idle. The gap is closed
+ * on the far side of the write instead of before it: each request creates its own `QUEUED` turn
+ * and then looks again, and a request that finds a live turn other than its own gives its claim
+ * back and refuses. The message is appended only once the claim has held, so a refused request
+ * leaves no half of the exchange behind.
+ *
  * @param container - The server container.
  * @param request - The incoming request.
  * @param params - Resolved path parameters.
@@ -252,8 +313,20 @@ export function postMessage(
     await requireNoLiveTurn(container, chat.id);
     await requireSecrets(container);
     const body = await parseJsonBody(request, postMessageRequest);
-    await container.repos.messages.append(chat.id, 'USER', body.prompt);
-    const turn = await queueTurn(container, chat.id);
+    const turn = await claimTurn(container, chat.id);
+    try {
+      await requireSoleClaim(container, chat.id, turn.id);
+      await container.repos.messages.append(chat.id, 'USER', body.prompt);
+    } catch (error) {
+      await compensate(
+        container,
+        { chatId: chat.id, turnId: turn.id },
+        'could not release a chat turn claim',
+        () => container.repos.turns.finish(turn.id, 'CANCELLED', NO_USAGE, CLAIM_RELEASED),
+      );
+      throw error;
+    }
+    await dispatchTurn(container, turn);
     await container.repos.chats.touch(chat.id);
     return jsonResponse(postMessageResponse, { turnId: turn.id }, { status: 201 });
   });
@@ -351,9 +424,19 @@ export function restoreChat(
 /**
  * `DELETE /api/chats/:id` — removes the chat and everything that cascades from it.
  *
- * The teardown job goes out before the row is deleted, while the chat id still resolves to a
- * workspace. The worker's processor must therefore be able to find the container by label once the
- * row is gone, because the workspace's chat reference is cleared by the cascade.
+ * The row is deleted first and the teardown is enqueued afterwards, so every teardown the worker
+ * can see names a chat that is already gone. Enqueueing first made the job visible while the
+ * delete was still uncommitted, and a delete that then failed left a queued teardown that would
+ * destroy the workspace of a chat still `ACTIVE`. The worker finds the container by its chat label
+ * rather than by the row, which is what lets the job go out this late; the live workspace is read
+ * before the delete because the cascade clears the workspace's chat reference, and the job is sent
+ * only when there was one to tear down.
+ *
+ * The limit is the far side of the same window: an enqueue that fails after the delete committed
+ * answers 500 with the row gone and the container still running. There is nothing to compensate —
+ * the chat cannot be put back — so the residue is a workspace row whose chat reference is now null
+ * and whose status is still live, which is exactly what the idle reaper and `pnpm ws:reap` collect
+ * by. A container reclaimed late is recoverable; a workspace destroyed under a live chat is not.
  *
  * @param container - The server container.
  * @param request - The incoming request.
@@ -370,10 +453,10 @@ export function deleteChat(
     const chat = await requireChat(container, params.id);
     await requireNoLiveTurn(container, chat.id);
     const live = await container.repos.workspaces.findLiveByChat(chat.id);
+    await container.repos.chats.delete(chat.id);
     if (live !== null) {
       await enqueueDestroyChatWorkspace(container.queues.workspaceGc, { chatId: chat.id });
     }
-    await container.repos.chats.delete(chat.id);
     return noContent();
   });
 }
