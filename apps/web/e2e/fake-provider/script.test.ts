@@ -4,7 +4,9 @@
  *
  * Layer: unit test.
  */
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { assertNoCanary } from '@agent-hangar/core/testing';
 import { describe, expect, it } from 'vitest';
@@ -12,6 +14,7 @@ import { describe, expect, it } from 'vitest';
 import { PROMPTS } from '../support/constants';
 
 import { GITHUB_CANARY_PLACEHOLDER, loadProviderScript, scriptPath } from './script';
+import type { ProviderScriptFile } from './script';
 
 const script = loadProviderScript();
 const raw = readFileSync(scriptPath(), 'utf8');
@@ -92,5 +95,70 @@ describe('the fake provider script', () => {
   /** A malformed script must fail here rather than inside the worker mid-run. */
   it('rejects a script that does not match the shape', () => {
     expect(() => loadProviderScript('/nonexistent/script.json')).toThrow();
+  });
+});
+
+describe('the tool arguments a script may carry', () => {
+  /**
+   * Writes a one-step script calling one tool and reads it back.
+   *
+   * @param name - Tool name the step calls.
+   * @param args - The call's arguments, as the JSON text the script would carry.
+   * @returns Whatever loading that file does.
+   */
+  function loadWithCall(name: string, args: string): ProviderScriptFile {
+    const file = join(mkdtempSync(join(tmpdir(), 'ah-script-')), 'script.json');
+    writeFileSync(
+      file,
+      JSON.stringify({
+        default: [
+          {
+            events: [
+              { type: 'tool_call', callId: 'c1', name, arguments: args },
+              {
+                type: 'response.done',
+                responseId: 'r1',
+                usage: { inputTokens: 1, outputTokens: 1 },
+              },
+            ],
+          },
+        ],
+      }),
+      'utf8',
+    );
+    return loadProviderScript(file);
+  }
+
+  /**
+   * The runtime is asked for strict function calling, so it requires every property to be present
+   * and rejects a call that omits one before the tool runs — no exit code, no output, one or two
+   * milliseconds. A script that drifts from that contract has to fail where it can be read.
+   */
+  it('rejects a call that omits a nullable property', () => {
+    expect(() => loadWithCall('list_dir', '{"path":"."}')).toThrow(/depth/);
+    expect(() => loadWithCall('run_shell', '{"command":"date"}')).toThrow(/cwd/);
+    expect(() => loadWithCall('read_file', '{"path":"NOTES.md"}')).toThrow(/startLine/);
+  });
+
+  /** The tools forbid additional properties, so a call carrying one dies the same way. */
+  it('rejects a call that carries a property the tool does not know', () => {
+    expect(() =>
+      loadWithCall('write_file', '{"path":"a.md","content":"x","mode":"append"}'),
+    ).toThrow();
+  });
+
+  /** Arguments travel as text, and text that is not JSON reaches the tool as no arguments at all. */
+  it('rejects a call whose arguments are not JSON', () => {
+    expect(() => loadWithCall('write_file', 'path=a.md')).toThrow(/not valid JSON/);
+  });
+
+  /** A script is allowed to prove what an unknown tool does, so its arguments are not judged. */
+  it('accepts a call to a tool no schema describes', () => {
+    expect(Object.keys(loadWithCall('teleport', '{"to":"mars"}'))).toEqual(['default']);
+  });
+
+  /** The shipped script is the one that has to hold: every call in it must be complete. */
+  it('accepts every call the shipped script makes', () => {
+    expect(toolCalls().length).toBeGreaterThan(0);
   });
 });

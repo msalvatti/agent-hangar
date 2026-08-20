@@ -9,8 +9,9 @@
  * `FAKE_PROVIDER_SCRIPT_PATH` at boot, validates it, and forwards its content to each container as
  * `AGENT_FAKE_SCRIPT_JSON`, which carries the script itself rather than a path. What this module
  * gives is the shape the file must have, pinned by tests on this side, so a script the worker
- * would refuse at boot fails here first. The placeholder itself is substituted inside the
- * container, where the credential already lives, so nothing on this side fills it in.
+ * would refuse at boot — or whose tool calls the runtime would refuse mid-turn — fails here first.
+ * The placeholder itself is substituted inside the container, where the credential already lives,
+ * so nothing on this side fills it in.
  *
  * No credential-shaped literal is written into the file. The one step whose arguments must carry
  * a credential — so the suite can prove the worker redacts it before persisting — writes the
@@ -24,6 +25,9 @@ import { z } from 'zod';
 
 /** Placeholder standing in for the GitHub canary inside the script file. */
 export const GITHUB_CANARY_PLACEHOLDER = '{{GITHUB_CANARY}}';
+
+/** Deepest directory tree `list_dir` will walk, as the runtime's schema bounds it. */
+const MAX_LIST_DIR_DEPTH = 5;
 
 /** Token usage every scripted response reports. */
 const usage = z.object({
@@ -61,8 +65,94 @@ const scriptedStep = z.object({
   delayMs: z.number().int().nonnegative().optional(),
 });
 
+/**
+ * Mirror of the runtime's strict tool-argument schemas, so a script the tools would refuse fails
+ * here and not as a tool call that dies in a millisecond.
+ *
+ * Providers are asked for strict function calling, which requires every property to be present:
+ * an optional argument is expressed as a nullable one that is always sent, and the runtime
+ * validates on exactly that basis. A scripted call that omits one is therefore rejected before the
+ * tool runs, with no exit code and no output, which reads as a broken tool rather than a broken
+ * script. The runtime is not a dependency of this app, so the shapes are restated here the way the
+ * `ModelEvent` union above already is.
+ */
+const toolArguments: Record<string, z.ZodType> = {
+  run_shell: z
+    .object({
+      command: z.string().min(1),
+      cwd: z.string().nullable(),
+      timeoutMs: z.number().int().positive().nullable(),
+    })
+    .strict(),
+  read_file: z
+    .object({
+      path: z.string().min(1),
+      startLine: z.number().int().positive().nullable(),
+      endLine: z.number().int().positive().nullable(),
+    })
+    .strict(),
+  write_file: z.object({ path: z.string().min(1), content: z.string() }).strict(),
+  list_dir: z
+    .object({
+      path: z.string().nullable(),
+      depth: z.number().int().min(1).max(MAX_LIST_DIR_DEPTH).nullable(),
+    })
+    .strict(),
+};
+
+/**
+ * Reports why a scripted tool call's arguments would not survive the runtime, if they would not.
+ *
+ * A name no tool answers to is left alone: a script is allowed to prove what an unknown tool does.
+ *
+ * @param name - Tool name as the script writes it.
+ * @param args - The call's arguments, as the JSON text the script carries.
+ * @returns The problem, or `null` when the arguments are acceptable.
+ */
+function describeArgumentProblem(name: string, args: string): string | null {
+  const schema = toolArguments[name];
+  if (schema === undefined) {
+    return null;
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(args);
+  } catch {
+    return 'arguments are not valid JSON';
+  }
+  const result = schema.safeParse(parsed);
+  if (result.success) {
+    return null;
+  }
+  // The property is named, not just the complaint: "expected number, received undefined" on its
+  // own does not say which argument is missing, which is the only thing the reader needs.
+  return result.error.issues
+    .map((issue) => {
+      const where = issue.path.join('.');
+      return where === '' ? issue.message : `${where}: ${issue.message}`;
+    })
+    .join('; ');
+}
+
 /** Steps keyed by the exact text of the last user message, plus a `default` key. */
-const providerScript = z.record(z.string(), z.array(scriptedStep).min(1));
+const providerScript = z
+  .record(z.string(), z.array(scriptedStep).min(1))
+  .superRefine((script, ctx) => {
+    for (const [prompt, steps] of Object.entries(script)) {
+      for (const event of steps.flatMap((step) => step.events)) {
+        if (event.type !== 'tool_call') {
+          continue;
+        }
+        const problem = describeArgumentProblem(event.name, event.arguments);
+        if (problem !== null) {
+          ctx.addIssue({
+            code: 'custom',
+            message: `${prompt} / ${event.callId} (${event.name}): ${problem}`,
+          });
+        }
+      }
+    }
+  });
 
 /** The parsed script. */
 export type ProviderScriptFile = z.infer<typeof providerScript>;

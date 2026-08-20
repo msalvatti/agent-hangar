@@ -57,6 +57,17 @@ test('a new chat runs the scripted task and streams the transcript', async ({
   await waitForTurnStatus(api, chatId, turnId ?? '', 'SUCCEEDED', API_SETTLE_TIMEOUT_MS);
   const detail = await readChat(api, chatId);
   expect(detail.toolCalls.map((call) => call.toolName)).toEqual(['list_dir', 'write_file']);
+  // Which tools ran says nothing about whether they worked, and a check that cannot fail is worse
+  // than no check: a `list_dir` rejected on its arguments in a millisecond satisfies the line
+  // above. The status and the exit code are asserted together because a call that never reached
+  // the tool has neither, and `resultHead` is asserted separately because a call that succeeded
+  // and recorded no output is a different defect with a different fix — one lives in the tool, the
+  // other in what the runtime puts on the event stream.
+  expect(detail.toolCalls.map((call) => call.status)).toEqual(['SUCCEEDED', 'SUCCEEDED']);
+  expect(detail.toolCalls.map((call) => call.exitCode)).toEqual([0, 0]);
+  for (const call of detail.toolCalls) {
+    expect(call.resultHead, `${call.toolName} recorded no output`).not.toBeNull();
+  }
   await waitForWorkspace(api, chatId, 'READY', API_SETTLE_TIMEOUT_MS);
 
   const writeRow = chat.toolRows('write_file').first();

@@ -5,13 +5,13 @@
         {
           "type": "tool_call.arguments.delta",
           "callId": "call-1",
-          "delta": "{\"path\":\".\"}"
+          "delta": "{\"path\":\".\",\"depth\":1}"
         },
         {
           "type": "tool_call",
           "callId": "call-1",
           "name": "list_dir",
-          "arguments": "{\"path\":\".\"}"
+          "arguments": "{\"path\":\".\",\"depth\":1}"
         },
         {
           "type": "response.done",
@@ -77,13 +77,13 @@
         {
           "type": "tool_call.arguments.delta",
           "callId": "call-3",
-          "delta": "{\"command\":\"date\"}"
+          "delta": "{\"command\":\"date\",\"cwd\":null,\"timeoutMs\":null}"
         },
         {
           "type": "tool_call",
           "callId": "call-3",
           "name": "run_shell",
-          "arguments": "{\"command\":\"date\"}"
+          "arguments": "{\"command\":\"date\",\"cwd\":null,\"timeoutMs\":null}"
         },
         {
           "type": "response.done",
@@ -122,13 +122,13 @@
         {
           "type": "tool_call.arguments.delta",
           "callId": "call-4",
-          "delta": "{\"path\":\"NOTES.md\"}"
+          "delta": "{\"path\":\"NOTES.md\",\"startLine\":null,\"endLine\":null}"
         },
         {
           "type": "tool_call",
           "callId": "call-4",
           "name": "read_file",
-          "arguments": "{\"path\":\"NOTES.md\"}"
+          "arguments": "{\"path\":\"NOTES.md\",\"startLine\":null,\"endLine\":null}"
         },
         {
           "type": "response.done",
@@ -167,13 +167,13 @@
         {
           "type": "tool_call.arguments.delta",
           "callId": "call-5",
-          "delta": "{\"command\":\"sleep 60\"}"
+          "delta": "{\"command\":\"sleep 60\",\"cwd\":null,\"timeoutMs\":null}"
         },
         {
           "type": "tool_call",
           "callId": "call-5",
           "name": "run_shell",
-          "arguments": "{\"command\":\"sleep 60\"}"
+          "arguments": "{\"command\":\"sleep 60\",\"cwd\":null,\"timeoutMs\":null}"
         },
         {
           "type": "response.done",
