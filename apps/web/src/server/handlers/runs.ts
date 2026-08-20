@@ -1,17 +1,44 @@
 /**
- * Run history and run detail.
+ * Run history, run detail and run cancellation.
  *
  * Layer: service (server).
  *
- * Both routes are reads, so neither carries the same-origin guard: a cross-origin page cannot read
- * the response, and the browser is what enforces that.
+ * The two reads carry no same-origin guard: a cross-origin page cannot read the response, and the
+ * browser is what enforces that. Cancel changes state, so it carries the guard like every other
+ * write.
+ *
+ * Cancel is the run's own route rather than a second meaning for the chat one. Both kinds of work
+ * are stopped by the same mechanism — the queued job is removed, or the request is published on
+ * `cmd:turn:<id>` for the worker that holds the container — but they are addressed by ids from
+ * different tables, and a route that had to guess which table it was handed would answer the wrong
+ * `404` whenever a lookup missed for some other reason. Each id is resolved by the repository that
+ * owns it: a `Turn.id` here is a `404`, exactly as a `JobRun.id` is at `/api/turns/:id/cancel`.
+ *
+ * The guarantee has one window in it, and it is the worker's rather than this route's. A run this
+ * process can still take off the queue is closed here outright. Once the worker has taken the
+ * delivery, the request is published instead — and the scheduled-job processor subscribes only
+ * after it has read the job and resolved the row, so a Stop that lands in the few milliseconds
+ * between those two points reaches nobody. The run keeps executing and the answer was `202`, which
+ * is honest about the request having been passed on rather than applied; stopping it again once it
+ * reports `PREPARING` or `RUNNING` finds the subscriber in place.
  */
-import { listRunsResponse } from '@agent-hangar/core';
+import {
+  isTerminalRunStatus,
+  listRunsResponse,
+  okResponse,
+  turnCommand,
+  turnCommandChannel,
+} from '@agent-hangar/core';
 
 import type { ServerContainer } from '../container';
-import { ResourceNotFoundError } from '../errors';
+import { ConflictError, ResourceNotFoundError } from '../errors';
 import { json, jsonResponse, withErrorHandling } from '../http';
+import { assertSameOrigin } from '../same-origin';
 
+import { CANCEL_REQUESTED_STATUS, removeQueuedJob } from './cancel';
+import { compensate } from './compensate';
+import { NO_USAGE } from './guards';
+import { enqueueManualRun } from './manual-run';
 import { toRunDetail, toRunSummary } from './mappers';
 
 /**
@@ -70,5 +97,65 @@ export function getRun(
     const toolCalls = await container.repos.toolCalls.listByJobRun(run.id);
     // The mapper already parsed the value against `runDetail`.
     return json(toRunDetail(run, toolCalls));
+  });
+}
+
+/**
+ * `POST /api/runs/:id/cancel` — stops a scheduled-job run, before or during execution.
+ *
+ * The queued shape spans Redis and Postgres, which cannot enlist in one transaction, so the two
+ * writes are kept in agreement by compensation exactly as the chat path keeps them: the delivery is
+ * removed, the terminal status is written, and a write that fails puts the delivery back under the
+ * same job id, with the same payload and the same retention. Removing first and failing to persist
+ * would leave a row reading `QUEUED` with nothing behind it to run; persisting first and failing to
+ * remove would leave a delivery the worker starts for a run already recorded as cancelled. Only a
+ * manual run can reach that branch — it is the only kind whose BullMQ job id is its run id — so the
+ * delivery that goes back is always the one that was taken away, never one invented for a tick.
+ *
+ * That guarantee stops where the compensating enqueue also fails: the run is then `QUEUED` with no
+ * delivery behind it, the request fails with the error that explains it, and the log line
+ * `compensate` writes is the only record. Cancelling it again answers `202` and publishes a command
+ * no worker is listening for, so it takes an operator to close it.
+ *
+ * @param container - The server container.
+ * @param request - The incoming request.
+ * @param params - Resolved path parameters (the run id).
+ * @returns `200` when the run was cancelled outright, `202` when the worker was asked to stop it.
+ * @throws Error When the terminal status could not be written after the delivery was removed; the
+ *   delivery is put back first, so a retry of the request finds the same state it started from.
+ */
+export function cancelRun(
+  container: ServerContainer,
+  request: Request,
+  params: RunParams,
+): Promise<Response> {
+  return withErrorHandling(container, async () => {
+    assertSameOrigin(request);
+    const run = await container.repos.jobRuns.get(params.id);
+    if (run === null) {
+      throw new ResourceNotFoundError('Run not found');
+    }
+    if (isTerminalRunStatus(run.status)) {
+      throw new ConflictError('RUN_NOT_CANCELLABLE', 'This run has already finished');
+    }
+    if (
+      run.status === 'QUEUED' &&
+      (await removeQueuedJob(container.queues.scheduledJobs, run.id))
+    ) {
+      try {
+        await container.repos.jobRuns.finish(run.id, { status: 'CANCELLED', usage: NO_USAGE });
+      } catch (error) {
+        await compensate(container, { runId: run.id }, 'could not undo a partial run cancel', () =>
+          enqueueManualRun(container.queues.scheduledJobs, { jobId: run.jobId, runId: run.id }),
+        );
+        throw error;
+      }
+      return jsonResponse(okResponse, { ok: true });
+    }
+    await container.redis.publish(
+      turnCommandChannel(run.id),
+      JSON.stringify(turnCommand.parse({ type: 'cancel' })),
+    );
+    return jsonResponse(okResponse, { ok: true }, { status: CANCEL_REQUESTED_STATUS });
   });
 }

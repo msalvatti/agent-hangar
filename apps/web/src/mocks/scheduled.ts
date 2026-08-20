@@ -304,6 +304,13 @@ function notFound(message: string) {
   return HttpResponse.json({ error: { code: 'NOT_FOUND', message } }, { status: 404 });
 }
 
+function conflict(code: string, message: string) {
+  return HttpResponse.json({ error: { code, message } }, { status: 409 });
+}
+
+/** Status the cancel route answers with once the request has to reach the worker. */
+const CANCEL_REQUESTED_STATUS = 202;
+
 /** How a scripted stream ended, when it ended at all. */
 interface StreamOutcome {
   status: Extract<JobRunStatus, 'SUCCEEDED' | 'FAILED'>;
@@ -362,7 +369,7 @@ function settleRun(run: MockRun, outcome: StreamOutcome): MockRun {
  * Settles a run to its scripted outcome at the moment the terminal frame is actually delivered,
  * not the moment its stream is requested. A cancel that lands while the script is still playing
  * back must win: this only applies the outcome if the run is still active when the frame fires,
- * so a run already moved to `CANCELLED` by `POST /api/turns/:id/cancel` stays cancelled instead
+ * so a run already moved to `CANCELLED` by `POST /api/runs/:id/cancel` stays cancelled instead
  * of being overwritten back to the script's `SUCCEEDED`/`FAILED` ending.
  *
  * @param runId - The run whose stream emitted the frame.
@@ -381,7 +388,10 @@ function settleOnTerminalFrame(runId: string, frame: SseScriptFrame): void {
   runs = runs.map((candidate) => (candidate.id === runId ? settled : candidate));
 }
 
-/** Mock handlers for `/api/jobs`, `/api/jobs/:id`, `/api/jobs/:id/run(s)` and `/api/runs/:id(/events)`. */
+/**
+ * Mock handlers for `/api/jobs`, `/api/jobs/:id`, `/api/jobs/:id/run(s)` and
+ * `/api/runs/:id(/events|/cancel)`.
+ */
 export const scheduledHandlers = [
   http.get(routes.jobs, () => {
     const sorted = [...jobs].sort((a, b) => a.name.localeCompare(b.name));
@@ -535,18 +545,26 @@ export const scheduledHandlers = [
     });
   }),
 
-  // `POST /api/turns/:id/cancel` is a shared route: the id is a `Turn.id` or a `JobRun.id`. This
-  // handler answers only the job-run case and returns nothing for anything else, which hands the
-  // request to the next matching handler — the chat mock, which owns the turn case.
-  http.post(routes.turnCancel, ({ params }) => {
+  // `POST /api/runs/:id/cancel` — the run's own route. An id this store does not know is a 404
+  // rather than a fall-through to the chat mock: the real handler resolves this parameter through
+  // the run repository, so a `Turn.id` is a 404 there, and a mock that answered `ok` for one would
+  // hide exactly the kind of mismatch that only a real run could otherwise reveal.
+  //
+  // Every run it does know answers `202`. The real API answers `200` for the one case it can
+  // settle by itself — a delivery removed from the queue before any worker took it — and `202`
+  // once the request has to travel to the worker holding the container. This store has no queue
+  // and stands in for the worker as well, so the first case never arises here; the status it
+  // sends is the one the real API would send for the same run.
+  http.post(routes.runCancel, ({ params }) => {
     const run = findRun(String(params.id));
     if (run === undefined) {
-      return undefined;
+      return notFound('Run not found');
     }
-    if (isActiveRunStatus(run.status)) {
-      const cancelled: MockRun = { ...run, status: 'CANCELLED', finishedAt: nowIso() };
-      runs = runs.map((candidate) => (candidate.id === run.id ? cancelled : candidate));
+    if (!isActiveRunStatus(run.status)) {
+      return conflict('RUN_NOT_CANCELLABLE', 'This run has already finished');
     }
-    return HttpResponse.json({ ok: true });
+    const cancelled: MockRun = { ...run, status: 'CANCELLED', finishedAt: nowIso() };
+    runs = runs.map((candidate) => (candidate.id === run.id ? cancelled : candidate));
+    return HttpResponse.json({ ok: true }, { status: CANCEL_REQUESTED_STATUS });
   }),
 ];

@@ -139,6 +139,21 @@ describe('job and run routes', () => {
     const detail = await import('./runs/[id]/route');
     expect((await detail.GET(request('/api/runs/missing'), ctx)).status).toBe(404);
   });
+
+  /**
+   * Stopping a run is its own route under `/api/runs`, and it reaches the handler that decides
+   * between removing a queued delivery and publishing a command — not the turn handler, which
+   * would look this id up in the wrong table.
+   */
+  it('wires the run cancel action', async () => {
+    const route = await import('./runs/[id]/cancel/route');
+    expect(route.dynamic).toBe('force-dynamic');
+    const response = await route.POST(
+      request('/api/runs/missing/cancel', 'POST'),
+      context({ id: 'missing' }),
+    );
+    expect(response.status).toBe(404);
+  });
 });
 
 describe('repository routes', () => {

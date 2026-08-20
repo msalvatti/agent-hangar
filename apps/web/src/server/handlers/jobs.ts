@@ -33,13 +33,9 @@ import {
   jobPatchRequest,
   jobSummary,
   jobUpsertRequest,
-  JOB_NAMES,
-  KEEP_COMPLETED_JOBS,
-  KEEP_FAILED_JOBS,
   listJobsResponse,
   nextRunAt,
   removeScheduledJob,
-  runScheduledJobPayload,
   triggerRunResponse,
   upsertScheduledJob,
   validateCronSpec,
@@ -54,6 +50,7 @@ import { assertSameOrigin } from '../same-origin';
 
 import { compensate } from './compensate';
 import { NO_USAGE, requireSecrets } from './guards';
+import { enqueueManualRun } from './manual-run';
 import { toJobSummary } from './mappers';
 
 /** Status the manual-run route answers with; the worker has yet to pick the run up. */
@@ -61,12 +58,6 @@ export const RUN_ACCEPTED_STATUS = 202;
 
 /** Log message every {@link compensate} call in this file shares, naming what it undoes. */
 const COMPENSATE_FAILURE_MESSAGE = 'could not undo a partial scheduled-job write';
-
-/** Retention every producer applies, shared with the core producers. */
-const RETENTION = {
-  removeOnComplete: KEEP_COMPLETED_JOBS,
-  removeOnFail: KEEP_FAILED_JOBS,
-} as const;
 
 /** Path parameters of the job routes. */
 export interface JobParams {
@@ -380,8 +371,8 @@ export function deleteJob(
  * row instead of inserting a second one; pressing "Run now" twice is deliberately two runs, and
  * the overlap policy is what keeps them from piling up.
  *
- * The core manual-run producer is not used because it cannot carry that id; the retention policy
- * it applies is imported rather than restated.
+ * The producer is `./manual-run.ts`, shared with the cancel route so that the delivery a stopped
+ * run is put back on is the same one this route created.
  *
  * @param container - The server container.
  * @param request - The incoming request.
@@ -404,11 +395,7 @@ export function triggerRun(
       scheduledFor: container.clock.now(),
     });
     try {
-      await container.queues.scheduledJobs.add(
-        JOB_NAMES.runScheduledJob,
-        runScheduledJobPayload.parse({ jobId: job.id, trigger: 'MANUAL', runId: run.id }),
-        RETENTION,
-      );
+      await enqueueManualRun(container.queues.scheduledJobs, { jobId: job.id, runId: run.id });
     } catch (error) {
       await compensate(container, { jobId: job.id }, COMPENSATE_FAILURE_MESSAGE, () =>
         container.repos.jobRuns.finish(run.id, {
