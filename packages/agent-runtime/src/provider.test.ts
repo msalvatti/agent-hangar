@@ -68,13 +68,17 @@ describe('resolveProviderName', () => {
 describe('createProvider with the fake provider', () => {
   it('uses the built-in scripts when the environment supplies none', () => {
     // This is what makes the end-to-end suite runnable without an API key.
-    expect(createProvider('fake', {}).name).toBe('fake');
+    expect(createProvider('fake', {}, undefined).name).toBe('fake');
   });
 
   it('uses a script supplied through the environment', async () => {
     // A spec that needs its own answer sets AGENT_FAKE_SCRIPT_JSON on the container.
     const script = { default: [{ events: [{ type: 'text.done', text: 'scripted' }] }] };
-    const provider = createProvider('fake', { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) });
+    const provider = createProvider(
+      'fake',
+      { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) },
+      undefined,
+    );
     const events = [];
     for await (const event of provider.stream({
       model: 'fake-model',
@@ -95,7 +99,11 @@ describe('createProvider with the fake provider', () => {
       'print date': [{ events: [{ type: 'text.done', text: 'The date was printed above.' }] }],
       default: [{ events: [{ type: 'text.done', text: 'Acknowledged.' }] }],
     };
-    const provider = createProvider('fake', { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) });
+    const provider = createProvider(
+      'fake',
+      { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) },
+      undefined,
+    );
 
     expect(await play(provider, 'print date')).toStrictEqual([
       { type: 'text.done', text: 'The date was printed above.' },
@@ -120,10 +128,11 @@ describe('createProvider with the fake provider', () => {
         },
       ],
     };
-    const provider = createProvider('fake', {
-      AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script),
-      GITHUB_TOKEN: GITHUB_CANARY,
-    });
+    const provider = createProvider(
+      'fake',
+      { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script), GITHUB_TOKEN: GITHUB_CANARY },
+      undefined,
+    );
 
     expect(await play(provider)).toStrictEqual([
       {
@@ -141,7 +150,11 @@ describe('createProvider with the fake provider', () => {
     const script = {
       default: [{ events: [{ type: 'text.done', text: GITHUB_CREDENTIAL_PLACEHOLDER }] }],
     };
-    const provider = createProvider('fake', { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) });
+    const provider = createProvider(
+      'fake',
+      { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) },
+      undefined,
+    );
 
     expect(await play(provider)).toStrictEqual([
       { type: 'text.done', text: GITHUB_CREDENTIAL_PLACEHOLDER },
@@ -153,10 +166,11 @@ describe('createProvider with the fake provider', () => {
     const script = {
       default: [{ events: [{ type: 'text.done', text: GITHUB_CREDENTIAL_PLACEHOLDER }] }],
     };
-    const provider = createProvider('fake', {
-      AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script),
-      GITHUB_TOKEN: '',
-    });
+    const provider = createProvider(
+      'fake',
+      { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script), GITHUB_TOKEN: '' },
+      undefined,
+    );
 
     expect(await play(provider)).toStrictEqual([
       { type: 'text.done', text: GITHUB_CREDENTIAL_PLACEHOLDER },
@@ -165,7 +179,7 @@ describe('createProvider with the fake provider', () => {
 
   it('refuses a script that is not valid JSON, without quoting it', () => {
     // The value came from the container environment, alongside the credentials.
-    expect(() => createProvider('fake', { AGENT_FAKE_SCRIPT_JSON: '{oops' })).toThrow(
+    expect(() => createProvider('fake', { AGENT_FAKE_SCRIPT_JSON: '{oops' }, undefined)).toThrow(
       new ConfigError('AGENT_FAKE_SCRIPT_JSON is not valid JSON'),
     );
   });
@@ -195,8 +209,9 @@ describe('createProvider with the openai provider', () => {
   });
 
   it('reports that this build has no factory wired in', () => {
-    // Until the wiring lands, `AGENT_MODEL_PROVIDER=openai` has to say so out loud.
-    expect(() => createProvider('openai', { OPENAI_API_KEY: OPENAI_CANARY })).toThrow(
+    // A build that composed no factories is the state that shipped once and failed on the
+    // operator's first real turn; it stays a named failure rather than an undefined dereference.
+    expect(() => createProvider('openai', { OPENAI_API_KEY: OPENAI_CANARY }, undefined)).toThrow(
       /not wired into this build/,
     );
   });
@@ -215,7 +230,7 @@ describe('createProvider with the openai provider', () => {
 describe('createProvider with an unknown name', () => {
   it('names the valid values without echoing the configured one', () => {
     // The message becomes a persisted, displayed event.
-    expect(() => createProvider('anthropic', {})).toThrow(
+    expect(() => createProvider('anthropic', {}, undefined)).toThrow(
       new ConfigError('AGENT_MODEL_PROVIDER must be "openai" or "fake"'),
     );
   });
