@@ -8,12 +8,13 @@
  * container, which the suite does not import. The worker is the join: it reads the file named by
  * `FAKE_PROVIDER_SCRIPT_PATH` at boot, validates it, and forwards its content to each container as
  * `AGENT_FAKE_SCRIPT_JSON`, which carries the script itself rather than a path. What this module
- * gives is the shape the file must have and the substitution its one placeholder needs, both
- * pinned by tests on this side, so a script the worker would refuse at boot fails here first.
+ * gives is the shape the file must have, pinned by tests on this side, so a script the worker
+ * would refuse at boot fails here first. The placeholder itself is substituted inside the
+ * container, where the credential already lives, so nothing on this side fills it in.
  *
  * No credential-shaped literal is written into the file. The one step whose arguments must carry
  * a credential — so the suite can prove the worker redacts it before persisting — writes the
- * placeholder below instead, for the canary to be substituted at the point the script is loaded.
+ * placeholder below instead, and the container fills it from the credential it already holds.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
@@ -85,21 +86,4 @@ export function scriptPath(): string {
  */
 export function loadProviderScript(path: string = scriptPath()): ProviderScriptFile {
   return providerScript.parse(JSON.parse(readFileSync(path, 'utf8')));
-}
-
-/**
- * Replaces every placeholder with its real value.
- *
- * @param raw - Text of the script file.
- * @param values - Placeholder-to-value pairs.
- * @returns The text with every placeholder substituted.
- */
-export function substitutePlaceholders(
-  raw: string,
-  values: Readonly<Record<string, string>>,
-): string {
-  return Object.entries(values).reduce(
-    (text, [placeholder, value]) => text.replaceAll(placeholder, value),
-    raw,
-  );
 }

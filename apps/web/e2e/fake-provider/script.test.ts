@@ -6,17 +6,12 @@
  */
 import { readFileSync } from 'node:fs';
 
-import { assertNoCanary, GITHUB_CANARY } from '@agent-hangar/core/testing';
+import { assertNoCanary } from '@agent-hangar/core/testing';
 import { describe, expect, it } from 'vitest';
 
 import { PROMPTS } from '../support/constants';
 
-import {
-  GITHUB_CANARY_PLACEHOLDER,
-  loadProviderScript,
-  scriptPath,
-  substitutePlaceholders,
-} from './script';
+import { GITHUB_CANARY_PLACEHOLDER, loadProviderScript, scriptPath } from './script';
 
 const script = loadProviderScript();
 const raw = readFileSync(scriptPath(), 'utf8');
@@ -97,21 +92,5 @@ describe('the fake provider script', () => {
   /** A malformed script must fail here rather than inside the worker mid-run. */
   it('rejects a script that does not match the shape', () => {
     expect(() => loadProviderScript('/nonexistent/script.json')).toThrow();
-  });
-});
-
-describe('substitutePlaceholders', () => {
-  /** Substitution replaces every occurrence, so a script may use a placeholder more than once. */
-  it('replaces every occurrence of every placeholder', () => {
-    const text = `${GITHUB_CANARY_PLACEHOLDER} and ${GITHUB_CANARY_PLACEHOLDER}`;
-    const substituted = substitutePlaceholders(text, {
-      [GITHUB_CANARY_PLACEHOLDER]: GITHUB_CANARY,
-    });
-    expect(substituted).toBe(`${GITHUB_CANARY} and ${GITHUB_CANARY}`);
-  });
-
-  /** Text with no placeholder is returned unchanged. */
-  it('leaves text without a placeholder alone', () => {
-    expect(substitutePlaceholders('plain', { '{{X}}': 'y' })).toBe('plain');
   });
 });
