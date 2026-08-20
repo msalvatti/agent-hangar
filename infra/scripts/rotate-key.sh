@@ -28,6 +28,15 @@
 # at all (it is copied, then replaced in place); "<key>.new" is deleted only when the helper
 # reported that every row is back under the current key.
 #
+# The instance must not be running. `MasterKeyFile` caches the key for the lifetime of the process
+# that read it, so a web or worker still up keeps encrypting with the OLD key however long ago the
+# files were swapped — a credential saved in Settings afterwards would be sealed under a key no
+# reader will hold again. The same running process is what makes the re-encryption pass unsafe: a
+# Settings write landing between the reveal and the write silently replaces the new value with the
+# one revealed earlier, and one landing after it is unreadable the moment the key files swap.
+# Rotation therefore refuses to start while the instance's web port answers, and the app has to be
+# started again afterwards so it picks up the new key.
+#
 # Flags:
 #   --yes      required to actually rotate; without it the plan is printed and nothing runs
 #   --resume   continue a previously interrupted rotation
@@ -75,6 +84,11 @@ run_helper() {
   else
     HELPER_RC=$?
   fi
+}
+
+# ah_tcp_open <host> <port>: succeeds when something accepts a connection there.
+ah_tcp_open() {
+  (exec 3<>"/dev/tcp/$1/$2") 2>/dev/null
 }
 
 # read_state <field>: prints the value of the "<field>=<value>" line, or nothing when the state
@@ -146,6 +160,14 @@ umask 077
 # also the state an operator lands in after restoring only part of a rotation by hand.
 if [ ! -f "$key" ]; then
   echo "No master key at $key. Create one with pnpm setup, or restore it from a $key.bak-* backup, before rotating." >&2
+  exit 1
+fi
+
+# Exclusion by refusing to start, not by locking: it stops the app's writers, which are the only
+# ones that exist in normal operation. It cannot stop a second rotation, nor anything writing to
+# the database directly — the store has no lock the two sides could share.
+if ah_tcp_open 127.0.0.1 "$WEB_PORT"; then
+  echo "Something is listening on 127.0.0.1:$WEB_PORT, so instance \"$AH_INSTANCE\" looks like it is running. Stop it before rotating and start it again afterwards: a running process caches the master key for its lifetime, so it would keep using the old one and any credential saved in Settings meanwhile would be sealed under a key nothing reads again." >&2
   exit 1
 fi
 

@@ -28,6 +28,15 @@
  * the store is then split across the two keys, and the only recoverable state is one where BOTH
  * key files are kept. The caller must not delete the new key file on that outcome.
  *
+ * What this function does NOT provide is isolation from anything else writing the store. Phase 1
+ * reveals and phase 2 writes are separate statements with no transaction, no row lock and no
+ * version check around them, because `SecretRepository` exposes none: a `set` landing between the
+ * two silently loses its value to the plaintext revealed earlier, and one landing after phase 2 is
+ * sealed under the old key and stops opening the moment the key files swap. Rotation therefore
+ * assumes it is the only writer, and `rotate-key.sh` is what establishes that — it refuses to run
+ * while the instance's web port answers. That is exclusion by refusing to start, not a lock, and
+ * it covers the app's writers and nothing else.
+ *
  * The revealed plaintexts live only in local `Map`s, cleared in a `finally` so they never outlive
  * this function.
  */
