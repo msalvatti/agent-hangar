@@ -14,7 +14,7 @@ import { join } from 'node:path';
 
 import type Dockerode from 'dockerode';
 
-import { DockerRunnerError } from './errors.js';
+import { DockerRunnerError } from './errors.ts';
 
 /** Constructor options for the dockerode client, as produced by {@link resolveDockerSocket}. */
 export type DockerodeOptions = Dockerode.DockerOptions;

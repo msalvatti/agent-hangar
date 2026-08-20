@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { GC_CRON, GC_SCHEDULER_KEY, jobIdFromSchedulerKey, toSchedulerKey } from './keys.js';
+import { GC_CRON, GC_SCHEDULER_KEY, jobIdFromSchedulerKey, toSchedulerKey } from './keys.ts';
 
 describe('scheduler keys', () => {
   /**

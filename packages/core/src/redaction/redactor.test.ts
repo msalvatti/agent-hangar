@@ -10,10 +10,10 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { REDACTED_TOKEN, SECRET_SHAPE_PATTERNS } from '../secrets/types.js';
-import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.js';
+import { REDACTED_TOKEN, SECRET_SHAPE_PATTERNS } from '../secrets/types.ts';
+import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.ts';
 
-import { CIRCULAR_TOKEN, createRedactor, escapeRegExp } from './redactor.js';
+import { CIRCULAR_TOKEN, createRedactor, escapeRegExp } from './redactor.ts';
 
 /** A classic PAT shape that was never registered anywhere. */
 const CLASSIC_PAT = `ghp_${'A'.repeat(36)}`;

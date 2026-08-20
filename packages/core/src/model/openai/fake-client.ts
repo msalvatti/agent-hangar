@@ -16,7 +16,7 @@ import type {
   ResponseStreamEvent,
 } from 'openai/resources/responses/responses';
 
-import type { OpenAIModelSummary, OpenAIResponsesClient, OpenAIStreamOptions } from './client.js';
+import type { OpenAIModelSummary, OpenAIResponsesClient, OpenAIStreamOptions } from './client.ts';
 
 /** Model ids served by `models.list()` unless the test configures its own. */
 export const DEFAULT_FAKE_MODELS: readonly string[] = ['gpt-5.6-sol', 'gpt-5.6-mini'];

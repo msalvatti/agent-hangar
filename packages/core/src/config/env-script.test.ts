@@ -15,8 +15,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { resolveInstance } from './instance.js';
-import { COMPOSE_DB_CREDENTIALS } from './schema.js';
+import { resolveInstance } from './instance.ts';
+import { COMPOSE_DB_CREDENTIALS } from './schema.ts';
 
 const scriptPath = fileURLToPath(new URL('../../../../infra/scripts/env.sh', import.meta.url));
 const setupPath = fileURLToPath(new URL('../../../../infra/scripts/setup.sh', import.meta.url));

@@ -15,16 +15,16 @@ import { join } from 'node:path';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { ConfigError } from '../errors.js';
+import { ConfigError } from '../errors.ts';
 
-import type { KeyFileSystem } from './master-key-file.js';
+import type { KeyFileSystem } from './master-key-file.ts';
 import {
   MasterKeyFile,
   isRegularFile,
   isWorldOrGroupReadable,
   nodeKeyFileSystem,
-} from './master-key-file.js';
-import { MASTER_KEY_BYTES, MASTER_KEY_VERSION } from './master-key.js';
+} from './master-key-file.ts';
+import { MASTER_KEY_BYTES, MASTER_KEY_VERSION } from './master-key.ts';
 
 const KEY_HEX = 'a'.repeat(64);
 const OTHER_KEY_HEX = 'b'.repeat(64);

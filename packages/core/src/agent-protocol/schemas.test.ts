@@ -8,7 +8,7 @@
  */
 import { describe, expect, expectTypeOf, it } from 'vitest';
 
-import type { ConversationItem } from '../model/types.js';
+import type { ConversationItem } from '../model/types.ts';
 
 import {
   agentEventSchema,
@@ -16,8 +16,8 @@ import {
   PROTOCOL_VERSION,
   toolNameSchema,
   turnRequestSchema,
-} from './schemas.js';
-import type { AgentEvent, ProtocolConversationItem, TurnRequest } from './types.js';
+} from './schemas.ts';
+import type { AgentEvent, ProtocolConversationItem, TurnRequest } from './types.ts';
 
 /** A valid turn request used as the baseline of every mutation below. */
 const validRequest: TurnRequest = {

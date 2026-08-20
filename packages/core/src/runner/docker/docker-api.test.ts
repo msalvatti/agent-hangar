@@ -9,8 +9,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { isDockerConflict, isDockerNotFound, isDockerNotModified } from './docker-api.js';
-import { dockerError } from './testing/fake-docker-api.js';
+import { isDockerConflict, isDockerNotFound, isDockerNotModified } from './docker-api.ts';
+import { dockerError } from './testing/fake-docker-api.ts';
 
 describe('Docker status predicates', () => {
   /**

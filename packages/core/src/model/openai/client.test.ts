@@ -9,10 +9,10 @@
 import type OpenAI from 'openai';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { OPENAI_CANARY } from '../../testing/canaries.js';
+import { OPENAI_CANARY } from '../../testing/canaries.ts';
 
-import { createOpenAIClient } from './client.js';
-import type { OpenAIResponsesClient } from './client.js';
+import { createOpenAIClient } from './client.ts';
+import type { OpenAIResponsesClient } from './client.ts';
 
 const { constructorOptions } = vi.hoisted(() => ({ constructorOptions: [] as unknown[] }));
 

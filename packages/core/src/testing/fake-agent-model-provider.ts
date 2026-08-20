@@ -9,7 +9,7 @@
  */
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import type { AgentModelProvider, ModelEvent, ModelTurnInput, ModelUsage } from '../model/types.js';
+import type { AgentModelProvider, ModelEvent, ModelTurnInput, ModelUsage } from '../model/types.ts';
 
 /** One model round-trip of a script. */
 export interface ScriptedStep {

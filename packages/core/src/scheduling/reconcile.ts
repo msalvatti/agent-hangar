@@ -9,8 +9,8 @@
  * the next delayed job, so re-upserting an unchanged scheduler would keep pushing its next tick
  * further out on every restart.
  */
-import { toSchedulerKey } from './keys.js';
-import type { ReconcilePlan, ScheduledJobRef, SchedulerKey } from './types.js';
+import { toSchedulerKey } from './keys.ts';
+import type { ReconcilePlan, ScheduledJobRef, SchedulerKey } from './types.ts';
 
 /** A job as the reconciler reads it: the scheduler fields plus whether it should run at all. */
 export interface ReconcilableJob extends ScheduledJobRef {

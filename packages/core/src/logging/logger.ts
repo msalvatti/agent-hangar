@@ -37,9 +37,9 @@
 import pino from 'pino';
 import type { Bindings, ChildLoggerOptions, DestinationStream, Logger, LoggerOptions } from 'pino';
 
-import { CIRCULAR_TOKEN } from '../redaction/redactor.js';
-import { REDACTED_TOKEN } from '../secrets/types.js';
-import type { Redactor } from '../secrets/types.js';
+import { CIRCULAR_TOKEN } from '../redaction/redactor.ts';
+import { REDACTED_TOKEN } from '../secrets/types.ts';
+import type { Redactor } from '../secrets/types.ts';
 
 /**
  * Fields blanked by name, regardless of their content.

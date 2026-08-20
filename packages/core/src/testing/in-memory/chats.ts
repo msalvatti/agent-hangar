@@ -3,7 +3,7 @@
  *
  * Layer: test double.
  */
-import type { Chat, Message, Turn, UsageTotals } from '../../persistence/entities.js';
+import type { Chat, Message, Turn, UsageTotals } from '../../persistence/entities.ts';
 import type {
   ChatRepository,
   CreateChatInput,
@@ -14,10 +14,10 @@ import type {
   TerminalStatus,
   TurnRepository,
   TurnStatusUpdate,
-} from '../../persistence/ports.js';
-import type { ChatStatus, MessageRole, TurnStatus } from '../../workspace/types.js';
+} from '../../persistence/ports.ts';
+import type { ChatStatus, MessageRole, TurnStatus } from '../../workspace/types.ts';
 
-import type { InMemoryStore } from './store.js';
+import type { InMemoryStore } from './store.ts';
 
 /** Chat rows with cascade delete to messages, turns and tool calls. */
 export class InMemoryChatRepository implements ChatRepository {

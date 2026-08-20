@@ -5,22 +5,22 @@
  *
  * Layer: test double.
  */
-import { systemClock } from '../config/clock.js';
-import type { Clock } from '../config/clock.js';
-import type { Repositories } from '../persistence/ports.js';
+import { systemClock } from '../config/clock.ts';
+import type { Clock } from '../config/clock.ts';
+import type { Repositories } from '../persistence/ports.ts';
 
 import {
   InMemoryChatRepository,
   InMemoryMessageRepository,
   InMemoryTurnRepository,
-} from './in-memory/chats.js';
-import { InMemoryJobRunRepository, InMemoryScheduledJobRepository } from './in-memory/jobs.js';
-import { InMemoryStore } from './in-memory/store.js';
+} from './in-memory/chats.ts';
+import { InMemoryJobRunRepository, InMemoryScheduledJobRepository } from './in-memory/jobs.ts';
+import { InMemoryStore } from './in-memory/store.ts';
 import {
   InMemorySecretRepository,
   InMemoryToolCallLogRepository,
-} from './in-memory/tool-calls-and-secrets.js';
-import { InMemoryWorkspaceRepository } from './in-memory/workspaces.js';
+} from './in-memory/tool-calls-and-secrets.ts';
+import { InMemoryWorkspaceRepository } from './in-memory/workspaces.ts';
 
 export {
   InMemoryChatRepository,

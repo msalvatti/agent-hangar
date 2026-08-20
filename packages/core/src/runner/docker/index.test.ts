@@ -9,11 +9,10 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { FakeClock } from '../../testing/fake-clock.js';
+import { FakeClock } from '../../testing/fake-clock.ts';
 
-import { DockerWorkspaceRunner } from './docker-workspace-runner.js';
-
-import { createDockerWorkspaceRunner } from './index.js';
+import { DockerWorkspaceRunner } from './docker-workspace-runner.ts';
+import { createDockerWorkspaceRunner } from './index.ts';
 
 const { dockerodeConstructor } = vi.hoisted(() => ({ dockerodeConstructor: vi.fn() }));
 

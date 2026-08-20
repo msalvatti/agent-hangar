@@ -19,7 +19,7 @@
  */
 import type { ZodType } from 'zod';
 
-import type { ProtocolErrorEvent, ProtocolErrorReason } from './types.js';
+import type { ProtocolErrorEvent, ProtocolErrorReason } from './types.ts';
 
 /**
  * Maximum number of characters buffered for a single line before the parser abandons it.

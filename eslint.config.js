@@ -200,6 +200,15 @@ export default defineConfig([
     },
   },
 
+  // Build-time tooling walks and rewrites paths it computes from a directory listing, never from
+  // untrusted input; the same rule is already off for test files for the same reason.
+  {
+    files: ['packages/core/scripts/**/*.ts'],
+    rules: {
+      'security/detect-non-literal-fs-filename': 'off',
+    },
+  },
+
   // Plain JavaScript config and script files are linted with the core rules only.
   {
     files: ['**/*.js', '**/*.mjs', '**/*.cjs'],

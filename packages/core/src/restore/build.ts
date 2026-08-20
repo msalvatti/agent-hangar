@@ -13,20 +13,20 @@
  * into the request and nowhere else — in particular, a request that fails schema validation is
  * reported by field path and issue code only, never by echoing the value that failed.
  */
-import { turnRequestSchema } from '../agent-protocol/schemas.js';
-import type { TurnLimits, TurnRequest } from '../agent-protocol/types.js';
-import { ProtocolError } from '../errors.js';
-import type { EnsureWorkspaceDecision, RestoreContext } from '../workspace/types.js';
+import { turnRequestSchema } from '../agent-protocol/schemas.ts';
+import type { TurnLimits, TurnRequest } from '../agent-protocol/types.ts';
+import { ProtocolError } from '../errors.ts';
+import type { EnsureWorkspaceDecision, RestoreContext } from '../workspace/types.ts';
 
-import { buildHistoryWindow } from './history.js';
-import type { HistoryBudget, HistoryMessage } from './history.js';
+import { buildHistoryWindow } from './history.ts';
+import type { HistoryBudget, HistoryMessage } from './history.ts';
 import {
   DEFAULT_CHAT_TURN_LIMITS,
   DEFAULT_JOB_TURN_LIMITS,
   defaultWorkBranch,
   JOB_WORK_BRANCH_PREFIX,
-} from './limits.js';
-import { RESTORATION_NOTICE_PREFIX, restorationNotice } from './notice.js';
+} from './limits.ts';
+import { RESTORATION_NOTICE_PREFIX, restorationNotice } from './notice.ts';
 
 /** The chat fields the builders read; a structural subset of the persisted `Chat`. */
 export interface ChatRestoreSource {

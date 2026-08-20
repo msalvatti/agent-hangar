@@ -8,9 +8,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { InvalidCronError } from '../errors.js';
+import { InvalidCronError } from '../errors.ts';
 
-import { describeCron } from './describe.js';
+import { describeCron } from './describe.ts';
 
 /**
  * Describes an expression in UTC unless another zone is given.

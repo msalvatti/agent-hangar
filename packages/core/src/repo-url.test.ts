@@ -8,8 +8,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { credentialFreeUrl, isCredentialFreeUrl, isPlainRepoUrl, repoUrl } from './repo-url.js';
-import { GITHUB_CANARY } from './testing/canaries.js';
+import { credentialFreeUrl, isCredentialFreeUrl, isPlainRepoUrl, repoUrl } from './repo-url.ts';
+import { GITHUB_CANARY } from './testing/canaries.ts';
 
 describe('credentialFreeUrl', () => {
   /** The shape the product actually uses must keep working, on any host. */

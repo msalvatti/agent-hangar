@@ -9,15 +9,15 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { ModelEvent, ModelTurnInput } from '../model/types.js';
+import type { ModelEvent, ModelTurnInput } from '../model/types.ts';
 
-import { assertNoCanary, GITHUB_CANARY } from './canaries.js';
+import { assertNoCanary, GITHUB_CANARY } from './canaries.ts';
 import {
   FAKE_USAGE,
   FakeAgentModelProvider,
   simpleAnswer,
   toolThenAnswer,
-} from './fake-agent-model-provider.js';
+} from './fake-agent-model-provider.ts';
 
 function input(overrides: Partial<ModelTurnInput> = {}): ModelTurnInput {
   return {

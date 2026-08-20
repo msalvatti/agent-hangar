@@ -14,12 +14,12 @@
  * envelope authenticates under the same master key — and `reveal('OPENAI_API_KEY')` would return
  * the GitHub token, which the caller would then send to a third party.
  */
-import type { SecretRepository } from '../persistence/ports.js';
+import type { SecretRepository } from '../persistence/ports.ts';
 
-import { encryptSecret, decryptSecret, last4 } from './crypto.js';
-import { InvalidSecretError } from './errors.js';
-import type { MasterKeyProvider } from './master-key.js';
-import type { SecretKey, SecretStatus, SecretsService } from './types.js';
+import { encryptSecret, decryptSecret, last4 } from './crypto.ts';
+import { InvalidSecretError } from './errors.ts';
+import type { MasterKeyProvider } from './master-key.ts';
+import type { SecretKey, SecretStatus, SecretsService } from './types.ts';
 
 /**
  * Builds the additional authenticated data that ties an envelope to one row.

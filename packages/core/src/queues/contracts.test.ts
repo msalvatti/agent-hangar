@@ -18,7 +18,7 @@ import {
   turnCommand,
   turnCommandChannel,
   turnEventsStreamKey,
-} from './contracts.js';
+} from './contracts.ts';
 
 describe('names', () => {
   /**

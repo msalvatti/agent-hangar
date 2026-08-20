@@ -8,9 +8,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { AgentHangarError } from '../errors.js';
+import { AgentHangarError } from '../errors.ts';
 
-import { WorkspaceBusyError } from './errors.js';
+import { WorkspaceBusyError } from './errors.ts';
 
 describe('WorkspaceBusyError', () => {
   /**

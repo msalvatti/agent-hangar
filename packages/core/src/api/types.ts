@@ -30,7 +30,7 @@ import type {
   toolCallView,
   turnView,
   workspaceView,
-} from './contracts.js';
+} from './contracts.ts';
 
 /** Parsed `apiError`. */
 export type ApiError = z.infer<typeof apiError>;

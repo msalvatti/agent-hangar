@@ -3,17 +3,17 @@
  *
  * Layer: test double.
  */
-import type { SecretRecord, ToolCallLog } from '../../persistence/entities.js';
+import type { SecretRecord, ToolCallLog } from '../../persistence/entities.ts';
 import type {
   FinishToolCallInput,
   SecretRepository,
   StartToolCallInput,
   ToolCallLogRepository,
-} from '../../persistence/ports.js';
-import { SECRET_KEYS } from '../../secrets/types.js';
-import type { SecretEnvelope, SecretKey, SecretStatus } from '../../secrets/types.js';
+} from '../../persistence/ports.ts';
+import { SECRET_KEYS } from '../../secrets/types.ts';
+import type { SecretEnvelope, SecretKey, SecretStatus } from '../../secrets/types.ts';
 
-import type { InMemoryStore } from './store.js';
+import type { InMemoryStore } from './store.ts';
 
 /** Tool-call log rows. */
 export class InMemoryToolCallLogRepository implements ToolCallLogRepository {

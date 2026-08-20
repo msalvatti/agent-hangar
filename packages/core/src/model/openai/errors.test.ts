@@ -5,9 +5,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { AgentHangarError, isAgentHangarError } from '../../errors.js';
+import { AgentHangarError, isAgentHangarError } from '../../errors.ts';
 
-import { ModelProviderError } from './errors.js';
+import { ModelProviderError } from './errors.ts';
 
 describe('ModelProviderError', () => {
   it('carries the stable code, the category and the retry hint', () => {

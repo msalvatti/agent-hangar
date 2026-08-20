@@ -6,9 +6,9 @@
  * These are the values the worker sends when a caller does not override them. They live here so
  * the chat path, the scheduled-job path and the tests read the same numbers.
  */
-import type { TurnLimits } from '../agent-protocol/types.js';
+import type { TurnLimits } from '../agent-protocol/types.ts';
 
-import type { HistoryBudget } from './history.js';
+import type { HistoryBudget } from './history.ts';
 
 /** Milliseconds in a minute. */
 const MINUTE_MS = 60_000;

@@ -11,9 +11,9 @@ import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { ConfigError } from '../errors.js';
+import { ConfigError } from '../errors.ts';
 
-import { resolveInstance } from './instance.js';
+import { resolveInstance } from './instance.ts';
 import {
   COMPOSE_DB_CREDENTIALS,
   defaultMasterKeyPath,
@@ -21,7 +21,7 @@ import {
   expandHomePrefix,
   instanceDefaults,
   loadConfig,
-} from './schema.js';
+} from './schema.ts';
 
 describe('loadConfig', () => {
   /**

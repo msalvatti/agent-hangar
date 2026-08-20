@@ -11,7 +11,7 @@
  * The conversions are therefore the identity function. They exist so that call sites read as
  * conversions and a future change of convention has one place to happen.
  */
-import type { SchedulerKey } from './types.js';
+import type { SchedulerKey } from './types.ts';
 
 /** Key of the scheduler that drives idle-workspace collection; not tied to any job. */
 export const GC_SCHEDULER_KEY = 'reap-idle';

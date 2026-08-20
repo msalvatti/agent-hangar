@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { archivedNotice, RESTORATION_NOTICE_PREFIX, restorationNotice } from './notice.js';
+import { archivedNotice, RESTORATION_NOTICE_PREFIX, restorationNotice } from './notice.ts';
 
 /** Fixed instant so the rendered text is byte-comparable. */
 const AT = new Date('2026-03-01T12:34:56.000Z');

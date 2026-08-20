@@ -10,8 +10,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { captureGitSnapshot, parseAheadBehind, truncateSummary } from './git-snapshot.js';
-import type { CaptureResult } from './git-snapshot.js';
+import { captureGitSnapshot, parseAheadBehind, truncateSummary } from './git-snapshot.ts';
+import type { CaptureResult } from './git-snapshot.ts';
 
 /** Instant every snapshot is stamped with. */
 const TAKEN_AT = new Date('2026-01-01T00:00:00.000Z');

@@ -3,10 +3,10 @@
  *
  * Layer: domain.
  */
-import { AgentHangarError } from '../errors.js';
-import type { AgentHangarErrorOptions } from '../errors.js';
+import { AgentHangarError } from '../errors.ts';
+import type { AgentHangarErrorOptions } from '../errors.ts';
 
-import type { WorkspaceStatus } from './types.js';
+import type { WorkspaceStatus } from './types.ts';
 
 /**
  * A chat's workspace is in a transient state, so no turn can start against it yet.

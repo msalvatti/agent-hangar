@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { decideOverlap, OVERLAP_POLICY, OVERLAP_SKIP_REASON } from './overlap.js';
+import { decideOverlap, OVERLAP_POLICY, OVERLAP_SKIP_REASON } from './overlap.ts';
 
 describe('decideOverlap', () => {
   /**

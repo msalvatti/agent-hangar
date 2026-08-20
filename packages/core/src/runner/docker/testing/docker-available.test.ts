@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { dockerGate } from './docker-available.js';
+import { dockerGate } from './docker-available.ts';
 
 describe('dockerGate', () => {
   /**

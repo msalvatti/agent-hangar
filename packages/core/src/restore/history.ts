@@ -11,11 +11,11 @@
  * invariant 1). It is copied into model input verbatim and is never used to build an error
  * message, so a value that slipped through redaction cannot escape through a thrown error.
  */
-import type { ConversationItem } from '../model/types.js';
-import { assertNever } from '../workspace/lifecycle.js';
-import type { MessageRole } from '../workspace/types.js';
+import type { ConversationItem } from '../model/types.ts';
+import { assertNever } from '../workspace/lifecycle.ts';
+import type { MessageRole } from '../workspace/types.ts';
 
-import { DEFAULT_HISTORY_BUDGET } from './limits.js';
+import { DEFAULT_HISTORY_BUDGET } from './limits.ts';
 
 /** Most tool-summary lines the compaction item lists before eliding the rest. */
 export const MAX_COMPACTION_TOOL_LINES = 20;

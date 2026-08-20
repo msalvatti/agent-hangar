@@ -8,7 +8,7 @@
  * hand (or by a Docker restart) leaves a row claiming a workspace that is gone. The collector
  * runs this diff on every tick and on boot.
  */
-import type { WorkspaceHandle } from '../runner/types.js';
+import type { WorkspaceHandle } from '../runner/types.ts';
 
 /** Both sides of the comparison: what the runner lists and what the database calls live. */
 export interface OrphanReconcileInput {

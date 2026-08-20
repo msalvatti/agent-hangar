@@ -6,7 +6,7 @@
  *
  * `infra/scripts/env.sh` implements the same derivation for shell consumers; a test compares both.
  */
-import { ConfigError } from '../errors.js';
+import { ConfigError } from '../errors.ts';
 
 /** Instance name used when nothing is configured. */
 export const DEFAULT_INSTANCE = 'default';

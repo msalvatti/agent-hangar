@@ -10,7 +10,7 @@
  * `null` → `undefined` conversion is needed here.
  */
 
-import type { SecretKey } from '../../secrets/types.js';
+import type { SecretKey } from '../../secrets/types.ts';
 import type {
   ChatStatus,
   JobRunStatus,
@@ -20,7 +20,7 @@ import type {
   TurnStatus,
   WorkspaceKind,
   WorkspaceStatus,
-} from '../../workspace/types.js';
+} from '../../workspace/types.ts';
 import type {
   Chat,
   JobRun,
@@ -30,7 +30,7 @@ import type {
   ToolCallLog,
   Turn,
   Workspace,
-} from '../entities.js';
+} from '../entities.ts';
 import type {
   Chat as ChatRow,
   JobRun as JobRunRow,
@@ -41,9 +41,9 @@ import type {
   ToolCallLog as ToolCallLogRow,
   Turn as TurnRow,
   Workspace as WorkspaceRow,
-} from '../generated/client.js';
+} from '../generated/client.ts';
 
-import { PersistenceMappingError } from './errors.js';
+import { PersistenceMappingError } from './errors.ts';
 
 /**
  * Builds a validated converter for one enum: accepts any of `values` and returns it narrowed to

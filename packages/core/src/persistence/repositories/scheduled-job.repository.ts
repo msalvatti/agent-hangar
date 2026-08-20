@@ -8,18 +8,18 @@
  * repository is the only writer, so redacting here is what keeps a credential out of the row.
  * `name`, `cron`, `timezone`, `repoUrl` and `branch` are identifiers and are never redacted.
  */
-import type { Redactor } from '../../secrets/types.js';
-import type { ScheduledJob } from '../entities.js';
-import type { PrismaClient } from '../generated/client.js';
+import type { Redactor } from '../../secrets/types.ts';
+import type { ScheduledJob } from '../entities.ts';
+import type { PrismaClient } from '../generated/client.ts';
 import type {
   CreateScheduledJobInput,
   RunTimes,
   ScheduledJobRepository,
   UpdateScheduledJobInput,
-} from '../ports.js';
+} from '../ports.ts';
 
-import { toScheduledJob } from './mappers.js';
-import { translatePrismaError } from './prisma-errors.js';
+import { toScheduledJob } from './mappers.ts';
+import { translatePrismaError } from './prisma-errors.ts';
 
 /** Scheduled job rows. */
 export class PrismaScheduledJobRepository implements ScheduledJobRepository {

@@ -7,19 +7,19 @@
  * redacted and truncated to {@link RESULT_HEAD_MAX_BYTES} on write, while `resultBytes` keeps the
  * untruncated length so callers can show a "truncated" indicator.
  */
-import type { Redactor } from '../../secrets/types.js';
-import type { ToolCallLog } from '../entities.js';
-import type { PrismaClient } from '../generated/client.js';
-import type { FinishToolCallInput, StartToolCallInput, ToolCallLogRepository } from '../ports.js';
+import type { Redactor } from '../../secrets/types.ts';
+import type { ToolCallLog } from '../entities.ts';
+import type { PrismaClient } from '../generated/client.ts';
+import type { FinishToolCallInput, StartToolCallInput, ToolCallLogRepository } from '../ports.ts';
 
-import { PersistenceMappingError } from './errors.js';
+import { PersistenceMappingError } from './errors.ts';
 import {
   toInputJson,
   toPrismaToolCallStatus,
   toToolCallLog,
   truncateResultHead,
-} from './mappers.js';
-import { translatePrismaError } from './prisma-errors.js';
+} from './mappers.ts';
+import { translatePrismaError } from './prisma-errors.ts';
 
 /** Tool-call log rows. */
 export class PrismaToolCallLogRepository implements ToolCallLogRepository {

@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { FakeClock } from './fake-clock.js';
+import { FakeClock } from './fake-clock.ts';
 
 describe('FakeClock', () => {
   /**

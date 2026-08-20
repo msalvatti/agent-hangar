@@ -16,7 +16,7 @@ import {
   defaultWorkBranch,
   JOB_WORK_BRANCH_PREFIX,
   WORK_BRANCH_ID_CHARS,
-} from './limits.js';
+} from './limits.ts';
 
 describe('default limits', () => {
   /**

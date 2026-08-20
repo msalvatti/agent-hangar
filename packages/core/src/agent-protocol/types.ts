@@ -16,7 +16,7 @@ import type {
   turnRepoSchema,
   turnRequestSchema,
   turnUsageSchema,
-} from './schemas.js';
+} from './schemas.ts';
 
 /** Tools the agent runtime exposes to the model. */
 export type ToolName = z.infer<typeof toolNameSchema>;

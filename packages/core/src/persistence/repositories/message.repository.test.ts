@@ -11,11 +11,11 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Redactor } from '../../secrets/types.js';
-import type { PrismaClient } from '../generated/client.js';
+import type { Redactor } from '../../secrets/types.ts';
+import type { PrismaClient } from '../generated/client.ts';
 
-import { NotFoundError } from './errors.js';
-import { PrismaMessageRepository } from './message.repository.js';
+import { NotFoundError } from './errors.ts';
+import { PrismaMessageRepository } from './message.repository.ts';
 
 const NOW = new Date('2026-01-01T00:00:00.000Z');
 

@@ -12,9 +12,9 @@
  */
 import { beforeEach, expect, it } from 'vitest';
 
-import type { Redactor } from '../../secrets/types.js';
-import { OPENAI_CANARY } from '../../testing/canaries.js';
-import type { PrismaClient } from '../generated/client.js';
+import type { Redactor } from '../../secrets/types.ts';
+import { OPENAI_CANARY } from '../../testing/canaries.ts';
+import type { PrismaClient } from '../generated/client.ts';
 import {
   connectTestDb,
   describeDb,
@@ -22,10 +22,10 @@ import {
   seedChat,
   sqlTemplate,
   truncateAll,
-} from '../testing/db.js';
+} from '../testing/db.ts';
 
-import { LiveWorkspaceExistsError, NotFoundError } from './errors.js';
-import { PrismaWorkspaceRepository } from './workspace.repository.js';
+import { LiveWorkspaceExistsError, NotFoundError } from './errors.ts';
+import { PrismaWorkspaceRepository } from './workspace.repository.ts';
 
 const testRedactor: Redactor = {
   register: () => undefined,

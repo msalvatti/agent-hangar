@@ -6,8 +6,8 @@
  * Messages describe the shape of the problem only; a rejected value is never echoed back, because
  * the value in hand at that moment is a credential.
  */
-import type { AgentHangarErrorOptions } from '../errors.js';
-import { AgentHangarError } from '../errors.js';
+import type { AgentHangarErrorOptions } from '../errors.ts';
+import { AgentHangarError } from '../errors.ts';
 
 /** A credential was rejected before it could be encrypted. */
 export class InvalidSecretError extends AgentHangarError {

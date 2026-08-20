@@ -11,9 +11,9 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import * as core from '../../index.js';
-import type { Redactor } from '../../secrets/types.js';
-import type { PrismaClient } from '../generated/client.js';
+import * as core from '../../index.ts';
+import type { Redactor } from '../../secrets/types.ts';
+import type { PrismaClient } from '../generated/client.ts';
 
 import {
   createRepositories,
@@ -25,7 +25,7 @@ import {
   PrismaToolCallLogRepository,
   PrismaTurnRepository,
   PrismaWorkspaceRepository,
-} from './index.js';
+} from './index.ts';
 
 const fakeRedactor: Redactor = {
   register: vi.fn(),

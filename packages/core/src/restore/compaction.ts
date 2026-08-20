@@ -12,9 +12,9 @@
  * redacted it on write, and this module neither re-reads the environment nor copies the text into
  * an error message — a failure here reports the shape of the input, never its content.
  */
-import type { ToolName } from '../agent-protocol/types.js';
-import { assertNever } from '../workspace/lifecycle.js';
-import type { ToolCallStatus } from '../workspace/types.js';
+import type { ToolName } from '../agent-protocol/types.ts';
+import { assertNever } from '../workspace/lifecycle.ts';
+import type { ToolCallStatus } from '../workspace/types.ts';
 
 /** Longest command text a summary keeps before eliding the rest. */
 export const MAX_SUMMARY_COMMAND_CHARS = 80;

@@ -7,14 +7,14 @@
  * (`SELECT … FOR UPDATE`) inside an interactive transaction before computing the next value, so
  * concurrent appends to the same chat serialise instead of racing on `MAX(seq)`.
  */
-import type { Redactor } from '../../secrets/types.js';
-import type { MessageRole } from '../../workspace/types.js';
-import type { Message } from '../entities.js';
-import type { Prisma, PrismaClient } from '../generated/client.js';
-import type { ListMessagesOptions, MessageRepository } from '../ports.js';
+import type { Redactor } from '../../secrets/types.ts';
+import type { MessageRole } from '../../workspace/types.ts';
+import type { Message } from '../entities.ts';
+import type { Prisma, PrismaClient } from '../generated/client.ts';
+import type { ListMessagesOptions, MessageRepository } from '../ports.ts';
 
-import { NotFoundError } from './errors.js';
-import { toMessage, toPrismaMessageRole } from './mappers.js';
+import { NotFoundError } from './errors.ts';
+import { toMessage, toPrismaMessageRole } from './mappers.ts';
 
 /** Row returned by the `SELECT COALESCE(MAX(seq), 0) + 1 AS next` query. */
 interface NextSeqRow {

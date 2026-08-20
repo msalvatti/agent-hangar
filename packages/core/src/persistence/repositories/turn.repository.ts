@@ -10,19 +10,19 @@
  * foreign-key violation P2003, translated to `NotFoundError('Chat', chatId)` like the in-memory
  * double raises.
  */
-import type { Redactor } from '../../secrets/types.js';
-import type { TurnStatus } from '../../workspace/types.js';
-import type { Turn, UsageTotals } from '../entities.js';
-import type { Prisma, PrismaClient } from '../generated/client.js';
+import type { Redactor } from '../../secrets/types.ts';
+import type { TurnStatus } from '../../workspace/types.ts';
+import type { Turn, UsageTotals } from '../entities.ts';
+import type { Prisma, PrismaClient } from '../generated/client.ts';
 import type {
   CreateTurnInput,
   TerminalStatus,
   TurnRepository,
   TurnStatusUpdate,
-} from '../ports.js';
+} from '../ports.ts';
 
-import { toPrismaTurnStatus, toTurn } from './mappers.js';
-import { translatePrismaError } from './prisma-errors.js';
+import { toPrismaTurnStatus, toTurn } from './mappers.ts';
+import { translatePrismaError } from './prisma-errors.ts';
 
 /** Turn rows. */
 export class PrismaTurnRepository implements TurnRepository {

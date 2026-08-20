@@ -12,8 +12,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { assertDatabaseReachable } from './client.js';
-import { truncateAll, withTestDb } from './testing/db.js';
+import { assertDatabaseReachable } from './client.ts';
+import { truncateAll, withTestDb } from './testing/db.ts';
 
 const databaseUrl = process.env.DATABASE_URL;
 const hasDatabase = databaseUrl !== undefined && databaseUrl.length > 0;

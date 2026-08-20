@@ -12,19 +12,19 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { WorkspaceImageMissing } from '../../errors.js';
-import { CANARY_MARKER } from '../../testing/canaries.js';
+import { WorkspaceImageMissing } from '../../errors.ts';
+import { CANARY_MARKER } from '../../testing/canaries.ts';
 
-import { DockerWorkspaceRunner } from './docker-workspace-runner.js';
-import { DockerRunnerError } from './errors.js';
-import { dockerError, FakeDockerApi } from './testing/fake-docker-api.js';
+import { DockerWorkspaceRunner } from './docker-workspace-runner.ts';
+import { DockerRunnerError } from './errors.ts';
+import { dockerError, FakeDockerApi } from './testing/fake-docker-api.ts';
 import {
   createFixtureWorkspace as createWorkspace,
   drainExec as drain,
   FIXTURE_IMAGE as IMAGE,
   fixtureSpec as spec,
   makeRunnerFixture as makeRunner,
-} from './testing/runner-fixture.js';
+} from './testing/runner-fixture.ts';
 
 describe('DockerWorkspaceRunner.create', () => {
   /**

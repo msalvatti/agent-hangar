@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { AgentHangarError, IllegalTransitionError } from '../errors.js';
+import { AgentHangarError, IllegalTransitionError } from '../errors.ts';
 
 import {
   assertNever,
@@ -20,7 +20,7 @@ import {
   isTerminalRunStatus,
   RUN_TRANSITIONS,
   WORKSPACE_TRANSITIONS,
-} from './lifecycle.js';
+} from './lifecycle.ts';
 
 describe('transition tables', () => {
   /**

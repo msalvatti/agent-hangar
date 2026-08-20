@@ -8,17 +8,17 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { SECRET_SHAPE_PATTERNS } from '../../secrets/types.js';
-import { OPENAI_CANARY, assertNoCanary } from '../../testing/canaries.js';
+import { SECRET_SHAPE_PATTERNS } from '../../secrets/types.ts';
+import { OPENAI_CANARY, assertNoCanary } from '../../testing/canaries.ts';
 
 import {
   OPENAI_FIXTURE_NAMES,
   loadOpenAIFixture,
   openAIFixturesDir,
   parseOpenAIFixture,
-} from './fixtures.js';
-import type { OpenAIFixtureName } from './fixtures.js';
-import { LIFECYCLE_EVENT_TYPES, VERIFIED_EVENT_TYPES } from './mapping.js';
+} from './fixtures.ts';
+import type { OpenAIFixtureName } from './fixtures.ts';
+import { LIFECYCLE_EVENT_TYPES, VERIFIED_EVENT_TYPES } from './mapping.ts';
 
 /** Every event type a committed fixture is allowed to contain. */
 const ALLOWED_TYPES = new Set<string>([...VERIFIED_EVENT_TYPES, ...LIFECYCLE_EVENT_TYPES]);

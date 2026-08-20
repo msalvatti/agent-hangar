@@ -11,11 +11,11 @@
  * The queue is accepted through {@link SchedulerQueue}, a structural subset of BullMQ's `Queue`,
  * so unit tests can drive the logic without Redis while the real queue satisfies it unchanged.
  */
-import { GC_CRON, GC_SCHEDULER_KEY, toSchedulerKey } from '../scheduling/keys.js';
-import type { ExistingScheduler } from '../scheduling/reconcile.js';
-import type { ReconcilePlan } from '../scheduling/types.js';
+import { GC_CRON, GC_SCHEDULER_KEY, toSchedulerKey } from '../scheduling/keys.ts';
+import type { ExistingScheduler } from '../scheduling/reconcile.ts';
+import type { ReconcilePlan } from '../scheduling/types.ts';
 
-import { JOB_NAMES, reapIdlePayload, runScheduledJobPayload } from './contracts.js';
+import { JOB_NAMES, reapIdlePayload, runScheduledJobPayload } from './contracts.ts';
 
 /** What a scheduler wrapper needs from a queue; BullMQ's `Queue` satisfies it. */
 export interface SchedulerQueue {

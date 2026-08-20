@@ -17,14 +17,13 @@ import { randomUUID } from 'node:crypto';
 import Dockerode from 'dockerode';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
-import { WorkspaceImageMissing } from '../../errors.js';
-import { assertNoCanary, GITHUB_CANARY } from '../../testing/canaries.js';
-import type { ExecEvent, WorkspaceHandle, WorkspaceSpec } from '../types.js';
+import { WorkspaceImageMissing } from '../../errors.ts';
+import { assertNoCanary, GITHUB_CANARY } from '../../testing/canaries.ts';
+import type { ExecEvent, WorkspaceHandle, WorkspaceSpec } from '../types.ts';
 
-import { resolveDockerSocket } from './docker-socket.js';
-import { dockerGate } from './testing/docker-available.js';
-
-import { createDockerWorkspaceRunner } from './index.js';
+import { resolveDockerSocket } from './docker-socket.ts';
+import { createDockerWorkspaceRunner } from './index.ts';
+import { dockerGate } from './testing/docker-available.ts';
 
 const gate = dockerGate();
 

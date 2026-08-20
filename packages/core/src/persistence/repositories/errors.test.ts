@@ -8,14 +8,14 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { AgentHangarError } from '../../errors.js';
+import { AgentHangarError } from '../../errors.ts';
 
 import {
   LiveWorkspaceExistsError,
   NotFoundError,
   PersistenceMappingError,
   UniqueViolationError,
-} from './errors.js';
+} from './errors.ts';
 
 describe('PersistenceMappingError', () => {
   /** New error kind of this layer: carries a stable code and the detail message verbatim. */

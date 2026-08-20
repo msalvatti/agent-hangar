@@ -6,7 +6,7 @@
  * Shapes mirror the Prisma models one-to-one; enums are the string-literal unions of
  * `workspace/types.ts`; timestamps are `Date`s.
  */
-import type { SecretEnvelope, SecretKey } from '../secrets/types.js';
+import type { SecretEnvelope, SecretKey } from '../secrets/types.ts';
 import type {
   ChatStatus,
   JobRunStatus,
@@ -16,7 +16,7 @@ import type {
   TurnStatus,
   WorkspaceKind,
   WorkspaceStatus,
-} from '../workspace/types.js';
+} from '../workspace/types.ts';
 
 /** A conversation bound to a repository and branch; carries the restore context. */
 export interface Chat {

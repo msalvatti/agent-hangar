@@ -3,17 +3,17 @@
  *
  * Layer: test double.
  */
-import { LiveWorkspaceExistsError } from '../../errors.js';
-import type { Workspace } from '../../persistence/entities.js';
+import { LiveWorkspaceExistsError } from '../../errors.ts';
+import type { Workspace } from '../../persistence/entities.ts';
 import type {
   CreateWorkspaceInput,
   WorkspaceRepository,
   WorkspaceStatusUpdate,
-} from '../../persistence/ports.js';
-import { LIVE_WORKSPACE_STATUSES } from '../../workspace/types.js';
-import type { WorkspaceStatus } from '../../workspace/types.js';
+} from '../../persistence/ports.ts';
+import { LIVE_WORKSPACE_STATUSES } from '../../workspace/types.ts';
+import type { WorkspaceStatus } from '../../workspace/types.ts';
 
-import type { InMemoryStore } from './store.js';
+import type { InMemoryStore } from './store.ts';
 
 function isLive(workspace: Workspace): boolean {
   return LIVE_WORKSPACE_STATUSES.includes(workspace.status);

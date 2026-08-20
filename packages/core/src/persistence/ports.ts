@@ -7,7 +7,7 @@
  * boundary. Repositories are the only writers and redact every free-text column on write.
  * Every method resolves with the fresh row it produced so callers never re-query.
  */
-import type { SecretEnvelope, SecretKey, SecretStatus } from '../secrets/types.js';
+import type { SecretEnvelope, SecretKey, SecretStatus } from '../secrets/types.ts';
 import type {
   ChatStatus,
   JobRunStatus,
@@ -17,7 +17,7 @@ import type {
   TurnStatus,
   WorkspaceKind,
   WorkspaceStatus,
-} from '../workspace/types.js';
+} from '../workspace/types.ts';
 
 import type {
   Chat,
@@ -29,7 +29,7 @@ import type {
   Turn,
   UsageTotals,
   Workspace,
-} from './entities.js';
+} from './entities.ts';
 
 /** Fields needed to create a chat. */
 export interface CreateChatInput {

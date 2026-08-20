@@ -7,7 +7,7 @@
  * receives a {@link MasterKey} and hands it straight to `node:crypto`; the bytes are never
  * logged, serialised, or written anywhere but the key file itself.
  */
-import { ConfigError } from '../errors.js';
+import { ConfigError } from '../errors.ts';
 
 /** Byte length of an AES-256 key. */
 export const MASTER_KEY_BYTES = 32;

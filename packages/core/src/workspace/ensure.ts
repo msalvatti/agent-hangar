@@ -9,11 +9,11 @@
  * that crashed mid-turn therefore all take the same branch, which is why restore is exercised on
  * every long-lived chat rather than only on archived ones.
  */
-import { WorkspaceImageMissing } from '../errors.js';
+import { WorkspaceImageMissing } from '../errors.ts';
 
-import { WorkspaceBusyError } from './errors.js';
-import { assertNever } from './lifecycle.js';
-import type { EnsureWorkspaceDecision, RestoreContext, WorkspaceStatus } from './types.js';
+import { WorkspaceBusyError } from './errors.ts';
+import { assertNever } from './lifecycle.ts';
+import type { EnsureWorkspaceDecision, RestoreContext, WorkspaceStatus } from './types.ts';
 
 /** What the decision needs to know; every value is read by the caller, nothing is fetched here. */
 export interface EnsureWorkspaceInput {

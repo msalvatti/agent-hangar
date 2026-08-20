@@ -9,7 +9,7 @@
  */
 import { z } from 'zod';
 
-import { credentialFreeUrl } from '../repo-url.js';
+import { credentialFreeUrl } from '../repo-url.ts';
 
 /** Tools the agent runtime exposes to the model. */
 export const toolNameSchema = z.enum(['run_shell', 'read_file', 'write_file', 'list_dir']);

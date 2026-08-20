@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { SECRET_SHAPE_PATTERNS } from '../secrets/types.js';
+import { SECRET_SHAPE_PATTERNS } from '../secrets/types.ts';
 
 import {
   assertNoCanary,
@@ -16,7 +16,7 @@ import {
   CANARY_VALUES,
   GITHUB_CANARY,
   OPENAI_CANARY,
-} from './canaries.js';
+} from './canaries.ts';
 
 describe('canaries', () => {
   /**

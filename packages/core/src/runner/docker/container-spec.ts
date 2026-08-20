@@ -11,9 +11,9 @@
  */
 import type Dockerode from 'dockerode';
 
-import type { WorkspaceSpec } from '../types.js';
+import type { WorkspaceSpec } from '../types.ts';
 
-import { DockerRunnerError } from './errors.js';
+import { DockerRunnerError } from './errors.ts';
 
 /** Unprivileged user baked into the workspace image (uid 1001). */
 export const WORKSPACE_USER = 'agent';

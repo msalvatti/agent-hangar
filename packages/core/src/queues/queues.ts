@@ -18,7 +18,7 @@ import { Queue, Worker } from 'bullmq';
 import type { Processor } from 'bullmq';
 import { Redis } from 'ioredis';
 
-import { ConfigError } from '../errors.js';
+import { ConfigError } from '../errors.ts';
 
 import {
   destroyChatWorkspacePayload,
@@ -26,8 +26,8 @@ import {
   QUEUE_NAMES,
   runScheduledJobPayload,
   runTurnPayload,
-} from './contracts.js';
-import type { DestroyChatWorkspacePayload, QueueName, RunTurnPayload } from './contracts.js';
+} from './contracts.ts';
+import type { DestroyChatWorkspacePayload, QueueName, RunTurnPayload } from './contracts.ts';
 
 /** Completed jobs kept per queue, for the runs list and for debugging. */
 export const KEEP_COMPLETED_JOBS = 1000;

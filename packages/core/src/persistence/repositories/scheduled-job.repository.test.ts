@@ -10,11 +10,11 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Redactor } from '../../secrets/types.js';
-import type { PrismaClient } from '../generated/client.js';
+import type { Redactor } from '../../secrets/types.ts';
+import type { PrismaClient } from '../generated/client.ts';
 
-import { NotFoundError } from './errors.js';
-import { PrismaScheduledJobRepository } from './scheduled-job.repository.js';
+import { NotFoundError } from './errors.ts';
+import { PrismaScheduledJobRepository } from './scheduled-job.repository.ts';
 
 /** Builds a P2025 (record not found) error shaped like `PrismaClientKnownRequestError`. */
 function p2025(): Error & { code: string } {

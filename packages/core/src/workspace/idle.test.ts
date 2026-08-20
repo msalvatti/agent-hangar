@@ -8,11 +8,11 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { FakeClock } from '../testing/fake-clock.js';
+import { FakeClock } from '../testing/fake-clock.ts';
 
-import { idleCutoff, selectIdleWorkspaces } from './idle.js';
-import type { IdleCandidate } from './idle.js';
-import type { WorkspaceStatus } from './types.js';
+import { idleCutoff, selectIdleWorkspaces } from './idle.ts';
+import type { IdleCandidate } from './idle.ts';
+import type { WorkspaceStatus } from './types.ts';
 
 /** Configured idle time-to-live, matching the `WORKSPACE_IDLE_TTL_MIN` default. */
 const TTL_MIN = 30;

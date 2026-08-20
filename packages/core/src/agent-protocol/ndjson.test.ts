@@ -13,15 +13,15 @@ import { describe, expect, it } from 'vitest';
 import { z } from 'zod';
 import type { ZodType } from 'zod';
 
-import { CANARY_MARKER, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.js';
+import { CANARY_MARKER, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.ts';
 
 import {
   createNdjsonParser,
   encodeLine,
   parseNdjsonStream,
   PROTOCOL_MAX_LINE_LENGTH,
-} from './ndjson.js';
-import { agentEventSchema } from './schemas.js';
+} from './ndjson.ts';
+import { agentEventSchema } from './schemas.ts';
 
 const encoder = new TextEncoder();
 

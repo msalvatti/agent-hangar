@@ -33,7 +33,7 @@ import type {
   ResponseUsage,
 } from 'openai/resources/responses/responses';
 
-import { REDACTED_TOKEN, SECRET_SHAPE_PATTERNS } from '../../secrets/types.js';
+import { REDACTED_TOKEN, SECRET_SHAPE_PATTERNS } from '../../secrets/types.ts';
 import type {
   ConversationItem,
   ModelErrorCode,
@@ -41,7 +41,7 @@ import type {
   ModelTurnInput,
   ModelUsage,
   ToolDefinition,
-} from '../types.js';
+} from '../types.ts';
 
 /** The `error` member of {@link ModelEvent}. */
 export type ModelErrorEvent = Extract<ModelEvent, { type: 'error' }>;

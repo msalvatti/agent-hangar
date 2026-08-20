@@ -8,9 +8,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { ConfigError } from '../errors.js';
+import { ConfigError } from '../errors.ts';
 
-import { MASTER_KEY_BYTES, MASTER_KEY_VERSION, StaticMasterKey } from './master-key.js';
+import { MASTER_KEY_BYTES, MASTER_KEY_VERSION, StaticMasterKey } from './master-key.ts';
 
 describe('StaticMasterKey', () => {
   /**

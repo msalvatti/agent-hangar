@@ -8,12 +8,12 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { WorkspaceImageMissing } from '../errors.js';
+import { WorkspaceImageMissing } from '../errors.ts';
 
-import { ensureWorkspaceDecision } from './ensure.js';
-import type { EnsureWorkspaceInput } from './ensure.js';
-import { WorkspaceBusyError } from './errors.js';
-import type { RestoreContext, WorkspaceStatus } from './types.js';
+import { ensureWorkspaceDecision } from './ensure.ts';
+import type { EnsureWorkspaceInput } from './ensure.ts';
+import { WorkspaceBusyError } from './errors.ts';
+import type { RestoreContext, WorkspaceStatus } from './types.ts';
 
 /** Restore context shared by the cases; identity matters, so it is created once. */
 const RESTORE: RestoreContext = {

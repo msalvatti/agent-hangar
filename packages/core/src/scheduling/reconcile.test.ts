@@ -8,8 +8,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { reconcile } from './reconcile.js';
-import type { ExistingScheduler, ReconcilableJob } from './reconcile.js';
+import { reconcile } from './reconcile.ts';
+import type { ExistingScheduler, ReconcilableJob } from './reconcile.ts';
 
 /**
  * Builds a job row with sensible defaults.
