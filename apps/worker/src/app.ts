@@ -1,5 +1,6 @@
 /**
- * Starting and stopping the worker: schedulers reconciled, three consumers running, one shutdown.
+ * Starting and stopping the worker: schedulers reconciled, workspaces a dead incarnation left
+ * half-torn-down closed out, three consumers running, one shutdown.
  *
  * Layer: service (composition).
  *
@@ -19,7 +20,7 @@ import type { ContainerDatabase, WorkerContainer, WorkerRedisClient } from './co
 import { startHeartbeat } from './heartbeat.js';
 import type { RunningHeartbeat } from './heartbeat.js';
 import { LABELS, SHUTDOWN_GRACE_MS, WORKER_RELIABILITY } from './processors/constants.js';
-import { createGcProcessor } from './processors/gc.js';
+import { createGcProcessor, recoverAbandonedTeardowns } from './processors/gc.js';
 import { createRunScheduledJobProcessor } from './processors/run-scheduled-job.js';
 import { createRunTurnProcessor } from './processors/run-turn.js';
 import type { ProcessorJob } from './processors/types.js';
@@ -218,6 +219,13 @@ export async function startWorker<
   }
 
   await reconcileSchedulers(container);
+  // Before any consumer starts, which is what makes it safe to conclude that a workspace still
+  // marked STOPPING belongs to an incarnation of this worker that is gone rather than to a
+  // teardown that is merely slow.
+  const recovered = await recoverAbandonedTeardowns(container);
+  if (recovered > 0) {
+    logger.warn({ recovered }, 'closed out workspaces whose teardown never came back');
+  }
   const heartbeat = await startHeartbeat(container);
 
   const options = { connection: container.redis.worker, ...WORKER_RELIABILITY };

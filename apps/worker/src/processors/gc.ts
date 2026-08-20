@@ -38,6 +38,9 @@ export interface GcResult {
 /** `Workspace.failureReason` written for a row whose container no longer exists. */
 export const CONTAINER_MISSING_REASON = 'container missing';
 
+/** `Workspace.failureReason` written for a row whose teardown never came back. */
+export const ABANDONED_TEARDOWN_REASON = 'teardown abandoned';
+
 /** Nothing collected. */
 const NOTHING: GcResult = { reaped: 0, orphansDestroyed: 0, goneMarked: 0 };
 
@@ -66,6 +69,68 @@ const NOTHING: GcResult = { reaped: 0, orphansDestroyed: 0, goneMarked: 0 };
  * `STOPPING -> STOPPING` and both callers would proceed to destroy.
  */
 const RECONCILABLE_STATUSES: readonly WorkspaceStatus[] = ['READY', 'STOPPING'];
+
+/**
+ * Closes out the `STOPPING` rows a previous incarnation of this worker left behind.
+ *
+ * A teardown writes `STOPPING` and then destroys the container. A process that dies in between —
+ * a crash, or the forced shutdown that abandons jobs past the grace period — leaves a row nothing
+ * else in the system will ever reclaim: a teardown refuses it because only a `READY` workspace is
+ * free to take, the idle selection refuses it for the same reason, and the reconciliation refuses
+ * it because its container is still running, so it is not gone. The row stays live and the
+ * container stays up, silently, forever.
+ *
+ * What makes this recoverable without a threshold is *when* it runs. Age cannot tell a teardown
+ * that died from one that is merely slow — the two rows are identical — but at boot the question
+ * does not arise: this process holds no teardowns, and an instance runs one worker, so a
+ * `STOPPING` row that exists here belongs to an incarnation that is gone. This is the same point
+ * `createShutdown` already names when it says an abandoned job leaves a container the next boot
+ * has to reconcile.
+ *
+ * It closes the row out and stops. Destroying the container is left to {@link reconcileOrphans},
+ * which is what that pass is for and which will find it the moment the row stops being live —
+ * so the recovery needs no Docker connection, and still works on a boot where the daemon is down.
+ *
+ * @param deps - Repositories, claims and logger.
+ * @returns How many rows were closed out.
+ */
+export async function recoverAbandonedTeardowns(deps: ProcessorDeps): Promise<number> {
+  const live = await deps.repos.workspaces.listLive();
+  let recovered = 0;
+  for (const workspace of live.filter((row) => row.status === 'STOPPING')) {
+    const key = workspaceClaimKey(workspace);
+    if (!deps.claims.claim(key)) {
+      // Unreachable from the boot call, where nothing has started yet; the guard is what lets a
+      // teardown of this process be in flight without this ever being the thing that took its row.
+      deps.logger.info(
+        { workspaceId: workspace.id },
+        'teardown is still in flight; its workspace is left alone',
+      );
+      continue;
+    }
+    try {
+      const closed = await deps.repos.workspaces.claimStatus(
+        workspace.id,
+        'STOPPING',
+        'DESTROYED',
+        {
+          failureReason: ABANDONED_TEARDOWN_REASON,
+        },
+      );
+      if (closed === null) {
+        continue;
+      }
+      recovered += 1;
+      deps.logger.warn(
+        { workspaceId: workspace.id },
+        'workspace closed out: its teardown never came back',
+      );
+    } finally {
+      deps.claims.release(key);
+    }
+  }
+  return recovered;
+}
 
 /**
  * Destroys the containers this instance owns that no live row points at.

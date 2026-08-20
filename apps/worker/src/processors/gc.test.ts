@@ -6,7 +6,8 @@
  * row is destroyed, a live row whose container is gone is closed out unless somebody owns it,
  * another instance's containers are never touched, and the archive job tears down the one
  * workspace of its chat. Every write is checked against the row as it is at the moment of the
- * write, not as the pass's opening snapshot described it.
+ * write, not as the pass's opening snapshot described it. Boot recovery closes out the rows a
+ * dead incarnation left `STOPPING` and leaves a teardown that is still in flight alone.
  * Mocks: `createTestContainer` with a `FakeClock`.
  */
 import { JOB_NAMES } from '@agent-hangar/core';
@@ -26,7 +27,12 @@ import {
 } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
-import { CONTAINER_MISSING_REASON, createGcProcessor } from './gc.js';
+import {
+  ABANDONED_TEARDOWN_REASON,
+  CONTAINER_MISSING_REASON,
+  createGcProcessor,
+  recoverAbandonedTeardowns,
+} from './gc.js';
 import type { GcResult } from './gc.js';
 import type { ProcessorJob } from './types.js';
 
@@ -546,5 +552,88 @@ describe('createGcProcessor', () => {
 
     expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0 });
     expect(container.logs.join('')).toContain('unknown workspace-gc job');
+  });
+});
+
+describe('recoverAbandonedTeardowns', () => {
+  /**
+   * The state a teardown leaves when its process dies between claiming the row and destroying the
+   * container: `STOPPING`, container still up. Nothing in the steady state reclaims it — a
+   * teardown refuses anything that is not `READY`, the idle selection refuses it for the same
+   * reason, and the reconciliation refuses it because the container is not gone. Boot is where
+   * that is put right, and closing the row out is enough: the container stops belonging to a live
+   * row, which is exactly what the orphan pass exists to clean up.
+   */
+  it('closes out a workspace whose teardown died, and the orphan pass destroys its container', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 0,
+      withContainer: true,
+    });
+    await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'STOPPING');
+
+    const recovered = await recoverAbandonedTeardowns(container);
+    const result = await collect(container, JOB_NAMES.reapIdle);
+
+    expect(recovered).toBe(1);
+    expect(await container.repos.workspaces.get(workspace.id)).toMatchObject({
+      status: 'DESTROYED',
+      failureReason: ABANDONED_TEARDOWN_REASON,
+    });
+    expect(result.orphansDestroyed).toBe(1);
+    expect(container.runner.getWorkspace(workspace.id)?.status).toBe('gone');
+  });
+
+  /**
+   * The half a staleness rule would break. A teardown that is merely slow leaves a row that looks
+   * identical to a dead one, so the recovery must never decide by how the row looks: it asks
+   * whether anything here owns the workspace, and a teardown in flight holds exactly that claim.
+   * The row and its container are left as they are.
+   */
+  it('leaves a teardown that is still in flight alone', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 0,
+      withContainer: true,
+    });
+    await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'STOPPING');
+    container.claims.claim(chatClaimKey(workspace.chatId ?? ''));
+
+    const recovered = await recoverAbandonedTeardowns(container);
+
+    expect(recovered).toBe(0);
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('STOPPING');
+    expect(container.runner.getWorkspace(workspace.id)?.status).toBe('running');
+    expect(container.logs.join('')).toContain('still in flight');
+  });
+
+  /**
+   * A teardown that finished between the listing and the write is not a row to close out, and the
+   * conditional write is what says so — the same reason the reconciliation may name the status it
+   * listed: the target is terminal, so the second caller matches nothing.
+   */
+  it('counts nothing for a row that reached its own terminal status first', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, { status: 'READY', idleMinutes: 0 });
+    await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'STOPPING');
+    const listLive = container.repos.workspaces.listLive.bind(container.repos.workspaces);
+    vi.spyOn(container.repos.workspaces, 'listLive').mockImplementation(async () => {
+      const rows = await listLive();
+      await container.repos.workspaces.setStatus(workspace.id, 'DESTROYED');
+      return rows;
+    });
+
+    expect(await recoverAbandonedTeardowns(container)).toBe(0);
+    vi.restoreAllMocks();
+  });
+
+  /** Nothing to recover on an ordinary boot: no STOPPING row, no write, no log line. */
+  it('does nothing when no workspace was left half-torn-down', async () => {
+    const container = createTestContainer();
+    await seedWorkspace(container, { status: 'READY', idleMinutes: 0 });
+
+    expect(await recoverAbandonedTeardowns(container)).toBe(0);
   });
 });
