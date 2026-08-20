@@ -26,7 +26,7 @@ const TONE_CLASS: Record<string, string> = {
   success: 'text-primary',
   destructive: 'text-destructive',
   warning: 'text-warning',
-  accent: 'text-accent-foreground',
+  accent: 'text-accent',
   muted: 'text-muted-foreground',
 };
 
