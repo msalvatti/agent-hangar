@@ -20,6 +20,11 @@ import { fileURLToPath } from 'node:url';
 
 import { z } from 'zod';
 
+import { LOOPBACK } from './constants';
+
+/** Statuses the stub answers with, named so a reply reads as an outcome rather than a number. */
+const STATUS = { ok: 200, unauthorized: 401, notFound: 404 } as const;
+
 /** Token shape the stub accepts, matching a GitHub classic PAT. */
 const BEARER_TOKEN = /^Bearer ghp_[A-Za-z0-9]+$/u;
 
@@ -134,14 +139,14 @@ export function routeGithubRequest(
   fixtures: GithubFixtures,
 ): StubReply {
   if (authorization === undefined || !BEARER_TOKEN.test(authorization)) {
-    return { status: 401, body: { message: 'Bad credentials' } };
+    return { status: STATUS.unauthorized, body: { message: 'Bad credentials' } };
   }
-  const notFound: StubReply = { status: 404, body: { message: 'Not Found' } };
+  const notFound: StubReply = { status: STATUS.notFound, body: { message: 'Not Found' } };
   if (method !== 'GET') {
     return notFound;
   }
   if (pathname === USER_REPOS_PATH) {
-    return { status: 200, body: fixtures.repos };
+    return { status: STATUS.ok, body: fixtures.repos };
   }
   const match = REPO_PATH.exec(pathname);
   if (match === null) {
@@ -153,10 +158,10 @@ export function routeGithubRequest(
     return notFound;
   }
   if (match[3] === undefined) {
-    return { status: 200, body: repo };
+    return { status: STATUS.ok, body: repo };
   }
   const branches = fixtures.branches[fullName];
-  return branches === undefined ? notFound : { status: 200, body: branches };
+  return branches === undefined ? notFound : { status: STATUS.ok, body: branches };
 }
 
 /** One request the stub answered, for assertions on what the web actually called. */
@@ -185,9 +190,6 @@ export interface GithubStubOptions {
   /** Folder holding the fixtures; defaults to the suite's own. */
   fixturesDirectory?: string;
 }
-
-/** Loopback address the stub binds to; nothing outside the machine may reach it. */
-const HOST = '127.0.0.1';
 
 /**
  * Normalises the parts of an incoming request the router needs.
@@ -229,7 +231,7 @@ function handle(
 ): void {
   const { method, pathname } = stubRequestParts(request.method, request.url);
   const reply = routeGithubRequest(method, pathname, request.headers.authorization, fixtures);
-  requests.push({ method, path: pathname, authorized: reply.status !== 401 });
+  requests.push({ method, path: pathname, authorized: reply.status !== STATUS.unauthorized });
   response.writeHead(reply.status, { 'content-type': 'application/json' });
   response.end(JSON.stringify(reply.body));
 }
@@ -251,10 +253,10 @@ export async function startGithubStub(options: GithubStubOptions): Promise<Githu
   });
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject);
-    server.listen(options.port, HOST, resolve);
+    server.listen(options.port, LOOPBACK, resolve);
   });
   return {
-    baseUrl: `http://${HOST}:${String(resolvePort(server.address(), options.port))}`,
+    baseUrl: `http://${LOOPBACK}:${String(resolvePort(server.address(), options.port))}`,
     requests,
     close: async (): Promise<void> => {
       await new Promise<void>((resolve, reject) => {

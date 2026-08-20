@@ -9,13 +9,13 @@
  */
 import { test, expect } from './fixtures';
 import { ChatPage, ComposerPage } from './pages';
+import { createChatAndRun, waitForTurnStatus, waitForWorkspace } from './support/chat-flows';
 import {
-  CHAT_API_SETTLE_MS,
-  createChatAndRun,
-  waitForTurnStatus,
-  waitForWorkspace,
-} from './support/chat-flows';
-import { CANCEL_TIMEOUT_MS, PROMPTS, TURN_TIMEOUT_MS } from './support/constants';
+  API_SETTLE_TIMEOUT_MS,
+  CANCEL_TIMEOUT_MS,
+  PROMPTS,
+  TURN_TIMEOUT_MS,
+} from './support/constants';
 import { skipUnlessReal } from './support/mode';
 
 /** Slack the cancellation budget is measured with, covering the round trip of the last poll. */
@@ -54,7 +54,7 @@ test('stopping a running turn cancels it and keeps the workspace', async ({
   expect(Date.now() - requestedAt).toBeLessThan(CANCEL_TIMEOUT_MS + CANCEL_MEASUREMENT_SLACK_MS);
 
   await expect(runningRow).not.toHaveAttribute('data-tool-status', 'running');
-  await waitForWorkspace(api, chatId, 'READY', CHAT_API_SETTLE_MS);
+  await waitForWorkspace(api, chatId, 'READY', API_SETTLE_TIMEOUT_MS);
 
   await composer.type(PROMPTS.printDate);
   await expect(composer.send).toBeEnabled();

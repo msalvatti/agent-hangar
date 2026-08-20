@@ -8,8 +8,8 @@
  *
  * Every spec runs its whole user-interface path in `mock` mode. The assertions listed here need
  * the worker, Docker, Postgres, Redis and the local git server, so in `mock` mode the test stops
- * at that point with `needs real stack: …` in the report. This is the list the integration lane
- * turns green by flipping `E2E_MODE` to `real`.
+ * at that point with `needs real stack: …` in the report. Setting `E2E_MODE` to `real` is what
+ * turns them green.
  *
  * - `chat-create-run` — turn reaches `SUCCEEDED` through `GET /api/chats/:id`; the two scripted
  *   tool calls are persisted; the workspace stays `READY` after the turn.

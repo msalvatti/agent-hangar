@@ -13,6 +13,9 @@ import { promisify } from 'node:util';
 
 const run = promisify(execFile);
 
+/** Output a command may produce before it is killed; a compose or migration log is verbose. */
+const MAX_OUTPUT_BYTES = 32 * 1024 * 1024;
+
 /** What a finished command produced. */
 export interface CommandResult {
   stdout: string;
@@ -50,7 +53,7 @@ export async function exec(
     const result = await run(command, [...args], {
       ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
       env: { ...process.env, ...options.env },
-      maxBuffer: 32 * 1024 * 1024,
+      maxBuffer: MAX_OUTPUT_BYTES,
     });
     return { stdout: result.stdout, stderr: result.stderr };
   } catch (error) {

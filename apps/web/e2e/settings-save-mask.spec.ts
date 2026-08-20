@@ -95,5 +95,5 @@ test('a credential inside tool-call arguments is stored redacted', async ({
 
   const detail = await api.get(`/api/chats/${chatId}`, chatDetail);
   assertNoCanary(JSON.stringify(detail));
-  expect(detail.toolCalls.length).toBeGreaterThanOrEqual(1);
+  expect(detail.toolCalls.map((call) => call.toolName)).toEqual(['write_file']);
 });

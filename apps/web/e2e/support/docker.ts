@@ -17,7 +17,7 @@ import { exec, succeeds } from './process';
  * @param namePrefix - `ah-ws-<instance>-`, from the resolved environment.
  * @returns Container names, possibly empty.
  */
-export async function listWorkspaceContainers(namePrefix: string): Promise<string[]> {
+async function listWorkspaceContainers(namePrefix: string): Promise<string[]> {
   const { stdout } = await exec('docker', [
     'ps',
     '--all',

@@ -29,7 +29,7 @@ const usage = z.object({
 });
 
 /** Mirror of the core `ModelEvent` union, so a malformed script fails here and not in the worker. */
-export const modelEvent = z.discriminatedUnion('type', [
+const modelEvent = z.discriminatedUnion('type', [
   z.object({ type: z.literal('text.delta'), text: z.string() }),
   z.object({ type: z.literal('text.done'), text: z.string() }),
   z.object({
@@ -53,13 +53,13 @@ export const modelEvent = z.discriminatedUnion('type', [
 ]);
 
 /** One model round-trip. */
-export const scriptedStep = z.object({
+const scriptedStep = z.object({
   events: z.array(modelEvent).min(1),
   delayMs: z.number().int().nonnegative().optional(),
 });
 
 /** Steps keyed by the exact text of the last user message, plus a `default` key. */
-export const providerScript = z.record(z.string(), z.array(scriptedStep).min(1));
+const providerScript = z.record(z.string(), z.array(scriptedStep).min(1));
 
 /** The parsed script. */
 export type ProviderScriptFile = z.infer<typeof providerScript>;

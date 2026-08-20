@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 import { resolveInstance } from '@agent-hangar/core';
 
-import { DEFAULT_PORT_BASE, PORT_OFFSETS, TEST_INSTANCE } from './constants';
+import { DEFAULT_PORT_BASE, LOOPBACK, PORT_OFFSETS, TEST_INSTANCE } from './constants';
 import type { E2eMode } from './mode';
 import { readMode } from './mode';
 
@@ -26,9 +26,6 @@ export const DEFAULT_GITSERVER_HOST = 'host.docker.internal';
 
 /** Workspace image the worker starts containers from, unless overridden. */
 export const DEFAULT_WORKSPACE_IMAGE = 'agent-hangar/workspace:dev';
-
-/** Loopback address the harness itself dials; never the workspace-facing host. */
-export const LOOPBACK = '127.0.0.1';
 
 /** Compose Postgres credentials — a loopback-only test service, not a secret. */
 const POSTGRES_CREDENTIALS = 'ah:ah';
@@ -53,6 +50,8 @@ export interface E2eEnv {
   gitServerPort: number;
   /** Host a workspace container reaches the git server by. */
   gitServerHost: string;
+  /** Host address the git server's port is published on. */
+  gitServerBindAddress: string;
   /** Host port the GitHub REST stub listens on. */
   githubStubPort: number;
   /** Base URL of the GitHub REST stub, as the web server should call it. */
@@ -120,6 +119,25 @@ function readPortBase(env: E2eProcessEnv): number {
   return value;
 }
 
+/** An IPv4 literal, which is an address the git server's port can be published on. */
+const IPV4 = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/u;
+
+/**
+ * Address the git server's port is published on.
+ *
+ * Never `0.0.0.0`: the server accepts anonymous pushes, and publishing it on every interface would
+ * offer a writable git endpoint to the whole network for the length of a run. A named host such as
+ * `host.docker.internal` is a container-side alias with no address on this side, and a port bound
+ * to loopback is reachable through it; an IPv4 literal — the bridge gateway on Linux — is bound
+ * directly, because loopback is not reachable from a container there.
+ *
+ * @param gitServerHost - Host a workspace container dials.
+ * @returns The address to publish on.
+ */
+export function gitServerBindAddress(gitServerHost: string): string {
+  return IPV4.test(gitServerHost) ? gitServerHost : LOOPBACK;
+}
+
 function readOverride(env: E2eProcessEnv, key: string, fallback: string): string {
   const raw = env[key];
   return raw === undefined || raw.trim().length === 0 ? fallback : raw.trim();
@@ -153,6 +171,7 @@ export function resolveE2eEnv(processEnv: E2eProcessEnv = process.env): E2eEnv {
     redisUrl: `redis://${LOOPBACK}:${String(derived.redisPort)}`,
     gitServerPort,
     gitServerHost,
+    gitServerBindAddress: gitServerBindAddress(gitServerHost),
     githubStubPort,
     githubApiBaseUrl: `http://${LOOPBACK}:${String(githubStubPort)}`,
     repoUrl: `http://${gitServerHost}:${String(gitServerPort)}/sample.git`,
@@ -174,8 +193,8 @@ export function resolveE2eEnv(processEnv: E2eProcessEnv = process.env): E2eEnv {
  *
  * Two keys are not in the shared configuration schema yet — `ALLOWED_REPO_HOSTS` and
  * `GITHUB_API_BASE_URL` — and one, `FAKE_PROVIDER_SCRIPT_PATH`, is the contract the fake provider
- * must load its script through. They are passed regardless: an unknown key is inert until the API
- * lane adds it, and passing it now is what makes that addition the only change needed.
+ * must load its script through. They are passed regardless: an unknown key is inert until the
+ * schema declares it, and passing it now is what makes declaring it the only change needed.
  *
  * @param env - The resolved environment.
  * @returns Variables to export for the managed servers.

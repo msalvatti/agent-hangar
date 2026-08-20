@@ -9,14 +9,21 @@
 import { test, expect } from './fixtures';
 import { ChatPage, ComposerPage, SidebarPage } from './pages';
 import {
-  CHAT_API_SETTLE_MS,
   createChatAndRun,
   readChat,
   waitForTurnStatus,
   waitForWorkspace,
 } from './support/chat-flows';
-import { PROMPTS, TURN_TIMEOUT_MS, WORKSPACE_GONE_TIMEOUT_MS } from './support/constants';
+import {
+  API_SETTLE_TIMEOUT_MS,
+  PROMPTS,
+  TURN_TIMEOUT_MS,
+  WORKSPACE_GONE_TIMEOUT_MS,
+} from './support/constants';
 import { skipUnlessReal } from './support/mode';
+
+/** Text of the notices the workspace preparation renders, whichever stage it has reached. */
+const PREPARATION_NOTICE = /Cloning|Prepared|Checking out/;
 
 /**
  * Proves archiving hides the chat from the active list, shows the archived banner and releases the
@@ -53,7 +60,7 @@ test('archiving releases the workspace and restoring keeps the history', async (
   await expect(sidebar.chatItem(title)).toHaveCount(0);
   await waitForWorkspace(api, chatId, null, WORKSPACE_GONE_TIMEOUT_MS);
 
-  const noticesBefore = await chat.systemNotices.count();
+  const noticesBefore = await chat.systemNotices.filter({ hasText: PREPARATION_NOTICE }).count();
   await chat.restore();
   await expect(chat.systemNotices.filter({ hasText: /restored/i })).not.toHaveCount(0);
   await expect(chat.userMessages).toHaveCount(userMessagesBefore);
@@ -63,9 +70,14 @@ test('archiving releases the workspace and restoring keeps the history', async (
 
   await composer.type(PROMPTS.showNotes);
   await composer.submit();
-  await expect(
-    chat.systemNotices.filter({ hasText: /Cloning|Prepared|Checking out/ }),
-  ).not.toHaveCount(noticesBefore, { timeout: TURN_TIMEOUT_MS });
+  // Strictly more preparation notices than before, not merely a different number: a notice
+  // disappearing would satisfy "different" while proving the opposite of what this asserts.
+  await expect
+    .poll(async () => chat.systemNotices.filter({ hasText: PREPARATION_NOTICE }).count(), {
+      timeout: TURN_TIMEOUT_MS,
+      message: 'the follow-up message never produced a new preparation notice',
+    })
+    .toBeGreaterThan(noticesBefore);
   await expect(chat.toolRows('read_file')).toHaveCount(1, { timeout: TURN_TIMEOUT_MS });
   await chat.waitForText('Here is NOTES.md.', TURN_TIMEOUT_MS);
   await chat.waitForStatus('done', TURN_TIMEOUT_MS);
@@ -73,5 +85,5 @@ test('archiving releases the workspace and restoring keeps the history', async (
   const detail = await readChat(api, chatId);
   const lastTurn = detail.turns.at(-1);
   expect(lastTurn?.status).toBe('SUCCEEDED');
-  await waitForWorkspace(api, chatId, 'READY', CHAT_API_SETTLE_MS);
+  await waitForWorkspace(api, chatId, 'READY', API_SETTLE_TIMEOUT_MS);
 });

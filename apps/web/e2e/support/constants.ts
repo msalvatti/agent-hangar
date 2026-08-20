@@ -35,6 +35,9 @@ export const PORT_OFFSETS = {
   githubStub: 8,
 } as const;
 
+/** Address every harness-side client dials; nothing here is reachable off the machine. */
+export const LOOPBACK = '127.0.0.1';
+
 /** Port base of the end-to-end instance when `E2E_PORT_BASE` is unset. */
 export const DEFAULT_PORT_BASE = 3900;
 
@@ -44,14 +47,8 @@ export const TEST_INSTANCE = 'test';
 /** Bare repository the local git server seeds, as the GitHub stub names it. */
 export const SAMPLE_REPO = 'e2e/sample';
 
-/** Second repository of the stub, so the picker has more than one row to choose between. */
-export const OTHER_REPO = 'e2e/other';
-
 /** Default branch of the seed repository. */
 export const SAMPLE_BRANCH = 'main';
-
-/** Second branch of the seed repository, so the branch picker has two rows. */
-export const SAMPLE_FEATURE_BRANCH = 'feature/docs';
 
 /**
  * Prompts the fake model provider is scripted for. A spec must use these exact strings: the

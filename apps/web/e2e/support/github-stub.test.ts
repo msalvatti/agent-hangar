@@ -3,6 +3,7 @@
  *
  * Layer: unit test.
  */
+import { GITHUB_CANARY } from '@agent-hangar/core/testing';
 import { http, passthrough } from 'msw';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -19,7 +20,9 @@ import {
 } from './github-stub';
 import type { GithubStub } from './github-stub';
 
-const TOKEN = 'Bearer ghp_0000000000000000000000000000000000';
+/** Authorisation header the stub accepts; the canary is the only credential-shaped
+ * string allowed anywhere in the repository. */
+const TOKEN = `Bearer ${GITHUB_CANARY}`;
 const GIT_SERVER = 'http://host.docker.internal:3907';
 
 /** Any loopback origin, whatever port the stub was given. */

@@ -20,7 +20,7 @@ import { ComposerPage } from '../pages/composer';
 import { SidebarPage } from '../pages/sidebar';
 
 import type { E2eApi } from './api';
-import { API_SETTLE_TIMEOUT_MS, SAMPLE_BRANCH, SAMPLE_REPO } from './constants';
+import { SAMPLE_BRANCH, SAMPLE_REPO } from './constants';
 import type { E2eMode } from './mode';
 
 /** Parsed `GET /api/chats/:id` body. */
@@ -152,6 +152,3 @@ export async function waitForWorkspace(
 export async function readChat(api: E2eApi, chatId: string): Promise<ChatDetailView> {
   return api.get(`/api/chats/${chatId}`, chatDetail);
 }
-
-/** Budget a chat assertion allows the API to catch up with the interface. */
-export const CHAT_API_SETTLE_MS = API_SETTLE_TIMEOUT_MS;

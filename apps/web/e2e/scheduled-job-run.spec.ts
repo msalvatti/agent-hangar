@@ -12,7 +12,7 @@ import { listRunsResponse, runDetail } from '@agent-hangar/core';
 import { test, expect } from './fixtures';
 import { JobDetailPage, ScheduledPage } from './pages';
 import { chatTarget } from './support/chat-flows';
-import { JOB_RUN_TIMEOUT_MS, PROMPTS, API_SETTLE_TIMEOUT_MS } from './support/constants';
+import { API_SETTLE_TIMEOUT_MS, JOB_RUN_TIMEOUT_MS, PROMPTS } from './support/constants';
 import { skipUnlessReal } from './support/mode';
 import { COPY } from './support/selectors';
 
@@ -77,6 +77,8 @@ test('a scheduled job runs on demand and reports its output', async ({
   expect(await detail.rawOutputText()).toContain('printed above');
 
   const { runs } = await api.get(`/api/jobs/${jobId}/runs`, listRunsResponse);
+  // At least one, not exactly one: the job is eligible every minute, so the schedule may have
+  // produced a second run alongside the one this test triggered.
   const succeeded = runs.filter((run) => run.status === 'SUCCEEDED');
   expect(succeeded.length).toBeGreaterThanOrEqual(1);
   const first = succeeded[0];

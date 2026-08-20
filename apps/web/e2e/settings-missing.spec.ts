@@ -13,6 +13,7 @@ import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core
 import { test, expect } from './fixtures';
 import { ComposerPage, SettingsPage, SidebarPage } from './pages';
 import { E2eApiError } from './support/api';
+import { SAMPLE_BRANCH } from './support/constants';
 import { useMockScenario } from './support/mock-scenario';
 import { skipUnlessReal } from './support/mode';
 
@@ -50,13 +51,13 @@ test('the new chat screen refuses to compose without credentials', async ({ page
  * Proves the API refuses `POST /api/chats` with `409 SECRETS_MISSING` while no credential is
  * stored, and that its refusal carries no credential material.
  */
-test('the API refuses to create a chat without credentials', async ({ api, env, mode }) => {
+test('the API refuses to create a chat without credentials', async ({ api, gitServer, mode }) => {
   skipUnlessReal(test, mode, 'the mock build serves no API routes');
 
   const failure = await api
     .post(
       '/api/chats',
-      { repoUrl: env.repoUrl, baseBranch: 'main', prompt: 'anything' },
+      { repoUrl: gitServer.repoUrl, baseBranch: SAMPLE_BRANCH, prompt: 'anything' },
       createChatResponse,
     )
     .then(

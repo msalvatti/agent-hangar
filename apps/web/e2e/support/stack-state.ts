@@ -20,7 +20,7 @@ const stackState = z.object({
 export type StackState = z.infer<typeof stackState>;
 
 /** Path of the state file inside the run's temporary directory. */
-export function stackStatePath(env: E2eEnv): string {
+function stackStatePath(env: E2eEnv): string {
   return `${env.tmpDir}/state.json`;
 }
 

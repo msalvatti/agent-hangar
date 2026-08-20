@@ -118,6 +118,7 @@ export async function prepareStack(
     port: env.gitServerPort,
     instance: env.instance,
     host: env.gitServerHost,
+    bindAddress: env.gitServerBindAddress,
     repoRoot: repoRoot(),
   });
   writeStackState(env, { ...readStackState(env), gitServer });

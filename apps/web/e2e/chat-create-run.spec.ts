@@ -11,14 +11,13 @@
 import { test, expect } from './fixtures';
 import { ChatPage, ComposerPage, SidebarPage } from './pages';
 import {
-  CHAT_API_SETTLE_MS,
   chatTarget,
   createChatAndRun,
   readChat,
   waitForTurnStatus,
   waitForWorkspace,
 } from './support/chat-flows';
-import { PROMPTS, TURN_TIMEOUT_MS } from './support/constants';
+import { API_SETTLE_TIMEOUT_MS, PROMPTS, TURN_TIMEOUT_MS } from './support/constants';
 import { skipUnlessReal } from './support/mode';
 
 /**
@@ -48,10 +47,10 @@ test('a new chat runs the scripted task and streams the transcript', async ({
   await chat.waitForText('NOTES.md with the file list', TURN_TIMEOUT_MS);
   await chat.waitForStatus('done', TURN_TIMEOUT_MS);
 
-  await waitForTurnStatus(api, chatId, turnId ?? '', 'SUCCEEDED', CHAT_API_SETTLE_MS);
+  await waitForTurnStatus(api, chatId, turnId ?? '', 'SUCCEEDED', API_SETTLE_TIMEOUT_MS);
   const detail = await readChat(api, chatId);
   expect(detail.toolCalls.map((call) => call.toolName)).toEqual(['list_dir', 'write_file']);
-  await waitForWorkspace(api, chatId, 'READY', CHAT_API_SETTLE_MS);
+  await waitForWorkspace(api, chatId, 'READY', API_SETTLE_TIMEOUT_MS);
 
   const writeRow = chat.toolRows('write_file').first();
   await chat.expandToolRow(writeRow);

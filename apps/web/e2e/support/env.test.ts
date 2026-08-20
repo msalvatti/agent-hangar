@@ -9,6 +9,7 @@ import { DEFAULT_PORT_BASE, PORT_OFFSETS, PROMPTS, TEST_INSTANCE } from './const
 import {
   DEFAULT_GITSERVER_HOST,
   DEFAULT_WORKSPACE_IMAGE,
+  gitServerBindAddress,
   repoRoot,
   resolveE2eEnv,
   serverEnv,
@@ -34,6 +35,7 @@ describe('resolveE2eEnv', () => {
     expect(env.databaseUrl).toContain('/agent_hangar_test');
     expect(env.redisUrl).toBe(`redis://127.0.0.1:${String(DEFAULT_PORT_BASE + 2)}`);
     expect(env.gitServerHost).toBe(DEFAULT_GITSERVER_HOST);
+    expect(env.gitServerBindAddress).toBe('127.0.0.1');
     expect(env.workspaceImage).toBe(DEFAULT_WORKSPACE_IMAGE);
     expect(env.repoUrl).toBe(
       `http://${DEFAULT_GITSERVER_HOST}:${String(DEFAULT_PORT_BASE + 7)}/sample.git`,
@@ -56,6 +58,7 @@ describe('resolveE2eEnv', () => {
     expect(env.portBase).toBe(4100);
     expect(env.postgresDb).toBe('agent_hangar_w2c_test');
     expect(env.gitServerHost).toBe('172.17.0.1');
+    expect(env.gitServerBindAddress).toBe('172.17.0.1');
     expect(env.repoUrl).toBe('http://172.17.0.1:4107/sample.git');
     expect(env.allowedRepoHosts).toEqual(['github.com', '172.17.0.1']);
     expect(env.workspaceImage).toBe('agent-hangar/workspace:ci');
@@ -79,6 +82,21 @@ describe('resolveE2eEnv', () => {
     expect(env.fakeScriptPath.endsWith('/e2e/fake-provider/script.json')).toBe(true);
     expect(env.masterKeyPath.endsWith('/e2e/.tmp/master.key')).toBe(true);
     expect(env.tmpDir.endsWith('/e2e/.tmp')).toBe(true);
+  });
+});
+
+describe('gitServerBindAddress', () => {
+  /**
+   * The git server accepts anonymous pushes, so its port must never be published on every
+   * interface. A container-side alias has no address here, and loopback is reachable through it.
+   */
+  it('publishes on loopback for a named host', () => {
+    expect(gitServerBindAddress('host.docker.internal')).toBe('127.0.0.1');
+  });
+
+  /** On a bridge gateway address loopback is not reachable from a container, so bind it directly. */
+  it('publishes on an IPv4 host directly', () => {
+    expect(gitServerBindAddress('172.17.0.1')).toBe('172.17.0.1');
   });
 });
 

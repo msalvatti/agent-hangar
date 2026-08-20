@@ -5,10 +5,12 @@
  *
  * The container is named after the instance and reused when it is already running, so a developer
  * can keep it up between runs with `E2E_KEEP_STACK=1` and a crashed run cannot leave a second one
- * behind. The health poll always dials loopback; the URL handed back names the host a workspace
- * container must dial, which is a different address.
+ * behind. The URL handed back names the host a workspace container must dial, which is neither the
+ * address the port is published on nor the loopback address the health poll uses.
+ *
+ * The server accepts anonymous pushes, so its port is published on one address — loopback, or the
+ * bridge gateway where a container cannot reach loopback — and never on every interface.
  */
-import { LOOPBACK } from './env';
 import { exec, succeeds, waitUntil } from './process';
 
 /** Image tag built from `infra/test/gitserver`. */
@@ -39,6 +41,8 @@ export interface StartGitServerOptions {
   instance: string;
   /** Host a workspace container reaches the server by. */
   host: string;
+  /** Host address the container's port is published on. */
+  bindAddress: string;
   /** Image to run; built from `infra/test/gitserver` when absent locally. */
   image?: string;
   /** Directory holding `infra/test/gitserver`, for the build. */
@@ -46,7 +50,7 @@ export interface StartGitServerOptions {
 }
 
 /** Container name of one instance's git server. */
-export function gitServerContainerName(instance: string): string {
+function gitServerContainerName(instance: string): string {
   return `ah-e2e-gitserver-${instance}`;
 }
 
@@ -61,9 +65,9 @@ async function isRunning(containerName: string): Promise<boolean> {
   return stdout.trim() === containerName;
 }
 
-async function isHealthy(port: number): Promise<boolean> {
+async function isHealthy(address: string, port: number): Promise<boolean> {
   try {
-    const response = await fetch(`http://${LOOPBACK}:${String(port)}/healthz`);
+    const response = await fetch(`http://${address}:${String(port)}/healthz`);
     return response.ok;
   } catch {
     return false;
@@ -91,11 +95,11 @@ export async function startGitServer(options: StartGitServerOptions): Promise<Gi
       '--name',
       containerName,
       '--publish',
-      `0.0.0.0:${String(options.port)}:${String(CONTAINER_PORT)}`,
+      `${options.bindAddress}:${String(options.port)}:${String(CONTAINER_PORT)}`,
       image,
     ]);
   }
-  await waitUntil(async () => isHealthy(options.port), {
+  await waitUntil(async () => isHealthy(options.bindAddress, options.port), {
     timeoutMs: READY_TIMEOUT_MS,
     intervalMs: READY_INTERVAL_MS,
     description: `the git server to answer /healthz on port ${String(options.port)}`,
