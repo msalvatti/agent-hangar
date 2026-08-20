@@ -182,8 +182,11 @@ jobs:
           # Named for the instance below: the test helpers refuse to truncate a database that is
           # not called agent_hangar_<instance> with "test" as a word of the instance.
           POSTGRES_DB: agent_hangar_test
+        # Published on the port the instance derives (AH_PORT_BASE + 1), not on 5432: the
+        # destructive helpers check the port the instance derives, so a service on the standard
+        # port is refused — correctly, since a shared server would otherwise be truncated.
         ports:
-          - 5432:5432
+          - 3901:5432
         options: >-
           --health-cmd "pg_isready -U ah -d agent_hangar_test"
           --health-interval 2s
@@ -191,8 +194,9 @@ jobs:
           --health-retries 30
       redis:
         image: redis:8-alpine
+        # AH_PORT_BASE + 2, for the same reason as Postgres above.
         ports:
-          - 6379:6379
+          - 3902:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 2s
@@ -200,7 +204,21 @@ jobs:
           --health-retries 30
     env:
       AH_INSTANCE: test
-      REDIS_URL: redis://127.0.0.1:6379
+      # Ports of this instance's block: web 3900, Postgres 3901, Redis 3902, git server 3907,
+      # GitHub stub 3908. The services above are published to match.
+      AH_PORT_BASE: '3900'
+      E2E_INSTANCE: test
+      E2E_PORT_BASE: '3900'
+      # Mock mode runs the whole interface path against the in-browser mock API, and skips the
+      # assertions that need a worker, Docker and the local git server. Set this to `real` once
+      # the API and the worker are wired end to end; nothing else here has to change.
+      E2E_MODE: mock
+      E2E_MANAGED_SERVER: '1'
+      # Postgres and Redis are provided as services above, so the harness must not start compose.
+      E2E_SKIP_COMPOSE: '1'
+      # The docker0 gateway: the address a workspace container reaches the runner's host by.
+      E2E_GITSERVER_HOST: 172.17.0.1
+      REDIS_URL: redis://127.0.0.1:3902
       AGENT_MODEL_PROVIDER: fake
       # These suites truncate every table; the helpers refuse to run without this opt-in.
       AH_ALLOW_DESTRUCTIVE_TESTS: '1'
@@ -215,27 +233,14 @@ jobs:
         with:
           node-version: 24
       - name: Derive DATABASE_URL
-        run: echo "DATABASE_URL=postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:5432/agent_hangar_test" >> "$GITHUB_ENV"
+        run: echo "DATABASE_URL=postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:3901/agent_hangar_test" >> "$GITHUB_ENV"
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:generate
-      # The suite is skipped entirely until specs exist: installing a browser to run an empty
-      # directory cost between two and twenty-three minutes per pull request, and it is the last
-      # job to finish, so it gated every merge.
-      - name: Detect end-to-end specs
-        id: e2e-specs
-        run: |
-          if [ -n "$(git ls-files 'apps/web/e2e/**/*.spec.ts')" ]; then
-            echo 'present=true' >> "$GITHUB_OUTPUT"
-          else
-            echo 'present=false' >> "$GITHUB_OUTPUT"
-            echo 'No end-to-end specs yet; skipping the browser install.' >> "$GITHUB_STEP_SUMMARY"
-          fi
       # Keyed on the INSTALLED Playwright version, read after the install: hashing the manifest
       # would hash the caret range instead, so a lockfile-only upgrade would keep the same key,
       # hit the cache, skip the install, and leave Playwright looking for a browser revision that
       # was never downloaded. An unrelated dependency bump still leaves the browsers alone.
       - name: Resolve the installed Playwright version
-        if: steps.e2e-specs.outputs.present == 'true'
         id: playwright-version
         run: |
           version="$(pnpm --filter web exec playwright --version | tr -d '\r' | awk '{print $NF}')"
@@ -245,7 +250,6 @@ jobs:
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
       - name: Cache Playwright browsers
-        if: steps.e2e-specs.outputs.present == 'true'
         id: playwright-cache
         uses: actions/cache@v6
         with:
@@ -257,14 +261,21 @@ jobs:
       # the libraries Chromium needs. If a future run fails to launch the browser, the fix is the
       # official Playwright container image for this job, not restoring the apt install.
       - name: Install Chromium
-        if: steps.e2e-specs.outputs.present == 'true' && steps.playwright-cache.outputs.cache-hit != 'true'
+        if: steps.playwright-cache.outputs.cache-hit != 'true'
         run: pnpm --filter web exec playwright install chromium
+      # Built here rather than by the suite so a real-mode run finds it already present; in mock
+      # mode nothing starts a workspace, but building it keeps the switch above to one line.
+      # `pnpm infra:image` also stages the agent-runtime bundle into the build context, which a
+      # bare `docker build` would leave out — the image would then have no runtime to exec.
+      - run: pnpm infra:image
       - run: pnpm test:e2e
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
           name: playwright-report
-          path: apps/web/playwright-report
+          path: |
+            apps/web/playwright-report
+            apps/web/test-results
           if-no-files-found: ignore
           retention-days: 7
 

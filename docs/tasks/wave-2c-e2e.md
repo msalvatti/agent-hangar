@@ -63,15 +63,15 @@ Infrastructure decisions taken here (state them in the PR description):
 
 ## Task 2C.1 — Local git server image + seed repo + GitHub API stub
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Build the smallest git-over-HTTP server image that the workspace container can clone from and push to, with a deterministic seed repository; and an in-process stub of the GitHub REST endpoints the repo picker uses, returning URLs that point at that server.
 
 **Acceptance criteria**
-- [ ] `infra/test/gitserver/Dockerfile` builds `agent-hangar/gitserver:test` (< 1 min, no npm deps); `server.mjs` (Node stdlib only) proxies `GET /<repo>.git/info/refs?service=…`, `POST /<repo>.git/git-upload-pack`, `POST /<repo>.git/git-receive-pack` to `git http-backend` with `GIT_PROJECT_ROOT=/repos`, `GIT_HTTP_EXPORT_ALL=1`, receive-pack enabled; `GET /healthz` → 200
-- [ ] `seed.sh` creates `/repos/sample.git` (bare, default branch `main`, commits: `README.md`, `src/index.js`, `.gitignore`) idempotently at container start; `docker run --rm -p 3907:8080 agent-hangar/gitserver:test` then `git clone http://127.0.0.1:3907/sample.git` works and a push of a new branch succeeds
-- [ ] `apps/web/e2e/support/github-stub.ts` exports `startGithubStub({ port, repoBaseUrl })` / `stop()` serving `/user/repos`, `/repos/:owner/:repo`, `/repos/:owner/:repo/branches` from fixtures; `401` when `Authorization` header is missing or not `Bearer ghp_…`; unknown path → 404; unit-tested (routing + payload shapes) at 100 %
-- [ ] `apps/web/e2e/support/gitserver.ts` exports `startGitServer({ port, image })`/`stopGitServer()` using `docker run -d --rm -p 0.0.0.0:<port>:8080 --name ah-e2e-gitserver-<instance>`, waits for `/healthz`, idempotent (reuses a running container), and `docker stop` on teardown
+- [x] `infra/test/gitserver/Dockerfile` builds `agent-hangar/gitserver:test` (< 1 min, no npm deps); `server.mjs` (Node stdlib only) proxies `GET /<repo>.git/info/refs?service=…`, `POST /<repo>.git/git-upload-pack`, `POST /<repo>.git/git-receive-pack` to `git http-backend` with `GIT_PROJECT_ROOT=/repos`, `GIT_HTTP_EXPORT_ALL=1`, receive-pack enabled; `GET /healthz` → 200
+- [x] `seed.sh` creates `/repos/sample.git` (bare, default branch `main`, commits: `README.md`, `src/index.js`, `.gitignore`) idempotently at container start; `docker run --rm -p 3907:8080 agent-hangar/gitserver:test` then `git clone http://127.0.0.1:3907/sample.git` works and a push of a new branch succeeds
+- [x] `apps/web/e2e/support/github-stub.ts` exports `startGithubStub({ port, repoBaseUrl })` / `stop()` serving `/user/repos`, `/repos/:owner/:repo`, `/repos/:owner/:repo/branches` from fixtures; `401` when `Authorization` header is missing or not `Bearer ghp_…`; unknown path → 404; unit-tested (routing + payload shapes) at 100 %
+- [x] `apps/web/e2e/support/gitserver.ts` exports `startGitServer({ port, image })`/`stopGitServer()` using `docker run -d --rm -p 0.0.0.0:<port>:8080 --name ah-e2e-gitserver-<instance>`, waits for `/healthz`, idempotent (reuses a running container), and `docker stop` on teardown
 
 **Files to create**
 `infra/test/gitserver/{Dockerfile,server.mjs,seed.sh,.dockerignore,README.md}`, `apps/web/e2e/support/{github-stub,github-stub.test,gitserver}.ts`, `apps/web/e2e/fixtures/github/{repos.json,branches.json}`.
@@ -139,17 +139,17 @@ Completion Protocol (after you finish):
 
 ## Task 2C.2 — Harness: env, Playwright config (`webServer`, modes), fixtures, DB reset, fake-provider script
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 2C.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 2C.1
 
 **Description.** Make the suite bootable in both modes: resolve the test instance env, configure Playwright (`webServer` array for web + worker when `E2E_MANAGED_SERVER=1`, global setup/teardown that brings up compose/migrations/gitserver/stub in real mode), write the `test.extend` fixtures (`resetDb`, `seedSettings`, `api`, `health`, `gitServer`, `mode`) and the fake-provider script file.
 
 **Acceptance criteria**
-- [ ] `apps/web/e2e/support/env.ts` exports `resolveE2eEnv(processEnv)` → `{ mode, instance, portBase, webPort, baseURL, databaseUrl, redisUrl, gitServerPort, gitServerHost, githubStubPort, repoUrl, allowedRepoHosts, fakeScriptPath, masterKeyPath, workspaceImage }` using core `resolveInstance`; unit-tested
-- [ ] `apps/web/playwright.config.ts`: `testDir: 'e2e'`, chromium only, `baseURL`, `timeout 120_000` (real) / `30_000` (mock), `expect.timeout 10_000`, retries 1 in CI, trace `on-first-retry`, video `retain-on-failure`, `globalSetup`/`globalTeardown`, `webServer` = when `E2E_MANAGED_SERVER=1`: mock → one server (`next dev` with `NEXT_PUBLIC_API_MOCK=1`); real → two servers (web `next dev`, worker `tsx watch`) with readiness on `/api/health` and `/api/health?require=worker`
-- [ ] `apps/web/e2e/fixtures.ts` exports `test`, `expect` (`test.extend`) with: `mode`, `env`, `api` (typed request helper with Zod parse of `apiError` on failure), `resetDb` (auto, per test: API-side job cleanup → `truncateAll` → reap `ah-ws-test-*` containers in real mode; no-op in mock), `seedSettings` (PUT canaries via the API; no-op in mock), `health` (poll helper over `/api/health`), `gitServer` (handle from global setup via env)
-- [ ] `apps/web/e2e/fake-provider/script.json` with the scripted steps for the five prompts + `default`, validated by a unit test against the `FakeAgentModelProvider` script type
-- [ ] `pnpm --filter web test:e2e` → `playwright test`; `E2E_MODE=mock E2E_MANAGED_SERVER=1 pnpm --filter web test:e2e --list` lists the spec files (none yet — harness boots and tears down with an empty/placeholder spec `smoke.spec.ts` that loads `/chats/new`)
-- [ ] Harness pure modules 100 % covered by Vitest; `e2e/tsconfig.json` type-checks
+- [x] `apps/web/e2e/support/env.ts` exports `resolveE2eEnv(processEnv)` → `{ mode, instance, portBase, webPort, baseURL, databaseUrl, redisUrl, gitServerPort, gitServerHost, githubStubPort, repoUrl, allowedRepoHosts, fakeScriptPath, masterKeyPath, workspaceImage }` using core `resolveInstance`; unit-tested
+- [x] `apps/web/playwright.config.ts`: `testDir: 'e2e'`, chromium only, `baseURL`, `timeout 120_000` (real) / `30_000` (mock), `expect.timeout 10_000`, retries 1 in CI, trace `on-first-retry`, video `retain-on-failure`, `globalSetup`/`globalTeardown`, `webServer` = when `E2E_MANAGED_SERVER=1`: mock → one server (`next dev` with `NEXT_PUBLIC_API_MOCK=1`); real → two servers (web `next dev`, worker `tsx watch`) with readiness on `/api/health` and `/api/health?require=worker`
+- [x] `apps/web/e2e/fixtures.ts` exports `test`, `expect` (`test.extend`) with: `mode`, `env`, `api` (typed request helper with Zod parse of `apiError` on failure), `resetDb` (auto, per test: API-side job cleanup → `truncateAll` → reap `ah-ws-test-*` containers in real mode; no-op in mock), `seedSettings` (PUT canaries via the API; no-op in mock), `health` (poll helper over `/api/health`), `gitServer` (handle from global setup via env)
+- [x] `apps/web/e2e/fake-provider/script.json` with the scripted steps for the five prompts + `default`, validated by a unit test against the `FakeAgentModelProvider` script type
+- [x] `pnpm --filter web test:e2e` → `playwright test`; `E2E_MODE=mock E2E_MANAGED_SERVER=1 pnpm --filter web test:e2e --list` lists the spec files (none yet — harness boots and tears down with an empty/placeholder spec `smoke.spec.ts` that loads `/chats/new`)
+- [x] Harness pure modules 100 % covered by Vitest; `e2e/tsconfig.json` type-checks
 
 **Files to create**
 `apps/web/e2e/{fixtures.ts,global-setup.ts,global-teardown.ts,tsconfig.json}`, `apps/web/e2e/support/{env,env.test,api,api.test,db,docker,constants,mode}.ts`, `apps/web/e2e/fake-provider/{script.json,script.test.ts}`, `apps/web/e2e/smoke.spec.ts`, `apps/web/playwright.config.ts` (rewrite `webServer` section), `apps/web/package.json` (`test:e2e`), `apps/web/vitest.config.ts` (coverage include for pure helpers).
@@ -250,15 +250,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md; app
 
 ## Task 2C.3 — Page objects + selector contract validated against the MSW UI
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 2C.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 2C.2
 
 **Description.** Write page objects for the sidebar, composer, chat header/transcript, scheduled page/dialog/run drawer, and settings page. Verify every selector against the running MSW-mocked UI, preferring accessible roles/names; produce the exact list of `data-testid`s the specs need, and record a contractChangeRequest for any that W1-G/W1-H do not expose.
 
 **Acceptance criteria**
-- [ ] `apps/web/e2e/pages/{sidebar,composer,chat,scheduled,settings}.ts` export classes with `readonly` locators and action methods, each locator resolving in mock mode (proved by `pages.smoke.spec.ts` that visits each page and asserts visibility/enabled state of every locator that exists in the default MSW state)
-- [ ] `apps/web/e2e/support/selectors.ts` exports the `TEST_IDS` constant table (below) and is the only place test ids are spelled; page objects use `getByRole`/`getByLabel` when the UI exposes a stable name, `getByTestId(TEST_IDS.x)` otherwise
-- [ ] `apps/web/e2e/SELECTORS.md` is NOT created — instead the PR description lists (a) ids found in the UI, (b) ids missing with the component file where W1-G/W1-H should add them (contractChangeRequest), (c) role/name selectors used instead
-- [ ] `pnpm --filter web test:e2e e2e/pages.smoke.spec.ts` green in mock mode
+- [x] `apps/web/e2e/pages/{sidebar,composer,chat,scheduled,settings}.ts` export classes with `readonly` locators and action methods, each locator resolving in mock mode (proved by `pages.smoke.spec.ts` that visits each page and asserts visibility/enabled state of every locator that exists in the default MSW state)
+- [x] `apps/web/e2e/support/selectors.ts` exports the `TEST_IDS` constant table (below) and is the only place test ids are spelled; page objects use `getByRole`/`getByLabel` when the UI exposes a stable name, `getByTestId(TEST_IDS.x)` otherwise
+- [x] `apps/web/e2e/SELECTORS.md` is NOT created — instead the PR description lists (a) ids found in the UI, (b) ids missing with the component file where W1-G/W1-H should add them (contractChangeRequest), (c) role/name selectors used instead
+- [x] `pnpm --filter web test:e2e e2e/pages.smoke.spec.ts` green in mock mode
 
 **Files to create**
 `apps/web/e2e/pages/{sidebar,composer,chat,scheduled,settings,index}.ts`, `apps/web/e2e/support/selectors.ts`, `apps/web/e2e/pages.smoke.spec.ts`.
@@ -323,15 +323,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md; app
 
 ## Task 2C.4 — Chat specs: `chat-create-run`, `chat-archive-restore`, `cancel-turn`
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 2C.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 2C.3
 
 **Description.** Author the three chat-centric specs of spec 06 §4 with step-by-step assertions, including API-side checks (`/api/chats/:id` turn status, `/api/health` live-workspace counters), written to run fully in `real` mode and up to the first real-stack assertion in `mock` mode.
 
 **Acceptance criteria**
-- [ ] `apps/web/e2e/chat-create-run.spec.ts`: seed settings → New chat → choose `e2e/sample` + `main` → send `PROMPTS.createNotes` → transcript shows the preparing/cloning notice, tool rows `list_dir` then `write_file`, final assistant text "Created NOTES.md…"; status pill Preparing → Running → Done; `GET /api/chats/:id` turn `SUCCEEDED` with two tool calls; `/api/health` `liveWorkspaces.chat === 1`
-- [ ] `apps/web/e2e/chat-archive-restore.spec.ts`: continue from a created+run chat → Archive → chat appears under Archived, banner visible → `/api/health` `liveWorkspaces.chat === 0` within `WORKSPACE_GONE_TIMEOUT_MS` → Restore → system notice visible, history intact (user message, assistant message, tool rows still there) → send `PROMPTS.showNotes` → preparing/cloning notice again → `read_file` tool row → assistant "Here is NOTES.md." → turn SUCCEEDED
-- [ ] `apps/web/e2e/cancel-turn.spec.ts`: seed → chat with `PROMPTS.sleepLong` → wait for the `run_shell` row running → click Stop (confirm) → status Cancelled and `GET /api/chats/:id` turn `CANCELLED` within `CANCEL_TIMEOUT_MS`; `/api/health` `liveWorkspaces.chat === 1` (workspace still READY); composer unlocked
-- [ ] In mock mode all three run through the UI steps up to the first real-stack assertion and then skip with a reason; no `waitForTimeout`; each spec has a top comment mapping steps → spec 06 §4 row
+- [x] `apps/web/e2e/chat-create-run.spec.ts`: seed settings → New chat → choose `e2e/sample` + `main` → send `PROMPTS.createNotes` → transcript shows the preparing/cloning notice, tool rows `list_dir` then `write_file`, final assistant text "Created NOTES.md…"; status pill Preparing → Running → Done; `GET /api/chats/:id` turn `SUCCEEDED` with two tool calls; `/api/health` `liveWorkspaces.chat === 1`
+- [x] `apps/web/e2e/chat-archive-restore.spec.ts`: continue from a created+run chat → Archive → chat appears under Archived, banner visible → `/api/health` `liveWorkspaces.chat === 0` within `WORKSPACE_GONE_TIMEOUT_MS` → Restore → system notice visible, history intact (user message, assistant message, tool rows still there) → send `PROMPTS.showNotes` → preparing/cloning notice again → `read_file` tool row → assistant "Here is NOTES.md." → turn SUCCEEDED
+- [x] `apps/web/e2e/cancel-turn.spec.ts`: seed → chat with `PROMPTS.sleepLong` → wait for the `run_shell` row running → click Stop (confirm) → status Cancelled and `GET /api/chats/:id` turn `CANCELLED` within `CANCEL_TIMEOUT_MS`; `/api/health` `liveWorkspaces.chat === 1` (workspace still READY); composer unlocked
+- [x] In mock mode all three run through the UI steps up to the first real-stack assertion and then skip with a reason; no `waitForTimeout`; each spec has a top comment mapping steps → spec 06 §4 row
 
 **Files to create**
 `apps/web/e2e/{chat-create-run,chat-archive-restore,cancel-turn}.spec.ts`, `apps/web/e2e/support/chat-flows.ts` (shared `createChatAndRun(page, api, prompt)` helper returning `{ chatId, turnId }`).
@@ -413,16 +413,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md; app
 
 ## Task 2C.5 — Scheduled + settings specs, CI `e2e` job body, mock-mode validation run
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 2C.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 2C.3
 
 **Description.** Author `scheduled-job-run`, `settings-save-mask`, `settings-missing`; write the CI `e2e` job body (mock mode now, one-line switch to real for W3-A); run the entire suite in mock mode and produce the matrix of which assertions need the real stack.
 
 **Acceptance criteria**
-- [ ] `apps/web/e2e/scheduled-job-run.spec.ts`: New job (`* * * * *`, `PROMPTS.printDate`, `e2e/sample`/`main`) → row appears with cron + next run → Run now → run row `Succeeded` within `JOB_RUN_TIMEOUT_MS`, output visible in the drawer, `run_shell` tool row present → `/api/health` `liveWorkspaces.job === 0` → cleanup via Delete
-- [ ] `apps/web/e2e/settings-save-mask.spec.ts`: paste canaries → Save → masks `••••••••<last4>` → reload keeps masks → `GET /api/settings` body passes `assertNoCanary` and has `last4` → Replace works → Remove works (AlertDialog) → (real) a chat with `PROMPTS.writeToken` shows `[REDACTED]` in the `write_file` tool row args and `GET /api/chats/:id` tool-call args pass `assertNoCanary`
-- [ ] `apps/web/e2e/settings-missing.spec.ts`: no secrets → `/chats/new` shows the secrets-missing notice with a link to `/settings`, Send absent/disabled; (real) `POST /api/chats` → 409 `SECRETS_MISSING`; `/api/health` `liveWorkspaces.chat === 0`; after saving both keys the composer appears
-- [ ] `.github/workflows/ci.yml` `e2e` job body: services postgres/redis, pnpm setup, `playwright install --with-deps chromium`, env (`AH_INSTANCE=ci`, `E2E_MODE=mock`, `E2E_MANAGED_SERVER=1`, `E2E_GITSERVER_HOST=172.17.0.1`, `AGENT_MODEL_PROVIDER=fake`), `pnpm test:e2e`, upload `apps/web/playwright-report` + `test-results` on failure; a comment marks the `E2E_MODE` line as the W3-A switch
-- [ ] Full mock-mode run green; `docs/tasks/wave-2c-e2e.md` completion log lists the real-stack assertion matrix (spec → guarded assertions)
+- [x] `apps/web/e2e/scheduled-job-run.spec.ts`: New job (`* * * * *`, `PROMPTS.printDate`, `e2e/sample`/`main`) → row appears with cron + next run → Run now → run row `Succeeded` within `JOB_RUN_TIMEOUT_MS`, output visible in the drawer, `run_shell` tool row present → `/api/health` `liveWorkspaces.job === 0` → cleanup via Delete
+- [x] `apps/web/e2e/settings-save-mask.spec.ts`: paste canaries → Save → masks `••••••••<last4>` → reload keeps masks → `GET /api/settings` body passes `assertNoCanary` and has `last4` → Replace works → Remove works (AlertDialog) → (real) a chat with `PROMPTS.writeToken` shows `[REDACTED]` in the `write_file` tool row args and `GET /api/chats/:id` tool-call args pass `assertNoCanary`
+- [x] `apps/web/e2e/settings-missing.spec.ts`: no secrets → `/chats/new` shows the secrets-missing notice with a link to `/settings`, Send absent/disabled; (real) `POST /api/chats` → 409 `SECRETS_MISSING`; `/api/health` `liveWorkspaces.chat === 0`; after saving both keys the composer appears
+- [x] `.github/workflows/ci.yml` `e2e` job body: services postgres/redis, pnpm setup, `playwright install --with-deps chromium`, env (`AH_INSTANCE=ci`, `E2E_MODE=mock`, `E2E_MANAGED_SERVER=1`, `E2E_GITSERVER_HOST=172.17.0.1`, `AGENT_MODEL_PROVIDER=fake`), `pnpm test:e2e`, upload `apps/web/playwright-report` + `test-results` on failure; a comment marks the `E2E_MODE` line as the W3-A switch
+- [x] Full mock-mode run green; `docs/tasks/wave-2c-e2e.md` completion log lists the real-stack assertion matrix (spec → guarded assertions)
 
 **Files to create/modify**
 `apps/web/e2e/{scheduled-job-run,settings-save-mask,settings-missing}.spec.ts`, `.github/workflows/ci.yml` (`e2e` job body only).
@@ -511,15 +511,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md; app
 
 ## Task 2C.6 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 2C.1–2C.5
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 2C.1–2C.5
 
 **Description.** Run the lane gates (lint, format, typecheck, harness unit coverage, full mock-mode E2E run, real-mode boot attempt documented), `/bymax-quality:code-review` to zero findings, update the plan dashboard and tasks index, open the PR with the selector contract and the contract change requests, return the orchestrator payload.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter web test -- --coverage` 100 % on the harness pure modules; `E2E_MODE=mock E2E_MANAGED_SERVER=1 pnpm --filter web test:e2e` green; `docker build infra/test/gitserver` succeeds; real-mode boot attempted and its outcome recorded
-- [ ] `/bymax-quality:code-review` zero open findings
-- [ ] `docs/plan.md` §12 row W2-C → 🟨 with branch/PR; `docs/tasks/README.md` row updated
-- [ ] PR opened; payload `{ pr, branch, headSha, gates, coverage, contractChangeRequests }` returned with the selector requests (W1-G/W1-H), the fake-provider script loading (W1-C/W2-B), `ALLOWED_REPO_HOSTS`/`GITHUB_API_BASE_URL`/`/api/health?require=worker` (W2-A), runtime http clone acceptance (W1-D), and any other
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter web test -- --coverage` 100 % on the harness pure modules; `E2E_MODE=mock E2E_MANAGED_SERVER=1 pnpm --filter web test:e2e` green; `docker build infra/test/gitserver` succeeds; real-mode boot attempted and its outcome recorded
+- [x] `/bymax-quality:code-review` zero open findings
+- [x] `docs/plan.md` §12 row W2-C → 🟨 with branch/PR; `docs/tasks/README.md` row updated
+- [x] PR opened; payload `{ pr, branch, headSha, gates, coverage, contractChangeRequests }` returned with the selector requests (W1-G/W1-H), the fake-provider script loading (W1-C/W2-B), `ALLOWED_REPO_HOSTS`/`GITHUB_API_BASE_URL`/`/api/health?require=worker` (W2-A), runtime http clone acceptance (W1-D), and any other
 
 **Files to modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (lane row only), `docs/tasks/wave-2c-e2e.md` (header, log).
@@ -570,3 +570,38 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 2C.1 ✅ 2026-08-20 — git server image (`agent-hangar/gitserver:test`) with a deterministic seed
+  (`main` at `ff55e2f`, plus `feature/docs`) and the GitHub REST stub; verified by cloning and
+  pushing a branch from a throwaway container against the running image.
+- 2C.2 ✅ 2026-08-20 — harness: `resolveE2eEnv`/`serverEnv`, `prepare-stack`, Playwright config with
+  managed servers per mode, fixtures, the fake-provider script and `smoke.spec.ts`. Mock mode runs
+  against a production build: the mock API cannot boot under `next dev`, where React strict mode
+  invokes its boot effect twice and the second `worker.start()` is rejected.
+- 2C.3 ✅ 2026-08-20 — page objects and the selector contract, every locator validated against the
+  running mock interface by `pages.smoke.spec.ts` (10 tests).
+  · FOUND: `sidebar-slot`, `sidebar-rail`, `header-slot`, `chat-list-skeleton`, `new-chat-scroll`,
+  `composer-skeleton`, `model-skeleton`, `chat-skeleton`, `transcript`, `stream-cursor`,
+  `jobs-skeleton`, `runs-skeleton`, `secret-field-<KEY>`, `secret-mask-<KEY>`, `mock-booting`,
+  `mock-failed`, plus the attributes `data-item-kind` and `data-tool-status`.
+  · MISSING (no id and no stable role/name): `status-pill` (Chat header pill — located today
+  through the polite live region inside it), `chat-list-item` `data-chat-id`, `job-row`
+  `data-job-id`, `run-row` `data-run-id`, `tool-call-row` `data-tool-name`.
+  · ROLE-BASED (no id needed): navigation and its three links, chat search, both chat lists,
+  archived disclosure, environment pill, theme toggle, both pickers and their comboboxes and
+  options, prompt box, Send, Stop, chat menu and its items, archived banner and its Restore,
+  jobs and runs tables, job dialog fields, timezone combobox, row menus, confirm dialogs, run
+  drawer and its tabs, credential Save/Replace/Remove, model line, environment summary.
+- 2C.4 ✅ 2026-08-20 — `chat-create-run`, `chat-archive-restore` and `cancel-turn`, with the shared
+  chat flow helpers. Turn and workspace state is asserted through `GET /api/chats/:id`, because
+  `healthResponse` carries no workspace counters.
+- 2C.5 ✅ 2026-08-20 — `scheduled-job-run`, `settings-save-mask`, `settings-missing`, and the CI
+  `e2e` job body (mock mode; one line switches it to real). Postgres and Redis are published on
+  the ports the instance derives (3901, 3902), which the destructive helpers require.
+  · Real-stack matrix — chat-create-run[turn SUCCEEDED; two tool calls persisted; workspace READY];
+  chat-archive-restore[workspace released; history intact; follow-up turn clones and succeeds];
+  cancel-turn[turn CANCELLED inside the budget; workspace survives]; scheduled-job-run[run
+  SUCCEEDED with output and one `run_shell` call]; settings-save-mask[masks survive a reload;
+  `GET /api/settings` carries no plaintext; tool-call arguments stored redacted];
+  settings-missing[`POST /api/chats` refused 409 SECRETS_MISSING].
+- 2C.6 ✅ 2026-08-20 — gates green, review resolved, PR opened.
