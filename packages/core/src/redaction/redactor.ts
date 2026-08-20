@@ -10,6 +10,11 @@
  * including tokens this process never saw, such as one the agent printed from its own
  * environment. Neither layer needs the caller to know which fields are sensitive.
  *
+ * What counts as a credential here is {@link REDACTION_PATTERNS}: the shapes of the secrets
+ * contract, plus the password a connection URL carries in its userinfo. The second one is what a
+ * process leaks about *itself* rather than about its user — see that constant for why it is
+ * policy and where the policy stops.
+ *
  * Redaction is idempotent: the replacement token matches no pattern, and a value that is a
  * substring of the token is refused at registration, so re-redacting redacted output is a no-op.
  *
@@ -29,9 +34,78 @@ export const CIRCULAR_TOKEN = '[Circular]';
 /** Characters that carry meaning inside a regular expression. */
 const REGEXP_SPECIAL_CHARACTERS = /[.*+?^${}()|[\]\\/]/g;
 
+/**
+ * The password of a URL that carries one, as `scheme://user:password@host`.
+ *
+ * The match is bounded by the authority's structure rather than by a list of characters a password
+ * may not contain, because the WHATWG parser — the one `z.url()` validates `DATABASE_URL` and
+ * `REDIS_URL` with — admits far more in userinfo than a hand-written class tends to allow. It takes
+ * `[`, `]`, `"`, a space and even a raw `@` and percent-encodes them itself, and it keeps the value
+ * the operator wrote: `z.url()` returns its input unchanged, so what flows through the process and
+ * into any record is the raw spelling, brackets and all. A class that excluded them would leave
+ * exactly those passwords in the log.
+ *
+ * So the right edge is the last `@` before the authority ends, which is the parser's own rule for
+ * where userinfo stops — greedy matching to the final `@` reproduces it, and a password containing
+ * an `@` is therefore covered rather than truncated. `/`, `?` and `#` end the authority, and a URL
+ * that carries one of them raw in its userinfo is rejected outright by the parser, so excluding
+ * them costs no real password and is what stops a match running from one URL's userinfo into a
+ * later `@` in a path or a query.
+ *
+ * Two characters are still excluded, and each is a price paid for a property rather than an
+ * oversight. Whitespace: without it one match could run from a URL across a whole log line to some
+ * distant `@`, redacting everything in between. A bare `"`: it is what separates one field of a
+ * serialised record from the next, and a match that crossed it would swallow the fields between —
+ * producing valid JSON with a field silently missing, which is worse than a line that fails to
+ * parse. Inside a JSON string a real quote arrives escaped, so only a boundary quote is ever bare.
+ *
+ * What that costs, stated plainly: a password containing a raw quote or a raw space is left alone
+ * by this rule. The complete answer for a password of any shape is not a pattern at all — it is
+ * registering the configured value at boot, which catches it in every spelling and is the same
+ * mechanism the forge token already uses.
+ *
+ * Idempotence no longer rests on the replacement token's brackets being unmatchable, and this is
+ * the part worth not re-deriving: the token contains no `@`, and after a substitution it sits
+ * immediately before the `@` the match ended at, so a second pass lands on that same `@`, matches
+ * exactly the token, and writes it back unchanged. The output is identical, not merely equivalent.
+ */
+export const URL_PASSWORD_PATTERN = /(?<=:\/\/[^\s/:@]*:)[^\s/"?#]+(?=@)/;
+
+/**
+ * What every redactor built here treats as a credential.
+ *
+ * `SECRET_SHAPE_PATTERNS` is the contract's answer for credentials that travel as *content*: a
+ * token the model quoted, a header the agent echoed. It says nothing about the password inside
+ * `DATABASE_URL` or `REDIS_URL`, which is not content at all — it is the process's own
+ * configuration, and nothing registers it: the web process never reveals a stored secret, so it
+ * hands the redactor no values, and a bare password matches no token shape. Shape is the only
+ * layer in front of it.
+ *
+ * Measured, so the reason here is not folklore: the drivers this project uses do not put the
+ * connection string in what they throw. `pg`, `@prisma/adapter-pg` and `ioredis` all report a
+ * refused connection, an unreachable host and an unparseable URL without the URL appearing in the
+ * message, the stack or any enumerable property. What makes the rule worth having is not one
+ * driver's habit but the shape of the defence: the configured URL is an ordinary string held by
+ * both processes, redaction here is structural rather than something a call site remembers, and a
+ * record that carries that string reaches the output through whichever path nobody thought about.
+ *
+ * Widening "credential" to cover it is a deliberate policy choice with a cost: a URL password
+ * becomes unreadable in a log from now on, including one an operator put there on purpose. That is
+ * the right trade, because a connection URL's password is never the thing a log line is about.
+ *
+ * The bare password on its own — named without the URL around it — stays out of reach here,
+ * because a password has no shape. Closing that, and the two userinfo spellings
+ * {@link URL_PASSWORD_PATTERN} sells, means registering the value at boot in every process that
+ * holds one.
+ */
+export const REDACTION_PATTERNS: readonly RegExp[] = [
+  ...SECRET_SHAPE_PATTERNS,
+  URL_PASSWORD_PATTERN,
+];
+
 /** Construction options of {@link createRedactor}. */
 export interface RedactorOptions {
-  /** Shape patterns to apply; defaults to `SECRET_SHAPE_PATTERNS`. */
+  /** Shape patterns to apply; defaults to {@link REDACTION_PATTERNS}. */
   patterns?: readonly RegExp[];
   /** Token written in place of a match; defaults to `REDACTED_TOKEN`. */
   replacement?: string;
@@ -195,12 +269,13 @@ function redactValue(
 /**
  * Creates a redactor over a set of shape patterns.
  *
- * @param options - Patterns and replacement token; both default to the frozen contract values.
+ * @param options - Patterns and replacement token; they default to {@link REDACTION_PATTERNS} and
+ * to the contract's replacement token.
  * @returns A redactor that starts with no registered values.
  */
 export function createRedactor(options: RedactorOptions = {}): RegisteringRedactor {
   const replacement = options.replacement ?? REDACTED_TOKEN;
-  const patterns = options.patterns ?? SECRET_SHAPE_PATTERNS;
+  const patterns = options.patterns ?? REDACTION_PATTERNS;
   const registered = new Set<string>();
   let longestFirst: string[] = [];
 
