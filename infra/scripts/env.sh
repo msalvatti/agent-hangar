@@ -21,6 +21,15 @@
 #                                        print `export KEY=value` lines from .env.local when it
 #                                        exists, else the derived ones — the environment every
 #                                        step of a run must agree on
+#   infra/scripts/env.sh --print-checked
+#                                        same output as --print-effective, but refuses (exit 3)
+#                                        when the shell explicitly names an instance the file
+#                                        contradicts. Every command that acts on an already
+#                                        configured instance reads this mode; see
+#                                        ah_assert_agreement for why disagreement is refused
+#                                        rather than resolved, and for the AH_ENV_FILE path that
+#                                        runs a command against a second instance from a checkout
+#                                        configured for a different one
 #
 # Runs on macOS bash 3.2: no associative arrays, no mapfile.
 set -euo pipefail
@@ -140,15 +149,88 @@ ah_print_env_file() {
   sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' -e 's/^/export /' "$1"
 }
 
+# Instance the shell explicitly asks for, before slugifying; empty when it asks for none.
+ah_selected_instance() {
+  ah_first_non_empty "${AH_INSTANCE:-}" "${CONDUCTOR_WORKSPACE_NAME:-}"
+}
+
+# Port base the shell explicitly asks for; empty when it asks for none.
+ah_selected_port_base() {
+  ah_first_non_empty "${AH_PORT_BASE:-}" "${CONDUCTOR_PORT:-}"
+}
+
+# Prints the value an existing env file records for one key, or nothing when it records none.
+# The file is re-read through ah_print_env_file and evaluated in a subshell, so the value comes
+# back through exactly the quoting ah_write_env_file put it in rather than through a second parser
+# that could disagree with the first.
+ah_env_file_value() {
+  local target="$1" key="$2"
+  (
+    unset "$key"
+    eval "$(ah_print_env_file "$target")"
+    printf '%s' "${!key:-}"
+  )
+}
+
+# Refuses when the shell explicitly names an instance the env file contradicts.
+#
+# Two sources can answer "which instance is this command for": the shell, and the env file this
+# checkout was set up with. Picking either one silently is what made `archive.sh` tear down the
+# DEFAULT instance's compose stack from a checkout configured for another instance, while deleting
+# that checkout's own env file — one instance's containers and another instance's configuration,
+# from a single command meant to clean up one worktree. The file is the source of truth, because a
+# developer who ran setup here expects commands here to act on this checkout; but a shell that
+# names an instance is not ignored either, because ignoring it silently is the same class of
+# mistake in the other direction. So a disagreement stops the command and says so.
+#
+# Only what the shell actually sets is compared: a shell naming an instance but no port base is
+# not in conflict with a file that records a port base, it simply says nothing about ports.
+#
+# Running a command against a SECOND instance from a checkout configured for a different one stays
+# supported, and goes through AH_ENV_FILE rather than through the shell: an instance is its env
+# file, so the second one gets a file of its own (env.sh --force writes it) and AH_ENV_FILE names
+# it. That keeps one rule — the file decides — instead of a shell override that would be
+# indistinguishable from the stale variable this check exists to catch.
+ah_assert_agreement() {
+  local target="$1" selected file_value conflict=0
+  selected=$(ah_selected_instance)
+  if [ -n "$selected" ]; then
+    selected=$(ah_slugify "$selected")
+    file_value=$(ah_env_file_value "$target" AH_INSTANCE)
+    if [ "$selected" != "$file_value" ]; then
+      echo "error: this shell selects instance \"$selected\" but $target records instance \"$file_value\"." >&2
+      conflict=1
+    fi
+  fi
+  selected=$(ah_selected_port_base)
+  if [ -n "$selected" ]; then
+    file_value=$(ah_env_file_value "$target" AH_PORT_BASE)
+    if [ "$selected" != "$file_value" ]; then
+      echo "error: this shell selects port base \"$selected\" but $target records port base \"$file_value\"." >&2
+      conflict=1
+    fi
+  fi
+  if [ "$conflict" -eq 0 ]; then
+    return 0
+  fi
+  echo "Refusing to guess which instance this command should act on. Three ways forward:" >&2
+  echo "  * unset AH_INSTANCE / AH_PORT_BASE (and CONDUCTOR_WORKSPACE_NAME / CONDUCTOR_PORT) to act on the instance this checkout was set up for;" >&2
+  echo "  * run \"pnpm setup --force\" to move this checkout to the instance the shell names;" >&2
+  echo "  * point AH_ENV_FILE at the env file of the other instance to act on it from here without disturbing this checkout. An instance that has none yet gets one with:" >&2
+  echo "      AH_ENV_FILE=<path> AH_INSTANCE=<name> AH_PORT_BASE=<base> bash infra/scripts/env.sh --force" >&2
+  return 3
+}
+
 ah_env_main() {
   local mode="write" root target
   case "${1:-}" in
     --print) mode="print" ;;
     --print-effective) mode="print-effective" ;;
+    --print-checked) mode="print-checked" ;;
     --force) mode="force" ;;
     "") ;;
     *)
-      echo "usage: env.sh [--print|--print-effective|--force]" >&2
+      echo "usage: env.sh [--print|--print-effective|--print-checked|--force]" >&2
       return 2
       ;;
   esac
@@ -156,13 +238,16 @@ ah_env_main() {
   target="${AH_ENV_FILE:-$root/.env.local}"
   # The file wins outright, and is echoed without re-deriving anything: the whole point is that a
   # variable exported in this shell cannot disagree with the file docker compose --env-file reads.
-  if [ "$mode" = "print-effective" ] && [ -f "$target" ]; then
+  if [ "$mode" = "print-checked" ] && [ -f "$target" ]; then
+    ah_assert_agreement "$target" || return 3
+  fi
+  if { [ "$mode" = "print-effective" ] || [ "$mode" = "print-checked" ]; } && [ -f "$target" ]; then
     ah_print_env_file "$target"
     return 0
   fi
   ah_resolve_env
   case "$mode" in
-    print|print-effective)
+    print|print-effective|print-checked)
       ah_print_env "export "
       ;;
     force)

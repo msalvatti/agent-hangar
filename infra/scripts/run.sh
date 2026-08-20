@@ -39,7 +39,10 @@ done
 
 env_file="${AH_ENV_FILE:-$root/.env.local}"
 [ -f "$env_file" ] || bash "$here/env.sh"
-eval "$(bash "$here/env.sh" --print-effective)"
+# Instance resolution — see ah_assert_agreement in env.sh. Captured before it is evaluated, so a
+# refusal is not swallowed by `eval`, which succeeds on the empty string a refusal prints.
+instance_env="$(bash "$here/env.sh" --print-checked)" || exit "$?"
+eval "$instance_env"
 
 # A rotation re-encrypts every stored secret and then swaps the key file. Starting the app in the
 # middle of that loses credentials both ways: a secret saved from Settings between the rotation's

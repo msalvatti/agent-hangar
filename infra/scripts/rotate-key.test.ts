@@ -268,6 +268,7 @@ describe('rotate-key.sh --yes failure', () => {
       args: ['--yes'],
       env: {
         HOME: box.dir,
+        AH_ENV_FILE: box.envFile,
         AH_PORT_BASE: String(box.portBase),
         MASTER_KEY_PATH: box.keyPath,
         AH_SHIM_LOG: box.log,
@@ -290,7 +291,12 @@ describe('rotate-key.sh usage', () => {
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--nope'],
-      env: { HOME: box.dir, MASTER_KEY_PATH: box.keyPath, AH_SHIM_LOG: box.log },
+      env: {
+        HOME: box.dir,
+        AH_ENV_FILE: box.envFile,
+        MASTER_KEY_PATH: box.keyPath,
+        AH_SHIM_LOG: box.log,
+      },
     });
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('usage');

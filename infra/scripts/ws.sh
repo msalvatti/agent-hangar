@@ -6,7 +6,10 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-eval "$(bash "$here/env.sh" --print)"
+# Instance resolution — see ah_assert_agreement in env.sh. Captured before it is evaluated, so a
+# refusal is not swallowed by `eval`, which succeeds on the empty string a refusal prints.
+instance_env="$(bash "$here/env.sh" --print-checked)" || exit "$?"
+eval "$instance_env"
 
 ws_list() {
   docker ps --filter "label=ah.instance=$AH_INSTANCE" \
@@ -16,6 +19,9 @@ ws_list() {
 ws_reap() {
   local listing id
   local ids=()
+  # Stated before the removal, not only in the count afterwards: this subcommand destroys
+  # containers, and the operator has to be able to see which instance's before it happens.
+  echo "Reaping workspace containers of instance \"$AH_INSTANCE\""
   listing="$(docker ps -aq --filter "label=ah.instance=$AH_INSTANCE")"
   # One id per line, collected into an array: expanded as "${ids[@]}" every id stays a separate
   # argument to `docker rm`, so an id carrying whitespace can never split into two.
