@@ -44,27 +44,33 @@ describe('rotate-key.sh --resume', () => {
    * A rotation left half-done is refused outright without `--resume`, and the refusal warns
    * against deleting the file that may hold the only key some rows open under.
    */
-  it('refuses an interrupted rotation without --resume', async () => {
-    const box = await sandbox();
+  it('refuses an interrupted rotation without --resume', () => {
+    const box = sandbox();
     writeFileSync(box.newKeyPath, PENDING_KEY);
     writeState(box, 'reencrypting');
     const result = run(box, ['--yes']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('--resume');
     expect(result.stderr).toContain('Do not delete');
-    expect(readShimLog(box.log)).toEqual([]);
+    // The shared-key check asks Docker which instances exist before anything else, so the log
+    // is not empty; what matters is that no key was generated and no helper ran.
+    expect(readShimLog(box.log).some((line) => line.includes('openssl'))).toBe(false);
+    expect(readShimLog(box.log).some((line) => line.includes('helper'))).toBe(false);
   });
 
   /**
    * With nothing left behind there is nothing to continue, and the run says so instead of
    * generating a key and re-encrypting under it.
    */
-  it('refuses to resume when no rotation is in progress', async () => {
-    const box = await sandbox();
+  it('refuses to resume when no rotation is in progress', () => {
+    const box = sandbox();
     const result = run(box, ['--yes', '--resume']);
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Nothing to resume');
-    expect(readShimLog(box.log)).toEqual([]);
+    // The shared-key check asks Docker which instances exist before anything else, so the log
+    // is not empty; what matters is that no key was generated and no helper ran.
+    expect(readShimLog(box.log).some((line) => line.includes('openssl'))).toBe(false);
+    expect(readShimLog(box.log).some((line) => line.includes('helper'))).toBe(false);
   });
 
   /**
@@ -72,8 +78,8 @@ describe('rotate-key.sh --resume', () => {
    * a copy of it. Without the file the run stops at once and names both ways back, rather than
    * re-encrypting first and then failing to copy a file that is not there.
    */
-  it('refuses to run without a current master key', async () => {
-    const box = await sandbox();
+  it('refuses to run without a current master key', () => {
+    const box = sandbox();
     rmSync(box.keyPath);
     writeFileSync(box.newKeyPath, PENDING_KEY);
     const result = run(box, ['--yes', '--resume']);
@@ -89,8 +95,8 @@ describe('rotate-key.sh --resume', () => {
    * wholly under the current key, so the resume re-encrypts in strict mode, exactly as a fresh run
    * would, and reuses the key that is already on disk rather than generating a second one.
    */
-  it('resumes from `prepared` in strict mode without generating a second key', async () => {
-    const box = await sandbox();
+  it('resumes from `prepared` in strict mode without generating a second key', () => {
+    const box = sandbox();
     writeFileSync(box.newKeyPath, PENDING_KEY);
     writeState(box, 'prepared');
     const result = run(box, ['--yes', '--resume']);
@@ -112,8 +118,8 @@ describe('rotate-key.sh --resume', () => {
    * them. The resume re-encrypts in salvage mode, which opens each row with whichever key
    * authenticates it, and then completes the swap.
    */
-  it('resumes from `reencrypting` in salvage mode', async () => {
-    const box = await sandbox();
+  it('resumes from `reencrypting` in salvage mode', () => {
+    const box = sandbox();
     writeFileSync(box.newKeyPath, PENDING_KEY);
     writeState(box, 'reencrypting');
     const result = run(box, ['--yes', '--resume']);
@@ -133,8 +139,8 @@ describe('rotate-key.sh --resume', () => {
    * far it got, so the widest assumption is taken: salvage, which is correct for every state the
    * store can be in before the swap.
    */
-  it('salvages when the state file is gone but .new is not', async () => {
-    const box = await sandbox();
+  it('salvages when the state file is gone but .new is not', () => {
+    const box = sandbox();
     writeFileSync(box.newKeyPath, PENDING_KEY);
     const result = run(box, ['--yes', '--resume']);
 
@@ -154,8 +160,8 @@ describe('rotate-key.sh --resume', () => {
    * now skips the helper entirely — proving the swap finishes even with the database unreachable
    * — and completes the rotation from the recorded phase alone.
    */
-  it('resumes from `reencrypted` without touching the database', async () => {
-    const box = await sandbox();
+  it('resumes from `reencrypted` without touching the database', () => {
+    const box = sandbox();
     const backup = `${box.keyPath}.bak-20260819000000`;
     writeFileSync(box.newKeyPath, PENDING_KEY);
     writeState(box, 'reencrypted', backup);
@@ -176,8 +182,8 @@ describe('rotate-key.sh --resume', () => {
    * The resume finishes the rename and must not overwrite the backup, which is the only remaining
    * copy of the previous key.
    */
-  it('resumes from `reencrypted` with the backup already written', async () => {
-    const box = await sandbox();
+  it('resumes from `reencrypted` with the backup already written', () => {
+    const box = sandbox();
     const backup = `${box.keyPath}.bak-20260819000000`;
     writeFileSync(backup, OLD_KEY, { mode: 0o600 });
     writeFileSync(box.newKeyPath, PENDING_KEY);
@@ -194,11 +200,34 @@ describe('rotate-key.sh --resume', () => {
   });
 
   /**
+   * The window the temporary backup name closes: a kill during the copy used to leave a partial
+   * file at the backup path, and because the resume path reads existence as completeness it then
+   * skipped the copy and renamed the new key over the old one — destroying the only whole copy of
+   * the key the previous ciphertext needs. A truncated leftover at the sibling name must not be
+   * mistaken for a finished backup.
+   */
+  it('ignores a partial backup left at the temporary name', () => {
+    const box = sandbox();
+    const backup = `${box.keyPath}.bak-20260819000000`;
+    writeFileSync(`${backup}.tmp`, 'aaaa');
+    writeFileSync(box.newKeyPath, PENDING_KEY);
+    writeState(box, 'reencrypted', backup);
+    const result = run(box, ['--yes', '--resume']);
+
+    expect(result.status).toBe(0);
+    // The backup is written afresh from the current key, not adopted from the stump.
+    expect(readFileSync(backup, 'utf8')).toBe(OLD_KEY);
+    expect(fileMode(backup)).toBe('600');
+    expect(existsSync(`${backup}.tmp`)).toBe(false);
+    expect(readFileSync(box.keyPath, 'utf8')).toBe(PENDING_KEY);
+  });
+
+  /**
    * Crash window 5 — the rename had already happened and only the state file was left. Nothing
    * remains to redo: the resume clears the state and neither the current key nor the backup moves.
    */
-  it('resumes from `reencrypted` after the rename already happened', async () => {
-    const box = await sandbox();
+  it('resumes from `reencrypted` after the rename already happened', () => {
+    const box = sandbox();
     const backup = `${box.keyPath}.bak-20260819000000`;
     writeFileSync(backup, OLD_KEY, { mode: 0o600 });
     writeFileSync(box.keyPath, PENDING_KEY);
@@ -216,8 +245,8 @@ describe('rotate-key.sh --resume', () => {
    * to an empty path is not a backup, and renaming without one would leave the previous key
    * material nowhere. The run stops and says what is wrong instead.
    */
-  it('refuses a state file that records the swap phase without a backup path', async () => {
-    const box = await sandbox();
+  it('refuses a state file that records the swap phase without a backup path', () => {
+    const box = sandbox();
     writeFileSync(box.newKeyPath, PENDING_KEY);
     writeState(box, 'reencrypted');
     const result = run(box, ['--yes', '--resume']);
@@ -238,7 +267,7 @@ describe('rotate-key.sh with the instance running', () => {
    * while the instance's web port answers, and nothing is touched.
    */
   it('refuses to rotate and touches nothing', async () => {
-    const box = await sandbox();
+    const box = sandbox();
     await listen(box.portBase);
     const result = run(box, ['--yes']);
 
@@ -248,7 +277,10 @@ describe('rotate-key.sh with the instance running', () => {
     expect(readFileSync(box.keyPath, 'utf8')).toBe(OLD_KEY);
     expect(existsSync(box.newKeyPath)).toBe(false);
     expect(existsSync(box.statePath)).toBe(false);
-    expect(readShimLog(box.log)).toEqual([]);
+    // The shared-key check asks Docker which instances exist before anything else, so the log
+    // is not empty; what matters is that no key was generated and no helper ran.
+    expect(readShimLog(box.log).some((line) => line.includes('openssl'))).toBe(false);
+    expect(readShimLog(box.log).some((line) => line.includes('helper'))).toBe(false);
   });
 
   /**
@@ -256,7 +288,7 @@ describe('rotate-key.sh with the instance running', () => {
    * files, which is exactly what a live process must not have happen under it.
    */
   it('refuses to resume as well', async () => {
-    const box = await sandbox();
+    const box = sandbox();
     writeFileSync(box.newKeyPath, PENDING_KEY);
     writeState(box, 'reencrypted', `${box.keyPath}.bak-20260819000000`);
     await listen(box.portBase);
@@ -272,7 +304,7 @@ describe('rotate-key.sh with the instance running', () => {
    * see what a rotation would do before stopping anything.
    */
   it('still prints the plan', async () => {
-    const box = await sandbox();
+    const box = sandbox();
     await listen(box.portBase);
     const result = run(box, []);
 
@@ -280,6 +312,67 @@ describe('rotate-key.sh with the instance running', () => {
     expect(result.stdout).toContain('Plan (not run without --yes)');
   });
 });
+
+describe('rotate-key.sh with other instances present', () => {
+  /**
+   * The master key file is shared by every instance on this machine, but a rotation re-encrypts
+   * only the current instance's database. Swapping the shared file while another instance exists
+   * would leave its rows sealed under the old key and unreadable the next time it starts — and the
+   * command would have said "Master key rotated" while doing it. So it refuses, names the instance
+   * it would have stranded, and touches nothing.
+   */
+  it('refuses while another instance shares the key', () => {
+    const box = sandbox();
+    const shimDir = createShimDir({
+      log: box.log,
+      docker: { psNames: ['agent-hangar-other'] },
+    });
+    const result = run(box, ['--yes'], {}, shimDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('agent-hangar-other');
+    expect(result.stderr).toContain(box.keyPath);
+    expect(readFileSync(box.keyPath, 'utf8')).toBe(OLD_KEY);
+    expect(existsSync(box.newKeyPath)).toBe(false);
+    expect(existsSync(box.statePath)).toBe(false);
+    expect(readShimLog(box.log).some((line) => line.includes('openssl'))).toBe(false);
+  });
+
+  /**
+   * The instance doing the rotating is not one of the instances it would strand, so seeing only
+   * itself is not a reason to refuse.
+   */
+  it('proceeds when the only instance it can see is itself', () => {
+    const box = sandbox();
+    const shimDir = createShimDir({
+      log: box.log,
+      docker: { psNames: ['agent-hangar-default'] },
+    });
+    const result = run(box, ['--yes'], {}, shimDir);
+
+    expect(result.status).toBe(0);
+    expect(readFileSync(box.keyPath, 'utf8')).toBe(GENERATED_KEY);
+  });
+
+  /**
+   * Not being able to ask is not the same as there being nothing to find. With Docker unreachable
+   * the run cannot show the rotation is safe, so it stops rather than swapping a shared key on the
+   * assumption that no other instance exists.
+   */
+  it('refuses when Docker cannot be asked which instances exist', () => {
+    const box = sandbox();
+    const shimDir = createShimDir({ log: box.log, docker: { availability: 'down' } });
+    const result = run(box, ['--yes'], {}, shimDir);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Cannot ask Docker');
+    expect(readFileSync(box.keyPath, 'utf8')).toBe(OLD_KEY);
+    expect(existsSync(box.newKeyPath)).toBe(false);
+  });
+});
+
+/** How long to wait for the detached run to reach the gate, and for the whole interleaving test. */
+const GATE_TIMEOUT_MS = 20_000;
 
 describe('rotate-key.sh concurrency', () => {
   /**
@@ -290,38 +383,46 @@ describe('rotate-key.sh concurrency', () => {
    * re-encryption step — squarely inside the section — and the second must refuse rather than
    * proceed, without disturbing anything the first is holding.
    */
-  it('refuses a second run that meets the first inside the critical section', async () => {
-    const box = await sandbox();
-    const shimDir = createShimDir({ log: box.log });
-    const started = join(box.dir, 'gate-started');
-    const release = join(box.dir, 'gate-release');
-    const gate = gateHelperShim(shimDir, started, release);
+  it(
+    'refuses a second run that meets the first inside the critical section',
+    async () => {
+      const box = sandbox();
+      const shimDir = createShimDir({ log: box.log });
+      const started = join(box.dir, 'gate-started');
+      const release = join(box.dir, 'gate-release');
+      const gate = gateHelperShim(shimDir, started, release);
 
-    const first = runDetached(box, ['--yes'], { AH_DOCTOR_HELPER_CMD: gate }, shimDir);
-    await expect.poll(() => existsSync(started)).toBe(true);
+      const first = runDetached(box, ['--yes'], { AH_DOCTOR_HELPER_CMD: gate }, shimDir);
+      // Generous, because this waits on a real bash run reaching a shimmed helper while the rest of
+      // the suite competes for the machine; the default one-second poll expired under that load.
+      await expect
+        .poll(() => existsSync(started), { timeout: GATE_TIMEOUT_MS, interval: 25 })
+        .toBe(true);
 
-    // The first run now holds the lock and its `.new` exists; the second must bounce off it.
-    const second = run(box, ['--yes']);
-    expect(second.status).toBe(1);
-    expect(second.stderr).toContain('Another rotation is already running');
-    expect(readFileSync(box.statePath, 'utf8')).toContain('phase=reencrypting');
-    expect(readFileSync(box.newKeyPath, 'utf8')).toBe(GENERATED_KEY);
-    expect(readFileSync(box.keyPath, 'utf8')).toBe(OLD_KEY);
+      // The first run now holds the lock and its `.new` exists; the second must bounce off it.
+      const second = run(box, ['--yes']);
+      expect(second.status).toBe(1);
+      expect(second.stderr).toContain('Another rotation is already running');
+      expect(readFileSync(box.statePath, 'utf8')).toContain('phase=reencrypting');
+      expect(readFileSync(box.newKeyPath, 'utf8')).toBe(GENERATED_KEY);
+      expect(readFileSync(box.keyPath, 'utf8')).toBe(OLD_KEY);
 
-    writeFileSync(release, '');
-    expect(await first.exitCode).toBe(0);
+      writeFileSync(release, '');
+      expect(await first.exitCode).toBe(0);
 
-    // The first run finishes normally and leaves nothing behind for the next one.
-    expect(readFileSync(box.keyPath, 'utf8')).toBe(GENERATED_KEY);
-    expect(existsSync(box.statePath)).toBe(false);
-    expect(existsSync(`${box.keyPath}.lock`)).toBe(false);
-  });
+      // The first run finishes normally and leaves nothing behind for the next one.
+      expect(readFileSync(box.keyPath, 'utf8')).toBe(GENERATED_KEY);
+      expect(existsSync(box.statePath)).toBe(false);
+      expect(existsSync(`${box.keyPath}.lock`)).toBe(false);
+    },
+    GATE_TIMEOUT_MS,
+  );
 
   /**
    * A lock is released however the run ends, so a failed rotation does not wedge the next one.
    */
-  it('releases the lock when the rotation fails', async () => {
-    const box = await sandbox();
+  it('releases the lock when the rotation fails', () => {
+    const box = sandbox();
     const result = run(box, ['--yes'], { AH_SHIM_ROTATE_RC: '3' });
 
     expect(result.status).toBe(3);
@@ -334,8 +435,8 @@ describe('rotate-key.sh concurrency', () => {
    * denial of service dressed as safety — so one whose recorded process is gone is reclaimed, and
    * the operator is told it happened rather than it being silently swallowed.
    */
-  it('reclaims a lock whose owner is no longer running', async () => {
-    const box = await sandbox();
+  it('reclaims a lock whose owner is no longer running', () => {
+    const box = sandbox();
     const stale = deadPid();
     writeFileSync(`${box.keyPath}.lock`, `${String(stale)}\n`);
 
@@ -352,8 +453,8 @@ describe('rotate-key.sh concurrency', () => {
    * The complement, which is what stops the reclaim from turning the lock into a suggestion: a
    * lock whose owner is alive is never taken, whatever this run would like to do.
    */
-  it('never takes a lock whose owner is alive', async () => {
-    const box = await sandbox();
+  it('never takes a lock whose owner is alive', () => {
+    const box = sandbox();
     // This test process is unquestionably running, so it stands in for a live rotation.
     writeFileSync(`${box.keyPath}.lock`, `${String(process.pid)}\n`);
 
@@ -371,8 +472,8 @@ describe('rotate-key.sh concurrency', () => {
    * A lock file with no readable owner is the trace of a run killed before it could name itself.
    * Nothing is alive to protect, so it is reclaimed on the same terms.
    */
-  it('reclaims a lock that names no owner', async () => {
-    const box = await sandbox();
+  it('reclaims a lock that names no owner', () => {
+    const box = sandbox();
     writeFileSync(`${box.keyPath}.lock`, '');
 
     const result = run(box, ['--yes']);

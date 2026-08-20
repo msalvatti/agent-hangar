@@ -28,6 +28,11 @@
 # at all (it is copied, then replaced in place); "<key>.new" is deleted only when the helper
 # reported that every row is back under the current key.
 #
+# One instance at a time, too. The key file is shared across instances while a rotation only
+# re-encrypts the current instance's database, so the run refuses while Docker can see another
+# Agent Hangar instance that the swap would strand. See the block that performs the check for why
+# refusing is the option taken over sweeping every instance or splitting the key per instance.
+#
 # One rotation at a time. A per-key lock is taken before any state is inspected and held through
 # the swap and the cleanup, so two --yes runs cannot both decide a rotation is needed and then
 # re-encrypt the same rows into each other. A lock left behind by a killed run is reclaimed, but
@@ -167,8 +172,13 @@ put_key_in_place() {
   local backup="$1"
   if [ -f "$key.new" ]; then
     if [ ! -f "$backup" ]; then
-      cp "$key" "$backup"
-      chmod 600 "$backup"
+      # Copied to a sibling and renamed, never straight to the backup path: `cp` truncates its
+      # destination before it writes, so a kill mid-copy would leave a partial file exactly where
+      # the resume path looks. That check treats existence as completeness — which it now is,
+      # because the backup name only ever appears through a rename of a finished file.
+      cp "$key" "$backup.tmp"
+      chmod 600 "$backup.tmp"
+      mv "$backup.tmp" "$backup"
     fi
     mv "$key.new" "$key"
     chmod 600 "$key"
@@ -201,6 +211,31 @@ umask 077
 # also the state an operator lands in after restoring only part of a rotation by hand.
 if [ ! -f "$key" ]; then
   echo "No master key at $key. Create one with pnpm setup, or restore it from a $key.bak-* backup, before rotating." >&2
+  exit 1
+fi
+
+# The master key file is shared by every instance on this machine — resolveInstance scopes ports,
+# databases and container names, but not the key path — while a rotation re-encrypts only THIS
+# instance's database. Swapping the shared file would therefore leave every other instance's rows
+# sealed under the old key and unreadable the moment those instances next start, and this command
+# would have reported success while doing it.
+#
+# Of the three ways out, this refuses. Rotating every instance cannot be made reliable: each one's
+# rows live in its own Postgres container, which the operator may well have stopped, so a sweep
+# would rotate what it could reach and strand the rest — the same failure with more moving parts.
+# Giving each instance its own key is the better end state but not this script's to make: the
+# default path comes from packages/core, whose contract test pins it, and changing it would strand
+# every store already sealed under the shared key. Refusing is what can be done here without
+# guessing, and it fails in the direction that keeps credentials readable.
+if ! compose_projects="$(docker ps -a --filter 'label=com.docker.compose.project' --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null)"; then
+  echo "Cannot ask Docker which instances exist, and $key is shared by all of them, so this rotation cannot be shown to be safe. Start Docker and try again." >&2
+  exit 1
+fi
+instance_prefix="${COMPOSE_PROJECT_NAME%"$AH_INSTANCE"}"
+others="$(printf '%s\n' "$compose_projects" | grep "^$instance_prefix" | grep -v -x "$COMPOSE_PROJECT_NAME" | sort -u || true)"
+if [ -n "$others" ]; then
+  echo "Other Agent Hangar instances share $key: $(printf '%s' "$others" | tr '\n' ' ')" >&2
+  echo "Rotation re-encrypts only $POSTGRES_DB, so swapping that shared file would leave their stored secrets sealed under the old key and unreadable the next time they start. Archive them first (bash infra/scripts/archive.sh from each instance) and then rotate, or leave the key as it is." >&2
   exit 1
 fi
 

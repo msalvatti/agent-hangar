@@ -53,8 +53,8 @@ describe('rotate-key.sh without --yes', () => {
    * Prints the plan (key path, backup pattern, secret count) and exits 2 without touching
    * anything.
    */
-  it('prints the plan and exits 2', async () => {
-    const box = await sandbox();
+  it('prints the plan and exits 2', () => {
+    const box = sandbox();
     const result = run(box, []);
     expect(result.status).toBe(2);
     expect(result.stdout).toContain(box.keyPath);
@@ -68,8 +68,8 @@ describe('rotate-key.sh without --yes', () => {
    * An interrupted rotation is named in the plan together with the phase it stopped in, so the
    * operator learns what state the store is in before deciding anything.
    */
-  it('names an interrupted rotation and its phase', async () => {
-    const box = await sandbox();
+  it('names an interrupted rotation and its phase', () => {
+    const box = sandbox();
     writeFileSync(box.newKeyPath, PENDING_KEY);
     writeState(box, 'reencrypting');
     const result = run(box, []);
@@ -85,8 +85,8 @@ describe('rotate-key.sh --yes success', () => {
    * content survives in a mode-600 backup, the new key (from the shimmed `openssl`) becomes
    * `master.key`, and the rotation state file is cleared.
    */
-  it('rotates the key and keeps a mode-600 backup of the old one', async () => {
-    const box = await sandbox();
+  it('rotates the key and keeps a mode-600 backup of the old one', () => {
+    const box = sandbox();
     const result = run(box, ['--yes']);
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('Master key rotated');
@@ -112,8 +112,8 @@ describe('rotate-key.sh --yes success', () => {
    * the same one. Reusing it would overwrite a backup that is still the only copy of the key it
    * holds, so a name already taken is stepped past instead.
    */
-  it('never reuses a backup name two rotations computed in the same second', async () => {
-    const box = await sandbox();
+  it('never reuses a backup name two rotations computed in the same second', () => {
+    const box = sandbox();
     const shimDir = createShimDir({ log: box.log });
     // A frozen clock is what makes the collision certain rather than occasional.
     writeExtraShim(shimDir, 'date', "printf '%s\\n' '20260819000000'");
@@ -133,8 +133,8 @@ describe('rotate-key.sh --yes success', () => {
    * over the real path. A plain redirect truncates first and fills after, and a crash inside that
    * window would strand a partial phase line.
    */
-  it('updates the rotation state by renaming a sibling over it', async () => {
-    const box = await sandbox();
+  it('updates the rotation state by renaming a sibling over it', () => {
+    const box = sandbox();
     const shimDir = createShimDir({ log: box.log });
     fileOpShims(shimDir);
     const result = run(box, ['--yes'], {}, shimDir);
@@ -151,18 +151,25 @@ describe('rotate-key.sh --yes success', () => {
    * atomic replacement. Moving the current key aside first, as an earlier version did, opened a
    * window in which neither file stood at `master.key`.
    */
-  it('copies the old key aside and renames the new one over it', async () => {
-    const box = await sandbox();
+  it('copies the old key aside and renames the new one over it', () => {
+    const box = sandbox();
     const shimDir = createShimDir({ log: box.log });
     fileOpShims(shimDir);
     const result = run(box, ['--yes'], {}, shimDir);
     expect(result.status).toBe(0);
 
     const log = readShimLog(box.log);
-    expect(log).toContain(`cp ${box.keyPath} ${backupPath(box)}`);
+    const backup = backupPath(box);
+    // The backup arrives by renaming a finished sibling, never by copying onto its own path: `cp`
+    // truncates before it writes, so a kill mid-copy would leave a partial file exactly where the
+    // resume path treats existence as completeness.
+    expect(log).toContain(`cp ${box.keyPath} ${backup}.tmp`);
+    expect(log).toContain(`mv ${backup}.tmp ${backup}`);
+    expect(log.some((line) => line === `cp ${box.keyPath} ${backup}`)).toBe(false);
+    // The current key is never moved away, so the key path is never empty.
     expect(log).toContain(`mv ${box.newKeyPath} ${box.keyPath}`);
     expect(log.some((line) => line.startsWith(`mv ${box.keyPath} `))).toBe(false);
-    expect(log.indexOf(`cp ${box.keyPath} ${backupPath(box)}`)).toBeLessThan(
+    expect(log.indexOf(`mv ${backup}.tmp ${backup}`)).toBeLessThan(
       log.indexOf(`mv ${box.newKeyPath} ${box.keyPath}`),
     );
   });
@@ -173,8 +180,8 @@ describe('rotate-key.sh --yes failure', () => {
    * A rollback the helper completed (exit 3) puts every row back under the current key, so the
    * half-written `.new` and the rotation state can both go.
    */
-  it('leaves the current key unchanged and removes .new after a completed rollback', async () => {
-    const box = await sandbox();
+  it('leaves the current key unchanged and removes .new after a completed rollback', () => {
+    const box = sandbox();
     const result = run(box, ['--yes'], { AH_SHIM_ROTATE_RC: '3' });
     expect(result.status).toBe(3);
     expect(result.stderr).toContain('Rotation aborted');
@@ -187,8 +194,8 @@ describe('rotate-key.sh --yes failure', () => {
    * A strict run that aborted (exit 2) wrote nothing to a store that was wholly under the current
    * key, so the same cleanup is safe.
    */
-  it('removes .new after a strict abort', async () => {
-    const box = await sandbox();
+  it('removes .new after a strict abort', () => {
+    const box = sandbox();
     const result = run(box, ['--yes'], { AH_SHIM_ROTATE_RC: '2' });
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('Rotation aborted');
@@ -201,8 +208,8 @@ describe('rotate-key.sh --yes failure', () => {
    * Deleting that file would destroy those credentials, so it is kept, the state stays at
    * `reencrypting` for the resume to read, and the operator is told both key files now matter.
    */
-  it('keeps .new and names both files when the rollback itself failed', async () => {
-    const box = await sandbox();
+  it('keeps .new and names both files when the rollback itself failed', () => {
+    const box = sandbox();
     const result = run(box, ['--yes'], { AH_SHIM_ROTATE_RC: '4' });
     expect(result.status).toBe(4);
     expect(result.stderr).toContain('KEEP BOTH');
@@ -218,8 +225,8 @@ describe('rotate-key.sh --yes failure', () => {
    * recorded phase sends the operator to `--resume`, which opens each row with whichever key
    * authenticates it.
    */
-  it('keeps both key files when the helper died without reporting', async () => {
-    const box = await sandbox();
+  it('keeps both key files when the helper died without reporting', () => {
+    const box = sandbox();
     const result = run(box, ['--yes'], { AH_SHIM_ROTATE_RC: '137' });
     expect(result.status).toBe(137);
     expect(result.stderr).toContain('KEEP BOTH');
@@ -232,8 +239,8 @@ describe('rotate-key.sh --yes failure', () => {
    * A salvaging resume that aborts cannot claim the store is intact: rows may still be sealed
    * under `.new` from the run it was resuming, so the file stays.
    */
-  it('keeps .new when a salvaging resume aborts', async () => {
-    const box = await sandbox();
+  it('keeps .new when a salvaging resume aborts', () => {
+    const box = sandbox();
     writeFileSync(box.newKeyPath, PENDING_KEY);
     writeState(box, 'reencrypting');
     const result = run(box, ['--yes', '--resume'], { AH_SHIM_ROTATE_RC: '2' });
@@ -248,8 +255,8 @@ describe('rotate-key.sh --yes failure', () => {
    * still resolve to a single command instead of being split into a missing executable and a
    * stray argument.
    */
-  it('runs a helper override whose path contains a space', async () => {
-    const box = await sandbox();
+  it('runs a helper override whose path contains a space', () => {
+    const box = sandbox();
     const shimDir = createShimDir({ log: box.log });
     const helper = writeExtraShim(
       shimDir,
@@ -277,8 +284,8 @@ describe('rotate-key.sh usage', () => {
   /**
    * An unrecognised flag exits 2 with a usage line.
    */
-  it('rejects an unknown flag', async () => {
-    const box = await sandbox();
+  it('rejects an unknown flag', () => {
+    const box = sandbox();
     const shimDir = createShimDir({ log: box.log });
     const result = spawnScript(scriptPath, {
       shimDir,
