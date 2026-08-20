@@ -1,13 +1,19 @@
 /**
- * Build step: rewrites relative ".ts" specifiers to ".js" across the emitted declaration graph.
+ * Emit step: rewrites relative ".ts" specifiers to ".js" across the emitted declaration graph.
  *
- * Layer: tooling (manual entry point for `tsx`, run by `packages/core`'s `build` script right
- * after `tsc -b` emits `dist`; never imported by application code).
+ * Layer: tooling (entry point for `tsx`, exposed as this package's `declarations:rewrite` script;
+ * never imported by application code).
+ *
+ * `tsc -b` emits declarations for every `composite` project it builds, so it produces `dist`
+ * whether it was invoked to build or merely to type-check. This rewrite therefore belongs to
+ * `tsc -b` itself rather than to any one script: every `typecheck` and `build` script in the
+ * repository whose `tsc -b` can reach this package runs it immediately afterwards, so no
+ * invocation can leave a half-finished `dist` behind.
  *
  * The rewrite itself is the pure transform in `../src/config/declaration-specifiers.ts` — see
  * that module for why the rewrite is needed. This script supplies the file-system side of it:
- * walk `dist`, apply the transform to every `.d.ts` file, and fail the build loudly if anything is
- * still unrewritten afterwards.
+ * walk `dist`, apply the transform to every `.d.ts` file, and fail loudly if anything is still
+ * unrewritten afterwards.
  *
  * Idempotent: a file whose content does not change is left untouched on disk, so running this
  * script twice in a row performs no writes on the second run.

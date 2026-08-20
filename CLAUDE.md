@@ -29,7 +29,7 @@ in fresh workspaces, and Settings stores encrypted credentials (GitHub PAT, Open
 | `pnpm build`                            | Build every workspace                                                    |
 | `pnpm lint` / `pnpm lint:fix`           | ESLint over the monorepo                                                 |
 | `pnpm format` / `format:check`          | Prettier                                                                 |
-| `pnpm typecheck`                        | `tsc -b` over all project references                                     |
+| `pnpm typecheck`                        | `tsc -b` over all project references (emits, so it also rewrites `dist`) |
 | `pnpm test`                             | Unit suites of every workspace (100 % coverage thresholds)               |
 | `pnpm test:integration`                 | `@db` / `@redis` / `@docker` suites against the compose instance         |
 | `pnpm test:e2e`                         | Playwright                                                               |
@@ -74,6 +74,15 @@ Shared files are append-only, one line per lane: each package's `vitest.config.t
 `coverage.include`, `packages/core/package.json` `exports`, the per-folder barrels re-exported by
 `packages/core/src/index.ts` (the root barrel itself is frozen), `apps/web/src/mocks/handlers.ts`.
 Contracts in `packages/core` are frozen after W0; changes are additive, one-file PRs.
+
+Every project reference is `composite`, so `tsc -b` **emits** — `typecheck` is a build with the
+output kept. `packages/core` writes relative `.ts` specifiers in its source (so the Next.js dev
+server resolves the package from source) and TypeScript does not rewrite those when it emits
+declarations, so a post-step fixes them up. That post-step is `packages/core`'s
+`declarations:rewrite` script, and **every** script that runs `tsc -b` where it can reach
+`packages/core` chains it: the root `typecheck`, and `build`/`typecheck` in `packages/core`,
+`apps/worker` and `packages/agent-runtime`. A new script that runs `tsc -b` must chain it too, or
+it leaves a `dist` whose declarations name `.ts` files that do not exist.
 
 `packages/core` is published with `sideEffects: false`: client components import the contracts
 from `@agent-hangar/core` and the bundler prunes the Node-only modules (Prisma, pg, pino,

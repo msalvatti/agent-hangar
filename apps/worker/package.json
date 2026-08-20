@@ -6,10 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --conditions=development src/main.ts",
-    "build": "tsc -b",
+    "build": "tsc -b && pnpm --filter @agent-hangar/core declarations:rewrite",
     "start": "node dist/main.js",
     "lint": "eslint .",
-    "typecheck": "tsc -b",
+    "typecheck": "tsc -b && pnpm --filter @agent-hangar/core declarations:rewrite",
     "test": "vitest run"
   },
   "dependencies": {

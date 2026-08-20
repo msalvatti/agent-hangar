@@ -17,7 +17,7 @@
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc -b",
+    "typecheck": "tsc -b && pnpm --filter @agent-hangar/core declarations:rewrite",
     "test": "pnpm -r --if-present test && vitest run --project scripts",
     "test:integration": "pnpm -r --if-present test:integration",
     "test:e2e": "pnpm --filter web test:e2e",
