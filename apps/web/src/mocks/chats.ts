@@ -65,7 +65,7 @@ const createChat = http.post(routes.chats, async ({ request }) => {
 
   const message: MessageView = {
     id: nextId(),
-    turnId,
+    turnId: null,
     seq: 1,
     role: 'USER',
     content: prompt,
@@ -168,7 +168,7 @@ const postMessage = http.post(routes.chatMessages, async ({ params, request }) =
   const turnId = nextId();
   const message: MessageView = {
     id: nextId(),
-    turnId,
+    turnId: null,
     seq: entry.messages.length + 1,
     role: 'USER',
     content: parsed.data.prompt,

@@ -21,6 +21,7 @@ import {
   ensureWorkspaceDecision,
   isTerminalRunStatus,
   LiveWorkspaceExistsError,
+  pushedNoticeText,
   runTurnPayload,
 } from '@agent-hangar/core';
 import type {
@@ -252,6 +253,34 @@ async function ensureWorkspace(
 }
 
 /**
+ * Records a push: as the hints a later turn restores from, and as a line of the transcript.
+ *
+ * The hints carry only the newest push, and the transcript has to show every one of them where it
+ * happened. A push is also the one thing a turn does that outlives its workspace — the commit it
+ * names is in the remote repository long after the container is gone — so it earns a row.
+ *
+ * @param deps - Repositories.
+ * @param context - The turn being run.
+ * @param event - The push, already redacted.
+ */
+async function recordPush(
+  deps: ProcessorDeps,
+  context: TurnContext,
+  event: Extract<AgentEvent, { type: 'git.pushed' }>,
+): Promise<void> {
+  await deps.repos.chats.updateRestoreHints(context.chat.id, {
+    workBranch: event.branch,
+    lastPushedSha: event.sha,
+  });
+  await deps.repos.messages.append(
+    context.chat.id,
+    'SYSTEM',
+    pushedNoticeText(event.branch, event.sha),
+    context.turnId,
+  );
+}
+
+/**
  * Builds the persistence half of the event stream.
  *
  * Every event it receives has already been redacted and published, so this function is purely
@@ -287,10 +316,7 @@ function makeTurnSink(
           await recorder.finish(event);
           break;
         case 'git.pushed':
-          await deps.repos.chats.updateRestoreHints(context.chat.id, {
-            workBranch: event.branch,
-            lastPushedSha: event.sha,
-          });
+          await recordPush(deps, context, event);
           break;
         case 'turn.completed':
           await completeTurn(deps, context, recorder, event);
@@ -315,8 +341,11 @@ function makeTurnSink(
         case 'assistant.message':
         case 'heartbeat':
         case 'protocol.error':
-          // Published and shown, but nothing about them belongs in a row: the transcript is
-          // rebuilt from the messages and the tool-call log, not from the live stream.
+          // Published and shown, but nothing about them belongs in a row. They all describe the
+          // container while it is being set up or while the model is thinking, and the container
+          // does not outlive the turn; what the turn actually did is in its tool calls and its
+          // answer. Keeping them would also cost the model a line of history per turn, since a
+          // stored SYSTEM message is part of the window a later turn carries.
           break;
       }
     },

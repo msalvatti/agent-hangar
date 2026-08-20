@@ -105,6 +105,41 @@ describe('mapRunDetail', () => {
     );
   });
 
+  /**
+   * The row shows the stored head and the tool's full size, and the difference between the two is
+   * what makes it admit it was cut. Reporting the full size as the shown size closed that gap, so
+   * a result the runtime truncated claimed to be complete.
+   */
+  it('reports the shown output as the size of the stored head', () => {
+    const cut = mapRunDetail(
+      detail({}, [{ ...toolCall, resultHead: 'All good.', resultBytes: 5_000 }]),
+    );
+    expect(cut.items.find((item) => item.kind === 'tool')).toMatchObject({
+      shownBytes: 9,
+      totalBytes: 5_000,
+    });
+
+    const whole = mapRunDetail(detail({}, [toolCall]));
+    expect(whole.items.find((item) => item.kind === 'tool')).toMatchObject({
+      shownBytes: 9,
+      totalBytes: 9,
+    });
+  });
+
+  /**
+   * Nothing persists the "Turn cancelled." line the stream pushes, but the run's own status is the
+   * same fact, so the reopened drawer says what the live one said.
+   */
+  it('rebuilds the cancellation notice from a stopped run', () => {
+    const result = mapRunDetail(detail({ status: 'CANCELLED' }));
+    expect(result.items).toContainEqual({
+      kind: 'notice',
+      id: 'run-cancelled',
+      tone: 'warning',
+      text: 'Turn cancelled.',
+    });
+  });
+
   /** A non-null output maps to a finalized assistant item. */
   it('maps output to an assistant item', () => {
     const result = mapRunDetail({ ...detail(), output: 'Done.' });

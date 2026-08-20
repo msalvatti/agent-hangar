@@ -6,10 +6,10 @@
  * No wall-clock reads happen here: every timestamp comes in through the action's `now` field so
  * the fold stays deterministic and trivially testable with a fake clock.
  */
-import { agentEventSchema } from '@agent-hangar/core';
-import type { AgentEvent, AgentEventType } from '@agent-hangar/core';
+import { agentEventSchema, pushedNoticeText, shortSha } from '@agent-hangar/core';
+import type { AgentEvent, AgentEventOf, AgentEventType } from '@agent-hangar/core';
 
-import { shortSha } from './lib/format';
+import { utf8ByteLength } from './lib/format';
 import type {
   AssistantTranscriptItem,
   NoticeTone,
@@ -20,7 +20,7 @@ import type {
   TranscriptItem,
   TranscriptState,
 } from './types';
-import { PREPARE_NOTICE_ID, TOOL_OUTPUT_DISPLAY_LIMIT_BYTES } from './types';
+import { PREPARE_NOTICE_ID, TOOL_OUTPUT_DISPLAY_LIMIT_BYTES, TURN_CANCELLED_NOTICE } from './types';
 
 /** Discriminator values of every `AgentEvent` variant, derived from the Zod schema itself. */
 export const AGENT_EVENT_TYPES: readonly AgentEventType[] = agentEventSchema.options.map(
@@ -118,10 +118,6 @@ function findTool(
   return { index, item: items[index] as ToolTranscriptItem };
 }
 
-function byteLength(text: string): number {
-  return new TextEncoder().encode(text).length;
-}
-
 /**
  * Appends a delta to a tool item's stdout/stderr, truncating so the item's `shownBytes` never
  * exceeds {@link TOOL_OUTPUT_DISPLAY_LIMIT_BYTES}.
@@ -144,7 +140,7 @@ function appendToolOutput(
   const encoded = encoder.encode(text);
   const kept =
     encoded.length <= budget ? text : decoder.decode(encoded.slice(0, budget), { stream: true });
-  const keptBytes = byteLength(kept);
+  const keptBytes = utf8ByteLength(kept);
   return {
     ...item,
     [stream]: item[stream] + kept,
@@ -166,6 +162,71 @@ function toolCallStatusOf(status: 'SUCCEEDED' | 'FAILED' | 'TIMED_OUT'): ToolCal
     case 'TIMED_OUT':
       return 'timed_out';
   }
+}
+
+/**
+ * Opens the row for a tool call the model has just made.
+ *
+ * A reload rebuilds the running turn from what the database holds and then reopens the stream,
+ * which replays that turn from its first event, so a call already on screen arrives again. It is
+ * the same call: the worker stores the call id the runtime issued, so both roads carry one
+ * identifier — the one {@link findTool} matches on for every later event of that call. The seeded
+ * row is kept rather than replaced, because it carries the start time persistence recorded while
+ * the event carries the moment of the reload.
+ *
+ * @param state - Current state.
+ * @param event - The call the model made.
+ * @param now - Clock of this action.
+ * @returns The state with the call's row open.
+ */
+function openToolCall(
+  state: TranscriptState,
+  event: AgentEventOf<'tool.call'>,
+  now: number,
+): TranscriptState {
+  const withFinalizedAssistant = finalizeStreamingAssistant(state.items);
+  if (findTool(withFinalizedAssistant, event.callId) !== null) {
+    return { ...state, items: withFinalizedAssistant };
+  }
+  const created: ToolTranscriptItem = {
+    kind: 'tool',
+    id: `tool-${event.callId}`,
+    callId: event.callId,
+    name: event.name,
+    args: event.args,
+    seq: event.seq,
+    status: 'running',
+    stdout: '',
+    stderr: '',
+    shownBytes: 0,
+    totalBytes: null,
+    exitCode: null,
+    durationMs: null,
+    startedAt: now,
+  };
+  return { ...state, items: [...withFinalizedAssistant, created] };
+}
+
+/**
+ * Records where the agent pushed.
+ *
+ * The same replay reaches here, and these two roads cannot agree on an id: the worker stores this
+ * line as a `SYSTEM` message, so a reloaded transcript carries it under that message's own id
+ * while the event would add it under the sha. What identifies a push is the fact it states — one
+ * branch at one commit — and that is exactly what the line says, so a line already saying it is
+ * this push. Matched here rather than inside {@link pushNotice}, because a repeated
+ * `protocol.error` is a second malformed event and not a second report of one.
+ *
+ * @param state - Current state.
+ * @param event - The push.
+ * @returns The state with the push reported once.
+ */
+function recordPush(state: TranscriptState, event: AgentEventOf<'git.pushed'>): TranscriptState {
+  const text = pushedNoticeText(event.branch, event.sha);
+  if (state.items.some((item) => item.kind === 'notice' && item.text === text)) {
+    return state;
+  }
+  return { ...state, items: pushNotice(state.items, `git-${event.sha}`, 'success', text) };
 }
 
 function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): TranscriptState {
@@ -226,26 +287,8 @@ function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): Tr
       return { ...state, items: [...state.items, created] };
     }
 
-    case 'tool.call': {
-      const withFinalizedAssistant = finalizeStreamingAssistant(state.items);
-      const created: ToolTranscriptItem = {
-        kind: 'tool',
-        id: `tool-${event.callId}`,
-        callId: event.callId,
-        name: event.name,
-        args: event.args,
-        seq: event.seq,
-        status: 'running',
-        stdout: '',
-        stderr: '',
-        shownBytes: 0,
-        totalBytes: null,
-        exitCode: null,
-        durationMs: null,
-        startedAt: now,
-      };
-      return { ...state, items: [...withFinalizedAssistant, created] };
-    }
+    case 'tool.call':
+      return openToolCall(state, event, now);
 
     case 'tool.output.delta': {
       const found = findTool(state.items, event.callId);
@@ -287,10 +330,8 @@ function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): Tr
       return { ...state, items: replaceAt(state.items, found.index, updated) };
     }
 
-    case 'git.pushed': {
-      const text = `Pushed ${event.branch} @ ${shortSha(event.sha)}`;
-      return { ...state, items: pushNotice(state.items, `git-${event.sha}`, 'success', text) };
-    }
+    case 'git.pushed':
+      return recordPush(state, event);
 
     case 'heartbeat':
       return state;
@@ -357,7 +398,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): Tr
           finalizeStreamingAssistant(state.items),
           `cancel-${state.step}`,
           'warning',
-          'Turn cancelled.',
+          TURN_CANCELLED_NOTICE,
         ),
       };
 

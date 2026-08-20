@@ -39,7 +39,7 @@ describe('ToolCallRow', () => {
     vi.useRealTimers();
   });
 
-  // Collapsed-row summaries per tool, including the unknown-shape fallback.
+  /** Collapsed-row summaries per tool, including the unknown-shape fallback. */
   it.each([
     ['run_shell', { command: 'rg -n "login" tests/' }, 'rg -n "login" tests/'],
     [
@@ -54,13 +54,13 @@ describe('ToolCallRow', () => {
     expect(screen.getByText(expected)).toBeInTheDocument();
   });
 
-  // An unrecognized shape falls back to a JSON dump rather than throwing.
+  /** An unrecognized shape falls back to a JSON dump rather than throwing. */
   it('falls back to a JSON summary for an unexpected shape', () => {
     render(<ToolCallRow item={makeItem({ name: 'run_shell', args: { odd: true } })} />);
     expect(screen.getByText('{ "odd": true }')).toBeInTheDocument();
   });
 
-  // A secret shape embedded in the arguments never reaches the DOM, in the summary or expanded.
+  /** A secret shape embedded in the arguments never reaches the DOM, in the summary or expanded. */
   it('never renders a canary secret from the arguments', async () => {
     const user = userEvent.setup();
     render(
@@ -72,8 +72,10 @@ describe('ToolCallRow', () => {
     expect(document.body.textContent).not.toContain(GITHUB_CANARY);
   });
 
-  // A secret shape embedded in tool output (stdout/stderr) is masked in the expanded view and in
-  // the value the copy button writes — defence in depth even though the worker already redacts.
+  /**
+   * A secret shape embedded in tool output (stdout/stderr) is masked in the expanded view and in
+   * the value the copy button writes — defence in depth even though the worker already redacts.
+   */
   it('never renders a canary secret from stdout/stderr, and masks the copied value', async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     const user = userEvent.setup();
@@ -99,7 +101,7 @@ describe('ToolCallRow', () => {
     expect(copied).not.toContain(OPENAI_CANARY);
   });
 
-  // Running: pulsing dot, live elapsed time, and a Stop button that fires onStop.
+  /** Running: pulsing dot, live elapsed time, and a Stop button that fires onStop. */
   it('shows a live elapsed time while running and fires onStop', async () => {
     vi.useFakeTimers();
     vi.setSystemTime(0);
@@ -117,13 +119,13 @@ describe('ToolCallRow', () => {
     expect(onStop).toHaveBeenCalledTimes(1);
   });
 
-  // No Stop button renders when onStop is not provided.
+  /** No Stop button renders when onStop is not provided. */
   it('renders no Stop button without onStop', () => {
     render(<ToolCallRow item={makeItem({ status: 'running' })} />);
     expect(screen.queryByRole('button', { name: 'Stop tool' })).toBeNull();
   });
 
-  // Succeeded: exit code and duration.
+  /** Succeeded: exit code and duration. */
   it('shows exit code and duration when succeeded', () => {
     render(
       <ToolCallRow
@@ -133,7 +135,7 @@ describe('ToolCallRow', () => {
     expect(screen.getByText('exit 0 · 0.3 s')).toBeInTheDocument();
   });
 
-  // A null durationMs (defensive: the field is nullable in the model) renders as 0.0 s.
+  /** A null durationMs (defensive: the field is nullable in the model) renders as 0.0 s. */
   it('shows 0.0 s when durationMs is null and succeeded', () => {
     render(
       <ToolCallRow
@@ -143,7 +145,7 @@ describe('ToolCallRow', () => {
     expect(screen.getByText('exit 0 · 0.0 s')).toBeInTheDocument();
   });
 
-  // write_file also shows the byte count once succeeded.
+  /** write_file also shows the byte count once succeeded. */
   it('shows the byte count for a succeeded write_file', () => {
     render(
       <ToolCallRow
@@ -160,27 +162,40 @@ describe('ToolCallRow', () => {
     expect(screen.getByText('exit 0 · 0.1 s · 2.0 KB')).toBeInTheDocument();
   });
 
-  // A null durationMs when failed also renders as 0.0 s.
+  /** A null durationMs when failed also renders as 0.0 s. */
   it('shows 0.0 s when durationMs is null and failed', () => {
     render(<ToolCallRow item={makeItem({ status: 'failed', exitCode: 1, durationMs: null })} />);
     expect(screen.getByText('exit 1 · 0.0 s')).toBeInTheDocument();
   });
 
-  // Failed: exit code + duration in the destructive colour.
+  /** Failed: exit code + duration in the destructive colour. */
   it('shows a destructive exit code and duration when failed', () => {
     render(<ToolCallRow item={makeItem({ status: 'failed', exitCode: 1, durationMs: 500 })} />);
     const meta = screen.getByText('exit 1 · 0.5 s');
     expect(meta).toHaveClass('text-destructive');
   });
 
-  // Timed out: destructive "timed out" text, no exit code.
+  /**
+   * A command killed by a signal — which is what stopping a turn does — reports no exit code, and a
+   * file tool never had a process at all. The word `exit` in front of a blank said nothing.
+   */
+  it.each(['succeeded', 'failed'] as const)(
+    'shows the duration alone when %s without an exit code',
+    (status) => {
+      render(<ToolCallRow item={makeItem({ status, exitCode: null, durationMs: 17_300 })} />);
+      expect(screen.getByText('17.3 s')).toBeInTheDocument();
+      expect(screen.queryByText(/exit/)).toBeNull();
+    },
+  );
+
+  /** Timed out: destructive "timed out" text, no exit code. */
   it('shows "timed out" in the destructive colour when timed out', () => {
     render(<ToolCallRow item={makeItem({ status: 'timed_out' })} />);
     const meta = screen.getByText('timed out');
     expect(meta).toHaveClass('text-destructive');
   });
 
-  // Enter and Space both toggle the row via native button semantics.
+  /** Enter and Space both toggle the row via native button semantics. */
   it('toggles via keyboard (Enter and Space)', async () => {
     const user = userEvent.setup();
     render(<ToolCallRow item={makeItem({ stdout: 'ok\n' })} />);
@@ -193,7 +208,7 @@ describe('ToolCallRow', () => {
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
   });
 
-  // defaultOpen renders the row already expanded.
+  /** defaultOpen renders the row already expanded. */
   it('starts expanded when defaultOpen is true', () => {
     render(<ToolCallRow item={makeItem({ stdout: 'ok\n' })} defaultOpen />);
     expect(screen.getByRole('button', { name: /run_shell/ })).toHaveAttribute(
@@ -202,7 +217,7 @@ describe('ToolCallRow', () => {
     );
   });
 
-  // Expanded content shows the arguments and the combined stdout/stderr output.
+  /** Expanded content shows the arguments and the combined stdout/stderr output. */
   it('shows arguments and output when expanded', async () => {
     const user = userEvent.setup();
     render(
@@ -218,7 +233,7 @@ describe('ToolCallRow', () => {
     expect(screen.getByText(/"command": "echo hi"/)).toBeInTheDocument();
   });
 
-  // Empty output renders "No output." instead of an empty log region.
+  /** Empty output renders "No output." instead of an empty log region. */
   it('shows "No output." when stdout and stderr are both empty', async () => {
     const user = userEvent.setup();
     render(<ToolCallRow item={makeItem()} />);
@@ -227,7 +242,7 @@ describe('ToolCallRow', () => {
     expect(screen.queryByRole('log')).toBeNull();
   });
 
-  // The truncation footer appears only when totalBytes exceeds shownBytes.
+  /** The truncation footer appears only when totalBytes exceeds shownBytes. */
   it('shows the truncation footer when totalBytes exceeds shownBytes', async () => {
     const user = userEvent.setup();
     render(
@@ -243,7 +258,7 @@ describe('ToolCallRow', () => {
     expect(screen.getByText(/truncated — /)).toBeInTheDocument();
   });
 
-  // No truncation footer when the full output is shown.
+  /** No truncation footer when the full output is shown. */
   it('shows no truncation footer when output was not capped', async () => {
     const user = userEvent.setup();
     render(<ToolCallRow item={makeItem({ stdout: 'hi\n', shownBytes: 3, totalBytes: 3 })} />);
@@ -253,9 +268,11 @@ describe('ToolCallRow', () => {
 });
 
 describe('ToolCallRow copy button', () => {
-  // The output copy button writes the combined stdout/stderr text. The clipboard mock is
-  // installed after userEvent.setup(): userEvent installs its own clipboard stub during setup
-  // (to support copy/paste simulation), which would otherwise shadow this one.
+  /**
+   * The output copy button writes the combined stdout/stderr text. The clipboard mock is installed
+   * after userEvent.setup(): userEvent installs its own clipboard stub during setup (to support
+   * copy/paste simulation), which would otherwise shadow this one.
+   */
   it('copies the output text', async () => {
     const user = userEvent.setup();
     render(<ToolCallRow item={makeItem({ stdout: 'out\n', stderr: 'err\n' })} />);

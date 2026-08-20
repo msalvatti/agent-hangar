@@ -3,13 +3,18 @@
  *
  * Layer: feature (lib).
  *
- * The API returns messages, turns and tool-call logs as separate lists; the transcript is one
- * ordered list. Rows are interleaved by turn, so a tool call always appears under the prompt that
- * triggered it, and the newest turn decides the phase the header pill shows.
+ * The API returns messages, turns and tool-call logs as three lists; the transcript is one ordered
+ * list. Nothing links a prompt to the turn it started — the message is written before the turn
+ * exists, so `Message.turnId` is null on every user message the database holds — and the rows a
+ * turn produces have no key back to the prompt either. What all three lists do carry is when each
+ * row happened, and the order they happened in is the order the transcript reads in: a tool call
+ * starts after the prompt that triggered it and before the answer that follows it, and a turn
+ * finishes after the last call it made. So the lists are merged on their own timestamps.
  */
-import { toolNameSchema } from '@agent-hangar/core';
+import { systemNoticeTone, toolNameSchema } from '@agent-hangar/core';
 import type { ChatDetail, MessageView, ToolCallView, TurnView } from '@agent-hangar/core';
 
+import { TURN_CANCELLED_NOTICE, utf8ByteLength } from '@/shared/transcript';
 import type { ToolCallStatus, TranscriptItem, TurnPhase } from '@/shared/transcript';
 
 /** Turn status as persisted, mapped onto the transcript's phase. */
@@ -44,6 +49,12 @@ export interface MappedChat {
   lastPrompt: string | null;
 }
 
+/** A transcript item and the instant it belongs at, before the lists are merged. */
+interface TimedItem {
+  at: number;
+  item: TranscriptItem;
+}
+
 /**
  * Converts one persisted message into a transcript item.
  *
@@ -65,7 +76,12 @@ function toMessageItem(message: MessageView): TranscriptItem | null {
         at: message.createdAt,
       };
     case 'SYSTEM':
-      return { kind: 'notice', id: message.id, tone: 'warning', text: message.content };
+      return {
+        kind: 'notice',
+        id: message.id,
+        tone: systemNoticeTone(message.content),
+        text: message.content,
+      };
     case 'TOOL_SUMMARY':
       return null;
   }
@@ -90,12 +106,62 @@ function toToolItem(call: ToolCallView): TranscriptItem {
     status: TOOL_STATUS[call.status],
     stdout: head,
     stderr: '',
-    shownBytes: head.length,
+    // The head is what is on screen and `resultBytes` is what the tool produced, so the two
+    // together are what decides whether the row admits to having been cut. Measured in UTF-8
+    // bytes because that is the unit the runtime capped the head in.
+    shownBytes: utf8ByteLength(head),
     totalBytes: call.resultBytes,
     exitCode: call.exitCode,
     durationMs: call.durationMs,
     startedAt: Date.parse(call.startedAt),
   };
+}
+
+/**
+ * Reports whether a turn ended because the operator stopped it.
+ *
+ * A turn that never ran also ends as `CANCELLED`: the API gives a claim on the chat back that way
+ * when two messages raced, and records why in `error`. Nobody watched that turn, so it gets no
+ * notice; a cancellation the operator asked for carries no error at all.
+ *
+ * @param turn - The persisted turn.
+ * @returns `true` when the turn was stopped while it was somebody's turn to watch.
+ */
+function wasStopped(turn: TurnView): boolean {
+  return turn.status === 'CANCELLED' && turn.error === null;
+}
+
+/**
+ * Places every displayed row on the chat's one timeline.
+ *
+ * The sort is stable and the three lists are concatenated in the order a row can cause the next
+ * one: a message, then the tool calls it set off, then the notice that says the turn was stopped.
+ * Rows that share a millisecond therefore keep that order, and calls of one turn keep the `seq`
+ * order the API listed them in.
+ *
+ * @param messages - The chat's messages, already in `seq` order.
+ * @param detail - The `GET /api/chats/:id` payload.
+ * @returns Every item with the instant it belongs at, oldest first.
+ */
+function timedItems(messages: readonly MessageView[], detail: ChatDetail): TimedItem[] {
+  const fromMessages = messages.flatMap((message) => {
+    const item = toMessageItem(message);
+    return item === null ? [] : [{ at: Date.parse(message.createdAt), item }];
+  });
+  const fromCalls = detail.toolCalls.map((call) => ({
+    at: Date.parse(call.startedAt),
+    item: toToolItem(call),
+  }));
+  const fromStops = detail.turns.filter(wasStopped).map((turn) => ({
+    at: Date.parse(turn.finishedAt ?? turn.queuedAt),
+    item: {
+      kind: 'notice' as const,
+      id: `${turn.id}-cancelled`,
+      tone: 'warning' as const,
+      text: TURN_CANCELLED_NOTICE,
+    },
+  }));
+  return [...fromMessages, ...fromCalls, ...fromStops].sort((left, right) => left.at - right.at);
 }
 
 /**
@@ -106,23 +172,7 @@ function toToolItem(call: ToolCallView): TranscriptItem {
  */
 export function mapChatDetail(detail: ChatDetail): MappedChat {
   const messages = [...detail.messages].sort((left, right) => left.seq - right.seq);
-  const callsByTurn = new Map<string | null, ToolCallView[]>();
-  for (const call of [...detail.toolCalls].sort((left, right) => left.seq - right.seq)) {
-    callsByTurn.set(call.turnId, [...(callsByTurn.get(call.turnId) ?? []), call]);
-  }
-
-  const items: TranscriptItem[] = [];
-  const emittedTurns = new Set<string>();
-  for (const message of messages) {
-    const item = toMessageItem(message);
-    if (item !== null) {
-      items.push(item);
-    }
-    if (message.turnId !== null && !emittedTurns.has(message.turnId) && message.role === 'USER') {
-      emittedTurns.add(message.turnId);
-      items.push(...(callsByTurn.get(message.turnId) ?? []).map(toToolItem));
-    }
-  }
+  const items: TranscriptItem[] = timedItems(messages, detail).map((entry) => entry.item);
 
   const latest = detail.turns.at(-1);
   const phase = latest === undefined ? 'idle' : PHASE_BY_TURN_STATUS[latest.status];

@@ -20,7 +20,13 @@ import type {
   WorkspaceView,
 } from '@agent-hangar/core';
 
-/** One chat's full detail, keyed by `chat.id` in {@link MockStore.chats}. */
+/**
+ * One chat's full detail, keyed by `chat.id` in {@link MockStore.chats}.
+ *
+ * A user message carries no `turnId`, as in the real database: the API writes the message and the
+ * turn as two rows and only the rows the worker writes afterwards name the turn. A mock that
+ * filled it in would let the app rely on a link that never arrives in production.
+ */
 export interface StoredChat {
   chat: ChatSummary;
   messages: MessageView[];
@@ -141,7 +147,7 @@ function seedChats(now: number): StoredChat[] {
       messages: [
         {
           id: 'msg-running-1',
-          turnId: 'turn-running-1',
+          turnId: null,
           seq: 1,
           role: 'USER',
           content: 'The login test is flaky on CI. Find out why and fix it.',
@@ -181,7 +187,7 @@ function seedChats(now: number): StoredChat[] {
       messages: [
         {
           id: 'msg-finished-1',
-          turnId: 'turn-finished-1',
+          turnId: null,
           seq: 1,
           role: 'USER',
           content: 'Add tests for the payment webhook handler.',
@@ -253,7 +259,7 @@ function seedChats(now: number): StoredChat[] {
       messages: [
         {
           id: 'msg-failed-1',
-          turnId: 'turn-failed-1',
+          turnId: null,
           seq: 1,
           role: 'USER',
           content: 'Walk me through how the caching layer invalidates stale entries.',
@@ -293,7 +299,7 @@ function seedChats(now: number): StoredChat[] {
       messages: [
         {
           id: 'msg-archived-1',
-          turnId: 'turn-archived-1',
+          turnId: null,
           seq: 1,
           role: 'USER',
           content: 'Refactor the queue consumer to use the shared retry helper.',
