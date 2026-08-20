@@ -27,6 +27,28 @@ describe('useChat', () => {
     expect(result.current.mapped).toBeUndefined();
   });
 
+  // Navigating from one chat to another keeps the hook mounted and only changes the id. Until the
+  // new chat arrives there is nothing to show for it: the previous chat's transcript belongs to
+  // the previous chat, and rendering it under the new id would attribute one conversation's
+  // messages to another.
+  it('shows nothing from the previous chat while the next one loads', async () => {
+    const { result, rerender } = renderHook(({ id }: { id: string }) => useChat(id), {
+      initialProps: { id: 'chat-finished' },
+    });
+    await waitFor(() => {
+      expect(result.current.chat?.id).toBe('chat-finished');
+    });
+
+    rerender({ id: 'chat-running' });
+    expect(result.current.chat).toBeUndefined();
+    expect(result.current.mapped).toBeUndefined();
+    expect(result.current.status).toBe('loading');
+
+    await waitFor(() => {
+      expect(result.current.chat?.id).toBe('chat-running');
+    });
+  });
+
   // An unknown id is the one failure with its own screen.
   it('reports an unknown chat as not found', async () => {
     const { result } = renderHook(() => useChat('chat-missing'));

@@ -45,7 +45,10 @@ describe('RepoPicker', () => {
     expect(screen.queryByLabelText('Search repositories')).toBeNull();
   });
 
-  // Typing filters the list via the debounced query against the mock API.
+  // Typing filters the list via the debounced query against the mock API. The list is asserted
+  // once the new query's results have arrived: the previous query's results are dropped the moment
+  // the search text changes (they answer a different question), so between the two the palette
+  // shows its loading skeleton rather than a stale list.
   it('filters the list by the search query', async () => {
     const user = userEvent.setup();
     render(<RepoPicker value={null} onChange={vi.fn()} />);
@@ -54,9 +57,9 @@ describe('RepoPicker', () => {
 
     await user.type(screen.getByLabelText('Search repositories'), 'web');
     await waitFor(() => {
+      expect(screen.getByText('acme/web')).toBeInTheDocument();
       expect(screen.queryByText('acme/api')).toBeNull();
     });
-    expect(screen.getByText('acme/web')).toBeInTheDocument();
   });
 
   // A repo already pushed to "recent" appears in its own group, and selecting it from there works

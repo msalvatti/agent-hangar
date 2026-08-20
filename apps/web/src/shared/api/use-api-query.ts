@@ -8,6 +8,12 @@
  * the mocked/real API needs the same handful of behaviours (loading/error state, invalidate-by-
  * key, interval refetch, abort on unmount). This hook is that shared minimum; it is not a general
  * cache and keeps no data between mounts.
+ *
+ * Status, data and error are one piece of state stamped with the key they describe, and the key is
+ * compared on every render: a result is visible only while it still belongs to the key being asked
+ * about. Holding them apart from the key would publish the previous key's result under the new key
+ * for as long as the new load takes — a caller that reacts to `data` (auto-selecting a default, for
+ * instance) would then act on data fetched for something else.
  */
 'use client';
 
@@ -57,6 +63,37 @@ export interface UseApiQueryResult<T> {
   isRefetching: boolean;
 }
 
+/**
+ * Everything the hook publishes, plus the key it was produced for. The key travels with the values
+ * so a render can tell whether they still describe the key being asked about.
+ */
+interface QueryState<T> {
+  /** `JSON.stringify(key)` of the query these values belong to. */
+  keyString: string;
+  status: UseApiQueryResult<T>['status'];
+  data: T | undefined;
+  error: Error | undefined;
+  isRefetching: boolean;
+}
+
+/**
+ * State of a key with nothing loaded for it yet: `loading` while the query is enabled (a fetch is
+ * already scheduled for it), `idle` while it is not (nothing will fetch until it is enabled).
+ *
+ * @param keyString - The key these values describe.
+ * @param enabled - Whether the query fetches for this key.
+ * @returns The empty state for that key.
+ */
+function unloadedState<T>(keyString: string, enabled: boolean): QueryState<T> {
+  return {
+    keyString,
+    status: enabled ? 'loading' : 'idle',
+    data: undefined,
+    error: undefined,
+    isRefetching: false,
+  };
+}
+
 function toError(reason: unknown): Error {
   return reason instanceof Error ? reason : new Error(String(reason));
 }
@@ -68,6 +105,9 @@ function isAbortError(reason: unknown): boolean {
 /**
  * Fetches `loader` under `key`, caching nothing beyond the component's lifetime but registering
  * for {@link invalidateQueries} so other parts of the tree can trigger a refetch.
+ *
+ * Changing `key` discards the previous key's result immediately: the very next render reports
+ * `loading` (or `idle` while disabled) with no data and no error, never the outgoing key's.
  *
  * @param key - Cache key; queries with the same `JSON.stringify(key)` share invalidation.
  * @param loader - Fetches the data; receives an `AbortSignal` aborted on unmount/key change.
@@ -82,10 +122,12 @@ export function useApiQuery<T>(
   const { enabled = true, refetchIntervalMs, refetchOnWindowFocus = false } = options;
   const keyString = JSON.stringify(key);
 
-  const [status, setStatus] = useState<UseApiQueryResult<T>['status']>('idle');
-  const [data, setData] = useState<T | undefined>(undefined);
-  const [error, setError] = useState<Error | undefined>(undefined);
-  const [isRefetching, setIsRefetching] = useState(false);
+  const [stored, setStored] = useState<QueryState<T>>(() => unloadedState<T>(keyString, enabled));
+  // The stored values are still stamped with the outgoing key on the render that changes it — the
+  // effect that starts the new load has not run yet, and no state may be written during a render
+  // anyway. Reading through this comparison is what makes the change take effect at once: values
+  // belonging to another key are simply not published.
+  const state = stored.keyString === keyString ? stored : unloadedState<T>(keyString, enabled);
 
   // Callers typically pass a fresh closure every render (it captures render-scoped values like a
   // debounced query string). Reading through a ref — always the latest closure, but never a new
@@ -96,29 +138,49 @@ export function useApiQuery<T>(
     loaderRef.current = loader;
   });
 
-  const run = useCallback(async (signal: AbortSignal, isRefetch: boolean) => {
+  // `runKey` is the key this run fetches for. Every write but the first checks that the stored
+  // state still belongs to it, so a run whose key has been replaced can neither publish its result
+  // under the new key nor wipe what the new key has already loaded. Aborting covers the runs the
+  // effects own; `refetch()` outlives a key change, and this covers that one.
+  const run = useCallback(async (runKey: string, signal: AbortSignal, isRefetch: boolean) => {
+    const update = (change: (current: QueryState<T>) => QueryState<T>): void => {
+      setStored((previous) => (previous.keyString === runKey ? change(previous) : previous));
+    };
+
     if (isRefetch) {
-      setIsRefetching(true);
+      update((current) => ({ ...current, isRefetching: true }));
     } else {
-      setStatus('loading');
+      // A first load claims the key outright: it is the write that makes the stored state describe
+      // `runKey`, and it starts from nothing rather than from another key's data.
+      setStored(unloadedState<T>(runKey, true));
     }
     try {
       const result = await loaderRef.current(signal);
       if (signal.aborted) {
         return;
       }
-      setData(result);
-      setError(undefined);
-      setStatus('success');
+      update((current) => ({
+        ...current,
+        status: 'success',
+        data: result,
+        error: undefined,
+        isRefetching: false,
+      }));
     } catch (reason) {
       if (signal.aborted || isAbortError(reason)) {
         return;
       }
-      setError(toError(reason));
-      setStatus('error');
+      update((current) => ({
+        ...current,
+        status: 'error',
+        error: toError(reason),
+        isRefetching: false,
+      }));
     } finally {
       if (!signal.aborted) {
-        setIsRefetching(false);
+        // Returning `current` unchanged when nothing is in flight keeps the settled write above
+        // from being followed by a second, identical-but-new state object on every load.
+        update((current) => (current.isRefetching ? { ...current, isRefetching: false } : current));
       }
     }
   }, []);
@@ -133,12 +195,12 @@ export function useApiQuery<T>(
     // the same shape as the interval/focus refetches below — keeps this one consistent with them.
     queueMicrotask(() => {
       if (!controller.signal.aborted) {
-        void run(controller.signal, false);
+        void run(keyString, controller.signal, false);
       }
     });
 
     const refetchCallback = () => {
-      void run(controller.signal, true);
+      void run(keyString, controller.signal, true);
     };
     const subscribers = registry.get(keyString) ?? new Set<() => void>();
     subscribers.add(refetchCallback);
@@ -160,13 +222,13 @@ export function useApiQuery<T>(
     }
     const controller = new AbortController();
     const interval = setInterval(() => {
-      void run(controller.signal, true);
+      void run(keyString, controller.signal, true);
     }, refetchIntervalMs);
     return () => {
       clearInterval(interval);
       controller.abort();
     };
-  }, [enabled, refetchIntervalMs, run]);
+  }, [enabled, keyString, refetchIntervalMs, run]);
 
   useEffect(() => {
     if (!enabled || !refetchOnWindowFocus) {
@@ -174,19 +236,25 @@ export function useApiQuery<T>(
     }
     const controller = new AbortController();
     const handleFocus = () => {
-      void run(controller.signal, true);
+      void run(keyString, controller.signal, true);
     };
     window.addEventListener('focus', handleFocus);
     return () => {
       window.removeEventListener('focus', handleFocus);
       controller.abort();
     };
-  }, [enabled, refetchOnWindowFocus, run]);
+  }, [enabled, keyString, refetchOnWindowFocus, run]);
 
   const refetch = useCallback(async () => {
     const controller = new AbortController();
-    await run(controller.signal, true);
-  }, [run]);
+    await run(keyString, controller.signal, true);
+  }, [keyString, run]);
 
-  return { status, data, error, refetch, isRefetching };
+  return {
+    status: state.status,
+    data: state.data,
+    error: state.error,
+    refetch,
+    isRefetching: state.isRefetching,
+  };
 }

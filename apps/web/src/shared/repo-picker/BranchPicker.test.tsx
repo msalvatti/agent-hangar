@@ -5,11 +5,46 @@
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
+import { useState } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 
 import { server } from '@/mocks/server';
 
 import { BranchPicker } from './BranchPicker';
+
+/**
+ * Stands in for the screen that owns the repository and branch: it clears the branch whenever
+ * another repository is chosen, exactly as the new-chat screen does, and reports every branch the
+ * picker selects so a test can see which repository each selection came from.
+ *
+ * @param props - Callback invoked with each auto-selected or chosen branch.
+ */
+function RepoSwitchHarness({ onSelect }: { onSelect: (branch: string) => void }) {
+  const [repo, setRepo] = useState('acme/api');
+  const [branch, setBranch] = useState<string | null>(null);
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => {
+          setRepo('acme/docs');
+          setBranch(null);
+        }}
+      >
+        Switch repository
+      </button>
+      <BranchPicker
+        repo={repo}
+        value={branch}
+        onChange={(next) => {
+          setBranch(next);
+          onSelect(next);
+        }}
+      />
+    </>
+  );
+}
 
 describe('BranchPicker', () => {
   // Without a repo, the trigger is disabled and carries the explanatory title.
@@ -55,6 +90,31 @@ describe('BranchPicker', () => {
     await waitFor(() => {
       expect(secondOnChange).toHaveBeenCalledWith('main');
     });
+  });
+
+  // Switching repository must never leave a branch of the previous one selected. The default is
+  // picked from whatever branches are loaded, so a branch list that outlived its repository would
+  // be auto-selected for the new one — and once a value is set the picker stops defaulting, so the
+  // wrong branch would stay, sending the task to a branch of a repository nobody chose.
+  it('never selects a branch of the previous repository after switching', async () => {
+    const selections: string[] = [];
+    const user = userEvent.setup();
+    render(
+      <RepoSwitchHarness
+        onSelect={(branch) => {
+          selections.push(branch);
+        }}
+      />,
+    );
+    await waitFor(() => {
+      expect(selections).toEqual(['main']);
+    });
+
+    await user.click(screen.getByRole('button', { name: 'Switch repository' }));
+    await waitFor(() => {
+      expect(selections).toEqual(['main', 'master']);
+    });
+    expect(screen.getByRole('button', { name: /master/i })).toBeInTheDocument();
   });
 
   // Selecting another branch from the list calls onChange with it.

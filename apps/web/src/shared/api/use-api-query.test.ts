@@ -19,7 +19,9 @@ afterEach(() => {
 });
 
 describe('useApiQuery', () => {
-  // A successful loader transitions idle -> loading -> success with the resolved data.
+  // An enabled query reports "loading" from its very first render — the fetch is already
+  // scheduled, so "idle" (which callers render as "nothing is happening") would misdescribe it —
+  // and settles on "success" with the resolved data.
   it('transitions from loading to success', async () => {
     let resolveLoader: (value: string) => void = () => {
       // Replaced once the loader is invoked.
@@ -31,7 +33,7 @@ describe('useApiQuery', () => {
         }),
     );
     const { result } = renderHook(() => useApiQuery(['a'], loader));
-    expect(result.current.status).toBe('idle');
+    expect(result.current.status).toBe('loading');
     await flushMicrotask();
     expect(result.current.status).toBe('loading');
     await act(async () => {
@@ -251,6 +253,139 @@ describe('useApiQuery', () => {
       await Promise.resolve();
     });
     expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  // A result belongs to the key it was fetched for. The moment the key changes, the previous key's
+  // data and error are gone and the query reports the new key's own first load — publishing them
+  // until the new load resolves would present one key's result as the other's, and a caller that
+  // acts on `data` (auto-selecting a default, say) would act on data fetched for something else.
+  it('never reports the previous key data after the key changes', async () => {
+    const resolvers: ((value: string) => void)[] = [];
+    const loader = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) => useApiQuery(['key-change', id], loader),
+      { initialProps: { id: '1' } },
+    );
+    await flushMicrotask();
+    await act(async () => {
+      resolvers[0]?.('first');
+      await Promise.resolve();
+    });
+    expect(result.current.data).toBe('first');
+
+    rerender({ id: '2' });
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.status).toBe('loading');
+    expect(result.current.isRefetching).toBe(false);
+
+    // Still nothing once the second load is under way, and only then the second key's own data.
+    await flushMicrotask();
+    expect(result.current.data).toBeUndefined();
+    await act(async () => {
+      resolvers[1]?.('second');
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.data).toBe('second');
+    });
+  });
+
+  // The same rule for a failure: an error describes the key that failed, so a key change clears it
+  // instead of showing the new key as broken before it has even been asked for.
+  it('never reports the previous key error after the key changes', async () => {
+    const loader = vi.fn(() => Promise.reject(new Error('boom')));
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) => useApiQuery(['error-key-change', id], loader),
+      { initialProps: { id: '1' } },
+    );
+    await waitFor(() => {
+      expect(result.current.status).toBe('error');
+    });
+
+    rerender({ id: '2' });
+    expect(result.current.error).toBeUndefined();
+    expect(result.current.status).toBe('loading');
+  });
+
+  // A disabled query reports "idle" for the key it is asked about, not the loaded data of the key
+  // it was enabled for: switching to a key that fetches nothing must leave nothing behind.
+  it('reports idle with no data when the key changes while disabled', async () => {
+    const loader = vi.fn(() => Promise.resolve('value'));
+    const { result, rerender } = renderHook(
+      ({ id, enabled }: { id: string; enabled: boolean }) =>
+        useApiQuery(['disabled-key-change', id], loader, { enabled }),
+      { initialProps: { id: '1', enabled: true } },
+    );
+    await waitFor(() => {
+      expect(result.current.data).toBe('value');
+    });
+
+    rerender({ id: '2', enabled: false });
+    expect(result.current.status).toBe('idle');
+    expect(result.current.data).toBeUndefined();
+    expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  // A refetch outlives a key change (its own controller is never aborted), so its late result must
+  // be dropped rather than overwrite what the current key has already loaded.
+  it('ignores a refetch that settles after the key has moved on', async () => {
+    const resolvers: ((value: string) => void)[] = [];
+    const loader = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          resolvers.push(resolve);
+        }),
+    );
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) => useApiQuery(['stale-refetch', id], loader),
+      { initialProps: { id: '1' } },
+    );
+    await flushMicrotask();
+    await act(async () => {
+      resolvers[0]?.('first');
+      await Promise.resolve();
+    });
+
+    let pending: Promise<void> = Promise.resolve();
+    act(() => {
+      pending = result.current.refetch();
+    });
+    rerender({ id: '2' });
+    await flushMicrotask();
+    await act(async () => {
+      resolvers[2]?.('second');
+      await Promise.resolve();
+    });
+    expect(result.current.data).toBe('second');
+
+    await act(async () => {
+      resolvers[1]?.('stale');
+      await pending;
+    });
+    expect(result.current.data).toBe('second');
+    expect(result.current.status).toBe('success');
+  });
+
+  // A refetch whose loader cancels itself leaves the query settled rather than stuck reporting
+  // that a refetch is still in flight.
+  it('clears isRefetching when a refetch is cancelled', async () => {
+    const loader = vi.fn(() => Promise.resolve('value'));
+    const { result } = renderHook(() => useApiQuery(['cancelled-refetch'], loader));
+    await waitFor(() => {
+      expect(result.current.status).toBe('success');
+    });
+
+    loader.mockRejectedValueOnce(new DOMException('aborted', 'AbortError'));
+    await act(async () => {
+      await result.current.refetch();
+    });
+    expect(result.current.isRefetching).toBe(false);
+    expect(result.current.status).toBe('success');
   });
 
   // An AbortError rejection (the loader's own fetch aborting) does not flip status to "error".
