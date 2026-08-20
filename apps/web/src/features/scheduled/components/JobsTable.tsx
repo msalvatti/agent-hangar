@@ -29,14 +29,19 @@ export interface JobsTableProps {
   onDelete: (job: JobSummary) => void;
 }
 
+/**
+ * Column headers, in order. The row-menu column is named too — an empty header leaves its data
+ * cells with no header to associate with, which assistive technology reports as an unlabelled
+ * cell — and hidden visually, because the menu button already reads as an action.
+ */
 const HEADERS = [
-  'Name',
-  'Schedule',
-  'Repo · Branch',
-  'Last run',
-  'Next run',
-  'Enabled',
-  '',
+  { label: 'Name', visible: true },
+  { label: 'Schedule', visible: true },
+  { label: 'Repo · Branch', visible: true },
+  { label: 'Last run', visible: true },
+  { label: 'Next run', visible: true },
+  { label: 'Enabled', visible: true },
+  { label: 'Actions', visible: false },
 ] as const;
 
 /**
@@ -60,8 +65,8 @@ export function JobsTable({
         <TableHeader>
           <TableRow>
             {HEADERS.map((header) => (
-              <TableHead key={header} className="text-muted-foreground text-[11px] uppercase">
-                {header}
+              <TableHead key={header.label} className="text-muted-foreground text-[11px] uppercase">
+                {header.visible ? header.label : <span className="sr-only">{header.label}</span>}
               </TableHead>
             ))}
           </TableRow>
