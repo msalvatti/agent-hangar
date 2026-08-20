@@ -224,6 +224,15 @@ function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): Tr
 
     case 'tool.call': {
       const withFinalizedAssistant = finalizeStreamingAssistant(state.items);
+      // A reload rebuilds the running turn from what the database holds and then reopens the
+      // stream, which replays that turn from its first event, so a call already on screen arrives
+      // again. It is the same call: the worker stores the call id the runtime issued, so both
+      // roads carry one identifier — the one `tool.result` and `tool.output.delta` below already
+      // find their row by. The seeded row is kept rather than replaced, because it carries the
+      // start time persistence recorded and this event carries the moment of the reload.
+      if (findTool(withFinalizedAssistant, event.callId) !== null) {
+        return { ...state, items: withFinalizedAssistant };
+      }
       const created: ToolTranscriptItem = {
         kind: 'tool',
         id: `tool-${event.callId}`,
@@ -285,6 +294,15 @@ function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): Tr
 
     case 'git.pushed': {
       const text = pushedNoticeText(event.branch, event.sha);
+      // Same replay, and here the two roads cannot agree on an id: the worker stores this line as
+      // a `SYSTEM` message, so a reloaded transcript carries it under that message's own id while
+      // this event would add it under the sha. What identifies a push is the fact it states — one
+      // branch at one commit — and that is exactly what the line says, so a line already saying it
+      // is this push. Matched on the notice text alone rather than in `pushNotice`, because a
+      // repeated `protocol.error` is a second malformed event and not a second report of one.
+      if (state.items.some((item) => item.kind === 'notice' && item.text === text)) {
+        return state;
+      }
       return { ...state, items: pushNotice(state.items, `git-${event.sha}`, 'success', text) };
     }
 
