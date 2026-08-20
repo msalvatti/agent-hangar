@@ -22,6 +22,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readdirSync,
+  renameSync,
   rmSync,
   statSync,
   writeFileSync,
@@ -41,8 +42,21 @@ import { createShimDir, spawnScript, writeExtraShim } from './shims.js';
  * input, but the security linter cannot tell that from a direct call to the imported function by
  * name. Routing each access through one indirection level is the pattern `shims.ts` uses for the
  * same reason.
+ *
+ * Exported so `rotate-key-sandbox.test.ts` can spy on `renameSync` to inject the one interleaving
+ * of the stale-marker reclaim that only two independent processes racing each other could produce;
+ * every other consumer reaches this module only through the functions exported below.
  */
-const fsPort = { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync };
+export const fsPort = {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  renameSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+};
 
 /** Absolute path of the script under test. */
 export const scriptPath = fileURLToPath(new URL('../rotate-key.sh', import.meta.url));
@@ -124,13 +138,55 @@ let nextPortBase = process.pid * PORT_BASE_STRIDE;
 const claims: string[] = [];
 
 /**
- * Reports whether a failed `mkdir` lost the race to create the marker.
+ * Reports whether a failed `mkdir` (or `rename`) lost the race over a path that another actor
+ * already holds.
  *
- * @param error - Value thrown by `mkdirSync`.
- * @returns `true` when the directory already existed.
+ * @param error - Value thrown by `mkdirSync` or `renameSync`.
+ * @param code - The `errno` code that means "somebody else got there first".
+ * @returns `true` when the operation failed for that reason.
  */
-function isDirectoryExistsError(error: unknown): boolean {
-  return error instanceof Error && (error as NodeJS.ErrnoException).code === 'EEXIST';
+function isRaceLossError(error: unknown, code: 'EEXIST' | 'ENOENT'): boolean {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === code;
+}
+
+/**
+ * Deletes `marker` if — and only if — it is actually abandoned, without ever deleting a directory
+ * a concurrent claimant just created there.
+ *
+ * A plain stat-then-remove reads the marker's age and acts on that reading afterwards, and those
+ * are two separate steps a concurrent reclaimer can land in between: harmlessly, it can remove the
+ * same abandoned directory a moment after this process already did (`force` absorbs that); unsafely,
+ * it can recreate a fresh claim at `marker` in the gap between this process's read and its removal,
+ * and this process would then delete that fresh claim believing it was still the old one — the two
+ * processes would go on to both believe they hold the same base. Renaming first turns the read into
+ * a claim: an atomic rename either takes exclusive possession of whatever currently sits at
+ * `marker` (no other process can rename the same source out from under it) or fails with `ENOENT`
+ * because somebody already reclaimed or released it, in which case there is nothing left for this
+ * process to do. Only the directory this process now exclusively holds is inspected, and if it
+ * turns out not to be stale after all — a fresh claim this process raced into holding — it is
+ * renamed straight back, restoring its owner's claim exactly as found.
+ *
+ * @param marker - Marker path to inspect.
+ */
+function reclaimIfStale(marker: string): void {
+  const held = `${marker}.reclaim-${String(process.pid)}-${String(Math.random()).slice(2)}`;
+  try {
+    fsPort.renameSync(marker, held);
+  } catch (error) {
+    if (isRaceLossError(error, 'ENOENT')) {
+      return;
+    }
+    throw error;
+  }
+  // `throwIfNoEntry: false` rather than a plain stat: the marker can be a dangling symlink left
+  // behind by a half-finished cleanup, which resolves to nothing. Missing reads as `0`, which is
+  // stale, so the removal below is what disposes of it.
+  const heldSince = fsPort.statSync(held, { throwIfNoEntry: false })?.mtimeMs ?? 0;
+  if (Date.now() - heldSince > STALE_CLAIM_MS) {
+    fsPort.rmSync(held, { recursive: true, force: true });
+  } else {
+    fsPort.renameSync(held, marker);
+  }
 }
 
 /**
@@ -150,17 +206,10 @@ function claimPortBase(base: number): boolean {
   try {
     fsPort.mkdirSync(marker);
   } catch (error) {
-    if (!isDirectoryExistsError(error)) {
+    if (!isRaceLossError(error, 'EEXIST')) {
       throw error;
     }
-    // `throwIfNoEntry: false` rather than a plain stat: the owner may have released the marker in
-    // the instant between the failed `mkdir` and this line, and a run must not die because the
-    // base it was about to skip became free. Missing reads as `0`, which is stale, so the removal
-    // below is the no-op `force` makes it and the next sweep simply takes the base.
-    const heldSince = fsPort.statSync(marker, { throwIfNoEntry: false })?.mtimeMs ?? 0;
-    if (Date.now() - heldSince > STALE_CLAIM_MS) {
-      fsPort.rmSync(marker, { recursive: true, force: true });
-    }
+    reclaimIfStale(marker);
     return false;
   }
   claims.push(marker);

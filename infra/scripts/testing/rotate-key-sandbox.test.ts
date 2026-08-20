@@ -13,14 +13,44 @@
  * allocator has branches of its own, and they are driven from here so no rotation test has to
  * contrive one. Every range used here sits above the one `sandbox()` hands out, so a run of this
  * file cannot take a base a rotation test is waiting for.
+ *
+ * That range separation is enough to keep this file clear of the rotation suites, but not of a
+ * second copy of itself: the allocator names markers from nothing but the base, so two processes
+ * running this same file at once — which is exactly how the allocator's own fix was measured, four
+ * copies of the `scripts` project racing under load — would plant and inspect the identical
+ * `/tmp/ah-port-base-*` paths, making the suite that proves determinism timing-dependent on
+ * whichever other copy of it happens to be running. `beforeAll`/`afterAll` below point `TMPDIR` at
+ * a directory `mkdtemp` makes unique to this process for the run of this file only, so every
+ * marker this file plants or reclaims lives in a root no other copy of this suite can reach.
  */
-import { existsSync, mkdirSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
-import { releaseSandboxes, reservePortBase } from './rotate-key-sandbox.js';
+import { fsPort, releaseSandboxes, reservePortBase } from './rotate-key-sandbox.js';
+
+/** `TMPDIR` as it was before this file pointed it at a private marker root. */
+let previousTmpdir: string | undefined;
+
+/** Private marker root for this process, isolating it from any other copy of this suite. */
+let privateRoot: string;
+
+beforeAll(() => {
+  previousTmpdir = process.env.TMPDIR;
+  privateRoot = mkdtempSync(join(tmpdir(), 'ah-port-base-test-'));
+  process.env.TMPDIR = privateRoot;
+});
+
+afterAll(() => {
+  if (previousTmpdir === undefined) {
+    delete process.env.TMPDIR;
+  } else {
+    process.env.TMPDIR = previousTmpdir;
+  }
+  rmSync(privateRoot, { recursive: true, force: true });
+});
 
 /** Prefix the allocator names its markers with; mirrored here to inspect and plant them. */
 const CLAIM_PREFIX = 'ah-port-base-';
@@ -75,6 +105,7 @@ afterEach(() => {
     rmSync(marker, { recursive: true, force: true });
   }
   planted.length = 0;
+  vi.restoreAllMocks();
 });
 
 describe('reservePortBase', () => {
@@ -149,6 +180,43 @@ describe('reservePortBase', () => {
     expect(() => reservePortBase(floor, 2 * STRIDE)).toThrow(
       new RegExp(`No free port base in \\[${floor}, ${floor + 2 * STRIDE}\\)`, 'u'),
     );
+  });
+
+  /**
+   * The reclaim is a rename-then-inspect, not a stat-then-remove, precisely so a second claimant
+   * reading the same marker cannot delete a fresh claim the first claimant just made in the gap.
+   * Simulated here: the marker still standing at the moment of the rename is somebody else's
+   * reclaim already in flight, so this attempt's rename loses that race — `ENOENT` — and must fold
+   * quietly into "not mine to take" rather than crash or, worse, misreport the base as free.
+   */
+  it('does not treat a marker somebody else already reclaimed as an error', () => {
+    const only = TEST_FLOOR + 15 * STRIDE;
+    const marker = plantMarker(only);
+    const raced = new Error('already reclaimed');
+    (raced as NodeJS.ErrnoException).code = 'ENOENT';
+    vi.spyOn(fsPort, 'renameSync').mockImplementationOnce(() => {
+      throw raced;
+    });
+
+    expect(() => reservePortBase(only, STRIDE)).toThrow(/No free port base/u);
+    expect(existsSync(marker)).toBe(true);
+  });
+
+  /**
+   * Only a race loss (`ENOENT`) is swallowed by the reclaim. Any other reason the rename failed —
+   * here a permission error — is a broken machine, not a concurrent claimant, and burying it would
+   * hide a real fault behind "somebody else has this base".
+   */
+  it('propagates a rename failure that is not a race loss', () => {
+    const only = TEST_FLOOR + 18 * STRIDE;
+    plantMarker(only);
+    const broken = new Error('permission denied');
+    (broken as NodeJS.ErrnoException).code = 'EACCES';
+    vi.spyOn(fsPort, 'renameSync').mockImplementationOnce(() => {
+      throw broken;
+    });
+
+    expect(() => reservePortBase(only, STRIDE)).toThrow(/permission denied/u);
   });
 
   /**
