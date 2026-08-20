@@ -8,10 +8,9 @@ import {
   listChatsResponse,
   okResponse,
   postMessageResponse,
+  RESTORATION_NOTICE_PREFIX,
 } from '@agent-hangar/core';
 import { describe, expect, it } from 'vitest';
-
-import { RESTORE_NOTICE } from './chats';
 
 async function errorBody(
   response: Response,
@@ -251,7 +250,8 @@ describe('POST /api/chats/:id/archive and /restore', () => {
     expect(body.archivedAt).not.toBeNull();
   });
 
-  // Restoring an archived chat reactivates it and appends the restoration notice.
+  // Restoring an archived chat reactivates it and appends the normative restoration notice — the
+  // same text the product writes, so a spec reading it in mock mode is reading the product.
   it('restores an archived chat and records the restoration notice', async () => {
     const response = await fetch('/api/chats/chat-archived/restore', { method: 'POST' });
     expect(response.status).toBe(200);
@@ -262,7 +262,8 @@ describe('POST /api/chats/:id/archive and /restore', () => {
     const detail = chatDetail.parse(await (await fetch('/api/chats/chat-archived')).json());
     const lastMessage = detail.messages.at(-1);
     expect(lastMessage?.role).toBe('SYSTEM');
-    expect(lastMessage?.content).toBe(RESTORE_NOTICE);
+    expect(lastMessage?.content).toContain(RESTORATION_NOTICE_PREFIX);
+    expect(lastMessage?.content).toContain('pushed work on `agent/qc7` is checked out');
   });
 
   // An unknown chat id 404s for both archive and restore.
