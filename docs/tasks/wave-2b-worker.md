@@ -551,4 +551,4 @@ Completion Protocol: append `- 2B.6 ✅ <date> — PR #<n> opened`; commit `docs
 - 2B.3 ✅ 2026-08-19 — scheduled-job processor with the overlap policy and destroy-in-finally, plus the boot-time scheduler reconciliation
 - 2B.4 ✅ 2026-08-19 — workspace collector with idle reaping and orphan reconciliation, plus the application wiring and graceful shutdown
 - 2B.5 ✅ 2026-08-19 — docker integration suite: a real turn, idle and orphan collection, a restored turn, a scheduled run and the overlap policy
-- 2B.6 ✅ 2026-08-19 — gates green, review to zero findings, dashboards updated, PR opened
+- 2B.6 ✅ 2026-08-19 — gates green, review to zero findings, dashboards updated, PR #22 opened
