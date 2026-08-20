@@ -64,6 +64,15 @@ const WRAPPER_REFERENCE_PATTERN = /\S*tsc-build\.sh/;
 /** Flag that makes a recursive `pnpm run` execute one workspace at a time instead of all at once. */
 const SEQUENTIAL_FLAG = '--sequential';
 
+/** Flag that keeps a recursive `pnpm run` going after a workspace fails, instead of stopping there. */
+const NO_BAIL_FLAG = '--no-bail';
+
+/** Keyword that ends the options pnpm reads and names the script it is to run. */
+const RUN_KEYWORD = 'run';
+
+/** Token after which pnpm forwards everything to the script instead of reading it. */
+const FORWARD_SEPARATOR = '--';
+
 /**
  * Matches a script that runs its command in every workspace, in either spelling pnpm accepts.
  *
@@ -87,6 +96,54 @@ const TEST_SCRIPT_PREFIX = 'test:';
  */
 function isTestScript(name: string): boolean {
   return name === TEST_SCRIPT || name.startsWith(TEST_SCRIPT_PREFIX);
+}
+
+/**
+ * The tokens of a fan-out command that pnpm itself reads, or `null` when they cannot be told apart
+ * from the arguments it forwards.
+ *
+ * Searching the whole command for a flag is not the same question, and the difference is the whole
+ * check. Measured on pnpm 11.22.0: `pnpm -r run test -- --sequential` and `pnpm -r run test
+ * --sequential` both start every workspace at the same instant and hand the script `--sequential`
+ * as an argument — the flag is present in the text and absent from pnpm's own parse. A guard
+ * reading the text would pass both while the workspaces run concurrently, which is a check that
+ * cannot fail in the way it exists to fail.
+ *
+ * The boundary is the `run` keyword: everything before it is an option pnpm reads, everything from
+ * the script name on is not. Requiring the keyword rather than inferring the script name is what
+ * makes the boundary a fact about the command instead of a guess about which options take values:
+ * without it, telling `--filter web` (an option and its value) from `--if-present test` (an option
+ * and the script) means keeping a list of which options take values, and a list like that is wrong
+ * the day pnpm adds one.
+ *
+ * The cost is deliberate and worth stating: `pnpm -r --sequential --no-bail test` runs correctly —
+ * measured — and is still reported here, because nothing in it marks where the options stop. The
+ * refusal is conservative rather than a verdict on the command, and the message names the spelling
+ * to use instead. A guard on a gate should fail loudly on what it cannot read, not guess.
+ *
+ * @param command - The script body as written in the manifest.
+ * @returns The tokens before `run`, or `null` when there is no `run` keyword to bound them, or when
+ *   a forwarding `--` reaches that far.
+ */
+function recursiveOptionSegment(command: string): string[] | null {
+  const tokens = command.split(/\s+/u).filter((token) => token !== '');
+  const runAt = tokens.indexOf(RUN_KEYWORD);
+  if (runAt === -1) {
+    return null;
+  }
+  const segment = tokens.slice(0, runAt);
+  return segment.includes(FORWARD_SEPARATOR) ? null : segment;
+}
+
+/**
+ * Whether a fan-out hands pnpm both flags a complete gate depends on.
+ *
+ * @param command - The script body as written in the manifest.
+ * @returns `true` when pnpm's own option segment carries `--sequential` and `--no-bail`.
+ */
+function fansOutCompletely(command: string): boolean {
+  const segment = recursiveOptionSegment(command);
+  return segment !== null && segment.includes(SEQUENTIAL_FLAG) && segment.includes(NO_BAIL_FLAG);
 }
 
 /**
@@ -490,17 +547,18 @@ describe('the manifests that fan a suite out across workspaces', () => {
    * `undefined` rather than `completed`, because the worker's harness had flushed the database
    * underneath it.
    *
-   * `--sequential` is what makes the fan-out one suite at a time, which is also the shape the
-   * memory budget is written for. It is asserted on the manifest rather than on a run, because the
-   * flag is the whole mechanism: a fan-out without it is concurrent, whatever the suites do.
+   * `--no-bail` is the other half, and it is the same failure `scripts/run-tests.sh` was written
+   * for one level down. Sequential execution without it stops the whole command at the first
+   * workspace that fails, so every later suite is never run — and a run that never happened is
+   * indistinguishable, in the job's output, from one that passed. Measured on pnpm 11.22.0 over
+   * three workspaces whose middle one fails: `--sequential` alone runs two of them, `--sequential
+   * --no-bail` runs all three and still exits non-zero. Making the suite sequential is therefore
+   * only safe together with the flag that keeps it going.
    *
-   * Those scripts also state `--no-include-workspace-root`, which this check does not demand and
-   * which changes nothing today, because pnpm excludes the root by default. It is written out for
-   * the same reason `scripts/run-tests.sh` writes it out: each of them fans out a script that has
-   * the name it is itself declared under, so a workspace configuration that ever opted the root
-   * in would have them call themselves forever.
+   * Both are asserted on pnpm's own option segment rather than on the command text: see
+   * {@link recursiveOptionSegment} for why the two are different questions.
    */
-  it('runs every workspace test suite one at a time', () => {
+  it('runs every workspace test suite one at a time, and runs all of them', () => {
     const fanOuts = listManifests().flatMap((manifest) =>
       Object.entries(readScripts(manifest))
         .filter(([name, command]) => isTestScript(name) && RECURSIVE_RUN_PATTERN.test(command))
@@ -511,13 +569,36 @@ describe('the manifests that fan a suite out across workspaces', () => {
       'no manifest fans a test suite across workspaces any more; this check would pass vacuously',
     ).toBeGreaterThan(0);
 
-    const concurrent = fanOuts
-      .filter(({ command }) => !command.includes(SEQUENTIAL_FLAG))
+    const offenders = fanOuts
+      .filter(({ command }) => !fansOutCompletely(command))
       .map(({ manifest, name }) => `${manifest} → ${name}`);
     expect(
-      concurrent,
-      `these scripts start every workspace suite at once, against one Postgres and one Redis; ` +
-        `add ${SEQUENTIAL_FLAG}`,
+      offenders,
+      `these scripts either start every workspace suite at once, against one Postgres and one ` +
+        `Redis, or stop at the first failure and leave the rest unrun; pnpm must receive ` +
+        `${SEQUENTIAL_FLAG} and ${NO_BAIL_FLAG} before the ${RUN_KEYWORD} keyword`,
     ).toEqual([]);
+  });
+
+  /**
+   * The check above is only worth having if it cannot be satisfied by a command that does not have
+   * the property, so the spellings that would fool a text search are pinned here rather than left
+   * to the reader's confidence. Each of the rejected forms was run against pnpm 11.22.0 and started
+   * every workspace at the same instant while handing the script the flag as an argument.
+   */
+  it('rejects a fan-out whose flags reach the script instead of pnpm', () => {
+    const complete = 'pnpm --recursive --if-present --sequential --no-bail run test:integration';
+    expect(fansOutCompletely(complete), 'the real command must pass').toBe(true);
+
+    // Forwarded past `--`: pnpm parses none of it, and hands the script "-- --sequential".
+    expect(fansOutCompletely('pnpm -r run test -- --sequential --no-bail')).toBe(false);
+    // After the script name: same outcome without the separator.
+    expect(fansOutCompletely('pnpm -r run test --sequential --no-bail')).toBe(false);
+    // No `run` keyword. This spelling does run sequentially, but nothing in the text marks where
+    // the options stop, so it is refused rather than read by guesswork; see the parser's note.
+    expect(fansOutCompletely('pnpm -r --sequential --no-bail test:integration')).toBe(false);
+    // Each flag is load-bearing on its own.
+    expect(fansOutCompletely('pnpm -r --sequential run test')).toBe(false);
+    expect(fansOutCompletely('pnpm -r --no-bail run test')).toBe(false);
   });
 });
