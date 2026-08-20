@@ -284,7 +284,7 @@ All coverage thresholds are **100/100/100/100** on the package's
 | `pnpm --filter @agent-hangar/agent-runtime build && pnpm --filter @agent-hangar/agent-runtime check:bundle` (< 2 MB; `node dist/cli.js --version`) | W1-D |
 | Lighthouse accessibility ≥ 95 on the lane's pages with MSW (`pnpm dlx lighthouse … --only-categories=accessibility`), screenshots in the PR | W1-G, W1-H, W3-A |
 | `pnpm test:e2e` in mock mode (specs compile, selectors resolve, harness boots/tears down) | W2-C |
-| Playwright suite green **3× consecutively** on the real stack with `--retries=0`; `pnpm smoke:openai` (or "pending"); `pnpm doctor` exit 0 for two instances; CI all jobs green | W3-A |
+| Playwright suite green **3× consecutively** on the real stack with `--retries=0`; `pnpm smoke:openai` (or "pending"); `pnpm infra:doctor` exit 0 for two instances; CI all jobs green | W3-A |
 | `pnpm test:mutation` per package, full run with `incremental: false`, `break: 80` (target 90), equivalent-mutant ledger in the PR | W4-A (core), W4-B (agent-runtime) |
 | `/bymax-quality:code-review full` → zero findings; `/security-review` → zero findings (including Low) | every lane, before the PR |
 

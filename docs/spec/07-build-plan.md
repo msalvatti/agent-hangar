@@ -22,7 +22,7 @@ Phases are sized for autonomous agent execution (one PR each, ≤ ~1 day of agen
 
 **Tests that must pass.** Unit: config derivation (instance/ports/Conductor precedence, slugify). Integration: Prisma migrate + `SELECT 1` against compose Postgres; Redis ping. CI: all jobs green.
 
-**DONE.** `git clone && pnpm setup && pnpm dev` opens an empty app shell at `http://localhost:3000`; `pnpm doctor` reports infra ✓, image ✓, secrets ✗ with instructions; CI green; toolchain decision (TS 7 vs 6) recorded in README.
+**DONE.** `git clone && pnpm setup && pnpm dev` opens an empty app shell at `http://localhost:3000`; `pnpm infra:doctor` reports infra ✓, image ✓, secrets ✗ with instructions; CI green; toolchain decision (TS 7 vs 6) recorded in README.
 
 ## Phase 1 — Walking skeleton (one chat, one container, one round-trip)
 

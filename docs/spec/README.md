@@ -25,4 +25,7 @@ originally written there to what the configuration already enforces — 100 % on
 everywhere, mutation scope including `packages/agent-runtime`); 09's authentication seam corrected
 to name the `Request` each route handler already receives, not the process-wide `ServerContainer`
 cache. Behaviour and decisions are unchanged; 06's testing success criteria are corrected upward to
-match what is enforced, not left as originally written.
+match what is enforced, not left as originally written. 05's doctor description and instance-
+resolution paragraph are further corrected against `fix/instance-resolution`: the checkout's
+`.env.local` now decides which instance a command acts on, not the shell, and a shell that
+disagrees is refused rather than obeyed or ignored.

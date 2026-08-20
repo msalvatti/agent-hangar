@@ -60,7 +60,7 @@ See [09 Non-goals](09-non-goals.md): multi-user auth, cloud deployment, multiple
 | S5 | Secrets: ciphertext only in Postgres; UI shows last 4; `grep` of logs and container image for the plaintext finds nothing | Unit tests on crypto + redaction; E2E `settings-mask`; CI secret-scan step |
 | S6 | Live streaming of agent output via SSE with reconnect/replay | Integration test on the events endpoint |
 | S7 | Mutation score ≥ 80% on `packages/core` (secrets, scheduling, workspace lifecycle) enforced in CI | Stryker gate |
-| S8 | Two Conductor workspaces run concurrently with independent DB, Redis keyspace, ports, and container names | Manual verification + `pnpm doctor` output |
+| S8 | Two Conductor workspaces run concurrently with independent DB, Redis keyspace, ports, and container names | Manual verification + `pnpm infra:doctor` output |
 
 ## 6. Technical approach (one page)
 
@@ -149,7 +149,7 @@ flowchart LR
 - **Isolation:** every chat and every scheduled run gets its own container; containers never share a filesystem; resource limits applied (CPU, memory, PIDs); no Docker socket inside workspaces.
 - **Secrets:** never in repo, images, logs, or UI beyond the last 4 characters. Master key file lives outside the repo and is `.gitignore`d even if copied in.
 - **Migration seam:** nothing outside `packages/core/runner/docker/*` may import dockerode.
-- **Runnable from README:** every step scripted; `pnpm doctor` explains anything missing.
+- **Runnable from README:** every step scripted; `pnpm infra:doctor` explains anything missing.
 - **Incomplete work** must be listed in the README with a plan to finish.
 
 ## 8. Risks
@@ -157,12 +157,12 @@ flowchart LR
 | ID | Risk | Level | Mitigation |
 |---|---|---|---|
 | R1 | TypeScript 7.0 (`latest` on npm) is a new native compiler with no stable programmatic API until 7.1; tools in the chain (typescript-eslint, Stryker instrumenter, Next type-check) may reject it | LOW (mitigated by decision) | **Decided:** pin `typescript@~6.0.3` (latest stable JS-line release) for v1; do not use TS 7. Upgrade to TS 7.1+ is a later, isolated PR once the ecosystem supports it. Code avoids options removed in TS 7 (`baseUrl`, legacy `moduleResolution`) so the upgrade is a version bump. |
-| R2 | Docker socket not reachable on the user's machine (Docker Desktop's `/var/run/docker.sock` symlink is opt-in) | MEDIUM | Runner resolves `DOCKER_HOST` → `~/.docker/run/docker.sock` → `/var/run/docker.sock`; `pnpm doctor` prints the fix. |
+| R2 | Docker socket not reachable on the user's machine (Docker Desktop's `/var/run/docker.sock` symlink is opt-in) | MEDIUM | Runner resolves `DOCKER_HOST` → `~/.docker/run/docker.sock` → `/var/run/docker.sock`; `pnpm infra:doctor` prints the fix. |
 | R3 | Agent runs away (infinite tool loop, huge output, long shell command) | MEDIUM | Hard limits per turn: max steps, max wall-clock, per-command timeout, output truncation; cancel button sends SIGINT. |
 | R4 | Secret leaks through tool output (e.g. `env` command) | MEDIUM | Redaction pass on every tool result and every persisted string using known secret values + token-shape regexes; secrets also not exported to the shell tool's environment — only `GIT_ASKPASS` helper sees the PAT. |
 | R5 | SSE connection buffered or dropped by dev tooling | LOW | No compression on the events route, heartbeat every 15 s, Redis Streams replay via `Last-Event-ID`. |
 | R6 | BullMQ Job Scheduler drift between DB and Redis (job edited while worker down) | LOW | Worker reconciles all enabled `ScheduledJob` rows → schedulers on boot; scheduler key = job id. |
-| R7 | OpenAI model id retired | LOW | Model id in env; provider exposes a `listModels()` check used by `pnpm doctor`. |
+| R7 | OpenAI model id retired | LOW | Model id in env; provider exposes a `listModels()` check used by `pnpm infra:doctor`. |
 
 ## 9. Open questions
 

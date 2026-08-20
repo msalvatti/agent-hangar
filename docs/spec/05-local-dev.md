@@ -3,11 +3,11 @@
 | | |
 |---|---|
 | **Status** | ✅ Approved — 2026-08-19 |
-| **Revision** | 2026-08-20 — corrected against `infra/scripts/*` and `packages/core/src/config/schema.ts` (setup steps, script list, environment table, workspace image) |
+| **Revision** | 2026-08-20 — corrected against `infra/scripts/*` and `packages/core/src/config/schema.ts` (setup steps, script list, environment table, workspace image); doctor's Postgres/Redis rows and the instance-resolution paragraph corrected against `fix/instance-resolution` (checkout's `.env.local` wins over the shell, with a refusal on disagreement, replacing the shell-first behaviour this section previously described) |
 | **Owner** | Maximiliano |
 | **Last updated** | 2026-08-19 |
 
-Target: **clone → follow README → it runs**, on macOS with Docker Desktop (OrbStack/Colima also work). Every step is a script; `pnpm run doctor` explains anything missing. The same parameterisation that makes Conductor work (per-instance DB, ports, names) is the default for everyone — Conductor is a thin layer on top.
+Target: **clone → follow README → it runs**, on macOS with Docker Desktop (OrbStack/Colima also work). Every step is a script; `pnpm infra:doctor` explains anything missing. The same parameterisation that makes Conductor work (per-instance DB, ports, names) is the default for everyone — Conductor is a thin layer on top.
 
 ## 1. Prerequisites (README "Requirements")
 
@@ -98,7 +98,9 @@ Then in the browser: **Settings → paste GitHub PAT and OpenAI API key → New 
 
 Flags reach the script through `pnpm run setup --<flag>`: a bare `pnpm setup` parses them against pnpm's own `setup` command first.
 
-`pnpm run doctor` prints a table: Node/pnpm versions, Docker socket found at …, Postgres reachable, Redis reachable, migrations applied, workspace image present, master key present (0600), secrets configured (✓/⚠ with last4), OpenAI model reachable (only if key set). Each ✗ comes with the exact command to fix it, and the exit code is non-zero only when a required row failed; `--json` prints the same rows as JSON. It resolves the instance from the shell rather than from `.env.local`, so a non-default checkout needs the same `AH_INSTANCE`/`AH_PORT_BASE` prefix that set it up. `pnpm doctor` without `run` reaches pnpm's own `doctor` command instead.
+`pnpm infra:doctor` (or `pnpm run doctor`) prints a table: Node/pnpm versions, Docker socket found at …, Postgres reachable (a real `SELECT 1` against `POSTGRES_DB`, not a bare port check), Redis reachable (a real `PING`/`PONG`), migrations applied, workspace image present, master key present (0600), secrets configured (✓/⚠ with last4), OpenAI model reachable (only if key set). Each ✗ comes with the exact command to fix it, and the exit code is non-zero only when a required row failed; `--json` prints the same rows as JSON. `pnpm doctor` without `infra:`/`run` reaches pnpm's own `doctor` command instead, which reports on the pnpm installation and exits 0 regardless.
+
+Doctor resolves the instance from **this checkout's `.env.local`**, the file `setup` wrote — not from the shell — and so does every other command that acts on an already-configured instance (`ws:list`, `ws:reap`, `db:prune`, `archive`, `rotate-key`, `dev`, `start`); `setup` is the one exception, since it is what establishes the file. A shell that explicitly names a different instance (`AH_INSTANCE`/`AH_PORT_BASE`, or Conductor's `CONDUCTOR_WORKSPACE_NAME`/`CONDUCTOR_PORT`) than the one the checkout's file records is refused rather than silently obeyed or silently ignored — the command prints both candidates and exits non-zero. Acting on a different instance from one shell means pointing `AH_ENV_FILE` at that instance's own file.
 
 Other scripts:
 
