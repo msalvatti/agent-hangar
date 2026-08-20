@@ -4,7 +4,8 @@
  * Layer: unit.
  * Goal: renders the header/pill and persisted transcript for a terminal run; streams live via a
  * fake `EventSource` for an active run (tool call running → done, final text, pill "Done"); the
- * stop flow hits the cancel endpoint; a reconnecting bar shows during reconnection; `expired`
+ * stop flow hits the cancel endpoint; the header actions stay clear of the sheet's close
+ * button; a reconnecting bar shows during reconnection; `expired`
  * triggers a refetch; the raw-output tab shows the output and copies it; Esc closes; the sheet
  * content carries the 720 px width class.
  * Mocks: MSW node server serving `src/mocks/scheduled.ts`; a fake `EventSource` factory; a
@@ -110,6 +111,29 @@ describe('RunDrawer — terminal run', () => {
     await waitFor(() => {
       expect(document.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
     });
+  });
+
+  /*
+   * The header's own actions and the sheet's close button both want the top-right corner, and the
+   * close button — painted last, absolutely positioned by the sheet — wins the click. Measured in
+   * Chrome at 1280 px before the sheet reserved that corner: the close button spanned x=1240..1268
+   * and Copy x=1236..1264, so Copy's centre (1250, 37) lay inside the close button and a click
+   * there opened nothing and closed the drawer instead. After the reservation Copy sits at
+   * x=1208..1236, clear of the close button by 4 px, and both controls take their own clicks.
+   *
+   * jsdom lays nothing out and resolves no CSS, so none of that geometry is covered here. What is
+   * pinned is the pair of declarations that produce it: the sheet marks the corner as taken and
+   * the header this drawer builds on is the one that reserves it.
+   */
+  it('keeps its header actions clear of the sheet close button', async () => {
+    render(<RunDrawer runId="run-nightly-success" job={job} open onOpenChange={vi.fn()} />);
+    const copy = await screen.findByRole('button', { name: 'Copy run id' });
+
+    const content = document.querySelector('[data-slot="sheet-content"]');
+    const header = document.querySelector('[data-slot="sheet-header"]');
+    expect(content).toHaveAttribute('data-close-button', 'true');
+    expect(header).toHaveClass('in-data-[close-button=true]:pr-11');
+    expect(header?.contains(copy)).toBe(true);
   });
 });
 
