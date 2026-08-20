@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W3-B (single agent; documentation only — runs in parallel with W3-A 🐳) |
-| **Status** | 🟦 running |
-| **Progress** | 4/5 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 5/5 tasks |
 | **Branch** | `feat/w3b-docs` |
 | **Owned paths** | `README.md`, `docs/**` (except `docs/tasks/wave-3a-integration.md` and the W3-A row of `docs/plan.md` §12 / `docs/tasks/README.md`, which W3-A keeps current) |
 | **Depends on** | W2-A, W2-B merged (may start on the W1 state and rebase before the close-out) |
@@ -47,7 +47,7 @@ Everything written here is about the product only — the README reads like the 
 | 3B.2 | README part 2: Testing, Security notes, Troubleshooting | ✅ | P0 | S | 3B.1 |
 | 3B.3 | README part 3: Known gaps & plan, Deployment discussion, Decisions & trade-offs, Non-goals | ✅ | P0 | M | 3B.1 |
 | 3B.4 | Spec refresh (`docs/spec/*` Revision lines), plan §12 and tasks index statuses | ✅ | P1 | S | 3B.1–3B.3 |
-| 3B.5 | Close-out: gates, code review, dashboard, PR | 🟦 | P0 | S | 3B.1–3B.4 |
+| 3B.5 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 3B.1–3B.4 |
 
 ---
 
@@ -310,7 +310,7 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-3b-docs.md; ap
 
 ## Task 3B.5 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 🟦 Running · **Priority:** P0 · **Size:** S · **Depends on:** 3B.1–3B.4
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 3B.1–3B.4
 
 **Description.** Final verification of the README against a fresh checkout (every command, path and link), fill any `W3-A pending` placeholders from W3-A's completion log, run the repository gates that apply to docs (format, lint on Markdown/Prettier, link check), run the code review to zero findings, set the dashboard rows to 🟨, and open the PR.
 
@@ -384,5 +384,5 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-3b-docs.md (he
   - `docs/spec/09-non-goals.md` → the authentication seam named a `RequestContext` that does not exist; handlers take an explicit `ServerContainer`
   - `docs/spec/README.md` → revision line for the set
   - `docs/AUTOPILOT.md` → R11 closed: the `assertSameOrigin` grep is replaced by a check for `apps/web/app/api/same-origin-policy.test.ts`, with a note not to reintroduce it. R20 closed: a rule for shared package manifests — the cross-cutting change is the base, the lane's change is reapplied on top
-- 3B.5 ✅ 2026-08-20 — close-out
+- 3B.5 ✅ 2026-08-20 — close-out: fresh-clone dry run of the Quick start (clone → `corepack enable` → `pnpm setup` → `pnpm infra:image` → `pnpm dev`, all exit 0, every page and `/api/health` green); integration suites green on an `AH_INSTANCE=test` stack; gates run per workspace with each exit code captured, including the `scripts` project; code review with zero open findings; PR #37
 

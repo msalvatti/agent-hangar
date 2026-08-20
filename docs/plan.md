@@ -336,7 +336,7 @@ wiring. So there is work available now that nothing is blocking.
 | W2-B 🐳 | 🟩 merged | PR #22 | worker 100 (all four metrics) | three consumers, cancel channel, scheduler reconcile and graceful shutdown; Docker suite ran green six consecutive times with no leftover containers |
 | W2-C | 🟨 PR open | PR #32 | web 100 (all four metrics) | Playwright harness, a local git server and the six critical-flow specs; real mode boots against the real API, database and git server, and two specs already pass end to end there |
 | W3-A 🐳 | ⬜ | — | — | success criteria S1–S6, S8 |
-| W3-B | 🟦 running | `feat/w3b-docs` | n/a (docs only) | README rewritten against the running system; 05 and 06 corrected; R11 and R20 closed in `docs/AUTOPILOT.md` |
+| W3-B | 🟨 PR open | PR #37 | n/a (docs only) | README rewritten against the running system, every command executed from a fresh clone; three claims corrected because verification refuted them (`pnpm doctor` is shadowed by pnpm's own command, five scripts resolve the instance from the shell while `setup`/`run` read `.env.local`, and the `RequestContext` in 09 does not exist); R11 and R20 closed in `docs/AUTOPILOT.md` |
 | W4-A | 🟥 held | — | — | held by the operator, not a dependency; may slip — documented |
 | W4-B | 🟥 held | — | — | held by the operator, not a dependency; may slip — documented |
 
