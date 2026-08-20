@@ -20,9 +20,12 @@
 #   infra/scripts/env.sh --print-effective
 #                                        print `export KEY=value` lines from .env.local when it
 #                                        exists, else the derived ones — the environment every
-#                                        step of a run must agree on
+#                                        step of a run must agree on. An existing file that does
+#                                        not define every key is refused (exit 4) naming the ones
+#                                        it is missing, rather than left for the first consumer to
+#                                        dereference; see ah_assert_complete
 #   infra/scripts/env.sh --print-checked
-#                                        same output as --print-effective, but refuses (exit 3)
+#                                        same output as --print-effective, plus a refusal (exit 3)
 #                                        when the shell explicitly names an instance the file
 #                                        contradicts. Every command that acts on an already
 #                                        configured instance reads this mode; see
@@ -172,6 +175,58 @@ ah_env_file_value() {
   )
 }
 
+# Prints the keys of AH_ENV_KEYS an existing env file does not define, one per line.
+#
+# Read through ah_print_env_file, so a key that survives only as a comment counts as missing —
+# that spelling is what turned an incomplete file into a bare "unbound variable" instead of a
+# diagnosis. A key defined but left empty counts as missing too: under `set -u` an empty value
+# passes the dereference and then fails somewhere further along, which is the same failure with
+# even less to go on.
+ah_missing_env_keys() {
+  local target="$1" key
+  (
+    for key in $AH_ENV_KEYS; do
+      unset "$key"
+    done
+    eval "$(ah_print_env_file "$target")"
+    for key in $AH_ENV_KEYS; do
+      if [ -z "${!key:-}" ]; then
+        printf '%s\n' "$key"
+      fi
+    done
+  )
+}
+
+# Refuses when an existing env file does not define every variable the run needs.
+#
+# The file is trusted outright once it exists — that is what keeps compose, the migrations and the
+# image build on one instance — so an incomplete one is trusted just as far, and the first consumer
+# to dereference a key it never carried fails under `set -u` with a message naming the variable and
+# nothing else: not the file, not the other keys it also lacks, not the way out.
+#
+# The keys are named here instead of being filled in from the derivation, because filling them in
+# would only fix this shell. `docker compose --env-file` reads the file itself, so a run that
+# repaired POSTGRES_PORT in memory would still bring compose up from a file that does not record
+# it — one instance in the shell, another on the ports. And a file missing AH_INSTANCE has nothing
+# left to derive *from* except the shell it was written to overrule. Regenerating the file is the
+# only repair that leaves every reader agreeing, so that is what this asks for.
+ah_assert_complete() {
+  local target="$1" missing key
+  missing=$(ah_missing_env_keys "$target")
+  if [ -z "$missing" ]; then
+    return 0
+  fi
+  echo "error: $target does not define every variable this instance needs." >&2
+  echo "Missing:" >&2
+  for key in $missing; do
+    echo "  * $key" >&2
+  done
+  echo "A key that appears only in a comment does not count: the file is read with comments stripped." >&2
+  echo "Regenerate it with \"pnpm setup --force\", or add the missing lines by hand." >&2
+  echo "To see what a complete file looks like: bash infra/scripts/env.sh --print" >&2
+  return 4
+}
+
 # Refuses when the shell explicitly names an instance the env file contradicts.
 #
 # Two sources can answer "which instance is this command for": the shell, and the env file this
@@ -238,10 +293,15 @@ ah_env_main() {
   target="${AH_ENV_FILE:-$root/.env.local}"
   # The file wins outright, and is echoed without re-deriving anything: the whole point is that a
   # variable exported in this shell cannot disagree with the file docker compose --env-file reads.
-  if [ "$mode" = "print-checked" ] && [ -f "$target" ]; then
-    ah_assert_agreement "$target" || return 3
-  fi
   if { [ "$mode" = "print-effective" ] || [ "$mode" = "print-checked" ]; } && [ -f "$target" ]; then
+    # Completeness comes first, and before the agreement check as well. Trusting the file means
+    # trusting all of it, so the gap is reported here rather than by whichever consumer dereferences
+    # a missing key first — and a file that lacks AH_INSTANCE would otherwise be reported as
+    # recording the instance "", which describes the symptom instead of the cause.
+    ah_assert_complete "$target" || return 4
+    if [ "$mode" = "print-checked" ]; then
+      ah_assert_agreement "$target" || return 3
+    fi
     ah_print_env_file "$target"
     return 0
   fi

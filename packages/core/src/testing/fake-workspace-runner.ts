@@ -11,6 +11,7 @@ import { setTimeout as sleep } from 'node:timers/promises';
 
 import { systemClock } from '../config/clock.ts';
 import type { Clock } from '../config/clock.ts';
+import { WorkspaceImageMissing } from '../errors.ts';
 import type {
   ExecEvent,
   ExecSignal,
@@ -36,6 +37,12 @@ export interface FakeWorkspaceRunnerOptions {
   /** Delay of `create()` in ms; use fake timers when set. */
   createDelayMs?: number;
   clock?: Clock;
+  /**
+   * Image references this host has. Omit it — the usual case — and every image exists, so a test
+   * that is not about images never has to name one. Give it, and `imageExists` answers `false` for
+   * anything else and `create` refuses it, the way a real host would.
+   */
+  images?: readonly string[];
 }
 
 /** Git state reported by `snapshot()`; override per workspace with `setGitState`. */
@@ -105,6 +112,8 @@ export class FakeWorkspaceRunner implements WorkspaceRunner {
   private readonly scripts: ExecScript[];
   private readonly createDelayMs: number;
   private readonly clock: Clock;
+  /** Images this host has; `undefined` means every image exists. */
+  private readonly images: readonly string[] | undefined;
   private readonly workspaces = new Map<string, FakeWorkspaceState>();
   private readonly execs = new Map<string, { controller: AbortController; signal?: ExecSignal }>();
   private sequence = 0;
@@ -113,11 +122,27 @@ export class FakeWorkspaceRunner implements WorkspaceRunner {
     this.scripts = options.scripts ?? [];
     this.createDelayMs = options.createDelayMs ?? 0;
     this.clock = options.clock ?? systemClock;
+    this.images = options.images;
   }
 
-  /** Creates a running workspace; rejects when `opts.signal` aborts during the create delay. */
+  /** Whether the configured image list has the reference; `true` for every image by default. */
+  async imageExists(image: string): Promise<boolean> {
+    this.calls.push({ method: 'imageExists', args: [image] });
+    await Promise.resolve();
+    return this.hasImage(image);
+  }
+
+  /**
+   * Creates a running workspace; rejects when `opts.signal` aborts during the create delay, and
+   * with `WorkspaceImageMissing` when the host was given an image list this spec is not in — a
+   * double that answered `imageExists` with `false` and then started the workspace anyway would
+   * be a worse guide to the port than no double at all.
+   */
   async create(spec: WorkspaceSpec, opts: { signal?: AbortSignal } = {}): Promise<WorkspaceHandle> {
     this.calls.push({ method: 'create', args: [spec, opts] });
+    if (!this.hasImage(spec.image)) {
+      throw new WorkspaceImageMissing(spec.image);
+    }
     if (this.createDelayMs > 0) {
       await sleep(this.createDelayMs, undefined, { signal: opts.signal });
     }
@@ -235,6 +260,11 @@ export class FakeWorkspaceRunner implements WorkspaceRunner {
   setGitState(workspaceId: string, git: Partial<FakeGitState>): void {
     const state = this.requireKnown(workspaceId);
     state.git = { ...state.git, ...git };
+  }
+
+  /** The one rule both `imageExists` and `create` answer to, so the double cannot disagree. */
+  private hasImage(image: string): boolean {
+    return this.images === undefined || this.images.includes(image);
   }
 
   private requireKnown(workspaceId: string): FakeWorkspaceState {

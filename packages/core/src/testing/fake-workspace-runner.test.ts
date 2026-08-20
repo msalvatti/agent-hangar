@@ -3,12 +3,13 @@
  *
  * Layer: unit.
  * Goal: create/exec (default echo and scripted), signal aborting an in-flight exec, snapshot
- * determinism, idempotent destroy, label listing, health, the virtual filesystem helpers and
- * the call log.
+ * determinism, idempotent destroy, label listing, health, image presence, the virtual filesystem
+ * helpers and the call log.
  * Mocks: fake timers for the create delay; no I/O.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { WorkspaceImageMissing } from '../errors.ts';
 import type { ExecEvent, WorkspaceSpec } from '../runner/types.ts';
 
 import { FakeClock } from './fake-clock.ts';
@@ -354,5 +355,45 @@ describe('FakeWorkspaceRunner', () => {
     expect(await runner.list({ 'ah.instance': 'x' })).toEqual([a, b]);
     expect(await runner.list({ 'ah.instance': 'x', 'ah.chat': '1' })).toEqual([a]);
     expect(await runner.list({ 'ah.instance': 'z' })).toEqual([]);
+  });
+
+  /**
+   * The port's image lookup, answered from a configured host: present for a reference the host
+   * has, absent for one it does not, and the call recorded like every other.
+   */
+  it('answers imageExists from the configured image list', async () => {
+    const runner = new FakeWorkspaceRunner({ images: ['agent-hangar/workspace:dev'] });
+
+    expect(await runner.imageExists('agent-hangar/workspace:dev')).toBe(true);
+    expect(await runner.imageExists('agent-hangar/workspace:nope')).toBe(false);
+    expect(runner.calls).toEqual([
+      { method: 'imageExists', args: ['agent-hangar/workspace:dev'] },
+      { method: 'imageExists', args: ['agent-hangar/workspace:nope'] },
+    ]);
+  });
+
+  /**
+   * A test that is not about images should never have to name one, so a runner given no list has
+   * every image — which is also what keeps the default identical to the behaviour before the port
+   * grew this method.
+   */
+  it('reports every image as present when no list was given', async () => {
+    const runner = new FakeWorkspaceRunner();
+
+    expect(await runner.imageExists('anything:at-all')).toBe(true);
+  });
+
+  /**
+   * The double has to agree with itself: a host that says it does not have the image must not go
+   * on to start a workspace from it, or a consumer written against this fake would pass here and
+   * fail against Docker.
+   */
+  it('refuses to create a workspace from an image the host does not have', async () => {
+    const runner = new FakeWorkspaceRunner({ images: ['agent-hangar/workspace:dev'] });
+
+    await expect(runner.create(spec({ image: 'agent-hangar/workspace:nope' }))).rejects.toThrow(
+      WorkspaceImageMissing,
+    );
+    await expect(runner.create(spec())).resolves.toMatchObject({ workspaceId: 'ws-1' });
   });
 });

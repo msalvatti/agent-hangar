@@ -11,7 +11,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { REDACTED_TOKEN, SECRET_SHAPE_PATTERNS } from '../secrets/types.ts';
-import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.ts';
+import {
+  assertNoCanary,
+  CANARY_MARKER,
+  GITHUB_CANARY,
+  OPENAI_CANARY,
+} from '../testing/canaries.ts';
 
 import { CIRCULAR_TOKEN, createRedactor, escapeRegExp } from './redactor.ts';
 
@@ -29,6 +34,13 @@ const PROJECT_API_KEY = `sk-proj-${'d'.repeat(30)}`;
 
 /** An authorization header carrying an opaque token. */
 const BEARER_HEADER = `Authorization: Bearer ${'e'.repeat(40)}`;
+
+/**
+ * A database password. It carries the canary marker so it is unmistakably fake, and it is shaped
+ * like nothing the contract patterns match — which is the point: only the connection-string rule
+ * can catch it.
+ */
+const DB_PASSWORD = `db-${CANARY_MARKER}-pw`;
 
 describe('createRedactor registered values', () => {
   /**
@@ -291,6 +303,216 @@ describe('createRedactor shape patterns', () => {
 
     expect(SECRET_SHAPE_PATTERNS.every((pattern) => pattern.lastIndex === 0)).toBe(true);
     expect(redactor.redact(CLASSIC_PAT)).toBe(REDACTED_TOKEN);
+  });
+});
+
+describe('createRedactor connection-string passwords', () => {
+  /**
+   * The credential a process leaks about itself rather than about its user. A driver that cannot
+   * open a connection quotes the string it tried, password and all, and that string is registered
+   * nowhere — the web process reveals no stored secret, so it registers none. Shape is the only
+   * layer left, and both connection URLs a process holds have to be covered by it.
+   */
+  it.each([
+    ['a Postgres URL', `postgresql://ah:${DB_PASSWORD}@127.0.0.1:5433/agent_hangar_default`],
+    ['a Redis URL', `redis://default:${DB_PASSWORD}@127.0.0.1:5434`],
+    ['a driver failure quoting one', `connect ECONNREFUSED redis://u:${DB_PASSWORD}@host:5434`],
+  ])('removes the password from %s', (_label, text) => {
+    const redactor = createRedactor();
+
+    const output = redactor.redact(text);
+
+    expect(output).not.toContain(DB_PASSWORD);
+    expect(output).toContain(REDACTED_TOKEN);
+  });
+
+  /**
+   * The canonical spelling of a Redis URL that carries only a password: `requirepass` is set, no
+   * ACL user is, and the username is therefore empty. It has its own test rather than a row in the
+   * table above because it is the likeliest real shape of `REDIS_URL` and the one a rule written
+   * around `user:password` silently misses — every other case here passed while this one leaked.
+   */
+  it('removes the password of a URL with an empty username', () => {
+    const redactor = createRedactor();
+
+    const output = redactor.redact(`redis://:${DB_PASSWORD}@127.0.0.1:5434`);
+
+    expect(output).toBe(`redis://:${REDACTED_TOKEN}@127.0.0.1:5434`);
+  });
+
+  /**
+   * What the lookbehind assumes about the rest of the URL, stated as cases so the assumptions stay
+   * as weak as a real URL needs them to be: a scheme that is not a bare word, a percent-encoded
+   * username, a bracketed IPv6 host after the userinfo, and a password that itself contains the
+   * colon RFC 3986 admits in userinfo — where the first colon separates user from password and
+   * everything after it belongs to the password.
+   */
+  it.each([
+    [
+      'a compound scheme',
+      `postgresql+psycopg://ah:${DB_PASSWORD}@127.0.0.1:5433/db`,
+      `postgresql+psycopg://ah:${REDACTED_TOKEN}@127.0.0.1:5433/db`,
+    ],
+    [
+      'brackets in the password',
+      `postgresql://ah:${DB_PASSWORD}[x]@127.0.0.1:5433/db`,
+      `postgresql://ah:${REDACTED_TOKEN}@127.0.0.1:5433/db`,
+    ],
+    [
+      'an at-sign in the password',
+      `postgresql://ah:${DB_PASSWORD}@x@127.0.0.1:5433/db`,
+      `postgresql://ah:${REDACTED_TOKEN}@127.0.0.1:5433/db`,
+    ],
+    [
+      'a query string that carries an at-sign',
+      `https://u:${DB_PASSWORD}@example.com?next=a@b`,
+      `https://u:${REDACTED_TOKEN}@example.com?next=a@b`,
+    ],
+    [
+      'a path that carries an at-sign',
+      `https://u:${DB_PASSWORD}@example.com/a@b`,
+      `https://u:${REDACTED_TOKEN}@example.com/a@b`,
+    ],
+    [
+      'a percent-encoded username',
+      `postgresql://a%40b:${DB_PASSWORD}@127.0.0.1:5433/db`,
+      `postgresql://a%40b:${REDACTED_TOKEN}@127.0.0.1:5433/db`,
+    ],
+    [
+      'an IPv6 host',
+      `rediss://:${DB_PASSWORD}@[::1]:5434`,
+      `rediss://:${REDACTED_TOKEN}@[::1]:5434`,
+    ],
+    [
+      'a password containing a colon',
+      `postgresql://ah:${DB_PASSWORD}:more@127.0.0.1:5433/db`,
+      `postgresql://ah:${REDACTED_TOKEN}@127.0.0.1:5433/db`,
+    ],
+  ])('handles %s', (_label, text, expected) => {
+    expect(createRedactor().redact(text)).toBe(expected);
+  });
+
+  /**
+   * Only the password is taken. A failure nobody can locate is its own kind of harm, so the
+   * scheme, the user, the host and the path all survive — the line still names what could not be
+   * reached.
+   */
+  it('keeps everything around the password', () => {
+    const redactor = createRedactor();
+
+    const output = redactor.redact(
+      `postgresql://ah:${DB_PASSWORD}@127.0.0.1:5433/agent_hangar_default`,
+    );
+
+    expect(output).toBe(`postgresql://ah:${REDACTED_TOKEN}@127.0.0.1:5433/agent_hangar_default`);
+  });
+
+  /**
+   * A URL with no password in it is ordinary text and must survive byte for byte, or every log
+   * line naming a service would start losing pieces of itself.
+   */
+  it.each([
+    ['no userinfo at all', 'redis://127.0.0.1:5434'],
+    ['a user and no password', 'postgresql://ah@127.0.0.1:5433/agent_hangar_default'],
+    ['an empty password', 'https://x-access-token:@github.com/acme/widgets.git'],
+    ['an empty username and password', 'redis://:@127.0.0.1:5434'],
+    ['a bare host and port', 'connect ECONNREFUSED 127.0.0.1:5433'],
+    ['an address with no scheme separator', 'mailto:someone@example.com'],
+    [
+      'a URL without userinfo beside an address that has an at-sign',
+      '{"redis":"redis://127.0.0.1:5434","contact":"ops@example.com"}',
+    ],
+  ])('leaves %s untouched', (_label, text) => {
+    expect(createRedactor().redact(text)).toBe(text);
+  });
+
+  /**
+   * The two spellings the rule sells, pinned so the price stays visible and so widening the class
+   * later has to re-derive the trade rather than discover it. The WHATWG parser accepts a raw quote
+   * and a raw space in userinfo and percent-encodes them itself, so both are real passwords — but
+   * admitting a bare quote would let one match cross a field boundary of a serialised record and
+   * delete the fields between, and admitting whitespace would let one run across a whole log line
+   * to a distant at-sign. What covers a password of any shape is registering the configured value
+   * at boot, not a wider pattern.
+   */
+  it.each([
+    ['a raw quote', `postgresql://ah:${DB_PASSWORD}"x@127.0.0.1:5433/db`],
+    ['a raw space', `postgresql://ah:${DB_PASSWORD} x@127.0.0.1:5433/db`],
+  ])('leaves a password containing %s to registration instead', (_label, text) => {
+    expect(createRedactor().redact(text)).toBe(text);
+  });
+
+  /**
+   * The property the structural bound had to re-establish from scratch, because it no longer rests
+   * on the replacement token's brackets being unmatchable: the token carries no at-sign, so after a
+   * substitution it sits immediately before the at-sign the match ended at, and a second pass lands
+   * on that same at-sign, matches exactly the token and writes it back. The output is identical,
+   * which is what lets the finished-line scrub return early instead of rewriting the line again.
+   */
+  it.each([
+    ['a path after the authority', `postgresql://ah:${DB_PASSWORD}@127.0.0.1:5433/db`],
+    ['no path at all', `redis://:${DB_PASSWORD}@127.0.0.1:5434`],
+    ['brackets in the password', `postgresql://ah:${DB_PASSWORD}[x]@127.0.0.1:5433/db`],
+    ['a query string', `https://u:${DB_PASSWORD}@example.com?next=a@b`],
+  ])('is stable when applied twice to a URL with %s', (_label, text) => {
+    const redactor = createRedactor();
+    const once = redactor.redact(text);
+
+    expect(once).toContain(REDACTED_TOKEN);
+    expect(once).not.toContain(DB_PASSWORD);
+    expect(redactor.redact(once)).toBe(once);
+  });
+
+  /**
+   * Two URLs on one line stay two: whitespace ends a match, so the first URL's password cannot
+   * reach the second URL's at-sign and swallow everything between them.
+   */
+  it('redacts each URL on a line independently', () => {
+    const text = `postgresql://ah:${DB_PASSWORD}1@h1/db redis://:${DB_PASSWORD}2@h2:5434`;
+
+    expect(createRedactor().redact(text)).toBe(
+      `postgresql://ah:${REDACTED_TOKEN}@h1/db redis://:${REDACTED_TOKEN}@h2:5434`,
+    );
+  });
+
+  /**
+   * The redactor's last pass runs over a whole serialised record, where two unrelated values sit
+   * next to each other with only `","` between them. A rule that read across that boundary — from
+   * a value ending in `scheme://host:` to an `@` in a later value — would swallow the field names
+   * in between. Measured, that produces valid JSON with a field silently gone, which is worse than
+   * a line that fails to parse: nothing downstream can tell it happened. Over-redaction is a
+   * failure of its own, and this is its worst form.
+   */
+  it('does not read across the fields of a serialised record', () => {
+    const line = JSON.stringify({ endpoint: 'https://cache:', contact: 'ops@example.com' });
+
+    const output = createRedactor().redact(line);
+
+    expect(output).toBe(line);
+    expect(JSON.parse(output)).toStrictEqual({
+      endpoint: 'https://cache:',
+      contact: 'ops@example.com',
+    });
+  });
+
+  /**
+   * The same boundary from the other side: a record whose own field holds a URL with a password
+   * loses the password and keeps every field, including a later one that contains an at-sign of
+   * its own. This is the shape a real log line takes, so it is the one that has to survive intact.
+   */
+  it('redacts a password inside a record without disturbing the fields around it', () => {
+    const line = JSON.stringify({
+      db: `redis://:${DB_PASSWORD}@127.0.0.1:5434`,
+      contact: 'ops@example.com',
+    });
+
+    const output = createRedactor().redact(line);
+
+    expect(output).not.toContain(DB_PASSWORD);
+    expect(JSON.parse(output)).toStrictEqual({
+      db: `redis://:${REDACTED_TOKEN}@127.0.0.1:5434`,
+      contact: 'ops@example.com',
+    });
   });
 });
 

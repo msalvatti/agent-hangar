@@ -59,7 +59,13 @@ fi
 # --env-file` below reads that file, so on a second run an exported AH_INSTANCE/AH_PORT_BASE that
 # disagrees with the preserved file would bring compose up on one instance's ports while the
 # migrations and the image build targeted another.
-eval "$(bash "$here"/env.sh --print-effective)"
+#
+# Captured before it is evaluated, and the status propagated. `eval "$(cmd)"` reports the status of
+# `eval`, never of `cmd`, so a refusal used to be swallowed here: env.sh printed why it would not
+# hand over an environment, setup carried on without one, and the first step to dereference a key
+# the file never carried died on "unbound variable" instead.
+instance_env="$(bash "$here"/env.sh --print-effective)" || exit "$?"
+eval "$instance_env"
 
 log "3/7 Docker socket"
 if [ -n "${DOCKER_HOST:-}" ]; then

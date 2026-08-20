@@ -14,7 +14,12 @@ import { describe, expect, it } from 'vitest';
 
 import { createRedactor } from '../redaction/redactor.ts';
 import { REDACTED_TOKEN } from '../secrets/types.ts';
-import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.ts';
+import {
+  assertNoCanary,
+  CANARY_MARKER,
+  GITHUB_CANARY,
+  OPENAI_CANARY,
+} from '../testing/canaries.ts';
 
 import type { CreateLoggerOptions, LoggerRedactor } from './logger.ts';
 import { LOG_REDACT_PATHS, SENSITIVE_FIELD_NAMES, createLogger } from './logger.ts';
@@ -24,6 +29,12 @@ import { LOG_REDACT_PATHS, SENSITIVE_FIELD_NAMES, createLogger } from './logger.
  * field-name redaction can catch it.
  */
 const OPAQUE_CREDENTIAL = 'opaque-value-1234';
+
+/**
+ * A database password: registered nowhere, shaped like no token, and marked as a canary so it is
+ * unmistakably fake. Only the connection-string rule of the redactor can reach it.
+ */
+const DB_PASSWORD = `db-${CANARY_MARKER}-pw`;
 
 /** A logger writing into memory, plus access to what it wrote. */
 interface Capture {
@@ -146,6 +157,25 @@ describe('createLogger', () => {
     expect(err.type).toBe('Error');
     expect(err.message).toContain(REDACTED_TOKEN);
     expect(String(err.stack)).toContain(REDACTED_TOKEN);
+  });
+
+  /**
+   * The database password is the one credential no process registers: the web app never reveals a
+   * stored secret, so it hands the redactor nothing, and a bare password matches no token shape.
+   * A driver that cannot open its connection quotes the string it tried — and a 5xx handler logs
+   * that error — so what is asserted here is the written line, not that a hook ran: the password
+   * is gone from it and the rest of the URL, which is what makes the failure locatable, is not.
+   */
+  it('redacts the password of a connection string quoted by a driver error', () => {
+    const sink = capture();
+    const url = `postgresql://ah:${DB_PASSWORD}@127.0.0.1:5433/agent_hangar_default`;
+
+    sink.logger.error({ err: new Error(`connect ECONNREFUSED ${url}`) }, 'request failed');
+
+    expect(sink.text()).not.toContain(DB_PASSWORD);
+    expect(sink.text()).toContain(
+      `postgresql://ah:${REDACTED_TOKEN}@127.0.0.1:5433/agent_hangar_default`,
+    );
   });
 
   /**

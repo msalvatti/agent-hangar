@@ -237,6 +237,24 @@ function withoutEmptyValues(env: RawEnv): Record<string, string> {
  * Precedence for every variable: explicit environment value → instance-derived default →
  * static default. Empty strings count as unset.
  *
+ * That precedence covers the identity variables too — an explicit `POSTGRES_PORT` or
+ * `DATABASE_URL` wins here — and it is deliberately looser than `infra/scripts/env.sh`, which
+ * derives those and ignores whatever the shell exported. The two are not in disagreement; they
+ * answer different questions. `env.sh` *writes* an instance's environment, and that is where an
+ * instance is sealed: the one place a name and a set of ports are paired, so no shell can pair one
+ * instance's name with another's database. This function *reads* an environment somebody else
+ * composed, and cannot tell a derived one from a deployment that legitimately points the app at a
+ * database somewhere else — which is what this repository's own integration job does, running
+ * instance `test` against a Postgres published on 5432, a port no derivation produces. Sealing the
+ * block here would refuse that with no way to state it.
+ *
+ * The invariant is therefore kept where it can be kept: identity is computed once, on the way in,
+ * and every supported entry point loads the file that computation wrote — `env.sh --print-checked`
+ * refuses a shell that names a different instance from the file. Where an override could still do
+ * real damage it is checked against the derivation at the point of damage rather than forbidden
+ * here; the integration harness refuses to empty a Redis whose URL is not the one this instance's
+ * port derives.
+ *
  * @param env - Environment to read (defaults to `process.env`).
  * @returns The validated configuration.
  * @throws ConfigError listing every invalid variable.
