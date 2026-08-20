@@ -191,6 +191,7 @@ describe('PrismaWorkspaceRepository', () => {
     });
   });
 
+  /** Only READY stamps readyAt and only DESTROYED stamps destroyedAt; BUSY writes neither. */
   it('setStatus(BUSY) does not call updateMany or touch destroyedAt', async () => {
     const { client, workspace } = fakePrisma();
     const repo = new PrismaWorkspaceRepository(client, fakeRedactor);

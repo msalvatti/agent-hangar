@@ -21,7 +21,12 @@
  * it takes time — an exec into the container, two writes for the chat — and a turn may take the
  * workspace while it runs, so the write that commits to destroying the container is also the one
  * that arbitrates: it applies only while the row still holds what was read, and reports a
- * workspace somebody else took instead of tearing it down underneath them.
+ * workspace somebody else took instead of tearing it down underneath them. What it cannot take
+ * back is the note already appended to the chat, so a teardown that loses leaves a message saying
+ * the workspace was reclaimed when it was not. Within one worker that never happens — the
+ * collector holds the workspace's claim across all of it — and across workers a stale sentence in
+ * the transcript is the cheaper of the two outcomes: writing the record after the destroy would
+ * lose it altogether whenever the process dies in between.
  */
 import { archivedNotice, describeClientFailure } from '@agent-hangar/core';
 import type { Workspace, WorkspaceSnapshot } from '@agent-hangar/core';

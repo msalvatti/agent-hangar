@@ -181,7 +181,6 @@ describeDb('PrismaWorkspaceRepository', () => {
     expect(ids).not.toContain(destroyed.id);
   });
 
-  /** get() on an unknown id returns null; setStatus() throws NotFoundError. */
   /**
    * The one property that cannot be proven against the double: that the conditional write is
    * really one conditional statement in Postgres, not a read followed by a write.
@@ -211,6 +210,7 @@ describeDb('PrismaWorkspaceRepository', () => {
     expect((await repo.get(workspace.id))?.status).toBe(winners[0]?.status);
   });
 
+  /** get() on an unknown id returns null; setStatus() throws NotFoundError. */
   it('get() returns null and setStatus() throws NotFoundError for an unknown id', async () => {
     const repo = new PrismaWorkspaceRepository(client, testRedactor);
     expect(await repo.get('missing')).toBeNull();

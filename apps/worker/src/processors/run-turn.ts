@@ -563,6 +563,37 @@ async function runPreparedTurn(
 }
 
 /**
+ * Takes the prepared workspace for this turn, or ends the turn because somebody else has it.
+ *
+ * The take is a conditional write, and it is the last thing that happens before the exec: the
+ * collector may have selected this row as idle while the workspace was being prepared, and a
+ * second worker process would not see the in-process claim at all. `READY` is the only status a
+ * turn may take a workspace from — a recovered stall has already been destroyed by then, and a
+ * `BUSY` row belongs to a turn that is running — so naming it is what tells "I took it" apart from
+ * "I overwrote whoever did".
+ *
+ * @param deps - Repositories, publisher and logger.
+ * @param turnId - The turn.
+ * @param workspaceId - The workspace preparation produced.
+ * @param watch - The turn's cancellation subscription, consulted before the conflict is recorded.
+ * @returns The workspace, now `BUSY`, or `null` when the turn has already been ended here.
+ */
+async function takeWorkspaceForTurn(
+  deps: ProcessorDeps,
+  turnId: string,
+  workspaceId: string,
+  watch: CancellationWatch,
+): Promise<Workspace | null> {
+  const busy = await deps.repos.workspaces.claimStatus(workspaceId, 'READY', 'BUSY');
+  if (busy !== null) {
+    return busy;
+  }
+  deps.logger.warn({ turnId, workspaceId }, "another writer took this chat's workspace first");
+  await endUnstartedTurn(deps, turnId, watch, WORKSPACE_CONFLICT_CODE, WORKSPACE_CONFLICT_MESSAGE);
+  return null;
+}
+
+/**
  * Prepares and runs one turn, with the chat's workspace and the cancellation channel both held.
  *
  * The history is read after the stalled recovery, not before: the recovery appends the SYSTEM note
@@ -598,26 +629,11 @@ async function runWatchedTurn(
     return;
   }
 
-  // Taking the workspace is a conditional write, and it is the last thing that happens before the
-  // exec: the collector may have selected this row as idle while the workspace was being prepared,
-  // and a second worker process would not see the in-process claim at all. `READY` is the only
-  // status a turn may take a workspace from — a recovered stall has already been destroyed above,
-  // and a `BUSY` row belongs to a turn that is running — so naming it here is what tells "I took
-  // it" apart from "I overwrote whoever did". It comes after the Stop check because a turn
-  // cancelled before its exec never reaches the release below.
-  const busy = await deps.repos.workspaces.claimStatus(ensured.workspace.id, 'READY', 'BUSY');
+  // After the Stop check, not before it: a turn cancelled before its exec never reaches the
+  // release below, so a workspace taken ahead of that check would stay `BUSY` with nobody to free
+  // it.
+  const busy = await takeWorkspaceForTurn(deps, turnId, ensured.workspace.id, watch);
   if (busy === null) {
-    deps.logger.warn(
-      { turnId, workspaceId: ensured.workspace.id },
-      "another writer took this chat's workspace first",
-    );
-    await endUnstartedTurn(
-      deps,
-      turnId,
-      watch,
-      WORKSPACE_CONFLICT_CODE,
-      WORKSPACE_CONFLICT_MESSAGE,
-    );
     return;
   }
 
