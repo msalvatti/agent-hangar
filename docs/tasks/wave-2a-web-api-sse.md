@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W2-A (one agent; runs in parallel with W2-B 🐳 and W2-C) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/6 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 6/6 tasks |
 | **Branch** | `feat/w2a-web-api-sse` |
 | **Owned paths** | `apps/web/app/api/**`, `apps/web/src/server/**` · plus, by explicit exception: `apps/web/vitest.config.ts` (`coverage.include` + test `include` globs only), `apps/web/package.json` (`scripts.test:integration` only), and **additive** lines in `packages/core/src/queues/contracts.ts`, `packages/core/src/api/contracts.ts`, `packages/core/src/config/schema.ts` (listed in Task 2A.1; every such addition is reported under `contractChangeRequests`) |
 | **Depends on** | W0, W1-A (secrets/redaction/logging), W1-E (persistence repositories), W1-F (scheduling, queues) — all merged to `main` |
@@ -47,28 +47,29 @@ Two decisions are taken here and must be stated in the PR description:
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 2A.1 | Server DI container, HTTP helpers, test container, GitHub client, additive core contracts | 📋 | P0 | M | — |
-| 2A.2 | Chats, messages, archive/restore, delete, turn cancel routes | 📋 | P0 | M | 2A.1 |
-| 2A.3 | Jobs CRUD + manual run, runs list/detail, repos + branches routes | 📋 | P0 | M | 2A.1 |
-| 2A.4 | Settings (status/set/remove, no request logging) and health routes | 📋 | P0 | S | 2A.1 |
-| 2A.5 | SSE: stream factory, `chats/[id]/events`, `runs/[id]/events`, `@redis` integration | 📋 | P0 | L | 2A.1, 2A.2 |
-| 2A.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 2A.1–2A.5 |
+| 2A.1 | Server DI container, HTTP helpers, test container, GitHub client, additive core contracts | ✅ | P0 | M | — |
+| 2A.2 | Chats, messages, archive/restore, delete, turn cancel routes | ✅ | P0 | M | 2A.1 |
+| 2A.3 | Jobs CRUD + manual run, runs list/detail, repos + branches routes | ✅ | P0 | M | 2A.1 |
+| 2A.4 | Settings (status/set/remove, no request logging) and health routes | ✅ | P0 | S | 2A.1 |
+| 2A.5 | SSE: stream factory, `chats/[id]/events`, `runs/[id]/events`, `@redis` integration | ✅ | P0 | L | 2A.1, 2A.2 |
+| 2A.6 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 2A.1–2A.5 |
 
 ---
 
 ## Task 2A.1 — Server DI container, HTTP helpers, test container, GitHub client, additive core contracts
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Build the server-side foundation every route uses: a per-process DI container (`getServerContainer()`, HMR-safe), HTTP helpers (JSON responses, Zod body/query parsing, error → status mapping), the injectable test container with fakes, the GitHub client (single permitted `reveal` site), and the small **additive** core contract changes this lane depends on (worker heartbeat key/schema, cancel command schema, `ALLOWED_REPO_HOSTS` + `GITHUB_API_BASE_URL` config vars, response schemas the routes need).
 
 **Acceptance criteria**
-- [ ] `apps/web/src/server/container.ts` exports `ServerContainer`, `createServerContainer(deps?)`, `getServerContainer()` (cached on `globalThis` under a symbol so Next dev HMR reuses one Prisma/Redis/BullMQ set), `disposeServerContainer()`
-- [ ] `apps/web/src/server/http.ts` exports `json`, `noContent`, `errorResponse`, `parseJsonBody`, `parseQuery`, `withErrorHandling`, `ApiHttpError`, `NotFoundError`, `ConflictError`, and maps core errors to status/code as specified
-- [ ] `apps/web/src/server/github.ts` exports `createGithubClient` with `listRepos(query)` / `listBranches(repo)`; PAT obtained via `secrets.reveal('GITHUB_PAT')` inside the call, never stored; errors are `GithubApiError { status }` with redacted messages; a test asserts no other web file calls `.reveal(`
-- [ ] `apps/web/src/server/testing/{test-container,fake-queue,fake-redis,fake-secrets}.ts` provide `createTestContainer(overrides?)` built on `@agent-hangar/core/testing`
-- [ ] Additive core changes: `workerHeartbeatKey(instance)`, `WORKER_HEARTBEAT_TTL_SEC = 90`, `WORKER_HEARTBEAT_INTERVAL_SEC = 30`, `workerHeartbeatSchema`, `turnCommandSchema` in `packages/core/src/queues/contracts.ts`; `ALLOWED_REPO_HOSTS` (comma-separated, default `github.com`) and `GITHUB_API_BASE_URL` (default `https://api.github.com`) in `packages/core/src/config/schema.ts`; any missing response schema in `packages/core/src/api/contracts.ts` (see prompt) — each with tests in core, 100 %
-- [ ] `apps/web/vitest.config.ts` `coverage.include` extended with `'app/api/**'`, `'src/server/**'`; unit tests green at 100 % for everything created here
+- [x] `apps/web/src/server/container.ts` exports `ServerContainer`, `createServerContainer(deps?)`, `getServerContainer()` (cached on `globalThis` under a symbol so Next dev HMR reuses one Prisma/Redis/BullMQ set), `disposeServerContainer()`
+- [x] `apps/web/src/server/http.ts` exports `json`, `noContent`, `errorResponse`, `parseJsonBody`, `parseQuery`, `withErrorHandling`, `ApiHttpError`, `ResourceNotFoundError`, `ConflictError`, and maps core errors to status/code as specified
+- [x] `apps/web/src/server/same-origin.ts` exports `assertSameOrigin(request)` (403 `FORBIDDEN_ORIGIN`), called by every state-changing handler
+- [x] `apps/web/src/server/github.ts` exports `createGithubClient` with `listRepos(query)` / `listBranches(repo)`; PAT obtained via `secrets.reveal('GITHUB_PAT')` inside the call, never stored; errors are `GithubApiError { status }` with redacted messages; a test asserts no other web file calls `.reveal(`
+- [x] `apps/web/src/server/testing/{test-container,fake-queue,fake-redis,fake-secrets}.ts` provide `createTestContainer(overrides?)` built on `@agent-hangar/core/testing`
+- [x] Additive core changes: `workerHeartbeatKey(instance)`, `WORKER_HEARTBEAT_TTL_SEC = 90`, `WORKER_HEARTBEAT_INTERVAL_SEC = 30`, `workerHeartbeatSchema`, `TURN_EVENT_FIELD`, `parseTurnEventEntry` in `packages/core/src/queues/contracts.ts`; `ALLOWED_REPO_HOSTS` and `GITHUB_API_BASE_URL` in `packages/core/src/config/schema.ts`; `getJob` operation and `healthResponse.ports` in `packages/core/src/api/contracts.ts` — each with tests in core, 100 %
+- [x] `apps/web/vitest.config.ts` `coverage.include` extended with `'app/api/**'`, `'src/server/**'`; unit tests green at 100 % for everything created here
 
 **Files to create/modify**
 `apps/web/src/server/{container,http,github,repo-url,index}.ts` + `*.test.ts`; `apps/web/src/server/testing/{test-container,fake-queue,fake-redis,fake-secrets,index}.ts` + tests; `apps/web/src/server/reveal-policy.test.ts`; `packages/core/src/queues/contracts.ts` (+ test), `packages/core/src/config/schema.ts` (+ test), `packages/core/src/api/contracts.ts` (+ test, only if schemas are missing); `apps/web/vitest.config.ts`.
@@ -187,19 +188,19 @@ Completion Protocol (after you finish):
 
 ## Task 2A.2 — Chats, messages, archive/restore, delete, turn cancel routes
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 2A.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 2A.1
 
 **Description.** Implement the chat side of spec 03 §4: create chat (+ first message + first turn + enqueue), list, detail, post message, archive (+ enqueue workspace destroy), restore (+ system notice), delete, and turn cancel via the Redis command channel. Handlers in `src/server/handlers/{chats,turns}.ts`, thin route files under `app/api/**`.
 
 **Acceptance criteria**
-- [ ] `POST /api/chats` validates `createChatRequest`, enforces repo host allow-list and secrets presence, creates Chat (title = trimmed prompt ≤ 80 chars) + Message(USER, seq 1) + Turn(QUEUED, model from config, `queueJobId = turnId`), enqueues `chat-turns`/`run-turn` `{ turnId }` with `jobId: turnId`, returns 201
-- [ ] `GET /api/chats?status=ACTIVE|ARCHIVED|ALL` (default `ACTIVE`) returns `chatSummary[]` sorted by `updatedAt` desc; `GET /api/chats/:id` returns `chatDetail` (messages by `seq`, turns by `queuedAt`, tool calls per turn) or 404
-- [ ] `POST /api/chats/:id/messages` → 409 `CHAT_ARCHIVED` / 409 `TURN_IN_PROGRESS` / 409 `SECRETS_MISSING` guards, else Message(USER, next seq) + Turn(QUEUED) + enqueue, 201
-- [ ] `PATCH /api/chats/:id` (`renameChatRequest { title }`, trimmed, 1–120 chars → 200 `chatSummary`; 400 `VALIDATION`; 404 unknown) — frozen contract route (spec 03 §4); route file `app/api/chats/[id]/route.ts` hosts GET/PATCH/DELETE
-- [ ] `POST /api/chats/:id/archive` (ACTIVE only; 409 `TURN_IN_PROGRESS` if a turn is QUEUED/PREPARING/RUNNING) → ARCHIVED + enqueue `workspace-gc`/`destroy-chat-workspace` `{ chatId }` → 200 `chatDetail`; `POST /api/chats/:id/restore` (ARCHIVED only) → ACTIVE + SYSTEM message → 200 `chatDetail`; `?warm=1` accepted and documented as a no-op in v1
-- [ ] `DELETE /api/chats/:id` → 409 `TURN_IN_PROGRESS` if a turn is live; else enqueue destroy job when a live workspace exists, then cascade delete → 204
-- [ ] `POST /api/turns/:id/cancel` → 404; terminal turn → 409 `TURN_NOT_CANCELLABLE`; QUEUED with a removable BullMQ job → job removed + Turn CANCELLED + 200 `{ status: 'CANCELLED' }`; otherwise PUBLISH `turnCommandSchema` `{ type: 'cancel' }` on `turnCommandChannel(turnId)` → 202 `{ status: 'CANCEL_REQUESTED' }`
-- [ ] 100 % coverage on `src/server/handlers/{chats,turns}.ts` and the route files
+- [x] `POST /api/chats` validates `createChatRequest`, enforces repo host allow-list and secrets presence, creates Chat (title = trimmed prompt ≤ 80 chars) + Message(USER, seq 1) + Turn(QUEUED, model from config, `queueJobId = turnId`), enqueues `chat-turns`/`run-turn` `{ turnId }` with `jobId: turnId`, returns 201
+- [x] `GET /api/chats?status=ACTIVE|ARCHIVED|ALL` (default `ACTIVE`) returns `chatSummary[]` sorted by `updatedAt` desc; `GET /api/chats/:id` returns `chatDetail` (messages by `seq`, turns by `queuedAt`, tool calls per turn) or 404
+- [x] `POST /api/chats/:id/messages` → 409 `CHAT_ARCHIVED` / 409 `TURN_IN_PROGRESS` / 409 `SECRETS_MISSING` guards, else Message(USER, next seq) + Turn(QUEUED) + enqueue, 201
+- [x] `PATCH /api/chats/:id` (`renameChatRequest { title }`, trimmed, 1–120 chars → 200 `chatSummary`; 400 `VALIDATION`; 404 unknown) — frozen contract route (spec 03 §4); route file `app/api/chats/[id]/route.ts` hosts GET/PATCH/DELETE
+- [x] `POST /api/chats/:id/archive` (ACTIVE only; 409 `TURN_IN_PROGRESS` if a turn is QUEUED/PREPARING/RUNNING) → ARCHIVED + enqueue `workspace-gc`/`destroy-chat-workspace` `{ chatId }` → 200 `chatDetail`; `POST /api/chats/:id/restore` (ARCHIVED only) → ACTIVE + SYSTEM message → 200 `chatDetail`; `?warm=1` accepted and documented as a no-op in v1
+- [x] `DELETE /api/chats/:id` → 409 `TURN_IN_PROGRESS` if a turn is live; else enqueue destroy job when a live workspace exists, then cascade delete → 204
+- [x] `POST /api/turns/:id/cancel` → 404; terminal turn → 409 `TURN_NOT_CANCELLABLE`; QUEUED with a removable BullMQ job → job removed + Turn CANCELLED + 200 `{ status: 'CANCELLED' }`; otherwise PUBLISH `turnCommandSchema` `{ type: 'cancel' }` on `turnCommandChannel(turnId)` → 202 `{ status: 'CANCEL_REQUESTED' }`
+- [x] 100 % coverage on `src/server/handlers/{chats,turns}.ts` and the route files
 
 **Files to create**
 `apps/web/src/server/handlers/{chats,turns}.ts` + `*.test.ts`; `apps/web/src/server/handlers/mappers.ts` (domain → `chatSummary`/`chatDetail`) + test; `apps/web/app/api/chats/route.ts`, `app/api/chats/[id]/route.ts`, `app/api/chats/[id]/messages/route.ts`, `app/api/chats/[id]/archive/route.ts`, `app/api/chats/[id]/restore/route.ts`, `app/api/turns/[id]/cancel/route.ts`; `apps/web/app/api/routes.test.ts` (wiring test, extended by later tasks).
@@ -274,17 +275,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 
 ## Task 2A.3 — Jobs CRUD + manual run, runs list/detail, repos + branches routes
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 2A.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 2A.1
 
 **Description.** Implement the scheduled-jobs API (create/list/get/patch/delete with BullMQ Job Scheduler upsert/remove, manual run enqueue), run history and detail, and the GitHub repo/branch picker routes.
 
 **Acceptance criteria**
-- [ ] `POST /api/jobs` validates `jobUpsertRequest`, `validateCron(cron, timezone)` (400 `INVALID_CRON` on failure), computes `nextRunAt`, creates the row, upserts the scheduler when `enabled`, returns 201 `jobSummary`
-- [ ] `GET /api/jobs` → `jobSummary[]` (createdAt desc); `GET /api/jobs/:id` → `jobSummary` or 404; `PATCH /api/jobs/:id` partial update with re-validation and scheduler upsert/remove according to `enabled`; `DELETE /api/jobs/:id` → remove scheduler + cascade delete → 204
-- [ ] `POST /api/jobs/:id/run` → 404 / 409 `SECRETS_MISSING` guards; enqueues `scheduled-jobs`/`run-scheduled-job` `{ jobId, trigger: 'MANUAL' }` → 202 `runJobResponse`
-- [ ] `GET /api/jobs/:id/runs?limit=` → `runSummary[]` newest first (default 50, max 200); `GET /api/runs/:id` → `runDetail` with tool calls or 404
-- [ ] `GET /api/repos?query=` → `repoSummary[]`; `GET /api/repos/branches?repo=` → `branchSummary[]`; 409 `SECRETS_MISSING`, 401 `GITHUB_AUTH`, 502 `GITHUB_ERROR`, 400 on bad `repo`
-- [ ] 100 % coverage on `src/server/handlers/{jobs,runs,repos}.ts` and route files
+- [x] `POST /api/jobs` validates `jobUpsertRequest`, `validateCron(cron, timezone)` (400 `INVALID_CRON` on failure), computes `nextRunAt`, creates the row, upserts the scheduler when `enabled`, returns 201 `jobSummary`
+- [x] `GET /api/jobs` → `jobSummary[]` (createdAt desc); `GET /api/jobs/:id` → `jobSummary` or 404; `PATCH /api/jobs/:id` partial update with re-validation and scheduler upsert/remove according to `enabled`; `DELETE /api/jobs/:id` → remove scheduler + cascade delete → 204
+- [x] `POST /api/jobs/:id/run` → 404 / 409 `SECRETS_MISSING` guards; enqueues `scheduled-jobs`/`run-scheduled-job` `{ jobId, trigger: 'MANUAL' }` → 202 `runJobResponse`
+- [x] `GET /api/jobs/:id/runs?limit=` → `runSummary[]` newest first (default 50, max 200); `GET /api/runs/:id` → `runDetail` with tool calls or 404
+- [x] `GET /api/repos?query=` → `repoSummary[]`; `GET /api/repos/branches?repo=` → `branchSummary[]`; 409 `SECRETS_MISSING`, 401 `GITHUB_AUTH`, 502 `GITHUB_ERROR`, 400 on bad `repo`
+- [x] 100 % coverage on `src/server/handlers/{jobs,runs,repos}.ts` and route files
 
 **Files to create**
 `apps/web/src/server/handlers/{jobs,runs,repos}.ts` + tests; `mappers.ts` extended (`toJobSummary`, `toRunSummary`, `toRunDetail`); `apps/web/app/api/jobs/route.ts`, `app/api/jobs/[id]/route.ts`, `app/api/jobs/[id]/run/route.ts`, `app/api/jobs/[id]/runs/route.ts`, `app/api/runs/[id]/route.ts`, `app/api/repos/route.ts`, `app/api/repos/branches/route.ts`; `app/api/routes.test.ts` extended.
@@ -348,16 +349,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 
 ## Task 2A.4 — Settings (status/set/remove, no request logging) and health routes
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 2A.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 2A.1
 
 **Description.** Implement `GET /api/settings`, `PUT`/`DELETE /api/settings/:key` using only `status`/`set`/`remove` of `SecretsService`, with request logging disabled and responses that never contain plaintext; and `GET /api/health` combining DB ping, Redis ping, the worker heartbeat key and DB-derived live-workspace counters.
 
 **Acceptance criteria**
-- [ ] `GET /api/settings` → `settingsStatus` (`githubPat`/`openaiKey` `{ set, last4?, updatedAt? }`, `model`), `Cache-Control: no-store`
-- [ ] `PUT /api/settings/:key` (`key` ∈ `GITHUB_PAT | OPENAI_API_KEY`, else 404) with `putSecretRequest` → `secrets.set` → 200 `putSecretResponse { set: true, last4 }`; `DELETE` → `secrets.remove` → 204; handlers log only `{ key, action }`, never the body/value; `Cache-Control: no-store`
-- [ ] A test captures all logger output and asserts with `assertNoCanary` that neither logs nor responses contain the canaries; a test asserts `reveal` is never called by settings handlers (`FakeSecretsService.revealCalls` empty)
-- [ ] `GET /api/health` → 200 `healthResponse` with `db`, `redis`, `worker` (from `workerHeartbeatKey(instance)` parsed by `workerHeartbeatSchema`; `ok = false` when absent/invalid/older than TTL), `liveWorkspaces` (`repos.workspaces.listLive()` grouped by kind), `image`, `ports`, `instance`, `ok`; `?require=worker|all` → 503 until satisfied; each probe bounded by a 2 s timeout and never throws
-- [ ] 100 % coverage
+- [x] `GET /api/settings` → `settingsStatus` (`githubPat`/`openaiKey` `{ set, last4?, updatedAt? }`, `model`), `Cache-Control: no-store`
+- [x] `PUT /api/settings/:key` (`key` ∈ `GITHUB_PAT | OPENAI_API_KEY`, else 404) with `putSecretRequest` → `secrets.set` → 200 `putSecretResponse { set: true, last4 }`; `DELETE` → `secrets.remove` → 204; handlers log only `{ key, action }`, never the body/value; `Cache-Control: no-store`
+- [x] A test captures all logger output and asserts with `assertNoCanary` that neither logs nor responses contain the canaries; a test asserts `reveal` is never called by settings handlers (`FakeSecretsService.revealCalls` empty)
+- [x] `GET /api/health` → 200 `healthResponse` with `db`, `redis`, `worker` (from `workerHeartbeatKey(instance)` parsed by `workerHeartbeatSchema`; `ok = false` when absent/invalid/older than TTL), `liveWorkspaces` (`repos.workspaces.listLive()` grouped by kind), `image`, `ports`, `instance`, `ok`; `?require=worker|all` → 503 until satisfied; each probe bounded by a 2 s timeout and never throws
+- [x] 100 % coverage
 
 **Files to create**
 `apps/web/src/server/handlers/{settings,health}.ts` + tests; `apps/web/app/api/settings/route.ts`, `app/api/settings/[key]/route.ts`, `app/api/health/route.ts`; `app/api/routes.test.ts` extended.
@@ -425,17 +426,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 
 ## Task 2A.5 — SSE: stream factory, `chats/[id]/events`, `runs/[id]/events`, `@redis` integration
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 2A.1, 2A.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 2A.1, 2A.2
 
 **Description.** Implement the Server-Sent Events endpoints over Redis Streams: replay via `XRANGE` from `Last-Event-ID`/`?from=`, tail via `XREAD BLOCK` on a dedicated duplicated ioredis connection, `: ping` heartbeat every 15 s, clean close on client abort, `event: expired` when the stream is gone and the turn/run is finished, terminal-event close. Unit-tested with `FakeRedis`, integration-tested `@redis` against compose Redis.
 
 **Acceptance criteria**
-- [ ] `apps/web/src/server/sse.ts` exports `formatSseFrame(frame: SseFrame): string`, `SSE_HEADERS`, `createSseResponse(opts)` building a `ReadableStream<Uint8Array>` with the behaviour below
-- [ ] `GET /api/chats/:id/events?turnId=&from=` (default: latest turn of the chat; 404 chat/turn) and `GET /api/runs/:id/events?from=` (404 run) respond `200 text/event-stream` with headers `Content-Type: text/event-stream; charset=utf-8`, `Cache-Control: no-cache, no-transform`, `Connection: keep-alive`, `X-Accel-Buffering: no`; `export const runtime = 'nodejs'`, `dynamic = 'force-dynamic'`
-- [ ] Replay: with `Last-Event-ID` header (or `?from=`) → `XRANGE key (<id> +`; without → full stream from `0-0`; frames `id: <stream-id>\nevent: <AgentEvent.type>\ndata: <json>\n\n`
-- [ ] Tail: `XREAD BLOCK <blockMs> STREAMS key <cursor>` loop on `redis.duplicate()`; closes after a terminal event (`turn.completed|turn.failed|turn.cancelled`), on `request.signal` abort, or on stream cancel; heartbeat comment `: ping\n\n` every `heartbeatMs` (15 000 default); the duplicated connection is always disconnected
-- [ ] Expired: stream key missing and turn/run in a terminal status → single frame `event: expired` then close; stream key missing and turn not finished → wait (tail from `0-0`) — the worker has not started yet
-- [ ] Unit tests (FakeRedis) + `@redis` integration tests (real Redis: XADD → frames, Last-Event-ID replay returns only later entries, heartbeat within 16 s using a short `heartbeatMs`, abort closes, expired path); 100 % coverage
+- [x] `apps/web/src/server/sse.ts` exports `formatSseFrame(frame: SseFrame): string`, `SSE_HEADERS`, `createSseResponse(opts)` building a `ReadableStream<Uint8Array>` with the behaviour below
+- [x] `GET /api/chats/:id/events?turnId=&from=` (default: latest turn of the chat; 404 chat/turn) and `GET /api/runs/:id/events?from=` (404 run) respond `200 text/event-stream` with headers `Content-Type: text/event-stream; charset=utf-8`, `Cache-Control: no-cache, no-transform`, `Connection: keep-alive`, `X-Accel-Buffering: no`; `export const runtime = 'nodejs'`, `dynamic = 'force-dynamic'`
+- [x] Replay: with `Last-Event-ID` header (or `?from=`) → `XRANGE key (<id> +`; without → full stream from `0-0`; frames `id: <stream-id>\nevent: <AgentEvent.type>\ndata: <json>\n\n`
+- [x] Tail: `XREAD BLOCK <blockMs> STREAMS key <cursor>` loop on `redis.duplicate()`; closes after a terminal event (`turn.completed|turn.failed|turn.cancelled`), on `request.signal` abort, or on stream cancel; heartbeat comment `: ping\n\n` every `heartbeatMs` (15 000 default); the duplicated connection is always disconnected
+- [x] Expired: stream key missing and turn/run in a terminal status → single frame `event: expired` then close; stream key missing and turn not finished → wait (tail from `0-0`) — the worker has not started yet
+- [x] Unit tests (FakeRedis) + `@redis` integration tests (real Redis: XADD → frames, Last-Event-ID replay returns only later entries, heartbeat within 16 s using a short `heartbeatMs`, abort closes, expired path); 100 % coverage
 
 **Files to create**
 `apps/web/src/server/sse.ts` + `sse.test.ts` + `sse.integration.test.ts`; `apps/web/src/server/handlers/events.ts` + test; `apps/web/app/api/chats/[id]/events/route.ts`, `app/api/runs/[id]/events/route.ts`; `apps/web/package.json` (`test:integration` script); `app/api/routes.test.ts` extended.
@@ -545,15 +546,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 
 ## Task 2A.6 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 2A.1–2A.5
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 2A.1–2A.5
 
 **Description.** Run every gate (lint, format, typecheck, unit 100 %, `@redis` integration), run `/bymax-quality:code-review` to zero findings, update the plan dashboard and the tasks index, open the PR with the structured summary including the two decisions and every additive contract change, and return the orchestrator payload.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter web test -- --coverage` 100/100/100/100 on `app/api/**` + `src/server/**`; `pnpm --filter @agent-hangar/core test -- --coverage` still 100 %; `pnpm --filter web test:integration` green against compose Redis
-- [ ] `/bymax-quality:code-review` run on the branch with zero open findings (no suppressions added to pass)
-- [ ] `docs/plan.md` §12 row W2-A → 🟨 with branch and PR number; `docs/tasks/README.md` row for this lane updated
-- [ ] PR opened against `main` with the structured body; returned payload `{ pr, branch, headSha, gates, coverage, contractChangeRequests }`
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter web test -- --coverage` 100/100/100/100 on `app/api/**` + `src/server/**`; `pnpm --filter @agent-hangar/core test -- --coverage` still 100 %; `pnpm --filter web test:integration` green against compose Redis
+- [x] `/bymax-quality:code-review` run on the branch with zero open findings (no suppressions added to pass)
+- [x] `docs/plan.md` §12 row W2-A → 🟨 with branch and PR number; `docs/tasks/README.md` row for this lane updated
+- [x] PR opened against `main` with the structured body; returned payload `{ pr, branch, headSha, gates, coverage, contractChangeRequests }`
 
 **Files to modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (lane row only), `docs/tasks/wave-2a-web-api-sse.md` (header status, log).
@@ -604,3 +605,10 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 2A.6 ✅ 2026-08-19 — every gate green, code review and security review to zero open findings, dashboards updated and the pull request opened
+- 2A.5 ✅ 2026-08-19 — SSE stream factory with replay, tail, heartbeat and expiry, the two events routes, and a @redis suite against a real Redis
+- 2A.4 ✅ 2026-08-19 — settings routes that never echo or log a credential, and a health route that reports Docker from the worker heartbeat
+- 2A.3 ✅ 2026-08-19 — scheduled-job CRUD with scheduler sync, manual run, run history and detail, and the GitHub repository and branch pickers
+- 2A.2 ✅ 2026-08-19 — chat, message, rename, archive, restore, delete and turn-cancel routes over the in-memory repositories and the BullMQ double
+- 2A.1 ✅ 2026-08-19 — server container, HTTP helpers, same-origin guard, GitHub client, test doubles and the additive core contracts

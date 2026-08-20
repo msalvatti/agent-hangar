@@ -48,6 +48,30 @@ export function expandHomePrefix(value: string): string {
 /** Upper bound of `WORKER_TURN_CONCURRENCY` (one container per turn; more would starve a laptop). */
 export const MAX_WORKER_TURN_CONCURRENCY = 32;
 
+/** Hosts a repository may be cloned from when `ALLOWED_REPO_HOSTS` is not set. */
+export const DEFAULT_ALLOWED_REPO_HOSTS = 'github.com';
+
+/** GitHub REST base URL used by the repository picker when `GITHUB_API_BASE_URL` is not set. */
+export const DEFAULT_GITHUB_API_BASE_URL = 'https://api.github.com';
+
+/**
+ * Splits the configured host allow-list into lower-cased hostnames.
+ *
+ * The list can only ever narrow what the API accepts: the request contracts already pin a
+ * repository URL to `https://github.com/<owner>/<repository>`, and this check runs after them.
+ * It exists so an operator who points the app at another forge — or who wants the default forge
+ * refused outright — has one place to say so, rather than a second parser to keep in step.
+ *
+ * @param value - Comma-separated host list.
+ * @returns The hosts, trimmed, lower-cased and free of empty entries.
+ */
+export function parseAllowedRepoHosts(value: string): string[] {
+  return value
+    .split(',')
+    .map((host) => host.trim().toLowerCase())
+    .filter((host) => host.length > 0);
+}
+
 const port = z.coerce.number().int().min(1).max(65_535);
 const positiveInt = z.coerce.number().int().positive();
 
@@ -74,6 +98,8 @@ export const envSchema = z.object({
   OPENAI_MODEL: z.string().min(1).default(DEFAULT_OPENAI_MODEL),
   OPENAI_BASE_URL: z.url().optional(),
   AGENT_MODEL_PROVIDER: z.enum(MODEL_PROVIDERS).default('openai'),
+  ALLOWED_REPO_HOSTS: z.string().min(1).default(DEFAULT_ALLOWED_REPO_HOSTS),
+  GITHUB_API_BASE_URL: z.url({ protocol: /^https$/ }).default(DEFAULT_GITHUB_API_BASE_URL),
   DOCKER_HOST: z.string().min(1).optional(),
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   NEXT_PUBLIC_API_MOCK: z.stringbool().default(false),

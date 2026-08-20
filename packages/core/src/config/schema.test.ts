@@ -21,6 +21,7 @@ import {
   expandHomePrefix,
   instanceDefaults,
   loadConfig,
+  parseAllowedRepoHosts,
 } from './schema.ts';
 
 describe('loadConfig', () => {
@@ -47,6 +48,8 @@ describe('loadConfig', () => {
       WORKER_TURN_CONCURRENCY: 2,
       OPENAI_MODEL: 'gpt-5.6-sol',
       AGENT_MODEL_PROVIDER: 'openai',
+      ALLOWED_REPO_HOSTS: 'github.com',
+      GITHUB_API_BASE_URL: 'https://api.github.com',
       LOG_LEVEL: 'info',
       NEXT_PUBLIC_API_MOCK: false,
     });
@@ -228,5 +231,38 @@ describe('helpers', () => {
    */
   it('exports a schema that requires the derived variables', () => {
     expect(envSchema.safeParse({}).success).toBe(false);
+  });
+
+  /**
+   * The repository host allow-list is written as a comma-separated string, so parsing has to be
+   * forgiving about spacing and casing and strict about empty entries — an empty host would
+   * otherwise match nothing while looking like a configured value.
+   */
+  it('parses the repository host allow-list', () => {
+    expect(parseAllowedRepoHosts('github.com')).toEqual(['github.com']);
+    expect(parseAllowedRepoHosts(' GitHub.com , git.example.org ')).toEqual([
+      'github.com',
+      'git.example.org',
+    ]);
+    expect(parseAllowedRepoHosts(',,')).toEqual([]);
+  });
+
+  /**
+   * Both new variables are overridable, and the GitHub base URL is narrowed to https: the PAT
+   * travels in its `Authorization` header, so a plaintext scheme would put it on the wire.
+   */
+  it('accepts overrides for the repository host list and the GitHub base URL', () => {
+    const config = loadConfig({
+      ALLOWED_REPO_HOSTS: 'github.com,git.example.org',
+      GITHUB_API_BASE_URL: 'https://ghe.example.org/api/v3',
+    });
+    expect(parseAllowedRepoHosts(config.ALLOWED_REPO_HOSTS)).toEqual([
+      'github.com',
+      'git.example.org',
+    ]);
+    expect(config.GITHUB_API_BASE_URL).toBe('https://ghe.example.org/api/v3');
+    expect(() => loadConfig({ GITHUB_API_BASE_URL: 'http://ghe.example.org' })).toThrow(
+      ConfigError,
+    );
   });
 });

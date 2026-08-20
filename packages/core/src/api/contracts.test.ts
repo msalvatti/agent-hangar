@@ -161,6 +161,16 @@ describe('no-content operations', () => {
     expect(apiOperations.cancelTurn.noContent).toBeUndefined();
     expect(apiOperations.cancelTurn.response.safeParse({ ok: true }).success).toBe(true);
   });
+
+  /**
+   * Reading one scheduled job is its own operation: the edit form loads a single row, and
+   * without it a client would have to list every job to render one.
+   */
+  it('exposes a single-job read on the job route', () => {
+    expect(apiOperations.getJob.method).toBe('GET');
+    expect(apiOperations.getJob.path).toBe(routes.job);
+    expect(apiOperations.getJob.response).toBe(jobSummary);
+  });
 });
 
 describe('chat schemas', () => {
@@ -322,16 +332,51 @@ describe('settings and health schemas', () => {
    */
   it('validates healthResponse', () => {
     const ok = { ok: true };
+    const ports = { web: 3000, postgres: 3001, redis: 3002 };
     expect(
       healthResponse.safeParse({
         ok: true,
         instance: 'default',
+        ports,
         checks: { db: ok, redis: ok, docker: ok, image: { ok: false, detail: 'missing' } },
       }).success,
     ).toBe(true);
     expect(
-      healthResponse.safeParse({ ok: true, instance: 'default', checks: { db: ok, redis: ok } })
-        .success,
+      healthResponse.safeParse({
+        ok: true,
+        instance: 'default',
+        ports,
+        checks: { db: ok, redis: ok },
+      }).success,
+    ).toBe(false);
+  });
+
+  /**
+   * `ports` was added after clients already parsed this response, so it is optional and a report
+   * without it still validates. What is not optional is a half-filled block: the Environment card
+   * names the instance by the ports it resolved to, and one `undefined` of three side-by-side
+   * checkouts would be worse than no card, so the three ports stand or fall together and each has
+   * to be a real port number.
+   */
+  it('accepts a report without ports and rejects an incomplete or invalid block', () => {
+    const ok = { ok: true };
+    const checks = { db: ok, redis: ok, docker: ok, image: ok };
+    expect(healthResponse.safeParse({ ok: true, instance: 'default', checks }).success).toBe(true);
+    expect(
+      healthResponse.safeParse({
+        ok: true,
+        instance: 'default',
+        ports: { web: 3000, postgres: 3001 },
+        checks,
+      }).success,
+    ).toBe(false);
+    expect(
+      healthResponse.safeParse({
+        ok: true,
+        instance: 'default',
+        ports: { web: 3000, postgres: 3001, redis: 0 },
+        checks,
+      }).success,
     ).toBe(false);
   });
 

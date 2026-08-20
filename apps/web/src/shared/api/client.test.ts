@@ -195,6 +195,7 @@ describe('apiFetch', () => {
       jsonResponse({
         ok: true,
         instance: 'default',
+        ports: { web: 3000, postgres: 3001, redis: 3002 },
         checks: {
           db: { ok: true },
           redis: { ok: true },
