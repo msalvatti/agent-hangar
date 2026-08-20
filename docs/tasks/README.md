@@ -18,12 +18,12 @@ Every task inside a lane file carries a self-contained English agent prompt: an 
 | 1 | W1-I | [wave-1i-infra-conductor.md](wave-1i-infra-conductor.md) | `infra/scripts`, `.conductor`, compose, root scripts | W0 (merge first in batch) | 🟩 |
 | 2 | W2-A | [wave-2a-web-api-sse.md](wave-2a-web-api-sse.md) | `apps/web/app/api`, `apps/web/src/server` | W1-A, W1-E, W1-F | 🟩 |
 | 2 | W2-B 🐳 | [wave-2b-worker.md](wave-2b-worker.md) | `apps/worker/src` | W1-A…W1-F | 🟩 |
-| 2 | W2-C | [wave-2c-e2e.md](wave-2c-e2e.md) | `apps/web/e2e`, `infra/test/gitserver` | W1-G, W1-H | 🟨 |
+| 2 | W2-C | [wave-2c-e2e.md](wave-2c-e2e.md) | `apps/web/e2e`, `infra/test/gitserver` | W1-G, W1-H | 🟩 |
 | 3 | W3-A 🐳 | [wave-3a-integration.md](wave-3a-integration.md) | any (single agent) | W2-A, W2-B, W2-C | 📋 |
 | 3 | W3-B | [wave-3b-docs.md](wave-3b-docs.md) | `README.md`, `docs/**` | W2-A, W2-B | 🟩 |
-| 4 | W4-A | [wave-4a-stryker-core.md](wave-4a-stryker-core.md) | `packages/core` tests + stryker config | W3-A | 🟥 |
-| 4 | W4-B | [wave-4b-stryker-runtime.md](wave-4b-stryker-runtime.md) | `packages/agent-runtime` tests + stryker config | W3-A | 🟥 |
+| 4 | W4-A | [wave-4a-stryker-core.md](wave-4a-stryker-core.md) | `packages/core` tests + stryker config | W3-A | 🟡 |
+| 4 | W4-B | [wave-4b-stryker-runtime.md](wave-4b-stryker-runtime.md) | `packages/agent-runtime` tests + stryker config | W3-A | 🟡 |
 
-Legend: 📋 ToDo · 🟦 running · 🟨 PR open · 🟩 merged · 🟥 blocked / held.
+Legend: 📋 ToDo · 🟦 running · 🟨 PR open · 🟩 merged · 🟥 blocked / held · 🟡 deferred by decision (in the plan, scheduled later — not blocked; see [plan §9](../plan.md)).
 
 Scheduling reminders (from [docs/plan.md §3](../plan.md)): ≤ 5 concurrent subagents; ≤ 1 🐳 lane at a time; each subagent in its own worktree with `AH_INSTANCE=<lane>`; no dependency additions inside lanes; contracts frozen after W0 (additive change PRs only).

@@ -233,10 +233,12 @@ Each lane below is one subagent prompt. Common to all: read `CLAUDE.md`, the spe
 
 Deliberately last: the code is stable, so mutants are meaningful, and if time runs out the product is complete without it (README "Known gaps" then states the mutation status and the plan — which is this section).
 
+**Status: deferred by the operator on 2026-08-20.** Both lanes stay in the plan and are expected to be taken up later; nothing about the design below changes. This is a scheduling decision, not a cancellation and not a blockage — the two are different, and a reader who finds these rows should not go looking for the missing dependency. What the product ships without is the mutation gate, and the README says so in plain terms.
+
 | Lane | Owned | Config | Gate |
 |---|---|---|---|
-| W4-A | 🟥 held | — | **Held by the operator, not by a dependency.** Mutation testing on `packages/core` starts only after the whole system has been merged, run end to end, and exercised by hand — and only when the operator says so. Do not start it on the strength of its dependency graph alone |
-| W4-B | 🟥 held | — | **Held by the operator, not by a dependency.** Mutation testing on `packages/agent-runtime` starts only after the whole system has been merged, run end to end, and exercised by hand — and only when the operator says so. Do not start it on the strength of its dependency graph alone |
+| W4-A | 🟡 deferred | — | **Deferred by the operator on 2026-08-20, not blocked and not cancelled.** Mutation testing on `packages/core` stays in the plan and will be taken up later. It was never a gate: the section below already says the product is complete without it. Do not start it on the strength of its dependency graph — it needs the operator to say so |
+| W4-B | 🟡 deferred | — | **Deferred by the operator on 2026-08-20**, on the same terms as W4-A, for `packages/agent-runtime` |
 
 Rules: kill survivors by **strengthening tests** (or simplifying code to the value that serves); no `// Stryker disable` without a one-line reason; equivalent mutants documented in the PR. When both lanes pass, a third tiny PR adds the `mutation` CI job (PR-scoped incremental, nightly full) and the README badge/section.
 
@@ -298,13 +300,13 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | | |
 |---|---|
 | Default branch | `main`; check its latest run with `gh run list --branch main --limit 1` rather than trusting a status recorded here, which ages the moment anything merges |
-| Lanes merged | **13 of 17** — the foundation, all nine first-wave lanes, both integration lanes (the web API and the worker) and the documentation lane |
-| Lanes in review | **1** — the end-to-end harness, which also unblocks the third wave |
-| Lanes not started | **3** — wiring and stabilisation, and both mutation-testing lanes. The two mutation lanes are additionally **held by the operator**: they wait on a working system the operator has tried, not on their dependencies |
-| Tasks merged | **74 of 94** |
-| Tasks written but not yet merged | **6** on the one open lane branch, so 80 of 94 exist as code |
-| Routed findings still open | **18** of the 31 rows in §14 below. Closed rows are marked, not deleted, so this is `31 minus the rows whose Owner column starts with 🟩 or says superseded` — check it against the table rather than believing it |
-| Orchestrator fixes | **36 merged, 1 open** — defects found while shepherding, listed under the lane table. Some rows carry several pull requests, so this counts ids and not rows. `gh pr list --state merged --limit 100` is the authority the moment the two disagree — the default caps at 30 and this table already holds more than that. This line is the kind of derived number that should not be here at all |
+| Lanes merged | **14 of 17** — the foundation, all nine first-wave lanes, all three integration lanes (web API, worker, end-to-end) and the documentation lane |
+| Lanes in review | **0** — nothing is open |
+| Lanes not started | **3** — wiring and stabilisation, and both mutation-testing lanes. The two mutation lanes are **deferred by decision** rather than blocked: they stay in the plan and are scheduled later (§9) |
+| Tasks merged | **80 of 94** |
+| Tasks written but not yet merged | **0** — nothing is on a branch; the 14 that remain are W3-A's six and the two mutation lanes' eight |
+| Routed findings still open | **22** of the 35 rows in §14 below. Closed rows are marked, not deleted, so this is `35 minus the rows whose Owner column starts with 🟩 or says superseded` — check it against the table rather than believing it |
+| Orchestrator fixes | **41 merged, 0 open** — defects found while shepherding, listed under the lane table. Some rows carry several pull requests, so this counts ids and not rows. `gh pr list --state merged --limit 100` is the authority the moment the two disagree, and this line is the kind of derived number that should not be here at all |
 
 Three tables in this section describe the same build and are updated together, because one of them
 being stale is how a reader ends up with the wrong answer: the lane table, the orchestrator-fix
@@ -312,8 +314,7 @@ table beneath it, and the task-progress table at the end. The lane index in `doc
 mirrors the first of them and moves with it.
 
 The task counts come from the per-lane task indexes in `docs/tasks/`. A lane's tasks only count as
-merged once its pull request lands, so the gap between 74 and 80 is exactly the one lane still in
-review.
+merged once its pull request lands, so there is no gap today: nothing is on a branch.
 
 **What unblocks what.** Both integration lanes are merged, so the documentation lane's gate has
 already cleared — it waits on the web API and the worker, not on the end-to-end harness. The wiring
@@ -334,11 +335,11 @@ wiring. So there is work available now that nothing is blocking.
 | W1-I | 🟩 merged | PR #18 | scripts 100 (all four metrics) | run, doctor, archive, prune and the Conductor wiring; the two-instance walkthrough was executed against real Docker, not simulated |
 | W2-A | 🟩 merged | PR #21 | web 100 · core 100 (all four metrics) | 19 routes and both SSE streams; found and fixed a path traversal in the forge slug pattern that would have sent the authorisation header to an unnamed path |
 | W2-B 🐳 | 🟩 merged | PR #22 | worker 100 (all four metrics) | three consumers, cancel channel, scheduler reconcile and graceful shutdown; Docker suite ran green six consecutive times with no leftover containers |
-| W2-C | 🟨 PR open | PR #32 | web 100 (all four metrics) | Playwright harness, a local git server and the six critical-flow specs. Rebased onto the merged fixes; mock mode green, all nine checks green. The real-mode reading that named R25 is **withdrawn**: R25 is closed by PR #44, and the run that produced it executed another lane's runtime, because the workspace image tag is shared across checkouts (R29) — so it measured a combination of worker and runtime that existed in no tree. A clean re-measurement on an instance-private image is pending, and where real mode stops is currently unknown rather than known |
-| W3-A 🐳 | ⬜ not started | — | — | Waiting on W2-C, its only unmerged dependency. It is also the largest backlog on the board and the row said none of that: besides its own 6 tasks it owns **all 18 open routed findings**, R2 and R8 included since their lane closed without them, and they are not one job. Four of them — R16, R21, R22 and R26 — are the same missing primitive, a conditional terminal write the persistence port does not offer, and should land as one change rather than four. Five that depended on nothing — R4, R5, R6, R17 and R18 — were taken out first and closed by PR #46, which is the argument for splitting the rest rather than waiting. The remainder need a system that runs end to end, which is what this lane exists to produce. DONE is spec 01 §5 success criteria S1–S6, S8, verified with evidence in the PR |
+| W2-C | 🟩 merged | PR #32 | web 100 (all four metrics) | Playwright harness, a local git server and the six critical-flow specs. Merged against **its own** Definition of Done — specs compile, selectors resolve, the harness boots and tears down — not against a real-mode pass, which §7 assigns to W3-A in as many words. It was the integration canary regardless: five defects blocking a real turn were found through it and fixed elsewhere (the client clone URL, the scheduled-run cancel route, the repository-origin policy, the scripted-provider script and the unwired model provider). Real mode now passes **7 of 9**; the two failures are recorded as R33 and R34 rather than adjusted away |
+| W3-A 🐳 | ⬜ not started | — | — | **Nothing blocks it: every dependency is merged.** It is the largest backlog on the board and the row said none of that: besides its own 6 tasks it owns **all 22 open routed findings**, R2 and R8 included since their lane closed without them, and they are not one job. Four of them — R16, R21, R22 and R26 — are the same missing primitive, a conditional terminal write the persistence port does not offer, and should land as one change rather than four. Five that depended on nothing — R4, R5, R6, R17 and R18 — were taken out first and closed by PR #46, which is the argument for splitting the rest rather than waiting. The remainder need a system that runs end to end, which is what this lane exists to produce. DONE is spec 01 §5 success criteria S1–S6, S8, verified with evidence in the PR |
 | W3-B | 🟩 merged | PR #37 | n/a (docs only) | README rewritten against the running system, every command executed from a fresh clone; three claims corrected because verification refuted them (`pnpm doctor` is shadowed by pnpm's own command, five scripts resolved the instance from the shell while `setup`/`run` read `.env.local`, and the `RequestContext` in 09 does not exist); R11 and R20 closed in `docs/AUTOPILOT.md`. The five-scripts finding describes behaviour that PR #39 has since replaced: every instance-acting script now reads the checkout's `.env.local` and refuses on disagreement, and the shadowed command has the working alias `pnpm infra:doctor` |
-| W4-A | 🟥 held | — | — | held by the operator, not a dependency; may slip — documented |
-| W4-B | 🟥 held | — | — | held by the operator, not a dependency; may slip — documented |
+| W4-A | 🟡 deferred | — | — | deferred by the operator on 2026-08-20; stays in the plan, taken up later — see §9 |
+| W4-B | 🟡 deferred | — | — | deferred by the operator on 2026-08-20; stays in the plan, taken up later — see §9 |
 
 **Orchestrator fixes alongside the lanes** (not lanes of the plan; each fixes a defect found while shepherding, and the Status column says whether that fix has landed):
 
@@ -373,10 +374,13 @@ wiring. So there is work available now that nothing is blocking.
 | #44 | 🟩 merged | The credential helper released the forge token to any origin a crafted prompt named — the URL authority was cut at `/` only, so `https://evil.test?@github.com` reduced to the approved host; and the policy itself was an environment entry the model could set inline through `bash -lc` |
 | #46 | 🟩 merged | `pnpm test` stopped before the scripts project whenever any workspace failed, and `tsc -b && <rewrite>` skipped the rewrite on a failed compile, leaving declarations naming files that do not exist |
 | #47 | 🟩 merged | The repository picker gave no sign which repositories the agent cannot push to — read-only or archived — or cannot work from at all, having no branch; and the composer's Send button went dead without saying which of three things was missing |
-| #49 | 🟨 PR open | The OpenAI provider was never wired into the binary the container runs: `bin.ts` fed no factory and the seam was optional, so every real turn failed with `the openai provider is not wired into this build`. **Spec 01 §5 S1 and S6 had therefore never been demonstrated** |
+| #49 | 🟩 merged | The OpenAI provider was never wired into the binary the container runs: `bin.ts` fed no factory and the seam was optional, so every real turn failed with `the openai provider is not wired into this build`. **Spec 01 §5 S1 and S6 had therefore never been demonstrated** |
 | #50 | 🟩 merged | `CLAUDE.md` still told authors to chain the declaration rewrite by hand, contradicting the guard that now forbids naming the compiler directly |
+| #51 | 🟩 merged | Findings were **deleted** from §14 when they closed, so a reader could not tell one that closed from one that never existed — while the section promised nothing is silently dropped |
+| #52 | 🟩 merged | Two optional fields still let an unwired build type-check; the seam had survived #49 because `TurnDeps` restated its members instead of extending, so the two could require different things |
+| #53 | 🟩 merged | A chat's **second turn** could never start: preparation chose its path on whether the work branch existed on the *remote* and never looked locally, so a reused workspace whose first turn had not pushed failed with `already exists`. A force-pushed work branch also broke preparation permanently, on an unforced fetch refspec |
 
-Legend: ⬜ not started · 🟦 running (branch) · 🟨 PR open · 🟩 merged · 🟥 blocked / held.
+Legend: ⬜ not started · 🟦 running (branch) · 🟨 PR open · 🟩 merged · 🟥 blocked / held · 🟡 deferred by decision (in the plan, scheduled later — not blocked).
 
 **Task progress per lane.** *Merged* counts tasks whose lane has landed on `main`; *on its branch*
 counts tasks a lane has finished but not yet merged. Taken from each lane's own task index, so a
@@ -396,12 +400,12 @@ number here is only as current as the last close-out that lane wrote.
 | W1-I | 6 | — | 6 |
 | W2-A | 6 | — | 6 |
 | W2-B | 6 | — | 6 |
-| W2-C | 0 | 6 | 6 |
+| W2-C | 6 | — | 6 |
 | W3-A | 0 | — | 6 |
 | W3-B | 5 | — | 5 |
 | W4-A | 0 | — | 4 |
 | W4-B | 0 | — | 4 |
-| **Total** | **74** | **6** | **94** |
+| **Total** | **80** | **—** | **94** |
 
 ## 13. Estimated complexity
 
@@ -460,5 +464,9 @@ reference to "R7" has to name which table it means.
 | R14 | `GITHUB_API_BASE_URL` and `ALLOWED_REPO_HOSTS` promised a configurable forge while the shared `repoUrl` schema accepted only `https://github.com/...`, so a self-hosted repository appeared in the picker and then failed with a 400 the user could not act on. | Restored to this table rather than left deleted. | 🟩 closed by PR #34, and again by PR #44 which carried the policy into the container and the credential helper. It shipped with a residual — only a GitHub-compatible API is *discoverable* — which is the README "Known gaps" entry that still cites this id |
 | R19 | `postMessage` bumped the chat's ordering timestamp after the turn was dispatched, and that last write was unguarded: its failure answered 500 for a turn the worker already held, and a caller who retried met its own turn reported as already in progress. | Restored to this table rather than left deleted. | 🟩 closed by PR #29's follow-up work; the row had been removed from this section instead of marked |
 | R31 | The repository picker gave no sign which repositories the agent cannot push to, or cannot work from at all for want of a branch, and the composer's Send button went dead without naming which of three requirements was missing. Fixed in PR #47 — recorded here because it is **scope beyond spec 10**, which §1 says the build does not take. | Accepted deliberately: both were found by the operator using the running system, and both are failures of the product to explain itself rather than features. Recorded so the scope decision is visible instead of implicit. | 🟩 closed by PR #47 |
+| R32 | The divergence warning `switchToWorkBranch` emits reaches nobody durably. `prepare.progress` is upserted under one notice id and `prepare.done` replaces it with the success line, and `runTurnLoop` is never handed the note — so a workspace whose work branch diverged from the remote tells neither the user nor the model. | PR #53 chose to land on the local branch and warn rather than merge or refuse, and defended that on the user being told and the agent being able to reconcile. Neither holds while the note is transient, so the reasoning is weaker than the code claims — though still far better than what it replaced, which discarded the local commits silently and failed every second turn of a chat. Making it durable needs a persistent transcript item and a line in the model's context, in two paths that change belongs to neither. | W3-A |
+| R33 | `chat-create-run` asserts which tools a turn called and never their status, so the spec passes while a tool call inside it fails. The lane found it and left it: adding the assertion would correctly turn the spec red against a defect outside its own paths. | The same shape this project has closed twice — a check that cannot fail. It is one line, and it should land together with whatever explains the failing tool call, not before it. | W3-A |
+| R34 | Measured in a real-stack run: `list_dir` and `run_shell` were recorded `FAILED` in 1–2 ms with no exit code and no output in a **chat** workspace, while the same `run_shell` executed and returned output in a **job** workspace. Reproduced twice against one image; not re-confirmed after PR #52, because the per-test reset clears the rows and an isolated re-run raced a stopped worker. An operator's real-model turn on the same day recorded `list_dir` and `read_file` at exit 0, so the argument shape differs between the two observations and is the first thing to check. | Reported with its confidence stated rather than folded into a spec fix. If real, it is the cause of the `cancel-turn` failure: a `sleep 60` that fails in 2 ms leaves no window in which a Stop button can exist. | W3-A |
+| R35 | The `chat-archive-restore` end-to-end check waits for a notice matching `/restored/i`. The mocked double writes "This chat was restored…"; the product's normative notice is `Workspace recreated from history at …` and is written when the next turn recreates the workspace. Wording and timing both differ, so the assertion tracks the double rather than the product. | The mock and the spec have to move together and the mock is another lane's file, so the lane that found it could not close it alone. It is the second of the two real-mode failures; the first is R34. | W3-A |
 
 Approved 2026-08-19. Per-lane task files with self-contained agent prompts live in [docs/tasks/](tasks/README.md).
