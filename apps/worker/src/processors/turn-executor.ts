@@ -380,6 +380,66 @@ async function consumeExecEvent(
 }
 
 /**
+ * Kills the process of an exec this worker is about to stop reading.
+ *
+ * Abandoning the loop disposes the runner's generator, and its cleanup unregisters the exec and
+ * removes the pid file that names the process — after which nothing can address it, and the
+ * command inside the container runs on: holding the workspace, writing to the filesystem the next
+ * turn of the same chat will reuse, until the collector destroys the container some minutes later.
+ * So the signal goes out first, while the generator is still suspended at its yield and the pid
+ * file is still there.
+ *
+ * It is `KILL` rather than the `INT` a cancellation sends. A graceful stop exists to let the
+ * runtime write a terminal event, and this path is taken precisely because the stream that would
+ * carry it can no longer be published or persisted; nobody is left to read a clean exit, there is
+ * no reader to wait for the escalation a cancellation would follow with, and a runtime that
+ * ignored the gentler signal would leave exactly the process this exists to remove.
+ *
+ * @param deps - Runner and logger.
+ * @param input - The execution inputs, for the workspace handle.
+ * @param state - Execution state, for the reference the runner handed out.
+ */
+async function stopAbandonedExec(
+  deps: ProcessorDeps,
+  input: ExecuteRuntimeTurnInput,
+  state: ExecState,
+): Promise<void> {
+  const { execRef } = state;
+  if (execRef === undefined) {
+    // Nothing was started: the runner hands the reference out with its first event, so there is no
+    // process to address.
+    return;
+  }
+  await deliverSignal(deps.runner, input.handle, execRef, 'KILL', deps);
+}
+
+/**
+ * Applies one exec event, stopping the process rather than walking away from it.
+ *
+ * Any failure here ends the loop, and the loop is the only thing reading that process. What threw
+ * does not change that, so the exec is killed before the failure is allowed to propagate.
+ *
+ * @param deps - The processor's collaborators.
+ * @param input - The execution inputs.
+ * @param state - Execution state, updated in place.
+ * @param event - What the runner reported.
+ * @throws unknown Whatever applying the event threw, once the process is stopped.
+ */
+async function consumeOrStopExec(
+  deps: ProcessorDeps,
+  input: ExecuteRuntimeTurnInput,
+  state: ExecState,
+  event: ExecEvent,
+): Promise<void> {
+  try {
+    await consumeExecEvent(deps, input, state, event);
+  } catch (error) {
+    await stopAbandonedExec(deps, input, state);
+    throw error;
+  }
+}
+
+/**
  * Builds the outcome of a turn the runtime described itself.
  *
  * @param state - What the loop observed.
@@ -486,7 +546,7 @@ export async function executeRuntimeTurn(
       stdin: encodeLine(input.request),
       timeoutMs: input.request.limits.maxTurnMs + EXEC_GRACE_MS,
     })) {
-      await consumeExecEvent(deps, input, state, event);
+      await consumeOrStopExec(deps, input, state, event);
     }
     for (const parsed of state.parser.flush()) {
       await handleEvent(deps, input, state, parsed);

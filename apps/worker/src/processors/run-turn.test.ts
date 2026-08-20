@@ -339,6 +339,32 @@ describe('createRunTurnProcessor, two turns of one chat', () => {
   });
 });
 
+describe('createRunTurnProcessor, listening for a cancellation', () => {
+  /**
+   * The web app answers a cancellation it could not apply itself — the job was already handed to a
+   * worker — by publishing on the turn's channel, and pub/sub keeps nothing for a subscriber that
+   * has not arrived yet. Every row read before subscribing is time in which that request reaches
+   * nobody while the caller has been told the worker will act on it, so the subscription is taken
+   * before the first read rather than after.
+   */
+  it('subscribes to the cancellation channel before reading any row', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
+    const { turn } = await seedChatWithTurn(container);
+    const subscriptionsAtFirstRead: number[] = [];
+    const get = container.repos.turns.get.bind(container.repos.turns);
+    vi.spyOn(container.repos.turns, 'get').mockImplementation(async (id) => {
+      subscriptionsAtFirstRead.push(container.commands.subscriptions);
+      return get(id);
+    });
+
+    await runTurnOn(container, turn.id);
+
+    expect(subscriptionsAtFirstRead.at(0)).toBe(1);
+    expect(container.commands.subscriptions).toBe(0);
+    vi.restoreAllMocks();
+  });
+});
+
 describe('createRunTurnProcessor, one job delivered twice', () => {
   /**
    * Stalled-job recovery can deliver a job again while the first delivery is still executing it

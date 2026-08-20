@@ -522,38 +522,20 @@ async function runWatchedTurn(
 }
 
 /**
- * Listens for a cancellation, then prepares and runs the turn.
- *
- * The subscription is taken before anything else happens to the turn. Stop is offered from the
- * moment the message is sent, the request travels over Redis pub/sub, and pub/sub keeps nothing for
- * a subscriber that has not arrived yet — so a cancellation sent while the container is being
- * created would be dropped by a worker that only starts listening once the exec does.
- *
- * @param deps - The processor's collaborators.
- * @param delivery - The turn, its chat and how often it was delivered.
- * @throws Error When the Docker daemon is unreachable, so BullMQ can redeliver the job.
- */
-async function prepareAndRunTurn(deps: ProcessorDeps, delivery: TurnDelivery): Promise<void> {
-  const watch = await openCancellationWatch(deps, delivery.turnId);
-  try {
-    await runWatchedTurn(deps, delivery, watch);
-  } finally {
-    await watch.close();
-  }
-}
-
-/**
- * Runs one delivery of a turn whose execution this process now owns.
+ * Runs one delivery of a turn whose execution this process now owns and whose channel it is
+ * already listening on.
  *
  * @param deps - The processor's collaborators.
  * @param turnId - The turn named by the delivery.
  * @param attemptsMade - How many times BullMQ already delivered this job.
+ * @param watch - The cancellation subscription, open since before the first row was read.
  * @throws Error When the Docker daemon is unreachable, so BullMQ can redeliver the job.
  */
 async function runDeliveredTurn(
   deps: ProcessorDeps,
   turnId: string,
   attemptsMade: number,
+  watch: CancellationWatch,
 ): Promise<void> {
   const turn = await deps.repos.turns.get(turnId);
   if (turn === null || isTerminalRunStatus(turn.status)) {
@@ -576,7 +558,7 @@ async function runDeliveredTurn(
     return;
   }
   try {
-    await prepareAndRunTurn(deps, { turnId, chat, attemptsMade });
+    await runWatchedTurn(deps, { turnId, chat, attemptsMade }, watch);
   } finally {
     deps.claims.release(claimKey);
   }
@@ -610,7 +592,16 @@ export function createRunTurnProcessor(
       return;
     }
     try {
-      await runDeliveredTurn(deps, turnId, job.attemptsMade);
+      // Before the first row is read, not after: the web app answers a cancellation it could not
+      // apply itself by publishing on this channel, pub/sub keeps nothing for a subscriber that
+      // has not arrived, and every lookup done before subscribing is time in which the request
+      // reaches nobody while the caller is told the worker will act on it.
+      const watch = await openCancellationWatch(deps, turnId);
+      try {
+        await runDeliveredTurn(deps, turnId, job.attemptsMade, watch);
+      } finally {
+        await watch.close();
+      }
     } finally {
       deps.claims.release(turnKey);
     }

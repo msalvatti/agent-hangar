@@ -26,9 +26,10 @@ const OPTED_IN = { [DESTRUCTIVE_TESTS_ENV]: DESTRUCTIVE_TESTS_OPT_IN };
  * @returns The validated configuration.
  */
 function configFor(overrides: Record<string, string> = {}): AppConfig {
+  const base =
+    overrides.AH_INSTANCE === undefined ? { AH_INSTANCE: 'w2b-test', AH_PORT_BASE: '3310' } : {};
   return loadConfig({
-    AH_INSTANCE: 'w2b-test',
-    AH_PORT_BASE: '3310',
+    ...base,
     WORKSPACE_IMAGE: 'agent-hangar/workspace:test',
     MASTER_KEY_PATH: '/nonexistent/master.key',
     ...overrides,
@@ -47,6 +48,22 @@ describe('assertRedisErasable', () => {
       assertRedisErasable(config, OPTED_IN);
     }).not.toThrow();
     expect(config.REDIS_URL).toBe(`redis://127.0.0.1:${String(config.REDIS_PORT)}`);
+  });
+
+  /**
+   * The environment continuous integration provides, pinned here so the two halves cannot drift
+   * apart in silence: the workflow declares instance "test" with no port base and publishes its
+   * Redis service on the port that instance derives. If either side moves, the guard starts
+   * refusing the integration job — and this fails first, in the unit suite, where the reason is
+   * legible.
+   */
+  it('accepts the environment continuous integration provides', () => {
+    const config = configFor({ AH_INSTANCE: 'test', REDIS_URL: 'redis://127.0.0.1:3002' });
+
+    expect(() => {
+      assertRedisErasable(config, OPTED_IN);
+    }).not.toThrow();
+    expect(config.REDIS_PORT).toBe(3002);
   });
 
   /**

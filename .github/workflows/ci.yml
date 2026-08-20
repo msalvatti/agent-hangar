@@ -115,8 +115,14 @@ jobs:
           --health-retries 30
       redis:
         image: redis:8-alpine
+        # Published on the port instance "test" derives (AH_PORT_BASE 3000 + 2), not on 6379. The
+        # integration harness empties Redis, and it refuses any target that is not this instance's
+        # own — a rule that exists because REDIS_URL is independent of DATABASE_URL, so a shared
+        # Redis named alongside a conventionally named test database would otherwise pass every
+        # check and then be flushed. Postgres needs no equivalent: its truncation guard keys on the
+        # database *name* (agent_hangar_test), which no port change affects.
         ports:
-          - 6379:6379
+          - 3002:6379
         options: >-
           --health-cmd "redis-cli ping"
           --health-interval 2s
@@ -124,7 +130,7 @@ jobs:
           --health-retries 30
     env:
       AH_INSTANCE: test
-      REDIS_URL: redis://127.0.0.1:6379
+      REDIS_URL: redis://127.0.0.1:3002
       DOCKER_AVAILABLE: '1'
       # These suites truncate every table; the helpers refuse to run without this opt-in.
       AH_ALLOW_DESTRUCTIVE_TESTS: '1'

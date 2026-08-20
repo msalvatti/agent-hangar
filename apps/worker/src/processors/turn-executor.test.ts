@@ -148,6 +148,56 @@ class BreakingRunner extends FakeWorkspaceRunner {
   }
 }
 
+/**
+ * A runner that records whether a signal arrived before its exec was disposed.
+ *
+ * The real Docker runner removes the pid file in the generator's `finally`, so a signal sent after
+ * disposal addresses nothing. `disposedAt` and `signalledAt` are what let a test prove the worker
+ * signals while the exec can still be reached.
+ */
+class DisposalRecordingRunner extends FakeWorkspaceRunner {
+  readonly events: string[] = [];
+
+  constructor(private readonly stdout: readonly AgentEvent[]) {
+    super();
+  }
+
+  override async *exec(): AsyncIterable<ExecEvent> {
+    try {
+      yield await Promise.resolve({ type: 'started' as const, execRef: 'exec-1' });
+      for (const event of this.stdout) {
+        yield { type: 'stdout', data: new TextEncoder().encode(encodeLine(event)) };
+      }
+      yield { type: 'exit', code: 0 };
+    } finally {
+      // What the Docker runner's own `finally` does: unregister the exec and drop the pid file.
+      this.events.push('disposed');
+    }
+  }
+
+  override signal(_handle: WorkspaceHandle, _execRef: string, sig: ExecSignal): Promise<void> {
+    this.events.push(`signal:${sig}`);
+    return Promise.resolve();
+  }
+}
+
+/** A runner that yields output without ever handing out an exec reference. */
+class RefLessRunner extends FakeWorkspaceRunner {
+  readonly signals: ExecSignal[] = [];
+
+  override async *exec(): AsyncIterable<ExecEvent> {
+    yield await Promise.resolve({
+      type: 'stdout',
+      data: new TextEncoder().encode(encodeLine({ type: 'prepare.progress', message: 'x' })),
+    });
+  }
+
+  override signal(_handle: WorkspaceHandle, _execRef: string, sig: ExecSignal): Promise<void> {
+    this.signals.push(sig);
+    return Promise.resolve();
+  }
+}
+
 /** A runner whose exec cannot be started, rejecting with whatever the test supplies. */
 class RejectingRunner extends FakeWorkspaceRunner {
   constructor(private readonly failure: unknown) {
@@ -490,6 +540,40 @@ describe('executeRuntimeTurn', () => {
     expect(outcome).toMatchObject({ terminal: 'completed', reportedByRuntime: true });
     expect(seen).toEqual([completed]);
     expect(container.logs.join('')).toContain('after the turn had reported its outcome');
+  });
+
+  /**
+   * Giving up on the stream must not leave the command running. The runner's cleanup removes the
+   * pid file that names the process, so a signal sent after the loop is abandoned would address
+   * nothing — the kill has to go out while the exec can still be reached, and the recorded order
+   * is what proves it does.
+   */
+  it('kills the exec before abandoning it when an event cannot be delivered', async () => {
+    const runner = new DisposalRecordingRunner([{ type: 'prepare.progress', message: 'Cloning…' }]);
+    const container = createTestContainer({ runner });
+    vi.spyOn(container.publisher, 'publish').mockRejectedValue(new Error('redis is gone'));
+    const { sink } = recordingSink();
+
+    const outcome = await execute(container, sink);
+
+    expect(outcome.terminal).toBe('client-error');
+    expect(runner.events).toEqual(['signal:KILL', 'disposed']);
+  });
+
+  /**
+   * A process that was never started cannot be addressed: the runner hands its reference out with
+   * the exec's first event, so there is nothing to signal and nothing to fail on.
+   */
+  it('signals nothing when the runner never handed out a reference', async () => {
+    const runner = new RefLessRunner();
+    const container = createTestContainer({ runner });
+    vi.spyOn(container.publisher, 'publish').mockRejectedValue(new Error('redis is gone'));
+    const { sink } = recordingSink();
+
+    const outcome = await execute(container, sink);
+
+    expect(outcome.terminal).toBe('client-error');
+    expect(runner.signals).toEqual([]);
   });
 
   /**
