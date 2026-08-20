@@ -307,7 +307,7 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | W1-I | 🟩 merged | PR #18 | scripts 100 (all four metrics) | run, doctor, archive, prune and the Conductor wiring; the two-instance walkthrough was executed against real Docker, not simulated |
 | W2-A | 🟨 PR open | PR #21 | web 100 · core 100 (all four metrics) | 19 routes and both SSE streams; found and fixed a path traversal in the forge slug pattern that would have sent the authorisation header to an unnamed path |
 | W2-B 🐳 | 🟨 PR open | PR #22 | worker 100 (all four metrics) | three consumers, cancel channel, scheduler reconcile and graceful shutdown; Docker suite ran green six consecutive times with no leftover containers |
-| W2-C | ⬜ | — | — | gate is W1-G and W1-H merged — both are still running |
+| W2-C | ⬜ | — | — | gate is W1-G and W1-H merged; W1-G is merged and W1-H is in review as PR #24, so this starts as soon as that lands |
 | W3-A 🐳 | ⬜ | — | — | success criteria S1–S6, S8 |
 | W3-B | ⬜ | — | — | |
 | W4-A | ⬜ | — | — | may slip — documented |
