@@ -373,3 +373,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-3b-docs.md (he
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 3B.1 ✅ 2026-08-20 — README top half rewritten against the running system: quick start matched to `infra/scripts/setup.sh` step for step, the doctor invoked as `pnpm run doctor`, configuration completed with `ALLOWED_REPO_HOSTS` and `GITHUB_API_BASE_URL`, scripts completed with `archive` and `rotate-key`, Conductor section written from `.conductor/settings.toml` and `env.sh`
+- 3B.2 ✅ 2026-08-20 — Testing, Security and Troubleshooting written from the code: the two opt-in variables and the test-instance naming rule the integration suites enforce, the forge-token limitation stated rather than implied, and ten troubleshooting rows cross-checked against `doctor.sh`
+- 3B.3 ✅ 2026-08-20 — Known gaps rewritten from plan §14 (three tables: not built yet, limitations of the running system, toolchain rough edges), deployment discussion condensed to 53 lines, non-goals added, decisions extended
+- 3B.4 ✅ 2026-08-20 — specs corrected against the implementation; dashboards refreshed for this lane only
+  - `docs/spec/01-overview.md` → revision line; stack table re-verified against the installed tree (no version changed)
+  - `docs/spec/05-local-dev.md` → setup step list now matches `setup.sh` (Docker socket check, generate-then-migrate, image only when missing, doctor exit code); flag-passing rule (`pnpm run setup --<flag>`); doctor paragraph (`pnpm run doctor`, shell-derived instance, `--json`); script table gains `db:generate`, `archive`, `rotate-key`, `lint:fix`, `format:check`; environment table gains `ALLOWED_REPO_HOSTS`, `GITHUB_API_BASE_URL`, `NEXT_PUBLIC_API_MOCK`; repository layout lists the nine scripts; the `profiles: [full]` compose variant is marked as not built; workspace image section corrected (askpass mediates by host and scheme, `CMD` not `ENTRYPOINT`, `curl` installed)
+  - `docs/spec/06-testing.md` → coverage policy is 100 % on four metrics everywhere rather than the tiered numbers; CI job list matches `ci.yml` (no mutation job, `secret-scan` is its own job, the e2e job skips the browser install while no spec exists, no `timeout-minutes`)
+  - `docs/spec/README.md` → revision line for the set
+  - `docs/AUTOPILOT.md` → R11 closed: the `assertSameOrigin` grep is replaced by a check for `apps/web/app/api/same-origin-policy.test.ts`, with a note not to reintroduce it. R20 closed: a rule for shared package manifests — the cross-cutting change is the base, the lane's change is reapplied on top
+- 3B.5 ✅ 2026-08-20 — close-out
+
