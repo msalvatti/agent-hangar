@@ -462,6 +462,56 @@ describe('retryTurn', () => {
   });
 
   /**
+   * The window the worker leaves open: it records the turn's outcome before its processor returns,
+   * so a Retry can arrive while the row already reads `FAILED` and the job is still `active`.
+   * Enqueuing there is answered with the running job and nothing new runs — and the turn would be
+   * left `QUEUED` behind a job about to complete, which no worker picks up and `cancelTurn` cannot
+   * remove, wedging the chat against every later message. It is refused instead, and because the
+   * refusal comes before the claim the row keeps its status and the error that explains it.
+   */
+  it('refuses a retry that arrives before the previous attempt finished', async () => {
+    const harness = createTestContainer();
+    const { turnId } = await seedFailedTurn(harness, 'active');
+
+    const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'PREVIOUS_ATTEMPT_RUNNING' },
+    });
+    expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({
+      status: 'FAILED',
+      error: 'OpenAI rejected the request',
+    });
+    expect(harness.doubles.queues.chatTurns.added).toEqual([]);
+    expect(harness.doubles.queues.chatTurns.jobs.get(turnId)?.removed).toBeFalsy();
+  });
+
+  /**
+   * The window always closes, so the advice the refusal gives is true rather than hopeful: once
+   * the processor returns and the job is `completed`, the very next Retry releases it and runs.
+   */
+  it('accepts the same retry once that attempt has finished', async () => {
+    const harness = createTestContainer();
+    const { turnId } = await seedFailedTurn(harness, 'active');
+    expect((await retryTurn(harness.container, retryRequest(turnId), { id: turnId })).status).toBe(
+      409,
+    );
+
+    const job = harness.doubles.queues.chatTurns.jobs.get(turnId);
+    if (job === undefined) {
+      throw new Error('The seeded chat did not enqueue a job');
+    }
+    job.state = 'completed';
+
+    const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(200);
+    expect(harness.doubles.queues.chatTurns.added).toHaveLength(1);
+    expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({ status: 'QUEUED' });
+  });
+
+  /**
    * A cancelled turn was stopped on purpose. Re-running it would undo a decision the user made
    * rather than recover from an accident, so it is refused with a code the UI can render; sending
    * the prompt again is the way to run it, and that records a new intent where it can be seen.

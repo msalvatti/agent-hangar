@@ -357,6 +357,32 @@ describe('ChatView', () => {
     release?.();
   });
 
+  // The refusal that tells the user to try again in a moment is only useful if there is still a
+  // button to press: the failure row must survive it, enabled, with the reason shown beside it.
+  it('keeps Retry available after the previous attempt is reported as still running', async () => {
+    server.use(
+      http.post('/api/turns/:id/retry', () =>
+        HttpResponse.json(
+          {
+            error: {
+              code: 'PREVIOUS_ATTEMPT_RUNNING',
+              message: 'The previous attempt is still finishing; press Retry again in a moment',
+            },
+          },
+          { status: 409 },
+        ),
+      ),
+    );
+    renderChat('chat-failed');
+    expect(await screen.findByText('The turn failed')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText(/still finishing/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeEnabled();
+    expect(screen.getByLabelText('Prompt')).not.toBeDisabled();
+  });
+
   // An archived chat is read-only until it is restored.
   it('offers to restore an archived chat', async () => {
     renderChat('chat-archived');

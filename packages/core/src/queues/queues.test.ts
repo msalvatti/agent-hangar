@@ -376,7 +376,7 @@ describe('releaseTerminalJob', () => {
     const { job, remove } = jobInState('completed');
     mocks.getJob.mockResolvedValue(job);
 
-    await expect(releaseTerminalJob(fakeQueue(), 'turn-1')).resolves.toBe(true);
+    await expect(releaseTerminalJob(fakeQueue(), 'turn-1')).resolves.toBe('released');
     expect(remove).toHaveBeenCalledTimes(1);
   });
 
@@ -387,13 +387,14 @@ describe('releaseTerminalJob', () => {
     const { job, remove } = jobInState('failed');
     mocks.getJob.mockResolvedValue(job);
 
-    await expect(releaseTerminalJob(fakeQueue(), 'turn-1')).resolves.toBe(true);
+    await expect(releaseTerminalJob(fakeQueue(), 'turn-1')).resolves.toBe('released');
     expect(remove).toHaveBeenCalledTimes(1);
   });
 
   /**
    * The guarantee the deterministic id buys must survive this: live work is never released, so a
-   * second dispatch of a job somebody is still waiting on is still deduplicated by BullMQ.
+   * second dispatch of a job somebody is still waiting on is still deduplicated by BullMQ — and
+   * the caller is told so, rather than being left to read it as "nothing to do".
    */
   it.each(['waiting', 'active', 'delayed', 'prioritized'])(
     'leaves a %s job alone',
@@ -401,18 +402,18 @@ describe('releaseTerminalJob', () => {
       const { job, remove } = jobInState(state);
       mocks.getJob.mockResolvedValue(job);
 
-      await expect(releaseTerminalJob(fakeQueue(), 'turn-1')).resolves.toBe(false);
+      await expect(releaseTerminalJob(fakeQueue(), 'turn-1')).resolves.toBe('live');
       expect(remove).not.toHaveBeenCalled();
     },
   );
 
   /**
-   * A turn dispatched for the first time has no job to release, which is an ordinary answer and
-   * not a failure — the caller enqueues straight after either way.
+   * A turn dispatched for the first time has no job to release. That is `absent`, not `live`: the
+   * id is free and the caller carries on, which is the opposite of what the third answer means.
    */
-  it('answers false when there is no such job', async () => {
+  it('answers absent when there is no such job', async () => {
     mocks.getJob.mockResolvedValue(undefined);
 
-    await expect(releaseTerminalJob(fakeQueue(), 'turn-1')).resolves.toBe(false);
+    await expect(releaseTerminalJob(fakeQueue(), 'turn-1')).resolves.toBe('absent');
   });
 });

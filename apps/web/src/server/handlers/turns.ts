@@ -48,7 +48,7 @@ import { assertSameOrigin } from '../same-origin';
 
 import { CANCEL_REQUESTED_STATUS, removeQueuedJob } from './cancel';
 import { compensate } from './compensate';
-import { redispatchTurn } from './dispatch';
+import { redispatchTurn, releasePreviousAttempt } from './dispatch';
 import {
   CLAIM_RELEASED,
   NO_USAGE,
@@ -182,6 +182,12 @@ async function requireRetryableTurn(container: ServerContainer, turnId: string):
  * be true for the moment. Credentials are checked before anything is written, so a chat is never
  * left with a queued turn that could not have run.
  *
+ * Before any of that, the previous attempt has to be over. The worker records a turn's outcome
+ * before its processor returns, so a Retry can arrive while the row already reads `FAILED` and its
+ * BullMQ job is still `active` — and enqueuing there is answered with the running job, leaving a
+ * `QUEUED` turn nothing will ever pick up. That case is refused rather than absorbed; see
+ * `handlers/dispatch.ts`.
+ *
  * The state change and its precondition are one write: `requeue` names `FAILED` in its own `where`
  * clause, so two retries of the same turn arriving together cannot both find it failed and both
  * proceed. The loser is answered `TURN_NOT_RETRYABLE`, which is what its turn now is.
@@ -211,6 +217,7 @@ export function retryTurn(
     assertSameOrigin(request);
     const turn = await requireRetryableTurn(container, params.id);
     await requireSecrets(container);
+    await releasePreviousAttempt(container, turn.id);
     const requeued = await container.repos.turns.requeue(turn.id);
     if (requeued === null) {
       throw new ConflictError('TURN_NOT_RETRYABLE', RETRY_REFUSED);

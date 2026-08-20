@@ -24,11 +24,46 @@ import { enqueueRunTurn, releaseTerminalJob, turnEventsStreamKey } from '@agent-
 import type { Turn } from '@agent-hangar/core';
 
 import type { ServerContainer } from '../container';
+import { ConflictError } from '../errors';
 
 import { NO_USAGE } from './guards';
 
 /** Error recorded on a turn the queue refused, so nothing is left waiting on a job that is gone. */
 export const ENQUEUE_FAILED = 'Could not enqueue the turn';
+
+/** Why a retry that arrived before the previous attempt finished is refused. */
+export const PREVIOUS_ATTEMPT_RUNNING =
+  'The previous attempt is still finishing; press Retry again in a moment';
+
+/**
+ * Frees the turn's previous job, and refuses the retry when that attempt has not finished.
+ *
+ * The refusal is the point. A chat-turn processor writes the turn's terminal status before it
+ * returns, so a Retry can arrive while the turn already reads `FAILED` and its job is still
+ * `active`. Enqueuing into that window does nothing at all — BullMQ answers with the running job —
+ * and would leave the turn `QUEUED` behind a job that is about to complete, which no worker will
+ * pick up and which `cancelTurn` cannot remove either, wedging the chat against every later
+ * message. Refusing turns that into a `409` the caller can act on.
+ *
+ * "In a moment" is a fact rather than a hope: the window ends when the processor returns and the
+ * job becomes `completed`, and if the worker died instead, BullMQ's stalled-job check fails the job
+ * after `maxStalledCount` recoveries. Both are terminal, so the next Retry releases and proceeds.
+ *
+ * Called before the turn is claimed, so a refusal leaves the row exactly as it was — still `FAILED`,
+ * still carrying the error that explains it, still retryable.
+ *
+ * @param container - The server container.
+ * @param turnId - Turn whose previous job is being released.
+ * @throws ConflictError 409 `PREVIOUS_ATTEMPT_RUNNING` when the previous job has not finished.
+ */
+export async function releasePreviousAttempt(
+  container: ServerContainer,
+  turnId: string,
+): Promise<void> {
+  if ((await releaseTerminalJob(container.queues.chatTurns, turnId)) === 'live') {
+    throw new ConflictError('PREVIOUS_ATTEMPT_RUNNING', PREVIOUS_ATTEMPT_RUNNING);
+  }
+}
 
 /**
  * Marks the turn `QUEUED`, runs the dispatch, and fails the turn if the dispatch is rejected.
@@ -75,10 +110,11 @@ export function dispatchTurn(container: ServerContainer, turn: Turn): Promise<Tu
  *
  * The order matters and is the opposite of intuition: the residue is cleared *inside* the
  * protected section, so a failure to clear it fails the turn rather than leaving it `QUEUED` with
- * nothing behind it. Releasing the retained job is what makes the enqueue take effect at all;
- * deleting the event stream is what stops the new attempt from replaying the old one's terminal
- * event to a client that joins without a resume point — which is every client that loaded the
- * failure from history.
+ * nothing behind it. Deleting the event stream is what stops the new attempt from replaying the old
+ * one's terminal event to a client that joins without a resume point — which is every client that
+ * loaded the failure from history. Freeing the previous job is the other half of erasing the
+ * attempt and happens earlier, in {@link releasePreviousAttempt}, because it is the one step that
+ * can still refuse and so has to run before the turn is claimed.
  *
  * @param container - The server container.
  * @param turn - The turn being run again, already moved back to `QUEUED` by the repository.
@@ -87,7 +123,6 @@ export function dispatchTurn(container: ServerContainer, turn: Turn): Promise<Tu
  */
 export function redispatchTurn(container: ServerContainer, turn: Turn): Promise<Turn> {
   return claimAndSend(container, turn, async () => {
-    await releaseTerminalJob(container.queues.chatTurns, turn.id);
     await container.redis.del(turnEventsStreamKey(turn.id));
     await enqueueRunTurn(container.queues.chatTurns, { turnId: turn.id });
   });

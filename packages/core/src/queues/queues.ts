@@ -242,6 +242,17 @@ export async function enqueueRunTurn(queue: Queue, payload: RunTurnPayload): Pro
 const TERMINAL_JOB_STATES: readonly string[] = ['completed', 'failed'];
 
 /**
+ * What {@link releaseTerminalJob} did, and when it did nothing, why.
+ *
+ * Three values rather than a boolean because the two ways of not releasing mean opposite things to
+ * the caller. `absent` is nothing to do — the id is free, carry on. `live` is a refusal: the id is
+ * held by work that has not finished, so an `add` under it would be answered with that same job and
+ * nothing new would run. Collapsing them into `false` is how a caller ends up treating a refusal as
+ * success.
+ */
+export type JobReleaseOutcome = 'released' | 'absent' | 'live';
+
+/**
  * Releases the retained job of a turn that has finished, so the same id can be enqueued again.
  *
  * Retention and a deterministic job id pull in opposite directions, and re-running an existing
@@ -256,22 +267,31 @@ const TERMINAL_JOB_STATES: readonly string[] = ['completed', 'failed'];
  * and the deterministic id exists precisely to stop a second dispatch of it — that guarantee is
  * untouched here, because this never removes a job anyone is still waiting on.
  *
+ * `active` is not a hypothetical here. A chat-turn processor records the turn's own outcome before
+ * it returns, so between that write and BullMQ marking the job `completed` there is a window in
+ * which the turn reads terminal while its job does not. A caller that saw `live` and enqueued
+ * anyway would be answered with the running job and would queue a turn nothing will ever pick up.
+ *
  * The cost is the released job's own Redis-side history: a turn that is re-run keeps only its
  * latest attempt in the queue's completed/failed sets. The durable record of a turn is its row in
  * Postgres, not the job, exactly as it is for a workspace teardown.
  *
  * @param queue - The queue holding the job.
  * @param jobId - Id to release; the turn id for a chat turn.
- * @returns `true` when a retained terminal job was removed, `false` when there was nothing to
- *   release or the job is still live.
+ * @returns `released` when a retained terminal job was removed, `absent` when no job holds the id,
+ *   and `live` when one does and has not finished — which a caller must treat as a refusal, never
+ *   as permission to enqueue.
  */
-export async function releaseTerminalJob(queue: Queue, jobId: string): Promise<boolean> {
+export async function releaseTerminalJob(queue: Queue, jobId: string): Promise<JobReleaseOutcome> {
   const job = await queue.getJob(jobId);
-  if (job === undefined || !TERMINAL_JOB_STATES.includes(await job.getState())) {
-    return false;
+  if (job === undefined) {
+    return 'absent';
+  }
+  if (!TERMINAL_JOB_STATES.includes(await job.getState())) {
+    return 'live';
   }
   await job.remove();
-  return true;
+  return 'released';
 }
 
 /**
