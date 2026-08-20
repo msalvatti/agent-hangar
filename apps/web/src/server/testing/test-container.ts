@@ -29,7 +29,7 @@ import { Queue } from 'bullmq';
 import type { Logger } from 'pino';
 
 import type { ServerContainer, ServerContainerDeps } from '../container';
-import type { BranchSummary, GithubClient, RepoSummary } from '../github';
+import type { BranchSummary, GithubClient, RepoListing, RepoSummary } from '../github';
 
 import { fakeQueue, resetFakeQueues } from './fake-queue';
 import type { FakeQueue } from './fake-queue';
@@ -66,19 +66,23 @@ export class StubGithubClient implements GithubClient {
   /** Set to make both methods reject. */
   failure: Error | null = null;
 
+  /** Whether `listRepos` reports that the listing stopped at the client's page limit. */
+  truncated = false;
+
   /**
    * @param query - Case-insensitive substring of `fullName`.
-   * @returns The matching repositories.
+   * @returns The matching repositories, and the scripted truncation flag.
    * @throws Error When {@link StubGithubClient.failure} is set; rejected, as a real client does.
    */
-  listRepos(query: string): Promise<RepoSummary[]> {
+  listRepos(query: string): Promise<RepoListing> {
     if (this.failure !== null) {
       return Promise.reject(this.failure);
     }
     const needle = query.trim().toLowerCase();
-    return Promise.resolve(
-      this.repos.filter((repo) => repo.fullName.toLowerCase().includes(needle)),
-    );
+    return Promise.resolve({
+      repos: this.repos.filter((repo) => repo.fullName.toLowerCase().includes(needle)),
+      truncated: this.truncated,
+    });
   }
 
   /**

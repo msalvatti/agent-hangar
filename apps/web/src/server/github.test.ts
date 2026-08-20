@@ -134,7 +134,7 @@ describe('listRepos', () => {
    */
   it('maps a listing onto the repository contract', async () => {
     const { deps, fetchSpy } = harness(() => jsonResponse([GITHUB_REPO]));
-    const repos = await createGithubClient(deps).listRepos('');
+    const { repos } = await createGithubClient(deps).listRepos('');
     expect(repos).toEqual([
       {
         fullName: 'acme/widgets',
@@ -158,8 +158,8 @@ describe('listRepos', () => {
     const other = { ...GITHUB_REPO, full_name: 'other/thing' };
     const { deps } = harness(() => jsonResponse([GITHUB_REPO, other]));
     const client = createGithubClient(deps);
-    expect(await client.listRepos('  WIDG ')).toHaveLength(1);
-    expect(await client.listRepos('nothing')).toHaveLength(0);
+    expect((await client.listRepos('  WIDG ')).repos).toHaveLength(1);
+    expect((await client.listRepos('nothing')).repos).toHaveLength(0);
   });
 
   /**
@@ -233,7 +233,7 @@ describe('pagination', () => {
       ]),
     );
 
-    const repos = await createGithubClient(deps).listRepos('');
+    const { repos } = await createGithubClient(deps).listRepos('');
 
     expect(repos.map((repo) => repo.fullName)).toEqual(['acme/widgets', 'acme/gadgets']);
     expect(fetchSpy).toHaveBeenCalledTimes(2);
@@ -267,10 +267,11 @@ describe('pagination', () => {
       jsonResponse([GITHUB_REPO], 200, nextLink(`${BASE_URL}/user/repos?page=next`)),
     );
 
-    const repos = await createGithubClient(deps).listRepos('');
+    const { repos, truncated } = await createGithubClient(deps).listRepos('');
 
     expect(fetchSpy).toHaveBeenCalledTimes(GITHUB_MAX_PAGES);
     expect(repos).toHaveLength(GITHUB_MAX_PAGES);
+    expect(truncated).toBe(true);
     expect(logOutput()).toContain('github listing stopped at the page limit');
   });
 
@@ -285,10 +286,14 @@ describe('pagination', () => {
   ])('does not follow a next link that leaves the API (%s)', async (_label, link) => {
     const { deps, fetchSpy } = harness(() => jsonResponse([GITHUB_REPO], 200, nextLink(link)));
 
-    const repos = await createGithubClient(deps).listRepos('');
+    const { repos, truncated } = await createGithubClient(deps).listRepos('');
 
     expect(fetchSpy).toHaveBeenCalledTimes(1);
     expect(repos).toHaveLength(1);
+    // A page was offered and this client declined to follow it, so the listing is incomplete for a
+    // different reason than the page limit — and just as incomplete. Reporting `false` here would
+    // let the picker claim it shows everything the token can reach.
+    expect(truncated).toBe(true);
   });
 
   /**
@@ -425,5 +430,159 @@ describe('failures', () => {
     await expect(createGithubClient(deps).listBranches('acme/widgets')).rejects.toBeInstanceOf(
       ApiHttpError,
     );
+  });
+});
+
+describe('repository access', () => {
+  /**
+   * Telling a repository the agent could push to from one it could only read is the whole point of
+   * the picker's badge, so the two fields that decide it are parsed rather than discarded — and
+   * the result still satisfies the API contract the route hands the listing straight to.
+   */
+  it('maps permissions and the archived flag onto the contract', async () => {
+    const { deps } = harness(() =>
+      jsonResponse([
+        { ...GITHUB_REPO, permissions: { push: true, pull: true }, archived: false },
+        {
+          ...GITHUB_REPO,
+          full_name: 'acme/legacy',
+          permissions: { push: false, pull: true },
+          archived: true,
+        },
+      ]),
+    );
+
+    const { repos } = await createGithubClient(deps).listRepos('');
+
+    expect(repos.map((repo) => [repo.canPush, repo.archived])).toEqual([
+      [true, false],
+      [false, true],
+    ]);
+    expect(repos.every((repo) => repoSummary.safeParse(repo).success)).toBe(true);
+  });
+
+  /**
+   * The two facts go missing independently, so they are carried independently. Bundling them into
+   * one answer loses information in both directions: a forge stating `archived` but not
+   * `permissions` would have its archived flag thrown away, and one stating `permissions` but not
+   * `archived` would have an unstated `archived: false` invented — which reports an archived
+   * repository as ready to push to, the exact failure these fields exist to prevent.
+   */
+  it.each([
+    ['only the push permission', { permissions: { push: false } }, { canPush: false }],
+    ['only the archived flag', { archived: true }, { archived: true }],
+  ])('keeps a partially reported repository partial (%s)', async (_label, upstream, expected) => {
+    const { deps } = harness(() => jsonResponse([{ ...GITHUB_REPO, ...upstream }]));
+
+    const { repos } = await createGithubClient(deps).listRepos('');
+
+    const [repo] = repos;
+    expect(repo).toMatchObject(expected);
+    // The unstated half is absent, not invented. `toMatchObject` would pass with an extra key
+    // present, so the absence is asserted separately.
+    expect(Object.hasOwn(repo ?? {}, 'canPush')).toBe(Object.hasOwn(expected, 'canPush'));
+    expect(Object.hasOwn(repo ?? {}, 'archived')).toBe(Object.hasOwn(expected, 'archived'));
+  });
+
+  /**
+   * `permissions` is required on the repository schema GitHub documents for `/user/repos` but
+   * optional on the minimal-repository schema sibling listings return, and the API base URL is
+   * configurable — so a forge that says nothing must be reported as having said nothing. The
+   * listing still succeeds, and the one thing that must never happen is a fabricated `canPush`.
+   */
+  it.each([
+    ['no permissions object at all', {}],
+    ['a permissions object without push', { permissions: { pull: true } }],
+  ])('reports an unstated push permission as unknown, not as writable (%s)', async (_l, extra) => {
+    const { deps } = harness(() =>
+      jsonResponse([
+        { ...GITHUB_REPO, permissions: { push: true } },
+        { ...GITHUB_REPO, full_name: 'acme/silent', ...extra },
+      ]),
+    );
+
+    const { repos } = await createGithubClient(deps).listRepos('');
+
+    // The stated one is answered, so the silent one's absence is the absence of a claim rather
+    // than a client that reads no permissions at all.
+    expect(repos[0]?.canPush).toBe(true);
+    expect(repos[1]?.canPush).toBeUndefined();
+    expect(Object.hasOwn(repos[1] ?? {}, 'canPush')).toBe(false);
+  });
+
+  /**
+   * An unreported `archived` is reported as unreported. Defaulting it to `false` — which GitHub
+   * does document as the default — would state on a lean forge's behalf something it never said,
+   * and the value it would state is the permissive one.
+   */
+  it('reports an unstated archived flag as unknown, not as not-archived', async () => {
+    const { deps } = harness(() => jsonResponse([{ ...GITHUB_REPO, permissions: { push: true } }]));
+
+    const { repos } = await createGithubClient(deps).listRepos('');
+
+    expect(repos[0]?.archived).toBeUndefined();
+    expect(Object.hasOwn(repos[0] ?? {}, 'archived')).toBe(false);
+  });
+
+  /**
+   * Guard for the field that reads as proof and is not: GitHub reports the configured default
+   * branch name from the moment a repository is created and only creates the ref on the first
+   * push, so a repository with no commits is indistinguishable here from one with a hundred.
+   * Nothing may infer from this field that a repository can be cloned.
+   */
+  it('reports a default branch name without vouching for the ref', async () => {
+    const { deps } = harness(() =>
+      jsonResponse([{ ...GITHUB_REPO, permissions: { push: true }, default_branch: 'main' }]),
+    );
+
+    const { repos } = await createGithubClient(deps).listRepos('');
+
+    expect(repos[0]?.defaultBranch).toBe('main');
+  });
+});
+
+describe('truncation', () => {
+  /**
+   * A walk that reached the end of the account is complete and says so. This is the value the
+   * picker's note depends on before it may claim the list is the token's whole reach.
+   */
+  it('reports a completed walk as not truncated', async () => {
+    const { deps } = harness(() => jsonResponse([GITHUB_REPO]));
+
+    const { truncated } = await createGithubClient(deps).listRepos('');
+
+    expect(truncated).toBe(false);
+  });
+
+  /**
+   * Truncation travels with the result rather than only reaching the log, because the search runs
+   * over what was read: a repository past the limit is reported as no match, and no caller could
+   * tell that from an empty array. The query here filters everything away precisely to show the
+   * filter cannot mask the flag.
+   */
+  it('reports truncation even when the query filters every repository away', async () => {
+    const { deps } = harness(() =>
+      jsonResponse([GITHUB_REPO], 200, nextLink(`${BASE_URL}/user/repos?page=next`)),
+    );
+
+    const { repos, truncated } = await createGithubClient(deps).listRepos('nothing-matches-this');
+
+    expect(repos).toHaveLength(0);
+    expect(truncated).toBe(true);
+  });
+
+  /**
+   * Branches paginate through the same walk but do not surface truncation: it would mean a
+   * repository with more than a thousand branches, and the branch picker makes no claim about its
+   * own completeness for a flag to correct. The walk still stops, and still returns what it read.
+   */
+  it('still returns branches from a walk that stopped at the page limit', async () => {
+    const { deps } = harness(() =>
+      jsonResponse([GITHUB_BRANCH], 200, nextLink(`${BASE_URL}/repos/acme/widgets/branches?p=2`)),
+    );
+
+    const branches = await createGithubClient(deps).listBranches('acme/widgets');
+
+    expect(branches).toHaveLength(GITHUB_MAX_PAGES);
   });
 });

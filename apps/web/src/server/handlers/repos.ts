@@ -47,10 +47,13 @@ export function listRepos(container: ServerContainer, request: Request): Promise
   return withErrorHandling(container, async () => {
     assertNoForeignOrigin(request);
     const query = parseQuery(request.url, listReposQuery);
-    const repos = await container.github.listRepos(query.query ?? '');
+    // `truncated` is forwarded rather than dropped: the client applies the search to what it read,
+    // so a listing that stopped at the page limit reports no match for a repository that exists.
+    // The picker needs that to explain an absence instead of blaming the token's scope.
+    const { repos, truncated } = await container.github.listRepos(query.query ?? '');
     return jsonResponse(
       listReposResponse,
-      { repos },
+      { repos, truncated },
       { headers: { 'Cache-Control': REPOS_CACHE_CONTROL } },
     );
   });

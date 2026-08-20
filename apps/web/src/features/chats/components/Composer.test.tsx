@@ -172,3 +172,88 @@ describe('Composer', () => {
     expect(screen.getByPlaceholderText('Custom')).toBeInTheDocument();
   });
 });
+
+describe('Composer disabled reason', () => {
+  /**
+   * Each of the three things that can hold Send shut is named specifically. A single "complete the
+   * form" would leave the person who has a repository and cannot get a branch exactly as stuck as
+   * silence does — which is the case people actually hit, because a repository with no commits has
+   * no branch for the picker to default to.
+   */
+  it.each([
+    ['no repository', { repo: null }, /Choose a repository/],
+    ['no branch', { branch: null }, /Choose a branch/],
+    ['an empty prompt', { value: '   ' }, /Write a prompt/],
+  ])('names what is missing when there is %s', (_label, overrides, expected) => {
+    renderNew(overrides);
+    expect(screen.getByRole('status')).toHaveTextContent(expected);
+  });
+
+  /**
+   * The reason has to be part of the control, not merely rendered beside it: a disabled button
+   * does not reliably emit the pointer events a native tooltip needs, so `title` is unreachable in
+   * precisely the state that needs explaining. `aria-describedby` pointing at the live region is
+   * what makes the button carry its own explanation.
+   */
+  it('associates the reason with the Send button', () => {
+    renderNew({ branch: null });
+    const status = screen.getByRole('status');
+    expect(status.id).not.toBe('');
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveAttribute(
+      'aria-describedby',
+      status.id,
+    );
+  });
+
+  /**
+   * The branch sentence carries the part nothing else on screen says: a repository with no branches
+   * has none to pick, so the picker will never fill itself in. It says "no branches" rather than
+   * "no commits" because an empty branch listing is all that was observed — a repository whose
+   * commits are reachable only through tags has commits and still cannot be used here.
+   */
+  it('explains that a repository with no branches has none to choose', () => {
+    renderNew({ branch: null });
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(/no branches/i);
+    expect(status).not.toHaveTextContent(/commits/i);
+  });
+
+  /**
+   * A follow-up inherits the chat's repository and branch, so only the prompt can hold Send shut
+   * there. Telling that user to choose a repository would be wrong, and a picker-shaped message in
+   * a placement that renders no pickers would be worse.
+   */
+  it('only ever asks a follow-up for a prompt', () => {
+    render(
+      <Composer mode="followup" value="" onChange={vi.fn()} onSubmit={vi.fn()} model={null} />,
+    );
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(/Write a prompt/);
+    expect(status).not.toHaveTextContent(/repositor/i);
+    expect(status).not.toHaveTextContent(/branch/i);
+  });
+
+  /**
+   * The live region is in the document in every state — a region added at the same moment as its
+   * text is not reliably announced — so a submittable composer renders it empty rather than not at
+   * all, and the button describes itself with nothing.
+   */
+  it('says nothing, but stays present, once the composer can send', () => {
+    renderNew();
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    expect(screen.getByRole('button', { name: 'Send' })).not.toHaveAttribute('aria-describedby');
+  });
+
+  /**
+   * A locked composer explains itself elsewhere — the spinner while busy, the archived banner when
+   * disabled — so repeating it here would announce a change that has not happened.
+   */
+  it.each([
+    ['busy', { busy: true }],
+    ['disabled', { disabled: true }],
+  ])('stays silent while the composer is %s', (_label, overrides) => {
+    renderNew({ ...overrides, value: '' });
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+  });
+});

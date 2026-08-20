@@ -73,10 +73,40 @@ export const repoSummary = z.object({
   defaultBranch: z.string().min(1),
   private: z.boolean(),
   description: z.string().nullable(),
+  /**
+   * Whether the token may push here, or absent when the forge did not say.
+   *
+   * Optional because absence is a real answer, not a gap to be filled in: `permissions` is
+   * required on the repository schema GitHub documents for `/user/repos` but optional on the
+   * minimal-repository schema other listings return, and the API base URL is configurable, so a
+   * forge that reports nothing about permissions has to be describable. A reader treats the
+   * absence as "unknown" and never as "may push".
+   */
+  canPush: z.boolean().optional(),
+  /**
+   * Whether the forge has archived the repository, or absent when it did not say.
+   *
+   * An archived repository rejects every write regardless of what the token may do, so this is a
+   * fact in its own right and not a detail of {@link repoSummary.canPush}. The two are separate
+   * optional fields rather than one optional pair precisely so that a forge reporting only one of
+   * them loses neither: bundling them would discard a stated `archived` whenever `permissions`
+   * was missing, and invent an unstated one whenever it was present.
+   */
+  archived: z.boolean().optional(),
 });
 
 /** `GET /api/repos` response. */
-export const listReposResponse = z.object({ repos: z.array(repoSummary) });
+export const listReposResponse = z.object({
+  repos: z.array(repoSummary),
+  /**
+   * Whether the listing stopped at the client's page limit rather than at the end of the account.
+   *
+   * A truncated listing is not merely incomplete, it answers searches wrongly: the query is
+   * applied to what was read, so a repository past the limit cannot be found however it is spelt.
+   * The picker says so instead of blaming the token's scope. Optional so the field is additive.
+   */
+  truncated: z.boolean().optional(),
+});
 
 /** `GET /api/repos/branches?repo=` */
 export const listBranchesQuery = z.object({ repo: z.string().min(1) });
