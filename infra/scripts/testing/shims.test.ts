@@ -3,18 +3,26 @@
  *
  * Layer: unit.
  * Goal: every shimmed executable logs its invocation and returns the configured canned result,
- * `readShimLog`/`spawnScript` behave for both the happy path and their edge cases, and
- * `writeExtraShim` supports both a fresh and an existing shim directory.
+ * `readShimLog`/`spawnScript` behave for both the happy path and their edge cases,
+ * `writeExtraShim` supports both a fresh and an existing shim directory, and
+ * `writeInstanceEnvFile` produces the env file a configured checkout carries — or reports why it
+ * could not.
  * Mocks: none — the shims are real executable files spawned as real child processes.
  */
 import { execFileSync } from 'node:child_process';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
-import { createShimDir, readShimLog, spawnScript, writeExtraShim } from './shims.js';
+import {
+  createShimDir,
+  readShimLog,
+  spawnScript,
+  writeExtraShim,
+  writeInstanceEnvFile,
+} from './shims.js';
 
 function freshLogPath(): { dir: string; log: string } {
   const dir = mkdtempSync(join(tmpdir(), 'ah-shim-test-'));
@@ -353,5 +361,50 @@ describe('writeExtraShim', () => {
     const freshPath = writeExtraShim(undefined, 'helper', 'exit 7\n');
     const result = spawnScript(freshPath, { shimDir: shimDir, env: {} });
     expect(result.status).toBe(7);
+  });
+});
+
+describe('writeInstanceEnvFile', () => {
+  /**
+   * The file is the one `pnpm setup` would leave behind: the instance the caller asked for, the
+   * ports derived from the default base, and a master key path inside the sandbox HOME rather
+   * than the developer's real one.
+   */
+  it('writes the env file a checkout set up for an instance would carry', () => {
+    const { dir } = freshLogPath();
+    const envFile = join(dir, '.env.local');
+    writeInstanceEnvFile(envFile, { instance: 'Feat_X', home: dir });
+    const contents = readFileSync(envFile, 'utf8');
+    expect(contents).toContain('AH_INSTANCE="feat-x"');
+    expect(contents).toContain('AH_PORT_BASE="3000"');
+    expect(contents).toContain('POSTGRES_PORT="3001"');
+    expect(contents).toContain(`MASTER_KEY_PATH="${dir}/.agent-hangar/master.key"`);
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /**
+   * An explicit port base moves the whole block, so two sandboxes can stand for two instances.
+   */
+  it('honours an explicit port base', () => {
+    const { dir } = freshLogPath();
+    const envFile = join(dir, '.env.local');
+    writeInstanceEnvFile(envFile, { instance: 'beta', home: dir, portBase: 4400 });
+    const contents = readFileSync(envFile, 'utf8');
+    expect(contents).toContain('AH_PORT_BASE="4400"');
+    expect(contents).toContain('REDIS_PORT="4402"');
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  /**
+   * A refused derivation must surface as a failed test rather than as a silently missing file
+   * that the script under test would then resolve from somewhere else.
+   */
+  it('throws when the derivation refuses the requested values', () => {
+    const { dir } = freshLogPath();
+    const envFile = join(dir, '.env.local');
+    expect(() => {
+      writeInstanceEnvFile(envFile, { instance: 'beta', home: dir, portBase: 80 });
+    }).toThrow(/env.sh --force failed/);
+    rmSync(dir, { recursive: true, force: true });
   });
 });

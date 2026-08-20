@@ -25,7 +25,10 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-eval "$(bash "$here/env.sh" --print)"
+# Instance resolution — see ah_assert_agreement in env.sh. Captured before it is evaluated, so a
+# refusal is not swallowed by `eval`, which succeeds on the empty string a refusal prints.
+instance_env="$(bash "$here/env.sh" --print-checked)" || exit "$?"
+eval "$instance_env"
 env_file="${AH_ENV_FILE:-$root/.env.local}"
 
 if [ $dry_run -eq 1 ]; then
@@ -39,6 +42,11 @@ if [ $dry_run -eq 1 ]; then
   fi
   exit 0
 fi
+
+# A teardown states what it is about to destroy before destroying it. The progress lines below
+# name the compose project and the label filter individually; this line is the one place an
+# operator can read the whole target off in one go and stop the run if it is the wrong one.
+echo "Archiving instance \"$AH_INSTANCE\" (compose $COMPOSE_PROJECT_NAME, database $POSTGRES_DB, env file $env_file)"
 
 echo "1/3 Tearing down compose resources ($COMPOSE_PROJECT_NAME)"
 if ! docker compose -f "$root/infra/docker-compose.yml" down -v --remove-orphans; then

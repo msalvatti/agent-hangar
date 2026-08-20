@@ -85,6 +85,12 @@ export interface Sandbox {
   newKeyPath: string;
   /** Port base whose web port nothing is listening on, so the running-instance probe stays quiet. */
   portBase: number;
+  /**
+   * Env file path inside the sandbox. It is never created, so the run derives its instance from
+   * the sandbox environment instead of reading the developer's real `.env.local` — which would
+   * point MASTER_KEY_PATH at the real master key.
+   */
+  envFile: string;
 }
 
 /**
@@ -281,6 +287,7 @@ export function sandbox(): Sandbox {
     statePath: `${keyPath}.rotation`,
     newKeyPath: `${keyPath}.new`,
     portBase: reservePortBase(),
+    envFile: join(dir, '.env.local'),
   };
 }
 
@@ -368,6 +375,7 @@ export function run(
     args,
     env: {
       HOME: box.dir,
+      AH_ENV_FILE: box.envFile,
       AH_PORT_BASE: String(box.portBase),
       MASTER_KEY_PATH: box.keyPath,
       AH_SHIM_LOG: box.log,
@@ -398,6 +406,7 @@ export function runDetached(
   const child = spawn('bash', [scriptPath, ...args], {
     env: {
       HOME: box.dir,
+      AH_ENV_FILE: box.envFile,
       AH_PORT_BASE: String(box.portBase),
       MASTER_KEY_PATH: box.keyPath,
       AH_SHIM_LOG: box.log,

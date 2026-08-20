@@ -8,9 +8,13 @@
  * optional Secrets/OpenAI rows never fail the exit code and skip in the documented cascade;
  * `--json` parses into 10 objects with the four documented keys.
  * Mocks: docker/pnpm/openssl/node via `infra/scripts/testing/shims.ts`; a bespoke
- * `AH_DOCTOR_HELPER_CMD` shim standing in for the secrets-status/openai-check helpers; real
- * `node:net` listeners standing in for Postgres/Redis reachability — bound on the ports `env.sh`
- * derives from AH_PORT_BASE, because the derivation deliberately ignores POSTGRES_PORT/REDIS_PORT.
+ * `AH_DOCTOR_HELPER_CMD` shim standing in for the secrets-status/openai-check/service-probes
+ * helpers; real `node:net` listeners standing in for the processes holding the Postgres/Redis
+ * ports — bound on the ports `env.sh` derives from AH_PORT_BASE, because the derivation
+ * deliberately ignores POSTGRES_PORT/REDIS_PORT. Those listeners answer nothing, which is exactly
+ * why the rows now consult the service probe rather than the socket: whether the probe says the
+ * service answered is what the shim decides here, and `lib/service-probes.test.ts` is where the
+ * probe itself is proven against a listener that is not the service it expects.
  */
 import { chmodSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -21,7 +25,13 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createShimDir, spawnScript, writeExtraShim, writeGnuStatShim } from './testing/shims.js';
+import {
+  createShimDir,
+  readShimLog,
+  spawnScript,
+  writeExtraShim,
+  writeGnuStatShim,
+} from './testing/shims.js';
 import type { DockerShimOptions, PnpmShimOptions } from './testing/shims.js';
 
 const scriptPath = fileURLToPath(new URL('./doctor.sh', import.meta.url));
@@ -130,27 +140,39 @@ interface HelperFixture {
 }
 
 /**
- * Writes the `AH_DOCTOR_HELPER_CMD` shim: it inspects its own last path argument to tell the
- * secrets-status and openai-check invocations apart, and answers from the environment.
+ * Body of the `AH_DOCTOR_HELPER_CMD` shim: it inspects its own last path argument to tell the
+ * three helper invocations apart, and answers each from the environment.
+ *
+ * @returns The shell script body.
+ */
+function helperBody(): string {
+  return [
+    'case "$1" in',
+    '  *secrets-status*)',
+    '    printf \'%s\\n\' "$AH_SHIM_SECRETS_LINES"',
+    '    exit "${AH_SHIM_SECRETS_RC:-0}"',
+    '    ;;',
+    '  *openai-check*)',
+    '    printf \'%s\\n\' "$AH_SHIM_OPENAI_LINE"',
+    '    exit "${AH_SHIM_OPENAI_RC:-0}"',
+    '    ;;',
+    '  *service-probes*)',
+    '    printf \'%s\\n\' "$AH_SHIM_PROBE_LINES"',
+    '    exit "${AH_SHIM_PROBE_RC:-0}"',
+    '    ;;',
+    'esac',
+    'exit 9',
+  ].join('\n');
+}
+
+/**
+ * Writes the `AH_DOCTOR_HELPER_CMD` shim into a shim directory.
+ *
+ * @param shimDir - Directory to write into.
+ * @returns The shim's path and directory.
  */
 function helperShim(shimDir: string): HelperFixture {
-  const path = writeExtraShim(
-    shimDir,
-    'helper.sh',
-    [
-      'case "$1" in',
-      '  *secrets-status*)',
-      '    printf \'%s\\n\' "$AH_SHIM_SECRETS_LINES"',
-      '    exit "${AH_SHIM_SECRETS_RC:-0}"',
-      '    ;;',
-      '  *openai-check*)',
-      '    printf \'%s\\n\' "$AH_SHIM_OPENAI_LINE"',
-      '    exit "${AH_SHIM_OPENAI_RC:-0}"',
-      '    ;;',
-      'esac',
-      'exit 9',
-    ].join('\n'),
-  );
+  const path = writeExtraShim(shimDir, 'helper.sh', helperBody());
   return { path, dir: shimDir };
 }
 
@@ -159,6 +181,8 @@ interface Sandbox {
   log: string;
   keyPath: string;
   portBase: number;
+  /** Env file path inside the sandbox; never created, so the shell drives the derivation. */
+  envFile: string;
 }
 
 async function greenSandbox(): Promise<Sandbox> {
@@ -171,18 +195,26 @@ async function greenSandbox(): Promise<Sandbox> {
   chmodSync(keyPath, 0o600);
   const ports = await bindDerivedPorts();
   cleanups.push(ports.close);
-  return { dir, log: join(dir, 'log'), keyPath, portBase: ports.portBase };
+  return {
+    dir,
+    log: join(dir, 'log'),
+    keyPath,
+    portBase: ports.portBase,
+    envFile: join(dir, '.env.local'),
+  };
 }
 
 function greenEnv(sandbox: Sandbox, extra: Record<string, string> = {}): Record<string, string> {
   return {
     HOME: sandbox.dir,
+    AH_ENV_FILE: sandbox.envFile,
     AH_INSTANCE: 'default',
     AH_PORT_BASE: String(sandbox.portBase),
     MASTER_KEY_PATH: sandbox.keyPath,
     AH_SHIM_LOG: sandbox.log,
     AH_SHIM_SECRETS_LINES: 'GITHUB_PAT=set:ab12\nOPENAI_API_KEY=set:cd34',
     AH_SHIM_OPENAI_LINE: 'ok gpt-5.6-sol',
+    AH_SHIM_PROBE_LINES: 'POSTGRES=ok\nREDIS=ok',
     ...extra,
   };
 }
@@ -204,23 +236,7 @@ describe('doctor.sh — all green', () => {
   it('runs a helper override whose path contains a space', async () => {
     const sandbox = await greenSandbox();
     const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
-    const helperPath = writeExtraShim(
-      shimDir,
-      'helper with space.sh',
-      [
-        'case "$1" in',
-        '  *secrets-status*)',
-        '    printf \'%s\\n\' "$AH_SHIM_SECRETS_LINES"',
-        '    exit 0',
-        '    ;;',
-        '  *openai-check*)',
-        '    printf \'%s\\n\' "$AH_SHIM_OPENAI_LINE"',
-        '    exit 0',
-        '    ;;',
-        'esac',
-        'exit 9',
-      ].join('\n'),
-    );
+    const helperPath = writeExtraShim(shimDir, 'helper with space.sh', helperBody());
     const result = spawnScript(scriptPath, {
       shimDir,
       env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helperPath }),
@@ -737,6 +753,138 @@ describe('doctor.sh on a GNU userland', () => {
     const key = rows.find((row) => row.check === 'Master key');
     expect(key?.status).toBe('✗');
     expect(key?.fix).toContain('chmod 600');
+  });
+});
+
+describe('doctor.sh service probes', () => {
+  /**
+   * The defect these rows were rebuilt for: the check was a bare TCP connect, so ANY listener on
+   * the port read as healthy — an unrelated container bound to the database port reported a
+   * working Postgres. The listener in this sandbox is exactly that: a socket that accepts and
+   * answers nothing. The row now follows the probe's verdict, so it fails, and it says why.
+   */
+  it('fails the Postgres row when the listener does not answer SELECT 1', async () => {
+    const sandbox = await greenSandbox();
+    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const helper = helperShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(sandbox, {
+        AH_DOCTOR_HELPER_CMD: helper.path,
+        AH_SHIM_PROBE_LINES: 'POSTGRES=no-select-1\nREDIS=ok',
+      }),
+    });
+    expect(result.status).toBe(1);
+    const rows = JSON.parse(result.stdout) as {
+      check: string;
+      status: string;
+      detail: string;
+      fix: string;
+    }[];
+    const postgres = rows.find((row) => row.check === 'Postgres');
+    expect(postgres?.status).toBe('✗');
+    expect(postgres?.detail).toContain('listener is not agent_hangar_default');
+    expect(postgres?.detail).toContain('no-select-1');
+    expect(postgres?.fix).toContain(String(sandbox.portBase + 1));
+    expect(rows.find((row) => row.check === 'Redis')?.status).toBe('✓');
+    expect(rows.find((row) => row.check === 'Migrations')?.detail).toBe('postgres down');
+  });
+
+  /**
+   * The same for the cache: a socket that never replies to `PING` is not a Redis.
+   */
+  it('fails the Redis row when the listener does not answer PING', async () => {
+    const sandbox = await greenSandbox();
+    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const helper = helperShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(sandbox, {
+        AH_DOCTOR_HELPER_CMD: helper.path,
+        AH_SHIM_PROBE_LINES: 'POSTGRES=ok\nREDIS=no-pong',
+      }),
+    });
+    expect(result.status).toBe(1);
+    const rows = JSON.parse(result.stdout) as { check: string; status: string; detail: string }[];
+    const redis = rows.find((row) => row.check === 'Redis');
+    expect(redis?.status).toBe('✗');
+    expect(redis?.detail).toContain('did not answer PING');
+    expect(rows.find((row) => row.check === 'Postgres')?.status).toBe('✓');
+  });
+
+  /**
+   * A healthy row says what it established, not merely that a port was open.
+   */
+  it('names the answer each healthy service gave', async () => {
+    const sandbox = await greenSandbox();
+    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const helper = helperShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+    });
+    expect(result.status).toBe(0);
+    const rows = JSON.parse(result.stdout) as { check: string; detail: string }[];
+    expect(rows.find((row) => row.check === 'Postgres')?.detail).toContain(
+      'agent_hangar_default answered SELECT 1',
+    );
+    expect(rows.find((row) => row.check === 'Redis')?.detail).toContain('answered PING with PONG');
+  });
+
+  /**
+   * A probe that cannot run at all is a different problem from an unhealthy service, and is
+   * reported as such rather than being quietly rendered as either verdict.
+   */
+  it('reports a probe that could not run instead of guessing a verdict', async () => {
+    const sandbox = await greenSandbox();
+    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const helper = helperShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path, AH_SHIM_PROBE_RC: '9' }),
+    });
+    expect(result.status).toBe(1);
+    const rows = JSON.parse(result.stdout) as { check: string; status: string; detail: string }[];
+    for (const name of ['Postgres', 'Redis']) {
+      const row = rows.find((entry) => entry.check === name);
+      expect(row?.status).toBe('✗');
+      expect(row?.detail).toContain('probe-unavailable');
+    }
+  });
+
+  /**
+   * With neither port held there is nothing to interrogate, so the probe process is not started
+   * at all and both rows report the plain "nothing listening" cause with the `pnpm infra:up` fix.
+   */
+  it('skips the probe entirely when nothing is listening', async () => {
+    const sandbox = await greenSandbox();
+    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const helper = writeExtraShim(
+      shimDir,
+      'logging-helper.sh',
+      [
+        'log="${AH_SHIM_LOG:?AH_SHIM_LOG is not set}"',
+        'printf \'%s\\n\' "helper $1" >> "$log"',
+        helperBody(),
+      ].join('\n'),
+    );
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(sandbox, {
+        AH_DOCTOR_HELPER_CMD: helper,
+        AH_PORT_BASE: String(await closedPortBase()),
+      }),
+    });
+    expect(result.status).toBe(1);
+    const rows = JSON.parse(result.stdout) as { check: string; detail: string; fix: string }[];
+    expect(rows.find((row) => row.check === 'Postgres')?.detail).toContain('nothing listening');
+    expect(rows.find((row) => row.check === 'Redis')?.fix).toBe('pnpm infra:up');
+    expect(readShimLog(sandbox.log).some((line) => line.includes('service-probes'))).toBe(false);
   });
 });
 

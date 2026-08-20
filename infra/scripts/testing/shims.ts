@@ -13,6 +13,7 @@ import { spawnSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 /**
  * The small subset of `node:fs` this module needs, called only through this object.
@@ -325,6 +326,52 @@ export function writeGnuStatShim(dir: string, mode = '600'): string {
       'exit 1',
     ].join('\n'),
   );
+}
+
+/** The script that writes an instance env file; used so tests never hand-roll that format. */
+const envScriptPath = fileURLToPath(new URL('../env.sh', import.meta.url));
+
+/** Options accepted by {@link writeInstanceEnvFile}. */
+export interface WriteInstanceEnvFileOptions {
+  /** Instance name to record, before slugification. */
+  instance: string;
+  /**
+   * HOME the derivation runs under. Required rather than defaulted: `env.sh` writes a
+   * HOME-derived `MASTER_KEY_PATH` into the file, and a test that let that resolve to the
+   * developer's real home would point a script at the real master key.
+   */
+  home: string;
+  /** Port base to record. Default `3000`. */
+  portBase?: number;
+}
+
+/**
+ * Writes the env file a checkout set up for one instance would carry.
+ *
+ * Produced by running the real `env.sh --force` rather than by formatting the lines here: the
+ * scripts under test read that file back, so a hand-rolled stand-in would let the two formats
+ * drift and would prove nothing about the resolution the scripts actually perform.
+ *
+ * @param envFile - Path to write (passed to the script as `AH_ENV_FILE`).
+ * @param options - Instance identity and overrides to record.
+ * @throws Error when the script refuses the requested values.
+ */
+export function writeInstanceEnvFile(envFile: string, options: WriteInstanceEnvFileOptions): void {
+  const result = spawnSync('bash', [envScriptPath, '--force'], {
+    // Same minimal PATH `spawnScript` gives a script under test: /bin carries the system bash on
+    // both macOS and Linux, and /usr/bin the tools `env.sh` reaches for.
+    env: {
+      PATH: '/usr/bin:/bin',
+      HOME: options.home,
+      AH_ENV_FILE: envFile,
+      AH_INSTANCE: options.instance,
+      AH_PORT_BASE: String(options.portBase ?? 3000),
+    },
+    encoding: 'utf8',
+  });
+  if (result.status !== 0) {
+    throw new Error(`env.sh --force failed: ${result.stderr}`);
+  }
 }
 
 /**

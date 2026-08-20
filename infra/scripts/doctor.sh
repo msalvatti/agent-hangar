@@ -5,6 +5,11 @@
 #
 # AH_DOCTOR_HELPER_CMD overrides the prefix used to run the TypeScript helpers under
 # infra/scripts/lib/*.main.ts (default: `pnpm exec tsx`) — tests point it at a shim.
+#
+# Invoke it as `pnpm infra:doctor` or `pnpm run doctor`. Plain `pnpm doctor` runs the package
+# manager's own built-in diagnostic instead: pnpm claims that name, no package script can override
+# it, and what comes back reports on the pnpm installation and exits 0 whatever state this
+# project's environment is in. `infra:doctor` is the short form pnpm does not claim.
 set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -20,7 +25,10 @@ case "${1:-}" in
     ;;
 esac
 
-eval "$(bash "$here/env.sh" --print)"
+# Instance resolution — see ah_assert_agreement in env.sh. Captured before it is evaluated, so a
+# refusal is not swallowed by `eval`, which succeeds on the empty string a refusal prints.
+instance_env="$(bash "$here/env.sh" --print-checked)" || exit "$?"
+eval "$instance_env"
 
 ROW_NAMES=()
 ROW_STATUSES=()
@@ -101,22 +109,79 @@ check_docker_socket() {
   fi
 }
 
-check_postgres() {
-  row_detail="127.0.0.1:$POSTGRES_PORT"
+# Whether anything at all holds the port, and what the service-level probe made of it. Filled by
+# detect_listeners and run_service_probes before the rows are built.
+postgres_listening=0
+redis_listening=0
+probe_postgres="not-run"
+probe_redis="not-run"
+
+# Records, for each of the two ports, whether a socket is accepted there.
+detect_listeners() {
+  postgres_listening=0
+  redis_listening=0
   if ah_tcp_open 127.0.0.1 "$POSTGRES_PORT"; then
-    row_status="✓"; row_fix=""
-  else
-    row_status="✗"; row_fix="pnpm infra:up"
+    postgres_listening=1
+  fi
+  if ah_tcp_open 127.0.0.1 "$REDIS_PORT"; then
+    redis_listening=1
   fi
 }
 
+# Asks the two services to answer for themselves, through the same clients the application uses.
+#
+# Skipped when neither port has a listener: there is nothing to interrogate, the rows already have
+# their answer, and the probe costs a Node process. A probe that cannot run at all (no
+# dependencies installed, a broken helper) is reported as such rather than as an unhealthy
+# service, because those are different problems with different fixes.
+run_service_probes() {
+  if [ "$postgres_listening" = "0" ] && [ "$redis_listening" = "0" ]; then
+    return 0
+  fi
+  run_helper service-probes.main.ts
+  if [ "$HELPER_RC" != "0" ]; then
+    probe_postgres="probe-unavailable"
+    probe_redis="probe-unavailable"
+    return 0
+  fi
+  probe_postgres=$(printf '%s\n' "$HELPER_OUTPUT" | sed -n 's/^POSTGRES=//p')
+  probe_redis=$(printf '%s\n' "$HELPER_OUTPUT" | sed -n 's/^REDIS=//p')
+}
+
+# The row does not ask whether the port is open — it asks whether the process behind it is this
+# instance's database. A bare connect cannot tell those apart, and an unrelated container bound to
+# the port therefore rendered as a healthy Postgres. The listener test is kept because it
+# separates "nothing is running" from "something else is running"; the answer to SELECT 1 is what
+# decides the row.
+check_postgres() {
+  row_detail="127.0.0.1:$POSTGRES_PORT"
+  if [ "$postgres_listening" != "1" ]; then
+    row_status="✗"; row_detail="$row_detail · nothing listening"; row_fix="pnpm infra:up"
+    return 0
+  fi
+  if [ "$probe_postgres" = "ok" ]; then
+    row_status="✓"; row_detail="$row_detail · $POSTGRES_DB answered SELECT 1"; row_fix=""
+    return 0
+  fi
+  row_status="✗"
+  row_detail="$row_detail · listener is not $POSTGRES_DB ($probe_postgres)"
+  row_fix="pnpm infra:up, then check what else holds port $POSTGRES_PORT (lsof -i :$POSTGRES_PORT)"
+}
+
+# Same reasoning as check_postgres: a cache is the thing that answers its own PING with PONG.
 check_redis() {
   row_detail="127.0.0.1:$REDIS_PORT"
-  if ah_tcp_open 127.0.0.1 "$REDIS_PORT"; then
-    row_status="✓"; row_fix=""
-  else
-    row_status="✗"; row_fix="pnpm infra:up"
+  if [ "$redis_listening" != "1" ]; then
+    row_status="✗"; row_detail="$row_detail · nothing listening"; row_fix="pnpm infra:up"
+    return 0
   fi
+  if [ "$probe_redis" = "ok" ]; then
+    row_status="✓"; row_detail="$row_detail · answered PING with PONG"; row_fix=""
+    return 0
+  fi
+  row_status="✗"
+  row_detail="$row_detail · listener did not answer PING ($probe_redis)"
+  row_fix="pnpm infra:up, then check what else holds port $REDIS_PORT (lsof -i :$REDIS_PORT)"
 }
 
 check_migrations() {
@@ -277,6 +342,8 @@ check_node; add_row "Node" "$row_status" "$row_detail" "$row_fix" 1
 check_pnpm; add_row "pnpm" "$row_status" "$row_detail" "$row_fix" 1
 check_docker_socket; add_row "Docker socket" "$row_status" "$row_detail" "$row_fix" 1
 docker_ok=0; [ "$row_status" = "✓" ] && docker_ok=1
+detect_listeners
+run_service_probes
 check_postgres; add_row "Postgres" "$row_status" "$row_detail" "$row_fix" 1
 postgres_ok=0; [ "$row_status" = "✓" ] && postgres_ok=1
 check_redis; add_row "Redis" "$row_status" "$row_detail" "$row_fix" 1

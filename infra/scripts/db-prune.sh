@@ -34,7 +34,10 @@ if [ "$days" -lt 1 ]; then
   exit 2
 fi
 
-eval "$(bash "$here/env.sh" --print)"
+# Instance resolution — see ah_assert_agreement in env.sh. Captured before it is evaluated, so a
+# refusal is not swallowed by `eval`, which succeeds on the empty string a refusal prints.
+instance_env="$(bash "$here/env.sh" --print-checked)" || exit "$?"
+eval "$instance_env"
 
 where="status = 'DESTROYED' AND \"destroyedAt\" < now() - interval '$days days'"
 if [ $dry_run -eq 1 ]; then
@@ -42,6 +45,10 @@ if [ $dry_run -eq 1 ]; then
 else
   sql="DELETE FROM \"Workspace\" WHERE $where"
 fi
+
+# The rows about to be deleted belong to one instance's database; it is named before the
+# statement runs rather than left implicit in the compose project the command resolves to.
+echo "Target instance \"$AH_INSTANCE\" (database $POSTGRES_DB)"
 
 output="$(docker compose -f "$root/infra/docker-compose.yml" exec -T postgres \
   psql -U ah -d "$POSTGRES_DB" -v ON_ERROR_STOP=1 -tAc "$sql")"

@@ -61,7 +61,10 @@ readonly EXIT_COMPENSATION_INCOMPLETE=4
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-eval "$(bash "$here"/env.sh --print)"
+# Instance resolution — see ah_assert_agreement in env.sh. Captured before it is evaluated, so a
+# refusal is not swallowed by `eval`, which succeeds on the empty string a refusal prints.
+instance_env="$(bash "$here/env.sh" --print-checked)" || exit "$?"
+eval "$instance_env"
 key="$MASTER_KEY_PATH"
 state="$key.rotation"
 lock="$key.lock"
@@ -195,6 +198,7 @@ if [ $confirmed -ne 1 ]; then
     set_count=$(printf '%s\n' "$HELPER_OUTPUT" | grep -c '=set:' || true)
   fi
   echo "Plan (not run without --yes):"
+  echo "  instance: $AH_INSTANCE (database $POSTGRES_DB)"
   echo "  key: $key"
   echo "  backup: $key.bak-<YYYYMMDDHHMMSS>"
   echo "  re-encrypts $set_count secret(s)"
@@ -205,6 +209,11 @@ if [ $confirmed -ne 1 ]; then
 fi
 
 umask 077
+
+# The rows that get re-encrypted are one instance's; the key file that gets swapped is shared by
+# all of them. Naming the instance before either happens is what lets an operator stop a rotation
+# aimed at the wrong store.
+echo "Rotating the master key for instance \"$AH_INSTANCE\" (database $POSTGRES_DB, key $key)"
 
 # Nothing below can run without the key it rotates away from: the helper decrypts with it and the
 # backup is a copy of it. Saying so here beats failing halfway with a bare `cp` error, and it is
