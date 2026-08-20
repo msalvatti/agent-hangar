@@ -82,11 +82,14 @@ project reference emits: `apps/web` sets `composite: false` and type-checks with
 `dist`. `packages/core`
 writes relative `.ts` specifiers in its source (so the Next.js dev server resolves the package
 from source) and TypeScript does not rewrite those when it emits declarations, so a post-step
-fixes them up. That post-step is `packages/core`'s `declarations:rewrite` script, and **every**
-script that runs `tsc -b` where it can reach `packages/core` chains it: the root `typecheck`, and
-`build`/`typecheck` in `packages/core`, `apps/worker` and `packages/agent-runtime`. **A new script
-that runs `tsc -b` where it can reach `packages/core` must chain it too**, or it leaves a `dist`
-whose declarations name `.ts` files that do not exist.
+fixes them up. That post-step is `packages/core`'s `declarations:rewrite` script, and it is no longer chained by
+hand: **no manifest script may run `tsc -b` at all.** The compiler is reached only through
+`scripts/tsc-build.sh`, which always runs the rewrite — including after a failed compile, which the
+old `tsc -b && <rewrite>` form skipped — while still exiting with the compiler's own status. A guard
+in `packages/core/src/config/tooling-scripts.test.ts` fails any manifest that names `tsc -b`
+directly, so this is enforced rather than remembered. A new script that needs the compiler delegates
+to the wrapper; the guard also checks that every delegating script names a path that resolves to it,
+so a package moved a level deeper fails there instead of silently compiling nothing.
 
 `packages/core` is published with `sideEffects: false`: client components import the contracts
 from `@agent-hangar/core` and the bundler prunes the Node-only modules (Prisma, pg, pino,
