@@ -19,6 +19,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import {
   FAKE_SCRIPT_ENV_KEY,
   fakeProviderScriptEnv,
+  MAX_FAKE_SCRIPT_ENV_BYTES,
   readFakeProviderScript,
 } from './fake-provider-script.js';
 import type { ScriptFileSystem } from './fake-provider-script.js';
@@ -88,6 +89,37 @@ afterAll(() => {
 });
 
 /**
+ * Builds a one-answer script whose forwarded assignment is exactly `bytes` long.
+ *
+ * The padding is measured against the assignment the module builds — the variable name, the `=`
+ * and the reserialised script — so a test can sit one byte either side of the bound. With the
+ * default single-byte filler the size is exact; a wider one cannot always land on a byte, so it
+ * rounds up, which is the safe direction for a test asking to be over the bound.
+ *
+ * @param bytes - Size the assignment must come to.
+ * @param filler - Character to pad the answer with; ASCII unless a test is about encoding.
+ * @returns The script, ready to be written out.
+ */
+function scriptOfEnvBytes(bytes: number, filler = 'a'): unknown {
+  const build = (text: string): unknown => ({
+    default: [{ events: [{ type: 'text.done', text }] }],
+  });
+  const empty = Buffer.byteLength(`${FAKE_SCRIPT_ENV_KEY}=${JSON.stringify(build(''))}`, 'utf8');
+  const perFiller = Buffer.byteLength(filler, 'utf8');
+  return build(filler.repeat(Math.ceil((bytes - empty) / perFiller)));
+}
+
+/**
+ * Measures the assignment a script would be forwarded as.
+ *
+ * @param value - The forwarded value.
+ * @returns Its length in bytes, including the variable name and the `=`.
+ */
+function envBytes(value: string): number {
+  return Buffer.byteLength(`${FAKE_SCRIPT_ENV_KEY}=${value}`, 'utf8');
+}
+
+/**
  * Forwards a script and returns the raw variable value.
  *
  * @param path - Path of the script file.
@@ -155,6 +187,63 @@ describe('fakeProviderScriptEnv', () => {
     expect(JSON.parse(forwarded)).toEqual({
       default: [{ events: [{ type: 'text.done', text: 'Acknowledged.' }] }],
     });
+  });
+
+  /**
+   * A script travels as one environment variable, and `execve` bounds how long one of those may
+   * be. A script that comes to exactly the bound is still forwarded: the refusal is for what
+   * exceeds it, not for what reaches it.
+   */
+  it('forwards a script that comes to exactly the limit', () => {
+    const path = write(
+      'at-limit.json',
+      JSON.stringify(scriptOfEnvBytes(MAX_FAKE_SCRIPT_ENV_BYTES)),
+    );
+
+    expect(envBytes(env(path))).toBe(MAX_FAKE_SCRIPT_ENV_BYTES);
+  });
+
+  /**
+   * One byte over and the script is refused at boot, where the file can still be named. Forwarded
+   * instead, it would create a container whose process cannot start, on every turn accepted, and
+   * the failure would be about `execve` rather than about a script. The message carries both the
+   * size and the bound, because a bare "too large" costs the reader a measurement.
+   */
+  it('refuses a script one byte over the limit, with both numbers', () => {
+    const tooBig = MAX_FAKE_SCRIPT_ENV_BYTES + 1;
+    const path = write('over-limit.json', JSON.stringify(scriptOfEnvBytes(tooBig)));
+
+    expect(() => fakeProviderScriptEnv('fake', path)).toThrow(ConfigError);
+    expect(() => fakeProviderScriptEnv('fake', path)).toThrow(
+      `${String(tooBig)} bytes as ${FAKE_SCRIPT_ENV_KEY}=…, over the ` +
+        `${String(MAX_FAKE_SCRIPT_ENV_BYTES)} bytes allowed here`,
+    );
+    expect(() => fakeProviderScriptEnv('fake', path)).toThrow(path);
+  });
+
+  /**
+   * The bound is on bytes, not characters: the limit belongs to a byte string, and a script of
+   * multi-byte answers is under the character count long before it is under the byte count.
+   */
+  it('measures the limit in bytes rather than characters', () => {
+    const path = write(
+      'multibyte.json',
+      JSON.stringify(scriptOfEnvBytes(MAX_FAKE_SCRIPT_ENV_BYTES + 3, '€')),
+    );
+
+    expect(() => fakeProviderScriptEnv('fake', path)).toThrow(ConfigError);
+  });
+
+  /**
+   * The bound is on what is forwarded, not on the file: whitespace is dropped when the validated
+   * script is serialised again, so a file far larger than the limit still passes when the value
+   * it produces does not.
+   */
+  it('measures what is forwarded rather than the file it came from', () => {
+    const script = scriptOfEnvBytes(MAX_FAKE_SCRIPT_ENV_BYTES - 1024);
+    const path = write('padded.json', JSON.stringify(script, null, 8));
+
+    expect(envBytes(env(path))).toBe(MAX_FAKE_SCRIPT_ENV_BYTES - 1024);
   });
 
   /**
