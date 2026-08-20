@@ -76,6 +76,37 @@ function baseEnv(f: Fixture, extra: Record<string, string> = {}): Record<string,
   };
 }
 
+/**
+ * Writes a `stat` shim that behaves like GNU coreutils rather than the BSD build the developer
+ * machines carry, so a Linux-only regression is reproducible everywhere.
+ *
+ * The distinction that matters: GNU reads `-f` as `--file-system` and treats the format string as
+ * another file operand, so it prints a filesystem block on stdout for the real file *and* exits
+ * non-zero. A `stat -f … || stat -c …` chain therefore captures both outputs concatenated.
+ *
+ * @param shimDir - Shim directory prepended to PATH.
+ * @param mode - Octal mode the GNU form reports for any file.
+ */
+function gnuStatShim(shimDir: string, mode = '600'): void {
+  writeExtraShim(
+    shimDir,
+    'stat',
+    [
+      'if [ "${1:-}" = \'-c\' ]; then',
+      `  printf '%s\\n' '${mode}'`,
+      '  exit 0',
+      'fi',
+      'if [ "${1:-}" = \'-f\' ]; then',
+      '  printf \'%s\\n\' "  File: \\"${3:-}\\""',
+      "  printf '%s\\n' '    ID: 0        Namelen: 255     Type: UNKNOWN'",
+      "  printf '%s\\n' 'Block size: 1048576'",
+      '  exit 1',
+      'fi',
+      'exit 1',
+    ].join('\n'),
+  );
+}
+
 describe('setup.sh first run', () => {
   /**
    * Every shimmed step runs, in order: install, the Docker reachability check, key generation,
@@ -235,6 +266,47 @@ describe('setup.sh refusals', () => {
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('usage');
     expect(readShimLog(f.log)).toEqual([]);
+  });
+});
+
+describe('setup.sh on a GNU userland', () => {
+  /**
+   * The Linux-only regression this shim reproduces on any machine: the key-mode check read its
+   * value from a `stat -f … || stat -c …` chain whose first branch, under GNU coreutils, prints a
+   * filesystem block on stdout before failing. The mode came back as that block with the real mode
+   * appended, so a correctly-permissioned key was refused and setup exited 1 before doing anything.
+   */
+  it('accepts a mode-600 key instead of refusing it', () => {
+    const f = fixture();
+    const shimDir = createShimDir({ log: f.log, docker: { image: 'present' } });
+    gnuStatShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--skip-doctor'],
+      env: baseEnv(f),
+    });
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).not.toContain('must be 0600');
+  });
+
+  /**
+   * The refusal still fires on the same userland when the mode really is wrong: the fix is about
+   * reading the mode, not about accepting whatever it reads.
+   */
+  it('still refuses a group-readable key', () => {
+    const f = fixture();
+    const shimDir = createShimDir({ log: f.log, docker: { image: 'present' } });
+    gnuStatShim(shimDir, '644');
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--skip-doctor'],
+      env: baseEnv(f),
+    });
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('has mode 644');
+    expect(result.stderr).toContain('chmod 600');
   });
 });
 

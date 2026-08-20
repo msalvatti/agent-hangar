@@ -90,7 +90,12 @@ else
   echo "master key present"
 fi
 # Refuse group/world-readable keys: the file decrypts every stored credential.
-key_mode=$(stat -f '%Lp' "$MASTER_KEY_PATH" 2>/dev/null || stat -c '%a' "$MASTER_KEY_PATH")
+# GNU and BSD stat spell the format flag differently, and neither fails cleanly when handed the
+# other's: GNU reads -f as --file-system and treats the format string as a second file operand, so
+# it still prints a filesystem block on stdout for the real file while exiting non-zero. Asking for
+# the GNU form FIRST is what keeps the fallback honest — the BSD build rejects -c as an illegal
+# option and writes nothing to stdout, so only one of the two ever contributes output.
+key_mode=$(stat -c '%a' "$MASTER_KEY_PATH" 2>/dev/null || stat -f '%Lp' "$MASTER_KEY_PATH")
 case "$key_mode" in
   600|400) ;;
   *)

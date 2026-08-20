@@ -124,6 +124,37 @@ async function closedPortBase(): Promise<number> {
   return bound.portBase;
 }
 
+/**
+ * Writes a `stat` shim that behaves like GNU coreutils rather than the BSD build the developer
+ * machines carry, so a Linux-only regression is reproducible everywhere.
+ *
+ * The distinction that matters: GNU reads `-f` as `--file-system` and treats the format string as
+ * another file operand, so it prints a filesystem block on stdout for the real file *and* exits
+ * non-zero. A `stat -f … || stat -c …` chain therefore captures both outputs concatenated.
+ *
+ * @param shimDir - Shim directory prepended to PATH.
+ * @param mode - Octal mode the GNU form reports for any file.
+ */
+function gnuStatShim(shimDir: string, mode = '600'): void {
+  writeExtraShim(
+    shimDir,
+    'stat',
+    [
+      'if [ "${1:-}" = \'-c\' ]; then',
+      `  printf '%s\\n' '${mode}'`,
+      '  exit 0',
+      'fi',
+      'if [ "${1:-}" = \'-f\' ]; then',
+      '  printf \'%s\\n\' "  File: \\"${3:-}\\""',
+      "  printf '%s\\n' '    ID: 0        Namelen: 255     Type: UNKNOWN'",
+      "  printf '%s\\n' 'Block size: 1048576'",
+      '  exit 1',
+      'fi',
+      'exit 1',
+    ].join('\n'),
+  );
+}
+
 interface HelperFixture {
   path: string;
   dir: string;
@@ -616,6 +647,55 @@ describe('doctor.sh — optional rows never fail the exit code', () => {
     const rows = JSON.parse(result.stdout) as { check: string; status: string; detail: string }[];
     const secrets = rows.find((row) => row.check === 'Secrets');
     expect(secrets).toEqual({ check: 'Secrets', status: '–', detail, fix: '' });
+  });
+});
+
+describe('doctor.sh on a GNU userland', () => {
+  /**
+   * The Linux-only regression this shim reproduces on any machine: with GNU coreutils, the key's
+   * mode was read by a `stat -f … || stat -c …` chain whose first branch prints a filesystem block
+   * on stdout before failing. The mode came back as that block with the real mode appended, so a
+   * correctly-permissioned key was reported as wrongly-permissioned, the run exited 1, and the
+   * embedded newlines made `--json` unparseable.
+   */
+  it('reads the key mode correctly and still emits valid JSON', async () => {
+    const sandbox = await greenSandbox();
+    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    gnuStatShim(shimDir);
+    const helper = helperShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+    });
+
+    expect(result.status).toBe(0);
+    const rows = JSON.parse(result.stdout) as { check: string; status: string; detail: string }[];
+    const key = rows.find((row) => row.check === 'Master key');
+    expect(key?.status).toBe('\u2713');
+    expect(key?.detail).toBe(`${sandbox.keyPath} (mode 600)`);
+  });
+
+  /**
+   * The check still refuses a group-readable key on the same userland: the fix is about reading
+   * the mode, not about accepting whatever it reads.
+   */
+  it('still refuses a group-readable key', async () => {
+    const sandbox = await greenSandbox();
+    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    gnuStatShim(shimDir, '644');
+    const helper = helperShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+    });
+
+    expect(result.status).toBe(1);
+    const rows = JSON.parse(result.stdout) as { check: string; status: string; fix: string }[];
+    const key = rows.find((row) => row.check === 'Master key');
+    expect(key?.status).toBe('\u2717');
+    expect(key?.fix).toContain('chmod 600');
   });
 });
 
