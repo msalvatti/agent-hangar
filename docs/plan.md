@@ -336,7 +336,7 @@ wiring. So there is work available now that nothing is blocking.
 | W2-B 🐳 | 🟩 merged | PR #22 | worker 100 (all four metrics) | three consumers, cancel channel, scheduler reconcile and graceful shutdown; Docker suite ran green six consecutive times with no leftover containers |
 | W2-C | 🟨 PR open | PR #32 | web 100 (all four metrics) | Playwright harness, a local git server and the six critical-flow specs; real mode boots against the real API, database and git server, and two specs already pass end to end there |
 | W3-A 🐳 | ⬜ | — | — | success criteria S1–S6, S8 |
-| W3-B | ⬜ | — | — | |
+| W3-B | 🟦 running | `feat/w3b-docs` | n/a (docs only) | README rewritten against the running system; 05 and 06 corrected; R11 and R20 closed in `docs/AUTOPILOT.md` |
 | W4-A | 🟥 held | — | — | held by the operator, not a dependency; may slip — documented |
 | W4-B | 🟥 held | — | — | held by the operator, not a dependency; may slip — documented |
 
@@ -386,10 +386,10 @@ number here is only as current as the last close-out that lane wrote.
 | W2-B | 6 | — | 6 |
 | W2-C | 0 | 6 | 6 |
 | W3-A | 0 | — | 6 |
-| W3-B | 0 | — | 5 |
+| W3-B | 0 | 5 | 5 |
 | W4-A | 0 | — | 4 |
 | W4-B | 0 | — | 4 |
-| **Total** | **69** | **6** | **94** |
+| **Total** | **69** | **11** | **94** |
 
 ## 13. Estimated complexity
 

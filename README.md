@@ -52,7 +52,7 @@ It runs entirely on your machine. The only external calls are to the OpenAI API 
 >
 > **Built and merged:** the whole product surface. The Next.js UI (chats with a streaming transcript, scheduled jobs, settings), the HTTP API and both SSE streams, the BullMQ worker with its turn, scheduled-job and garbage-collection processors, the Docker workspace runner, the agent runtime that runs inside the container, the Prisma persistence layer, AES-256-GCM secrets with redaction, and the local infrastructure scripts.
 >
-> **Not finished:** the Playwright end-to-end suite (the harness is not in the tree, so `pnpm test:e2e` currently passes with zero specs), a final wiring-and-stabilisation pass, and mutation testing. See [Known gaps](#-known-gaps) — that section is specific rather than reassuring, including about the things it would be more comfortable to leave out.
+> **Not finished:** the Playwright end-to-end suite (written and in review, but not on `main` — so `pnpm test:e2e` currently passes with zero specs), a final wiring-and-stabilisation pass, and mutation testing. See [Known gaps](#-known-gaps) — that section is specific rather than reassuring, including about the things it would be more comfortable to leave out.
 >
 > **What has been exercised by hand:** `pnpm setup` from a clean tree, `pnpm dev` bringing up web and worker together, every page rendering, `GET /api/health` reporting Postgres, Redis, Docker and the workspace image healthy, and the `@db` / `@redis` / `@docker` integration suites green against real services. A full agent turn against a real repository with a real model key has **not** been recorded here; treat that path as implemented but not yet proven by an automated test.
 
@@ -366,7 +366,7 @@ The rotation writes its phase to a state file before each step and keeps a times
 | --------------- | ----------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
 | **Unit**        | `pnpm test`             | nothing but `pnpm db:generate` once                                    | every module, with 100 % coverage thresholds enforced per package                                        |
 | **Integration** | `pnpm test:integration` | a running stack, a test instance, and two opt-in variables (see below) | repositories against real PostgreSQL, queues against real Redis, the runner against a real Docker daemon |
-| **End to end**  | `pnpm test:e2e`         | Playwright browsers                                                    | **not written yet** — the harness is absent, so the command passes with zero specs                       |
+| **End to end**  | `pnpm test:e2e`         | Playwright browsers                                                    | **not on `main` yet** — the suite is in review, so today the command passes with zero specs              |
 | **Mutation**    | `pnpm test:mutation`    | —                                                                      | **not wired yet** — no package defines the script, so the command exits 0 doing nothing                  |
 
 ### Running the integration suites
@@ -416,11 +416,11 @@ Specific rather than reassuring — an empty section is the goal, and this one i
 
 ### Not built yet
 
-| Item                              | Status                                                                                                                                                                                                                                                                  |
-| --------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **End-to-end suite** (Playwright) | The harness and specs are not in the tree. `pnpm test:e2e` passes with zero specs, and the CI `e2e` job detects that and skips the browser install.                                                                                                                     |
-| **Wiring and stabilisation**      | The last pass over the assembled system — a recorded run of a real turn against a real repository and a real model, and the findings below that it owns.                                                                                                                |
-| **Mutation testing** (Stryker 10) | Scope and thresholds are fixed (`break: 80`, target 90, over secrets, redaction, scheduling, workspace lifecycle, restore, the protocol codec and the runtime tools), but no package defines `test:mutation` yet, so the root script is a no-op and there is no CI job. |
+| Item                              | Status                                                                                                                                                                                                                                                                                                                       |
+| --------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **End-to-end suite** (Playwright) | Written and in review, but not on `main`. Until it lands, `pnpm test:e2e` passes with zero specs, and the CI `e2e` job detects that and skips the browser install.                                                                                                                                                           |
+| **Wiring and stabilisation**      | The last pass over the assembled system — a recorded run of a real turn against a real repository and a real model, and the findings below that it owns.                                                                                                                                                                     |
+| **Mutation testing** (Stryker 10) | Scope and thresholds are fixed (`break: 80`, target 90, over secrets, redaction, scheduling, workspace lifecycle, restore, the protocol codec and the runtime tools), and deliberately scheduled after the stabilisation pass. No package defines `test:mutation` yet, so the root script is a no-op and there is no CI job. |
 
 ### Limitations of the running system
 

@@ -20,7 +20,7 @@ Every task inside a lane file carries a self-contained English agent prompt: an 
 | 2 | W2-B 🐳 | [wave-2b-worker.md](wave-2b-worker.md) | `apps/worker/src` | W1-A…W1-F | 🟩 |
 | 2 | W2-C | [wave-2c-e2e.md](wave-2c-e2e.md) | `apps/web/e2e`, `infra/test/gitserver` | W1-G, W1-H | 🟨 |
 | 3 | W3-A 🐳 | [wave-3a-integration.md](wave-3a-integration.md) | any (single agent) | W2-A, W2-B, W2-C | 📋 |
-| 3 | W3-B | [wave-3b-docs.md](wave-3b-docs.md) | `README.md`, `docs/**` | W2-A, W2-B | 📋 |
+| 3 | W3-B | [wave-3b-docs.md](wave-3b-docs.md) | `README.md`, `docs/**` | W2-A, W2-B | 🟦 |
 | 4 | W4-A | [wave-4a-stryker-core.md](wave-4a-stryker-core.md) | `packages/core` tests + stryker config | W3-A | 🟥 |
 | 4 | W4-B | [wave-4b-stryker-runtime.md](wave-4b-stryker-runtime.md) | `packages/agent-runtime` tests + stryker config | W3-A | 🟥 |
 

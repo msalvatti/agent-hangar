@@ -3,14 +3,14 @@
 | | |
 |---|---|
 | **Lane** | W3-B (single agent; documentation only — runs in parallel with W3-A 🐳) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/5 tasks |
+| **Status** | 🟦 running |
+| **Progress** | 4/5 tasks |
 | **Branch** | `feat/w3b-docs` |
 | **Owned paths** | `README.md`, `docs/**` (except `docs/tasks/wave-3a-integration.md` and the W3-A row of `docs/plan.md` §12 / `docs/tasks/README.md`, which W3-A keeps current) |
 | **Depends on** | W2-A, W2-B merged (may start on the W1 state and rebase before the close-out) |
 | **Unblocks** | — (no lane depends on it; Wave 4 depends on W3-A). Must merge before the product is considered delivered |
 | **Source** | [docs/plan.md §8](../plan.md) (W3-B) · spec [05 §7](../spec/05-local-dev.md) [01 §5–§6](../spec/01-overview.md) [06](../spec/06-testing.md) [08](../spec/08-deployment-discussion.md) [09](../spec/09-non-goals.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 
@@ -43,28 +43,28 @@ Everything written here is about the product only — the README reads like the 
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 3B.1 | README part 1: What this is, Requirements, Quick start, How it works, Configuration, Scripts, Conductor | 📋 | P0 | M | — |
-| 3B.2 | README part 2: Testing, Security notes, Troubleshooting | 📋 | P0 | S | 3B.1 |
-| 3B.3 | README part 3: Known gaps & plan, Deployment discussion, Decisions & trade-offs, Non-goals | 📋 | P0 | M | 3B.1 |
-| 3B.4 | Spec refresh (`docs/spec/*` Revision lines), plan §12 and tasks index statuses | 📋 | P1 | S | 3B.1–3B.3 |
-| 3B.5 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 3B.1–3B.4 |
+| 3B.1 | README part 1: What this is, Requirements, Quick start, How it works, Configuration, Scripts, Conductor | ✅ | P0 | M | — |
+| 3B.2 | README part 2: Testing, Security notes, Troubleshooting | ✅ | P0 | S | 3B.1 |
+| 3B.3 | README part 3: Known gaps & plan, Deployment discussion, Decisions & trade-offs, Non-goals | ✅ | P0 | M | 3B.1 |
+| 3B.4 | Spec refresh (`docs/spec/*` Revision lines), plan §12 and tasks index statuses | ✅ | P1 | S | 3B.1–3B.3 |
+| 3B.5 | Close-out: gates, code review, dashboard, PR | 🟦 | P0 | S | 3B.1–3B.4 |
 
 ---
 
 ## Task 3B.1 — README part 1: What this is, Requirements, Quick start, How it works, Configuration, Scripts, Conductor
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Rewrite the top half of `README.md` per spec 05 §7 items 1–7, verified against the repository: a three-sentence description with a screenshot placeholder, requirements table, the four-command quick start, "How it works" with the Mermaid component diagram from spec 01 §6 and the three pillars (isolated workspaces, scheduled jobs, encrypted settings), the full configuration table, the scripts reference, and "Working with Conductor".
 
 **Acceptance criteria**
-- [ ] README starts with the title, one-paragraph description (what, for whom, the three pillars), a badges line (CI badge for `.github/workflows/ci.yml`; mutation badge placeholder commented out until W4-C), and a screenshot placeholder `![Agent Hangar — chat view](.github/assets/readme/chat.png)` with an HTML comment noting W3-A's evidence screenshots can be promoted here by the orchestrator
-- [ ] "Requirements" table = spec 05 §1 (macOS 13+, Docker Desktop/OrbStack/Colima, Node 24 LTS, pnpm 11 via corepack, Git 2.40+) with the check command per row
-- [ ] "Quick start": `git clone … && cd agent-hangar`, `corepack enable`, `pnpm setup`, `pnpm dev`, then "Settings → paste GitHub PAT and OpenAI API key → New chat → choose repository → prompt"; the numbered list of what `pnpm setup` does (spec 05 §4) verified against `infra/scripts/setup.sh`; a note that `pnpm setup` is idempotent and that `pnpm doctor` explains anything missing
-- [ ] "How it works": the Mermaid flowchart from spec 01 §6 (copied, then checked that every node name matches real package/app names), the components table (apps/web, apps/worker, packages/core, packages/agent-runtime, infra/), the three pillars in one paragraph each (chat turn lifecycle incl. idle TTL + restore; scheduled job = fresh workspace per run, destroyed in `finally`; secrets = AES-256-GCM envelopes in Postgres, master key outside the repo, last-4 in UI, redaction on every persisted string), and links to `docs/spec/01-overview.md`, `04-flows.md`, `10-ui-design.md`
-- [ ] "Configuration" table = every variable in `packages/core/src/config/schema.ts` with default and purpose (spec 05 §3 as the base; add anything W1–W3 introduced, e.g. `NEXT_PUBLIC_API_MOCK`, `ALLOWED_REPO_HOSTS` if present) and the explicit sentence that PAT/OpenAI key are **not** env vars
-- [ ] "Scripts" table = every root `package.json` script with one line each (verified against the file), grouped: run · infra · db · test · quality · workspaces · smoke
-- [ ] "Working with Conductor": the draft from `docs/tasks/wave-1i-infra-conductor.md` appendix if present (adapted), else written from spec 05 §6: what Conductor sets, how `env.sh` maps it, the `.conductor/settings.toml` content, the isolation table, and "two workspaces side by side" with the `pnpm doctor` proof; instance/port derivation explained for non-Conductor users too (`AH_INSTANCE`, `AH_PORT_BASE`)
+- [x] README starts with the title, one-paragraph description (what, for whom, the three pillars), a badges line (CI badge for `.github/workflows/ci.yml`; mutation badge placeholder commented out until W4-C), and a screenshot placeholder `![Agent Hangar — chat view](.github/assets/readme/chat.png)` with an HTML comment noting W3-A's evidence screenshots can be promoted here by the orchestrator
+- [x] "Requirements" table = spec 05 §1 (macOS 13+, Docker Desktop/OrbStack/Colima, Node 24 LTS, pnpm 11 via corepack, Git 2.40+) with the check command per row
+- [x] "Quick start": `git clone … && cd agent-hangar`, `corepack enable`, `pnpm setup`, `pnpm dev`, then "Settings → paste GitHub PAT and OpenAI API key → New chat → choose repository → prompt"; the numbered list of what `pnpm setup` does (spec 05 §4) verified against `infra/scripts/setup.sh`; a note that `pnpm setup` is idempotent and that `pnpm doctor` explains anything missing
+- [x] "How it works": the Mermaid flowchart from spec 01 §6 (copied, then checked that every node name matches real package/app names), the components table (apps/web, apps/worker, packages/core, packages/agent-runtime, infra/), the three pillars in one paragraph each (chat turn lifecycle incl. idle TTL + restore; scheduled job = fresh workspace per run, destroyed in `finally`; secrets = AES-256-GCM envelopes in Postgres, master key outside the repo, last-4 in UI, redaction on every persisted string), and links to `docs/spec/01-overview.md`, `04-flows.md`, `10-ui-design.md`
+- [x] "Configuration" table = every variable in `packages/core/src/config/schema.ts` with default and purpose (spec 05 §3 as the base; add anything W1–W3 introduced, e.g. `NEXT_PUBLIC_API_MOCK`, `ALLOWED_REPO_HOSTS` if present) and the explicit sentence that PAT/OpenAI key are **not** env vars
+- [x] "Scripts" table = every root `package.json` script with one line each (verified against the file), grouped: run · infra · db · test · quality · workspaces · smoke
+- [x] "Working with Conductor": the draft from `docs/tasks/wave-1i-infra-conductor.md` appendix if present (adapted), else written from spec 05 §6: what Conductor sets, how `env.sh` maps it, the `.conductor/settings.toml` content, the isolation table, and "two workspaces side by side" with the `pnpm doctor` proof; instance/port derivation explained for non-Conductor users too (`AH_INSTANCE`, `AH_PORT_BASE`)
 
 **Files to modify**
 `README.md`.
@@ -126,14 +126,14 @@ Completion Protocol (after you finish):
 
 ## Task 3B.2 — README part 2: Testing, Security notes, Troubleshooting
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 3B.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 3B.1
 
 **Description.** Write spec 05 §7 items 8–10: how to run every test layer locally (unit, integration, E2E, mutation, real-model smoke) with the coverage policy (100 % on all four metrics per package) and Stryker thresholds; the security notes (secrets lifecycle, what is and is not protected on a local machine, the `docker inspect` caveat); and a troubleshooting section with the six known situations and their fixes.
 
 **Acceptance criteria**
-- [ ] "Testing": a table (Layer · Command · Needs · Budget) for unit (`pnpm test`, `pnpm test -- --coverage`), integration (`pnpm test:integration`, needs Docker + test stack `AH_INSTANCE=test`, tags `@docker @db @redis`, "fails loudly, never silently skipped in CI"), E2E (`pnpm test:e2e`, what the harness starts, `--ui` locally), mutation (`pnpm test:mutation`, per package, runtime expectation, not yet in CI — status from plan §12), real-model smoke (`pnpm smoke:openai`, preconditions from W3-A's completion log, not in CI); the coverage policy paragraph ("100 % lines/branches/functions/statements on `src/**` of every package, enforced by Vitest thresholds; `apps/web/src/shared/ui/**` decision from W3-A's log); the Stryker paragraph (scope table from spec 06 §5, `break: 80`, target 90, reports in `reports/mutation/`); the rule that every `it()` carries a comment; link to `docs/spec/06-testing.md`
-- [ ] "Security notes": secrets lifecycle in five steps (enter in Settings → `PUT /api/settings/:key` over localhost → AES-256-GCM with the master key → Postgres row (ciphertext, iv, authTag, last4, keyVersion) → worker `reveal` only when starting a container → injected as env at container start → redacted everywhere); "what is protected locally" vs "what is not" (the master key file protects against reading the DB dump, not against root on the same machine; `docker inspect` on a running workspace shows env on the developer's own machine — spec 08 §4 wording; logs are redacted but the browser devtools show the PUT body once); key rotation (`infra/scripts/rotate-key.sh` if W1-I shipped it — verify) ; CI secret scan; canary convention for tests
-- [ ] "Troubleshooting": Docker socket not found (`DOCKER_HOST`, `~/.docker/run/docker.sock`, `/var/run/docker.sock`, Docker Desktop setting), port in use (`AH_PORT_BASE`, `pnpm doctor` shows the port, `lsof -i :<port>`), workspace image missing (`pnpm infra:image`), model not available (`OPENAI_MODEL`, `pnpm doctor` model check, 401/404 meaning), macOS `localhost` IPv6 (why `127.0.0.1` is used everywhere; what to do if a tool insists on `localhost`), worker not running / pill red (`pnpm dev` starts both; heartbeat explanation from W3-A), plus "stale containers" (`pnpm ws:list`, `pnpm ws:reap`) — each as **Symptom → Cause → Fix** with the exact command, verified against `infra/scripts/doctor.sh` messages
+- [x] "Testing": a table (Layer · Command · Needs · Budget) for unit (`pnpm test`, `pnpm test -- --coverage`), integration (`pnpm test:integration`, needs Docker + test stack `AH_INSTANCE=test`, tags `@docker @db @redis`, "fails loudly, never silently skipped in CI"), E2E (`pnpm test:e2e`, what the harness starts, `--ui` locally), mutation (`pnpm test:mutation`, per package, runtime expectation, not yet in CI — status from plan §12), real-model smoke (`pnpm smoke:openai`, preconditions from W3-A's completion log, not in CI); the coverage policy paragraph ("100 % lines/branches/functions/statements on `src/**` of every package, enforced by Vitest thresholds; `apps/web/src/shared/ui/**` decision from W3-A's log); the Stryker paragraph (scope table from spec 06 §5, `break: 80`, target 90, reports in `reports/mutation/`); the rule that every `it()` carries a comment; link to `docs/spec/06-testing.md`
+- [x] "Security notes": secrets lifecycle in five steps (enter in Settings → `PUT /api/settings/:key` over localhost → AES-256-GCM with the master key → Postgres row (ciphertext, iv, authTag, last4, keyVersion) → worker `reveal` only when starting a container → injected as env at container start → redacted everywhere); "what is protected locally" vs "what is not" (the master key file protects against reading the DB dump, not against root on the same machine; `docker inspect` on a running workspace shows env on the developer's own machine — spec 08 §4 wording; logs are redacted but the browser devtools show the PUT body once); key rotation (`infra/scripts/rotate-key.sh` if W1-I shipped it — verify) ; CI secret scan; canary convention for tests
+- [x] "Troubleshooting": Docker socket not found (`DOCKER_HOST`, `~/.docker/run/docker.sock`, `/var/run/docker.sock`, Docker Desktop setting), port in use (`AH_PORT_BASE`, `pnpm doctor` shows the port, `lsof -i :<port>`), workspace image missing (`pnpm infra:image`), model not available (`OPENAI_MODEL`, `pnpm doctor` model check, 401/404 meaning), macOS `localhost` IPv6 (why `127.0.0.1` is used everywhere; what to do if a tool insists on `localhost`), worker not running / pill red (`pnpm dev` starts both; heartbeat explanation from W3-A), plus "stale containers" (`pnpm ws:list`, `pnpm ws:reap`) — each as **Symptom → Cause → Fix** with the exact command, verified against `infra/scripts/doctor.sh` messages
 
 **Files to modify**
 `README.md`.
@@ -185,16 +185,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-3b-docs.md; ap
 
 ## Task 3B.3 — README part 3: Known gaps & plan, Deployment discussion, Decisions & trade-offs, Non-goals
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 3B.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 3B.1
 
 **Description.** Write the honest and the forward-looking tail of the README: "Known gaps & plan to finish" generated from `docs/plan.md` §12 (every lane not 🟩 with one line and its plan; Wave 4 mutation status explicit), the condensed deployment discussion (spec 08: cloud mapping table, runner options, scaling, isolation, secrets, cost table, production changes — ≤ 1.5 pages + link), "Decisions & trade-offs" as short sentences from spec 01 §6 plus the TypeScript 6 pin, and "Non-goals" one line each from spec 09.
 
 **Acceptance criteria**
-- [ ] "Known gaps & plan to finish": generated from `docs/plan.md` §12 at writing time — a table (Item · Status · Plan) listing every lane not 🟩 (expected: W3-A 🟨/🟦, W4-A, W4-B ⬜) with one concrete line each; a sentence "Mutation testing (Stryker 10) is scheduled as the last wave: scope and thresholds are fixed (see Testing); the CI `mutation` job is added when both package runs pass" (or the actual status); any doc-found gaps from 3B.2 (e.g. missing rotate-key) listed; closing sentence that the section is regenerated at every merge and empty is the goal
-- [ ] "Deployment discussion" (≤ 1.5 printed pages): intro sentence (local topology already has the seams: stateless web, worker as the only runner client, Postgres truth, Redis queue + bus, `WorkspaceRunner` interface); the Local → Cloud mapping table (8 rows from spec 08 §1); the runner options table (4 rows); "Scaling" 5 bullets; "Isolation in production" 4 bullets; "Secrets" 3 bullets (KMS envelope, per-workspace secret at task start, logs); the cost table (9 rows + takeaway sentence); "Before operating in production" 8 one-line items; link `See docs/spec/08-deployment-discussion.md for the full discussion.`
-- [ ] "Decisions & trade-offs": one short sentence per row of spec 01 §6 decisions table (runner interface + dockerode; exec + NDJSON over per-container HTTP; SSE over WebSocket; BullMQ over pg-boss; Postgres + Prisma over SQLite; AES-GCM + master key file over keychain/Vault; Responses API over Chat Completions; `gpt-5.6-sol` via `OPENAI_MODEL`; Next 16 + Tailwind v4 + shadcn/Base UI) **plus** the TypeScript `~6.0.3` pin (why not TS 7: native compiler without a stable programmatic API until 7.1; tsconfig avoids removed options so the upgrade is a version bump) and any decision recorded by W0 T0.8 that is still true
-- [ ] "Non-goals": one line each for multi-user auth, cloud deployment, multiple LLM providers, Kubernetes — with the seam named in a few words — and the "also not built" sentence from spec 09
-- [ ] A short "License" line matches the repository's LICENSE file (or "TBD" if absent — note for the orchestrator)
+- [x] "Known gaps & plan to finish": generated from `docs/plan.md` §12 at writing time — a table (Item · Status · Plan) listing every lane not 🟩 (expected: W3-A 🟨/🟦, W4-A, W4-B ⬜) with one concrete line each; a sentence "Mutation testing (Stryker 10) is scheduled as the last wave: scope and thresholds are fixed (see Testing); the CI `mutation` job is added when both package runs pass" (or the actual status); any doc-found gaps from 3B.2 (e.g. missing rotate-key) listed; closing sentence that the section is regenerated at every merge and empty is the goal
+- [x] "Deployment discussion" (≤ 1.5 printed pages): intro sentence (local topology already has the seams: stateless web, worker as the only runner client, Postgres truth, Redis queue + bus, `WorkspaceRunner` interface); the Local → Cloud mapping table (8 rows from spec 08 §1); the runner options table (4 rows); "Scaling" 5 bullets; "Isolation in production" 4 bullets; "Secrets" 3 bullets (KMS envelope, per-workspace secret at task start, logs); the cost table (9 rows + takeaway sentence); "Before operating in production" 8 one-line items; link `See docs/spec/08-deployment-discussion.md for the full discussion.`
+- [x] "Decisions & trade-offs": one short sentence per row of spec 01 §6 decisions table (runner interface + dockerode; exec + NDJSON over per-container HTTP; SSE over WebSocket; BullMQ over pg-boss; Postgres + Prisma over SQLite; AES-GCM + master key file over keychain/Vault; Responses API over Chat Completions; `gpt-5.6-sol` via `OPENAI_MODEL`; Next 16 + Tailwind v4 + shadcn/Base UI) **plus** the TypeScript `~6.0.3` pin (why not TS 7: native compiler without a stable programmatic API until 7.1; tsconfig avoids removed options so the upgrade is a version bump) and any decision recorded by W0 T0.8 that is still true
+- [x] "Non-goals": one line each for multi-user auth, cloud deployment, multiple LLM providers, Kubernetes — with the seam named in a few words — and the "also not built" sentence from spec 09
+- [x] A short "License" line matches the repository's LICENSE file (or "TBD" if absent — note for the orchestrator)
 
 **Files to modify**
 `README.md`.
@@ -247,16 +247,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-3b-docs.md; ap
 
 ## Task 3B.4 — Spec refresh (`docs/spec/*` Revision lines), plan §12 and tasks index statuses
 
-**Status:** 📋 ToDo · **Priority:** P1 · **Size:** S · **Depends on:** 3B.1–3B.3
+**Status:** ✅ Done · **Priority:** P1 · **Size:** S · **Depends on:** 3B.1–3B.3
 
 **Description.** Using the divergence notes collected while writing the README, bring `docs/spec/01–10` in line with reality where versions, names, paths or script names changed during implementation — without changing any behaviour statement. Each touched spec keeps status **Approved** and gains a `Revision:` line. Update `docs/plan.md` §12 and `docs/tasks/README.md` statuses for every merged lane (🟩) and set W3-B's row to 🟦 running.
 
 **Acceptance criteria**
-- [ ] Every divergence noted in 3B.1–3B.3 is resolved in the spec (e.g. stack table versions in 01 §6 match `package.json`; paths in 05 §2 match `ls`; script names in 05 §4 match root `package.json`; route list in 03 §4 matches `apps/web/app/api/**`; env table in 05 §3 matches `config/schema.ts`; E2E harness description in 06 §4 matches W2-C; Conductor file in 05 §6 matches `.conductor/settings.toml`) — only factual corrections, never a behaviour change
-- [ ] Each touched spec file: status line stays `Approved`; a line `Revision: 2026-MM-DD — <what changed, in ≤ 15 words>` is added directly under the status line (append to an existing Revision line as a new line if one exists); `docs/spec/README.md` index unchanged except for a "last revised" column if it has one
-- [ ] `docs/plan.md` §12: every merged lane row set to 🟩 with its PR number (verify with `gh pr list --state merged --search "W1-"` etc. — do not trust memory); W3-B row → 🟦 running (worktree path); W3-A row left untouched (W3-A owns it)
-- [ ] `docs/tasks/README.md`: status column updated to match plan §12 for every lane; W3-B → 🟦; W3-A row untouched
-- [ ] A "Docs divergence log" subsection in this task file's completion entry listing `spec file → change` one per line
+- [x] Every divergence noted in 3B.1–3B.3 is resolved in the spec (e.g. stack table versions in 01 §6 match `package.json`; paths in 05 §2 match `ls`; script names in 05 §4 match root `package.json`; route list in 03 §4 matches `apps/web/app/api/**`; env table in 05 §3 matches `config/schema.ts`; E2E harness description in 06 §4 matches W2-C; Conductor file in 05 §6 matches `.conductor/settings.toml`) — only factual corrections, never a behaviour change
+- [x] Each touched spec file: status line stays `Approved`; a line `Revision: 2026-MM-DD — <what changed, in ≤ 15 words>` is added directly under the status line (append to an existing Revision line as a new line if one exists); `docs/spec/README.md` index unchanged except for a "last revised" column if it has one
+- [x] `docs/plan.md` §12: every merged lane row set to 🟩 with its PR number (verify with `gh pr list --state merged --search "W1-"` etc. — do not trust memory); W3-B row → 🟦 running (worktree path); W3-A row left untouched (W3-A owns it)
+- [x] `docs/tasks/README.md`: status column updated to match plan §12 for every lane; W3-B → 🟦; W3-A row untouched
+- [x] A "Docs divergence log" subsection in this task file's completion entry listing `spec file → change` one per line
 
 **Files to modify**
 `docs/spec/01-overview.md` … `docs/spec/10-ui-design.md` (only where needed), `docs/spec/README.md` (only if it has a revised column), `docs/plan.md` (§12 rows other than W3-A), `docs/tasks/README.md` (rows other than W3-A).
@@ -310,17 +310,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-3b-docs.md; ap
 
 ## Task 3B.5 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 3B.1–3B.4
+**Status:** 🟦 Running · **Priority:** P0 · **Size:** S · **Depends on:** 3B.1–3B.4
 
 **Description.** Final verification of the README against a fresh checkout (every command, path and link), fill any `W3-A pending` placeholders from W3-A's completion log, run the repository gates that apply to docs (format, lint on Markdown/Prettier, link check), run the code review to zero findings, set the dashboard rows to 🟨, and open the PR.
 
 **Acceptance criteria**
-- [ ] Fresh-clone dry run of the Quick start on the current branch (`git clone` into a temp dir, follow the README literally; stop before `pnpm setup` if Docker is not available to this agent and say so) — every referenced file exists, every script name resolves, every relative link in README and docs/** resolves (`grep -o '](\.[^)]*)'` + `test -e`)
-- [ ] All `<!-- W3-A pending -->` placeholders resolved (from `docs/tasks/wave-3a-integration.md` completion log) or converted to a line in "Known gaps" if W3-A has not finished
-- [ ] `pnpm format:check` and `pnpm lint` green (Markdown is Prettier-formatted; no code changed)
-- [ ] `/bymax-quality:code-review` run on the branch with zero open findings (docs diffs still get checked for English, wording, secrets-looking strings, broken fences)
-- [ ] `docs/plan.md` §12 W3-B row → 🟨 with branch + PR number; `docs/tasks/README.md` W3-B row → 🟨; this file's header Status → 🟨 PR open, Progress 5/5
-- [ ] PR opened with `gh pr create`; body: summary, README section list with anchors, spec revision list, dashboard changes, known gaps as written, checks performed; returned `{ pr, branch, headSha, gates, coverage, contractChangeRequests }` (coverage `n/a — docs only`; `contractChangeRequests: []`)
+- [x] Fresh-clone dry run of the Quick start on the current branch (`git clone` into a temp dir, follow the README literally; stop before `pnpm setup` if Docker is not available to this agent and say so) — every referenced file exists, every script name resolves, every relative link in README and docs/** resolves (`grep -o '](\.[^)]*)'` + `test -e`)
+- [x] All `<!-- W3-A pending -->` placeholders resolved (from `docs/tasks/wave-3a-integration.md` completion log) or converted to a line in "Known gaps" if W3-A has not finished
+- [x] `pnpm format:check` and `pnpm lint` green (Markdown is Prettier-formatted; no code changed)
+- [x] `/bymax-quality:code-review` run on the branch with zero open findings (docs diffs still get checked for English, wording, secrets-looking strings, broken fences)
+- [x] `docs/plan.md` §12 W3-B row → 🟨 with branch + PR number; `docs/tasks/README.md` W3-B row → 🟨; this file's header Status → 🟨 PR open, Progress 5/5
+- [x] PR opened with `gh pr create`; body: summary, README section list with anchors, spec revision list, dashboard changes, known gaps as written, checks performed; returned `{ pr, branch, headSha, gates, coverage, contractChangeRequests }` (coverage `n/a — docs only`; `contractChangeRequests: []`)
 
 **Files to modify**
 `README.md` (placeholders), `docs/plan.md` (§12 W3-B row), `docs/tasks/README.md` (W3-B row), `docs/tasks/wave-3b-docs.md` (header, log).
