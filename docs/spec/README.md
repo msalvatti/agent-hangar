@@ -16,3 +16,16 @@ Technical specification for **Agent Hangar**, a local-first web application wher
 | 10 | [UI design](10-ui-design.md) | Direction, tokens, shell, screens, components, states, motion, accessibility |
 
 Status: **Approved** — 2026-08-19. Execution plan: [../plan.md](../plan.md).
+
+Revision: 2026-08-20 — 01 stack table verified against the installed tree; 05 corrected against
+`infra/scripts/*` and `packages/core/src/config/schema.ts` (setup steps, script list, environment
+table, workspace image); 06 corrected against `.github/workflows/ci.yml` and the Vitest configs
+(job list, and the coverage/mutation success criteria themselves, raised from the tiered numbers
+originally written there to what the configuration already enforces — 100 % on four metrics
+everywhere, mutation scope including `packages/agent-runtime`); 09's authentication seam corrected
+to name the `Request` each route handler already receives, not the process-wide `ServerContainer`
+cache. Behaviour and decisions are unchanged; 06's testing success criteria are corrected upward to
+match what is enforced, not left as originally written. 05's doctor description and instance-
+resolution paragraph are further corrected against `fix/instance-resolution`: the checkout's
+`.env.local` now decides which instance a command acts on, not the shell, and a shell that
+disagrees is refused rather than obeyed or ignored.

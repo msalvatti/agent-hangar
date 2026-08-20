@@ -284,7 +284,7 @@ All coverage thresholds are **100/100/100/100** on the package's
 | `pnpm --filter @agent-hangar/agent-runtime build && pnpm --filter @agent-hangar/agent-runtime check:bundle` (< 2 MB; `node dist/cli.js --version`) | W1-D |
 | Lighthouse accessibility ≥ 95 on the lane's pages with MSW (`pnpm dlx lighthouse … --only-categories=accessibility`), screenshots in the PR | W1-G, W1-H, W3-A |
 | `pnpm test:e2e` in mock mode (specs compile, selectors resolve, harness boots/tears down) | W2-C |
-| Playwright suite green **3× consecutively** on the real stack with `--retries=0`; `pnpm smoke:openai` (or "pending"); `pnpm doctor` exit 0 for two instances; CI all jobs green | W3-A |
+| Playwright suite green **3× consecutively** on the real stack with `--retries=0`; `pnpm smoke:openai` (or "pending"); `pnpm infra:doctor` exit 0 for two instances; CI all jobs green | W3-A |
 | `pnpm test:mutation` per package, full run with `incremental: false`, `break: 80` (target 90), equivalent-mutant ledger in the PR | W4-A (core), W4-B (agent-runtime) |
 | `/bymax-quality:code-review full` → zero findings; `/security-review` → zero findings (including Low) | every lane, before the PR |
 
@@ -331,7 +331,11 @@ yet (before W0 merges, and before W2-A creates the API routes).
 # 2. web app still bound to loopback (owner: W0, then W1-I; W2-A/W2-C edit sibling keys)
 [ -f apps/web/package.json ] && { grep -qE '\-H +127\.0\.0\.1' apps/web/package.json || echo "MISSING: loopback bind in apps/web scripts"; }
 # 3. every mutating route handler calls the same-origin guard (owner: W2-A)
-for f in $(grep -rlE "export async function (POST|PUT|PATCH|DELETE)" apps/web/app/api 2>/dev/null); do grep -q assertSameOrigin "$f" || echo "MISSING: assertSameOrigin in $f"; done
+#    A grep over the route files cannot fail here: the guard lives in the handler behind a thin
+#    wiring module, so every route reads as covered by construction. The check is a test that
+#    calls each state-changing export from a foreign origin and names the route when the guard
+#    is gone. Do not reintroduce the grep.
+[ -d apps/web/app/api ] && { [ -f apps/web/app/api/same-origin-policy.test.ts ] || echo "MISSING: apps/web/app/api/same-origin-policy.test.ts — the only check that can fail when a route loses the guard"; }
 # 4. the Markdown renderer keeps its unsafe-URL tests and never gains rehype-raw (owner: W1-G)
 [ -d apps/web/src/shared/transcript ] && { grep -rq "javascript:" apps/web/src/shared/transcript/**/AssistantMarkdown.test.tsx 2>/dev/null || echo "MISSING: unsafe-href tests for AssistantMarkdown"; }
 grep -rn "rehype-raw" apps packages --include='*.ts' --include='*.tsx' --include='*.json' 2>/dev/null
@@ -573,6 +577,16 @@ Beyond /bymax-workflow:standards and the `CLAUDE.md` W0 writes:
   `exports`, `apps/web/src/mocks/handlers.ts`. Root `package.json` scripts
   block belongs to W1-I (W0 wires the names first; W3 may add
   `smoke:openai`).
+- **A package manifest's `scripts` block has two authors, and the
+  repository-wide one wins.** A lane owns the scripts of the package it
+  owns, but infrastructure work that has to chain a step into *every*
+  script reaching the shared package (a build, a declaration rewrite, a
+  condition flag) crosses those manifests by nature. When both sides edit
+  one `scripts` block, the cross-cutting change is the base and the lane's
+  change is reapplied on top of it — never the other way round, and never
+  resolved by taking one side whole. A rebase that drops either half stays
+  green, which is why this is a rule and not a judgement call: re-read the
+  merged block and confirm both intentions survived.
 - **`docs/` is in `.prettierignore`** (W0 T0.1): the planning docs are
   hand-authored (tables + 4-backtick fences wrapping nested fences) and
   `prettier --write .` has corrupted them on a sibling repo. `lint-staged`

@@ -222,7 +222,7 @@ Each lane below is one subagent prompt. Common to all: read `CLAUDE.md`, the spe
 
 ### W3-A 🐳 — End-to-end wiring & stabilisation — complexity HIGH, ~4 h (single agent; touches many paths, so nothing else runs in `apps/**` concurrently)
 
-- Widen every `vitest.config` `coverage.include` to the whole package (`src/**`) and keep 100 %; wire remaining seams (worker image check banner in UI, `/api/health` ↔ env pill, cancel button, restore banner, settings-missing gate); run Playwright suite for real (Docker + Postgres + Redis + fake provider) until green 3× in a row; run **one real OpenAI smoke** with the user's key (documented script `pnpm smoke:openai`, not in CI); fix flakiness at the root; UI polish pass against spec 10 §10 checklist on real data; `pnpm doctor` final; CI all jobs green.
+- Widen every `vitest.config` `coverage.include` to the whole package (`src/**`) and keep 100 %; wire remaining seams (worker image check banner in UI, `/api/health` ↔ env pill, cancel button, restore banner, settings-missing gate); run Playwright suite for real (Docker + Postgres + Redis + fake provider) until green 3× in a row; run **one real OpenAI smoke** with the user's key (documented script `pnpm smoke:openai`, not in CI); fix flakiness at the root; UI polish pass against spec 10 §10 checklist on real data; `pnpm infra:doctor` final; CI all jobs green.
 - **Owned:** any path, one agent. **DONE:** spec 01 §5 success criteria S1–S6, S8 verified and listed in the PR with evidence.
 
 ### W3-B — README + docs refresh — complexity LOW, ~2 h (parallel with W3-A; owns only `README.md`, `docs/**`)
@@ -336,7 +336,7 @@ wiring. So there is work available now that nothing is blocking.
 | W2-B 🐳 | 🟩 merged | PR #22 | worker 100 (all four metrics) | three consumers, cancel channel, scheduler reconcile and graceful shutdown; Docker suite ran green six consecutive times with no leftover containers |
 | W2-C | 🟨 PR open | PR #32 | web 100 (all four metrics) | Playwright harness, a local git server and the six critical-flow specs; real mode boots against the real API, database and git server, and two specs already pass end to end there |
 | W3-A 🐳 | ⬜ | — | — | success criteria S1–S6, S8 |
-| W3-B | ⬜ | — | — | |
+| W3-B | 🟨 PR open | PR #37 | n/a (docs only) | README rewritten against the running system, every command executed from a fresh clone; three claims corrected because verification refuted them (`pnpm doctor` is shadowed by pnpm's own command, five scripts resolved the instance from the shell while `setup`/`run` read `.env.local`, and the `RequestContext` in 09 does not exist); R11 and R20 closed in `docs/AUTOPILOT.md`; further corrected against PR #39 (`fix/instance-resolution`), which gives the collision a working alias (`pnpm infra:doctor`) and makes every instance-acting script read the checkout's `.env.local` instead of the shell, refusing on disagreement — the five-scripts finding above describes the behaviour that PR replaces |
 | W4-A | 🟥 held | — | — | held by the operator, not a dependency; may slip — documented |
 | W4-B | 🟥 held | — | — | held by the operator, not a dependency; may slip — documented |
 
@@ -386,10 +386,10 @@ number here is only as current as the last close-out that lane wrote.
 | W2-B | 6 | — | 6 |
 | W2-C | 0 | 6 | 6 |
 | W3-A | 0 | — | 6 |
-| W3-B | 0 | — | 5 |
+| W3-B | 0 | 5 | 5 |
 | W4-A | 0 | — | 4 |
 | W4-B | 0 | — | 4 |
-| **Total** | **69** | **6** | **94** |
+| **Total** | **69** | **11** | **94** |
 
 ## 13. Estimated complexity
 

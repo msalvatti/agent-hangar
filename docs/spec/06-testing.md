@@ -1,5 +1,12 @@
 # 06 — Testing Strategy
 
+| | |
+|---|---|
+| **Status** | ✅ Approved — 2026-08-19 |
+| **Revision** | 2026-08-20 — corrected against `.github/workflows/ci.yml` and the Vitest configs: coverage policy raised from the tiered numbers originally written here to 100 % on four metrics everywhere, mutation scope expanded to `packages/agent-runtime`, and the CI job list matched to what actually runs |
+| **Owner** | Maximiliano |
+| **Last updated** | 2026-08-19 |
+
 Principle: tests verify **behaviour**, not line coverage. The mutation gate on `packages/core` is the real quality signal; coverage is a floor, not the goal.
 
 ## 1. Layers
@@ -9,9 +16,9 @@ Principle: tests verify **behaviour**, not line coverage. The mutation gate on `
 | Unit | Vitest 4 | pure functions, fakes | every package | < 30 s |
 | Integration | Vitest 4 | real local Docker, Postgres, Redis (compose test profile) | `packages/core`, `apps/worker`, `apps/web` | < 5 min |
 | E2E | Playwright 1.62 | full stack with `AGENT_MODEL_PROVIDER=fake` | `apps/web/e2e` | < 5 min |
-| Mutation | Stryker 10 + `@stryker-mutator/vitest-runner` | unit suites of `packages/core` | `packages/core` | < 10 min (CI incremental) |
+| Mutation | Stryker 10 + `@stryker-mutator/vitest-runner` | unit suites of the mutated packages | `packages/core`, `packages/agent-runtime` | < 10 min (CI incremental) |
 
-Coverage thresholds (Vitest `coverage.thresholds`): `packages/core` 100 % lines/branches/functions on the mutation-gated modules, 90 % elsewhere; apps 80 %. Every `it()` carries a one-line comment stating the behaviour proved.
+Coverage thresholds (Vitest `coverage.thresholds`): **100 % lines, branches, functions and statements** on every path a package lists in `coverage.include`, in all four workspaces and in the `scripts` project — the bar was raised from the tiered numbers originally written here and is enforced by the configuration, never lowered in a diff. Composition roots that only wire real clients together are excluded and their logic is tested through fakes instead (`apps/worker/src/main.ts`, `packages/agent-runtime/src/bin.ts`), as is the generated shadcn code under `apps/web/src/shared/ui/**`. Every `it()` carries a one-line comment stating the behaviour proved.
 
 ## 2. Unit tests (fast, no I/O)
 
@@ -80,15 +87,17 @@ Config notes (from prior experience): vitest runner version pinned equal to core
 
 Jobs on `ubuntu-latest`, Node 24, pnpm 11 via `pnpm/setup@v2` with store cache:
 
-1. **lint** — ESLint (flat config, `no-restricted-imports` for dockerode outside runner), Prettier check, `gitleaks` secret scan.
+1. **lint** — ESLint (flat config, `no-restricted-imports` for dockerode outside the runner), Prettier check, and a suppression ban.
 2. **typecheck** — `tsc -b` across workspaces.
 3. **unit** — Vitest with coverage thresholds; uploads `coverage/`.
-4. **integration** — services `postgres:18`, `redis:8`; Docker available on runner → `@docker` tests included; builds the workspace image first.
-5. **e2e** — Playwright with fake provider; traces on failure.
-6. **mutation** — Stryker on `packages/core` + `agent-runtime`, `break` thresholds above; runs on PRs to `main` (incremental) and nightly full.
-7. **build** — `pnpm build` (Next standalone + worker bundle) and `docker build` of the workspace image; smoke-start the image and run `node cli.js --version`.
+4. **integration** — services `postgres:18`, `redis:8`; `AH_INSTANCE=test`, `DOCKER_AVAILABLE=1` and `AH_ALLOW_DESTRUCTIVE_TESTS=1` so nothing is skipped silently; builds the workspace image first.
+5. **e2e** — Playwright with the fake provider; traces on failure. While no spec file exists the job detects that and skips the browser install rather than paying for it.
+6. **build** — `pnpm build` and `docker build` of the workspace image; smoke-start the image and run `node cli.js --version`.
+7. **secret-scan** — `gitleaks` through its container image: the working tree, the commits of the pull request, and the full history on `main`.
 
-Branch protection on `main`: all seven required. No `continue-on-error`.
+The **mutation** job described in §5 is not part of the pipeline yet; it is added once both packages define `test:mutation` and pass their thresholds.
+
+Branch protection on `main`: all seven required. No `continue-on-error`. No job declares `timeout-minutes` yet, so a hung one holds a runner for the platform default.
 
 ## 7. Test doubles (kept in `packages/core/src/testing/`)
 
