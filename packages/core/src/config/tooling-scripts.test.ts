@@ -98,52 +98,191 @@ function isTestScript(name: string): boolean {
   return name === TEST_SCRIPT || name.startsWith(TEST_SCRIPT_PREFIX);
 }
 
+/** Shell operators that end one command and begin the next. */
+const COMMAND_SEPARATORS: readonly string[] = ['&&', '||', ';', '|', '&'];
+
+/** Name of the package manager whose invocations this guard is about. */
+const PNPM = 'pnpm';
+
+/** Flags, either spelling, that make a pnpm invocation act on every workspace. */
+const RECURSIVE_FLAGS: readonly string[] = ['--recursive', '-r'];
+
+/** Matches a leading `NAME=value` token, which is environment for the command rather than the command. */
+const ENVIRONMENT_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/u;
+
+/** Quote inside which the shell expands nothing, so its contents are literal text. */
+const LITERAL_QUOTE = "'";
+
+/** Quote inside which the shell still expands, so its contents are not guaranteed literal. */
+const EXPANDING_QUOTE = '"';
+
+/** Characters that hand part of the command to the shell to produce, rather than stating it. */
+const EXPANSIONS: readonly string[] = ['$', '`'];
+
+/** Characters that open or close a subshell, changing what counts as a command. */
+const SUBSHELL: readonly string[] = ['(', ')'];
+
 /**
- * The tokens of a fan-out command that pnpm itself reads, or `null` when they cannot be told apart
- * from the arguments it forwards.
+ * What a script does about fanning a suite out across workspaces.
  *
- * Searching the whole command for a flag is not the same question, and the difference is the whole
- * check. Measured on pnpm 11.22.0: `pnpm -r run test -- --sequential` and `pnpm -r run test
- * --sequential` both start every workspace at the same instant and hand the script `--sequential`
- * as an argument — the flag is present in the text and absent from pnpm's own parse. A guard
- * reading the text would pass both while the workspaces run concurrently, which is a check that
- * cannot fail in the way it exists to fail.
+ * `undecidable` is deliberately not folded into either verdict. It says the command contains
+ * something that looks like a recursive run and is written in a shape this guard will not take
+ * apart — which is a reason to stop, not a reason to assume either answer.
+ */
+type FanOutVerdict = 'none' | 'complete' | 'incomplete' | 'undecidable';
+
+/**
+ * Splits a script into the individual commands it runs, tokenised.
  *
- * The boundary is the `run` keyword: everything before it is an option pnpm reads, everything from
- * the script name on is not. Requiring the keyword rather than inferring the script name is what
- * makes the boundary a fact about the command instead of a guess about which options take values:
- * without it, telling `--filter web` (an option and its value) from `--if-present test` (an option
- * and the script) means keeping a list of which options take values, and a list like that is wrong
- * the day pnpm adds one.
+ * A script is not one invocation. `a && b` is two, and a guard that looks for *the* pnpm call in
+ * the text finds whichever one happens to come first — so a chain whose first half is protected
+ * vouches for a second half that is not. Every command has to be recovered before any of them can
+ * be judged.
  *
- * The cost is deliberate and worth stating: `pnpm -r --sequential --no-bail test` runs correctly —
- * measured — and is still reported here, because nothing in it marks where the options stop. The
- * refusal is conservative rather than a verdict on the command, and the message names the spelling
- * to use instead. A guard on a gate should fail loudly on what it cannot read, not guess.
+ * Quotes are tracked so a separator inside an argument is not mistaken for one between commands,
+ * which is what lets `--filter './packages/*'` survive. Anything the shell would expand returns
+ * `null` instead — subshells, command substitution, a variable, an unterminated quote — because
+ * those decide which text is a command at all, and only a single-quoted stretch is literal enough
+ * to rule that out. A parser that guessed there would be guessing about exactly the thing being
+ * checked.
  *
  * @param command - The script body as written in the manifest.
- * @returns The tokens before `run`, or `null` when there is no `run` keyword to bound them, or when
- *   a forwarding `--` reaches that far.
+ * @returns One token list per command, or `null` when the script is not safely decomposable.
  */
-function recursiveOptionSegment(command: string): string[] | null {
-  const tokens = command.split(/\s+/u).filter((token) => token !== '');
-  const runAt = tokens.indexOf(RUN_KEYWORD);
-  if (runAt === -1) {
-    return null;
+function splitInvocations(command: string): string[][] | null {
+  const invocations: string[][] = [];
+  let tokens: string[] = [];
+  let token = '';
+  let quote = '';
+  const endToken = (): void => {
+    if (token.length > 0) {
+      tokens.push(token);
+      token = '';
+    }
+  };
+  const endInvocation = (): void => {
+    endToken();
+    if (tokens.length > 0) {
+      invocations.push(tokens);
+      tokens = [];
+    }
+  };
+  for (const character of command) {
+    if (quote === LITERAL_QUOTE) {
+      // Nothing expands inside single quotes, so every character is text, including a separator.
+      if (character === LITERAL_QUOTE) {
+        quote = '';
+      } else {
+        token += character;
+      }
+    } else if (EXPANSIONS.includes(character)) {
+      // Reached outside single quotes — double quotes do not stop the shell expanding.
+      return null;
+    } else if (quote === EXPANDING_QUOTE) {
+      if (character === EXPANDING_QUOTE) {
+        quote = '';
+      } else {
+        token += character;
+      }
+    } else if (character === LITERAL_QUOTE || character === EXPANDING_QUOTE) {
+      quote = character;
+    } else if (SUBSHELL.includes(character)) {
+      return null;
+    } else if (COMMAND_SEPARATORS.some((separator) => separator.startsWith(character))) {
+      endInvocation();
+    } else if (/\s/u.test(character)) {
+      endToken();
+    } else {
+      token += character;
+    }
   }
-  const segment = tokens.slice(0, runAt);
-  return segment.includes(FORWARD_SEPARATOR) ? null : segment;
+  endInvocation();
+  return quote === '' ? invocations : null;
 }
 
 /**
- * Whether a fan-out hands pnpm both flags a complete gate depends on.
+ * Strips the environment a command is prefixed with, leaving the command itself.
+ *
+ * `DOCKER_AVAILABLE=1 vitest run` is `vitest`, not `DOCKER_AVAILABLE=1`, and the difference decides
+ * whether an invocation is recognised as pnpm's at all.
+ *
+ * @param tokens - Tokens of one invocation.
+ * @returns The same tokens without any leading `NAME=value` assignments.
+ */
+function withoutEnvironment(tokens: string[]): string[] {
+  const commandAt = tokens.findIndex((token) => !ENVIRONMENT_ASSIGNMENT.test(token));
+  // Every token being an assignment means there is no command here to judge, and `slice(-1)` would
+  // answer that with the last assignment rather than with nothing.
+  return commandAt === -1 ? [] : tokens.slice(commandAt);
+}
+
+/**
+ * Whether one invocation is a pnpm command that acts on every workspace.
+ *
+ * Both halves matter. `grep -r` carries a recursive flag and is not pnpm's business; `pnpm --filter
+ * web run test` is pnpm and is not a fan-out. Only the intersection is what this gate is about.
+ *
+ * @param tokens - Tokens of one invocation, environment already stripped.
+ * @returns `true` when the command is `pnpm` and carries `-r` or `--recursive`.
+ */
+function isRecursivePnpm(tokens: string[]): boolean {
+  return tokens[0] === PNPM && tokens.some((token) => RECURSIVE_FLAGS.includes(token));
+}
+
+/**
+ * Whether one recursive pnpm invocation hands pnpm both flags a complete gate depends on.
+ *
+ * Searching the invocation's text for a flag is not the same question, and the difference is the
+ * whole check. Measured on pnpm 11.22.0: `pnpm -r run test -- --sequential` and `pnpm -r run test
+ * --sequential` both start every workspace at the same instant and hand the script `--sequential`
+ * as an argument — the flag is present in the text and absent from pnpm's own parse.
+ *
+ * The boundary is the `run` keyword: everything before it is an option pnpm reads, everything from
+ * the script name on is not. Requiring the keyword rather than inferring the script name is what
+ * makes the boundary a fact about the invocation instead of a guess about which options take
+ * values: without it, telling `--filter web` (an option and its value) from `--if-present test` (an
+ * option and the script) means keeping a list of which options take values, and a list like that is
+ * wrong the day pnpm adds one.
+ *
+ * The cost is deliberate and worth stating: `pnpm -r --sequential --no-bail test` runs correctly —
+ * measured — and is still reported, because nothing in it marks where the options stop. The refusal
+ * is conservative rather than a verdict on the command, and the message names the spelling to use
+ * instead. A guard on a gate should fail loudly on what it cannot read, not guess.
+ *
+ * @param tokens - Tokens of one recursive pnpm invocation, environment already stripped.
+ * @returns `true` when `--sequential` and `--no-bail` both reach pnpm's own option segment.
+ */
+function protectsItsFanOut(tokens: string[]): boolean {
+  const runAt = tokens.indexOf(RUN_KEYWORD);
+  if (runAt === -1) {
+    return false;
+  }
+  const options = tokens.slice(0, runAt);
+  return (
+    !options.includes(FORWARD_SEPARATOR) &&
+    options.includes(SEQUENTIAL_FLAG) &&
+    options.includes(NO_BAIL_FLAG)
+  );
+}
+
+/**
+ * What a script does about fanning a suite out, judged over every command it runs.
  *
  * @param command - The script body as written in the manifest.
- * @returns `true` when pnpm's own option segment carries `--sequential` and `--no-bail`.
+ * @returns `none` when nothing in it fans out, `complete` when every recursive pnpm invocation is
+ *   protected, `incomplete` when one is not, and `undecidable` when the script cannot be taken
+ *   apart yet still looks like it fans out.
  */
-function fansOutCompletely(command: string): boolean {
-  const segment = recursiveOptionSegment(command);
-  return segment !== null && segment.includes(SEQUENTIAL_FLAG) && segment.includes(NO_BAIL_FLAG);
+function fanOutVerdict(command: string): FanOutVerdict {
+  const invocations = splitInvocations(command);
+  if (invocations === null) {
+    return RECURSIVE_RUN_PATTERN.test(command) ? 'undecidable' : 'none';
+  }
+  const fanOuts = invocations.map(withoutEnvironment).filter(isRecursivePnpm);
+  if (fanOuts.length === 0) {
+    return 'none';
+  }
+  return fanOuts.every(protectsItsFanOut) ? 'complete' : 'incomplete';
 }
 
 /**
@@ -555,50 +694,104 @@ describe('the manifests that fan a suite out across workspaces', () => {
    * --no-bail` runs all three and still exits non-zero. Making the suite sequential is therefore
    * only safe together with the flag that keeps it going.
    *
-   * Both are asserted on pnpm's own option segment rather than on the command text: see
-   * {@link recursiveOptionSegment} for why the two are different questions.
+   * Both are asserted over every command the script runs, against pnpm's own option segment in
+   * each: see {@link splitInvocations} and {@link protectsItsFanOut} for why either shortcut —
+   * one invocation, or the command's text — is a different question from this one.
    */
   it('runs every workspace test suite one at a time, and runs all of them', () => {
-    const fanOuts = listManifests().flatMap((manifest) =>
+    const verdicts = listManifests().flatMap((manifest) =>
       Object.entries(readScripts(manifest))
-        .filter(([name, command]) => isTestScript(name) && RECURSIVE_RUN_PATTERN.test(command))
-        .map(([name, command]) => ({ manifest, name, command })),
+        .map(([name, command]) => ({
+          where: `${manifest} → ${name}`,
+          test: isTestScript(name),
+          verdict: fanOutVerdict(command),
+        }))
+        .filter(({ test, verdict }) => test && verdict !== 'none'),
     );
     expect(
-      fanOuts.length,
-      'no manifest fans a test suite across workspaces any more; this check would pass vacuously',
-    ).toBeGreaterThan(0);
+      verdicts.map(({ where }) => where),
+      'the scan must still recognise the fan-out it exists for; a guard tightened until it ' +
+        'matches nothing passes every manifest for the wrong reason',
+    ).toContain('package.json → test:integration');
 
-    const offenders = fanOuts
-      .filter(({ command }) => !fansOutCompletely(command))
-      .map(({ manifest, name }) => `${manifest} → ${name}`);
+    const offenders = verdicts
+      .filter(({ verdict }) => verdict !== 'complete')
+      .map(({ where, verdict }) => `${where} (${verdict})`);
     expect(
       offenders,
       `these scripts either start every workspace suite at once, against one Postgres and one ` +
-        `Redis, or stop at the first failure and leave the rest unrun; pnpm must receive ` +
-        `${SEQUENTIAL_FLAG} and ${NO_BAIL_FLAG} before the ${RUN_KEYWORD} keyword`,
+        `Redis, or stop at the first failure and leave the rest unrun; every recursive pnpm ` +
+        `invocation must receive ${SEQUENTIAL_FLAG} and ${NO_BAIL_FLAG} before its ` +
+        `${RUN_KEYWORD} keyword`,
     ).toEqual([]);
   });
 
   /**
    * The check above is only worth having if it cannot be satisfied by a command that does not have
-   * the property, so the spellings that would fool a text search are pinned here rather than left
-   * to the reader's confidence. Each of the rejected forms was run against pnpm 11.22.0 and started
-   * every workspace at the same instant while handing the script the flag as an argument.
+   * the property, so every spelling that would fool a simpler reading is pinned here rather than
+   * left to the reader's confidence. Each rejected form was run against pnpm 11.22.0 and started
+   * every workspace at the same instant while handing the script the flag as an argument, or —
+   * for the chained ones — left a second fan-out entirely unprotected.
    */
-  it('rejects a fan-out whose flags reach the script instead of pnpm', () => {
-    const complete = 'pnpm --recursive --if-present --sequential --no-bail run test:integration';
-    expect(fansOutCompletely(complete), 'the real command must pass').toBe(true);
+  it('rejects a fan-out whose flags never reach the pnpm invocation that needs them', () => {
+    expect(
+      fanOutVerdict('pnpm --recursive --if-present --sequential --no-bail run test:integration'),
+      'the real command must pass',
+    ).toBe('complete');
 
     // Forwarded past `--`: pnpm parses none of it, and hands the script "-- --sequential".
-    expect(fansOutCompletely('pnpm -r run test -- --sequential --no-bail')).toBe(false);
+    expect(fanOutVerdict('pnpm -r run test -- --sequential --no-bail')).toBe('incomplete');
     // After the script name: same outcome without the separator.
-    expect(fansOutCompletely('pnpm -r run test --sequential --no-bail')).toBe(false);
+    expect(fanOutVerdict('pnpm -r run test --sequential --no-bail')).toBe('incomplete');
     // No `run` keyword. This spelling does run sequentially, but nothing in the text marks where
     // the options stop, so it is refused rather than read by guesswork; see the parser's note.
-    expect(fansOutCompletely('pnpm -r --sequential --no-bail test:integration')).toBe(false);
+    expect(fanOutVerdict('pnpm -r --sequential --no-bail test:integration')).toBe('incomplete');
     // Each flag is load-bearing on its own.
-    expect(fansOutCompletely('pnpm -r --sequential run test')).toBe(false);
-    expect(fansOutCompletely('pnpm -r --no-bail run test')).toBe(false);
+    expect(fanOutVerdict('pnpm -r --sequential run test')).toBe('incomplete');
+    expect(fanOutVerdict('pnpm -r --no-bail run test')).toBe('incomplete');
+    // The flags belong to another command entirely, which never fans anything out.
+    expect(fanOutVerdict('echo --sequential --no-bail run && pnpm -r run test')).toBe('incomplete');
+    // A chain whose first half is protected does not vouch for its second half.
+    expect(
+      fanOutVerdict('pnpm -r --sequential --no-bail run test && pnpm -r run test:integration'),
+    ).toBe('incomplete');
+    // Both halves protected is the shape that legitimately passes.
+    expect(
+      fanOutVerdict(
+        'pnpm -r --sequential --no-bail run test && pnpm -r --sequential --no-bail run test:integration',
+      ),
+    ).toBe('complete');
+  });
+
+  /**
+   * The two verdicts that are not about the flags at all, kept apart because collapsing either into
+   * a pass is how a gate stops reporting. A command with no fan-out in it is simply not this
+   * check's business; a command carrying something the shell would expand is its business and
+   * cannot be read, which is a reason to stop rather than to assume.
+   */
+  it('separates a script that does not fan out from one it cannot read', () => {
+    expect(fanOutVerdict('bash scripts/run-tests.sh')).toBe('none');
+    expect(fanOutVerdict('vitest run --project unit')).toBe('none');
+    expect(fanOutVerdict('grep -r pattern src && vitest run')).toBe('none');
+    expect(fanOutVerdict('DOCKER_AVAILABLE=1 vitest run --project integration')).toBe('none');
+    expect(
+      fanOutVerdict('DOCKER_AVAILABLE=1 pnpm -r --sequential --no-bail run test'),
+      'environment in front of the command must not hide the command',
+    ).toBe('complete');
+    expect(
+      fanOutVerdict("pnpm -r --sequential --no-bail --filter './packages/*' run test"),
+      'a separator inside a quoted argument is not a separator between commands',
+    ).toBe('complete');
+    expect(
+      fanOutVerdict('FOO=1 BAR=2'),
+      'an invocation that is only environment has no command in it to judge',
+    ).toBe('none');
+    expect(fanOutVerdict('pnpm -r run $SCRIPT')).toBe('undecidable');
+    expect(fanOutVerdict('(pnpm -r run test)')).toBe('undecidable');
+    expect(fanOutVerdict('echo "unterminated && pnpm -r run test')).toBe('undecidable');
+    expect(
+      fanOutVerdict('echo "$HOME"'),
+      'an unreadable command with no fan-out in it is still outside this gate',
+    ).toBe('none');
   });
 });
