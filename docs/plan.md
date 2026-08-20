@@ -90,7 +90,7 @@ flowchart TB
 | Lane | Needs merged | Why |
 |---|---|---|
 | W1-A … W1-H | W0 | contracts, tooling, deps |
-| W1-I | 🟨 PR open | PR #18 | scripts 100 (all four metrics) | run, doctor, archive, prune and the Conductor wiring; the two-instance walkthrough was executed against real Docker, not simulated |
+| W1-I | W0 (+ W1-A, W1-C, W1-E for the doctor/rotate-key tasks) | runs in the second Wave 1 batch; merges first within that batch (root scripts block) |
 | W2-A (web API) | W1-A, W1-E, W1-F | secrets status, repositories, scheduling validation |
 | W2-B (worker) | W1-A, W1-B, W1-C, W1-D, W1-E, W1-F | everything the processors orchestrate |
 | W2-C (E2E authoring) | W1-G, W1-H | UI selectors; specs run for real only in W3-A |
