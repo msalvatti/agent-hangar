@@ -1,231 +1,37 @@
 /**
- * Unit tests for `infra/scripts/doctor.sh`.
+ * Unit tests for the rows of `infra/scripts/doctor.sh`.
  *
  * Layer: unit (spawns bash with PATH shims and real ephemeral TCP listeners; no real Docker,
  * Postgres or Redis).
  * Goal: an all-green machine exits 0; each required failure (Docker down, image missing, wrong
- * key mode, Postgres down, migrations pending) reports the documented fix and exits 1; the
+ * key mode, service absent, migrations pending) reports the documented fix and exits 1; the
  * optional Secrets/OpenAI rows never fail the exit code and skip in the documented cascade;
- * `--json` parses into 10 objects with the four documented keys.
- * Mocks: docker/pnpm/openssl/node via `infra/scripts/testing/shims.ts`; a bespoke
- * `AH_DOCTOR_HELPER_CMD` shim standing in for the secrets-status/openai-check/service-probes
- * helpers; real `node:net` listeners standing in for the processes holding the Postgres/Redis
- * ports — bound on the ports `env.sh` derives from AH_PORT_BASE, because the derivation
- * deliberately ignores POSTGRES_PORT/REDIS_PORT. Those listeners answer nothing, which is exactly
- * why the rows now consult the service probe rather than the socket: whether the probe says the
- * service answered is what the shim decides here, and `lib/service-probes.test.ts` is where the
- * probe itself is proven against a listener that is not the service it expects.
+ * `--json` parses into 10 objects with the four documented keys. The Postgres/Redis service
+ * probes have their own file, `doctor.probes.test.ts`.
+ * Mocks: docker/pnpm/openssl/node and the `AH_DOCTOR_HELPER_CMD` helper via
+ * `infra/scripts/testing/{shims,doctor-sandbox}.ts`.
  */
-import { chmodSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
-import { createServer } from 'node:net';
-import type { Server } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { chmodSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
-  createShimDir,
-  readShimLog,
-  spawnScript,
-  writeExtraShim,
-  writeGnuStatShim,
-} from './testing/shims.js';
-import type { DockerShimOptions, PnpmShimOptions } from './testing/shims.js';
-
-const scriptPath = fileURLToPath(new URL('./doctor.sh', import.meta.url));
-
-const cleanups: (() => void)[] = [];
+  closedPortBase,
+  greenDocker,
+  greenEnv,
+  greenPnpm,
+  greenShims,
+  helperBody,
+  helperShim,
+  releaseSandboxes,
+  sandbox,
+  scriptPath,
+} from './testing/doctor-sandbox.js';
+import { spawnScript, writeExtraShim, writeGnuStatShim } from './testing/shims.js';
 
 afterEach(() => {
-  while (cleanups.length > 0) {
-    cleanups.pop()?.();
-  }
+  releaseSandboxes();
 });
-
-/** Lowest and highest port base `env.sh` accepts. */
-const MIN_PORT_BASE = 1024;
-const MAX_PORT_BASE = 65000;
-
-/** How many adjacent-pair candidates to try before giving up. */
-const PORT_BASE_ATTEMPTS = 50;
-
-/** A reserved port base together with the listeners holding its derived ports. */
-interface BoundPorts {
-  /** Value to pass as `AH_PORT_BASE`; `+ 1` and `+ 2` are the bound ports. */
-  portBase: number;
-  /** Releases both listeners. */
-  close: () => void;
-}
-
-/**
- * Binds a loopback listener, or reports that the port is taken.
- *
- * @param port - Port to bind; `0` lets the OS choose a free one.
- * @returns The listening server, or `null` when the port could not be bound.
- */
-function tryListen(port: number): Promise<Server | null> {
-  return new Promise((resolve) => {
-    const server: Server = createServer();
-    server.once('error', () => {
-      resolve(null);
-    });
-    server.listen(port, '127.0.0.1', () => {
-      resolve(server);
-    });
-  });
-}
-
-/**
- * Reads the port a listening server was given.
- *
- * @param server - A server that has already emitted `listening`.
- * @returns Its loopback port.
- */
-function portOf(server: Server): number {
-  const address = server.address();
-  return typeof address === 'object' && address !== null ? address.port : 0;
-}
-
-/**
- * Reserves a port base whose derived Postgres and Redis ports are both listening.
- *
- * `env.sh` derives POSTGRES_PORT/REDIS_PORT from AH_PORT_BASE and ignores any same-named variable
- * in the environment, so a test that needs "Postgres is reachable" listens where the derivation
- * points instead of pointing the derivation at a listener it picked. The OS hands out one free
- * port; the base is that port minus one, and the Redis port next to it is bound explicitly, which
- * is why the search may have to try more than one candidate.
- *
- * @returns The reserved base and a function releasing both listeners.
- */
-async function bindDerivedPorts(): Promise<BoundPorts> {
-  for (let attempt = 0; attempt < PORT_BASE_ATTEMPTS; attempt += 1) {
-    const postgres = await tryListen(0);
-    if (postgres !== null) {
-      const portBase = portOf(postgres) - 1;
-      const inRange = portBase >= MIN_PORT_BASE && portBase + 2 <= MAX_PORT_BASE;
-      const redis = inRange ? await tryListen(portBase + 2) : null;
-      if (redis !== null) {
-        return {
-          portBase,
-          close: () => {
-            postgres.close();
-            redis.close();
-          },
-        };
-      }
-      postgres.close();
-    }
-  }
-  throw new Error('could not reserve an adjacent Postgres/Redis port pair');
-}
-
-/**
- * Reserves a port base whose derived ports nothing listens on, to simulate an unreachable service.
- *
- * @returns A base whose `+ 1` and `+ 2` ports are free.
- */
-async function closedPortBase(): Promise<number> {
-  // A pair bound and immediately released stays free for the duration of one test: the OS hands
-  // out ephemeral ports in rotation rather than reissuing the one just returned.
-  const bound = await bindDerivedPorts();
-  bound.close();
-  return bound.portBase;
-}
-
-interface HelperFixture {
-  path: string;
-  dir: string;
-}
-
-/**
- * Body of the `AH_DOCTOR_HELPER_CMD` shim: it inspects its own last path argument to tell the
- * three helper invocations apart, and answers each from the environment.
- *
- * @returns The shell script body.
- */
-function helperBody(): string {
-  return [
-    'case "$1" in',
-    '  *secrets-status*)',
-    '    printf \'%s\\n\' "$AH_SHIM_SECRETS_LINES"',
-    '    exit "${AH_SHIM_SECRETS_RC:-0}"',
-    '    ;;',
-    '  *openai-check*)',
-    '    printf \'%s\\n\' "$AH_SHIM_OPENAI_LINE"',
-    '    exit "${AH_SHIM_OPENAI_RC:-0}"',
-    '    ;;',
-    '  *service-probes*)',
-    '    printf \'%s\\n\' "$AH_SHIM_PROBE_LINES"',
-    '    exit "${AH_SHIM_PROBE_RC:-0}"',
-    '    ;;',
-    'esac',
-    'exit 9',
-  ].join('\n');
-}
-
-/**
- * Writes the `AH_DOCTOR_HELPER_CMD` shim into a shim directory.
- *
- * @param shimDir - Directory to write into.
- * @returns The shim's path and directory.
- */
-function helperShim(shimDir: string): HelperFixture {
-  const path = writeExtraShim(shimDir, 'helper.sh', helperBody());
-  return { path, dir: shimDir };
-}
-
-interface Sandbox {
-  dir: string;
-  log: string;
-  keyPath: string;
-  portBase: number;
-  /** Env file path inside the sandbox; never created, so the shell drives the derivation. */
-  envFile: string;
-}
-
-async function greenSandbox(): Promise<Sandbox> {
-  const dir = mkdtempSync(join(tmpdir(), 'ah-doctor-'));
-  cleanups.push(() => {
-    rmSync(dir, { recursive: true, force: true });
-  });
-  const keyPath = join(dir, 'master.key');
-  writeFileSync(keyPath, `${'0'.repeat(64)}\n`);
-  chmodSync(keyPath, 0o600);
-  const ports = await bindDerivedPorts();
-  cleanups.push(ports.close);
-  return {
-    dir,
-    log: join(dir, 'log'),
-    keyPath,
-    portBase: ports.portBase,
-    envFile: join(dir, '.env.local'),
-  };
-}
-
-function greenEnv(sandbox: Sandbox, extra: Record<string, string> = {}): Record<string, string> {
-  return {
-    HOME: sandbox.dir,
-    AH_ENV_FILE: sandbox.envFile,
-    AH_INSTANCE: 'default',
-    AH_PORT_BASE: String(sandbox.portBase),
-    MASTER_KEY_PATH: sandbox.keyPath,
-    AH_SHIM_LOG: sandbox.log,
-    AH_SHIM_SECRETS_LINES: 'GITHUB_PAT=set:ab12\nOPENAI_API_KEY=set:cd34',
-    AH_SHIM_OPENAI_LINE: 'ok gpt-5.6-sol',
-    AH_SHIM_PROBE_LINES: 'POSTGRES=ok\nREDIS=ok',
-    ...extra,
-  };
-}
-
-function greenDocker(overrides: DockerShimOptions = {}): DockerShimOptions {
-  return { availability: 'up', image: 'present', ...overrides };
-}
-
-function greenPnpm(overrides: PnpmShimOptions = {}): PnpmShimOptions {
-  return { migrateStatusExitCode: 0, ...overrides };
-}
 
 describe('doctor.sh — all green', () => {
   /**
@@ -234,12 +40,12 @@ describe('doctor.sh — all green', () => {
    * executable that does not exist and turn the Secrets row into a helper error.
    */
   it('runs a helper override whose path contains a space', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const shimDir = greenShims(box);
     const helperPath = writeExtraShim(shimDir, 'helper with space.sh', helperBody());
     const result = spawnScript(scriptPath, {
       shimDir,
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helperPath }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helperPath }),
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('GitHub PAT: set (…ab12)');
@@ -250,12 +56,12 @@ describe('doctor.sh — all green', () => {
    * Every required row passes and both optional rows report success: exit 0.
    */
   it('exits 0 when every check passes', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
     });
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('All required checks passed');
@@ -269,13 +75,13 @@ describe('doctor.sh — all green', () => {
    * `--json` parses into 10 objects, each with the four documented keys.
    */
   it('--json prints 10 rows with the documented keys', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
     });
     expect(result.status).toBe(0);
     const rows = JSON.parse(result.stdout) as {
@@ -308,17 +114,13 @@ describe('doctor.sh — required failures', () => {
    * Docker unreachable: the socket row is ✗ with the R2 fix, the image row is skipped, exit 1.
    */
   it('reports Docker down with the R2 fix and skips the image row', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({
-      log: sandbox.log,
-      docker: greenDocker({ availability: 'down' }),
-      pnpm: greenPnpm(),
-    });
+    const box = await sandbox();
+    const shimDir = greenShims(box, greenDocker({ availability: 'down' }), greenPnpm());
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
     });
     expect(result.status).toBe(1);
     const rows = JSON.parse(result.stdout) as { check: string; status: string; fix: string }[];
@@ -333,17 +135,13 @@ describe('doctor.sh — required failures', () => {
    * The workspace image is missing: fix is `pnpm infra:image`.
    */
   it('reports a missing workspace image with pnpm infra:image', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({
-      log: sandbox.log,
-      docker: greenDocker({ image: 'missing' }),
-      pnpm: greenPnpm(),
-    });
+    const box = await sandbox();
+    const shimDir = greenShims(box, greenDocker({ image: 'missing' }), greenPnpm());
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
     });
     expect(result.status).toBe(1);
     const rows = JSON.parse(result.stdout) as { check: string; status: string; fix: string }[];
@@ -360,14 +158,14 @@ describe('doctor.sh — required failures', () => {
    * A master key file with mode 644 is refused with `chmod 600`, and the Secrets row is skipped.
    */
   it('reports a wrongly-permissioned master key with chmod 600', async () => {
-    const sandbox = await greenSandbox();
-    chmodSync(sandbox.keyPath, 0o644);
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    chmodSync(box.keyPath, 0o644);
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
     });
     expect(result.status).toBe(1);
     const rows = JSON.parse(result.stdout) as {
@@ -387,14 +185,14 @@ describe('doctor.sh — required failures', () => {
    * A missing master key reports the `pnpm setup` fix.
    */
   it('reports a missing master key with pnpm setup', async () => {
-    const sandbox = await greenSandbox();
-    rmSync(sandbox.keyPath);
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    rmSync(box.keyPath);
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
     });
     const rows = JSON.parse(result.stdout) as { check: string; status: string; fix: string }[];
     const key = rows.find((row) => row.check === 'Master key');
@@ -407,15 +205,15 @@ describe('doctor.sh — required failures', () => {
    * (nothing reports the key as set).
    */
   it('cascades Postgres-down into the dependent rows', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, {
-        AH_DOCTOR_HELPER_CMD: helper.path,
-        AH_PORT_BASE: String(await closedPortBase()),
+      env: greenEnv(box, {
+        AH_DOCTOR_HELPER_CMD: helper,
+        AH_PORT_BASE: String(closedPortBase()),
       }),
     });
     expect(result.status).toBe(1);
@@ -435,17 +233,13 @@ describe('doctor.sh — required failures', () => {
    * Pending migrations report the `pnpm db:migrate` fix.
    */
   it('reports pending migrations with pnpm db:migrate', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({
-      log: sandbox.log,
-      docker: greenDocker(),
-      pnpm: greenPnpm({ migrateStatusExitCode: 1 }),
-    });
+    const box = await sandbox();
+    const shimDir = greenShims(box, greenDocker(), greenPnpm({ migrateStatusExitCode: 1 }));
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
     });
     expect(result.status).toBe(1);
     const rows = JSON.parse(result.stdout) as { check: string; status: string; fix: string }[];
@@ -467,15 +261,15 @@ describe('doctor.sh master key validation', () => {
    * 0. A required dependency that fails must fail a required row.
    */
   it('fails the required key row on a malformed key', async () => {
-    const sandbox = await greenSandbox();
-    writeFileSync(sandbox.keyPath, 'not-a-key\n');
-    chmodSync(sandbox.keyPath, 0o600);
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    writeFileSync(box.keyPath, 'not-a-key\n');
+    chmodSync(box.keyPath, 0o600);
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
     });
 
     expect(result.status).toBe(1);
@@ -489,15 +283,15 @@ describe('doctor.sh master key validation', () => {
    * Right length, right characters, wrong count still cannot be loaded.
    */
   it('fails the required key row on a key of the wrong length', async () => {
-    const sandbox = await greenSandbox();
-    writeFileSync(sandbox.keyPath, `${'0'.repeat(63)}\n`);
-    chmodSync(sandbox.keyPath, 0o600);
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    writeFileSync(box.keyPath, `${'0'.repeat(63)}\n`);
+    chmodSync(box.keyPath, 0o600);
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
     });
 
     expect(result.status).toBe(1);
@@ -511,16 +305,16 @@ describe('doctor.sh master key validation', () => {
    * loader rather than the filesystem.
    */
   it('fails the required key row on a symlinked key', async () => {
-    const sandbox = await greenSandbox();
-    const target = `${sandbox.keyPath}.real`;
-    renameSync(sandbox.keyPath, target);
-    symlinkSync(target, sandbox.keyPath);
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const target = `${box.keyPath}.real`;
+    renameSync(box.keyPath, target);
+    symlinkSync(target, box.keyPath);
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
     });
 
     expect(result.status).toBe(1);
@@ -537,14 +331,14 @@ describe('doctor.sh — optional rows never fail the exit code', () => {
    * the OpenAI row is skipped because no key is set.
    */
   it('reports unset secrets as a warning without failing the run', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, {
-        AH_DOCTOR_HELPER_CMD: helper.path,
+      env: greenEnv(box, {
+        AH_DOCTOR_HELPER_CMD: helper,
         AH_SHIM_SECRETS_LINES: 'GITHUB_PAT=set:ab12\nOPENAI_API_KEY=unset',
       }),
     });
@@ -559,7 +353,7 @@ describe('doctor.sh — optional rows never fail the exit code', () => {
     expect(secrets?.status).toBe('⚠');
     expect(secrets?.detail).toBe('GitHub PAT: set (…ab12) · OpenAI key: unset');
     expect(secrets?.fix).toContain('/settings');
-    expect(secrets?.fix).toContain(String(sandbox.portBase));
+    expect(secrets?.fix).toContain(String(box.portBase));
     const openai = rows.find((row) => row.check === 'OpenAI model');
     expect(openai).toEqual({
       check: 'OpenAI model',
@@ -573,13 +367,13 @@ describe('doctor.sh — optional rows never fail the exit code', () => {
    * An OpenAI key that is set and reachable reports the model id, still exit 0.
    */
   it('reports the OpenAI model as reachable when the key is set', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
     });
     expect(result.status).toBe(0);
     const rows = JSON.parse(result.stdout) as { check: string; status: string; detail: string }[];
@@ -595,14 +389,14 @@ describe('doctor.sh — optional rows never fail the exit code', () => {
    * A model-missing outcome from the OpenAI helper is a warning, not a failure.
    */
   it('reports model-missing as a warning', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, {
-        AH_DOCTOR_HELPER_CMD: helper.path,
+      env: greenEnv(box, {
+        AH_DOCTOR_HELPER_CMD: helper,
         AH_SHIM_OPENAI_LINE: 'model-missing gpt-5.6-sol (available: a, b)',
         AH_SHIM_OPENAI_RC: '5',
       }),
@@ -624,14 +418,14 @@ describe('doctor.sh — optional rows never fail the exit code', () => {
    * An auth failure from the OpenAI helper reports the Settings-page fix.
    */
   it('reports an auth failure with the Settings fix', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, {
-        AH_DOCTOR_HELPER_CMD: helper.path,
+      env: greenEnv(box, {
+        AH_DOCTOR_HELPER_CMD: helper,
         AH_SHIM_OPENAI_LINE: 'auth',
         AH_SHIM_OPENAI_RC: '6',
       }),
@@ -656,14 +450,14 @@ describe('doctor.sh — optional rows never fail the exit code', () => {
    * A network failure from the OpenAI helper reports the network/base-URL fix.
    */
   it('reports a network failure with the network fix', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, {
-        AH_DOCTOR_HELPER_CMD: helper.path,
+      env: greenEnv(box, {
+        AH_DOCTOR_HELPER_CMD: helper,
         AH_SHIM_OPENAI_LINE: 'network connection reset',
         AH_SHIM_OPENAI_RC: '7',
       }),
@@ -689,14 +483,14 @@ describe('doctor.sh — optional rows never fail the exit code', () => {
     ['3', 'db-unreachable'],
     ['4', 'master-key-missing'],
   ])('reports the secrets helper exit %s as skipped with %s', async (rc, detail) => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const shimDir = greenShims(box);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, {
-        AH_DOCTOR_HELPER_CMD: helper.path,
+      env: greenEnv(box, {
+        AH_DOCTOR_HELPER_CMD: helper,
         AH_SHIM_SECRETS_RC: rc,
       }),
     });
@@ -716,21 +510,21 @@ describe('doctor.sh on a GNU userland', () => {
    * embedded newlines made `--json` unparseable.
    */
   it('reads the key mode correctly and still emits valid JSON', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const shimDir = greenShims(box);
     writeGnuStatShim(shimDir);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
     });
 
     expect(result.status).toBe(0);
     const rows = JSON.parse(result.stdout) as { check: string; status: string; detail: string }[];
     const key = rows.find((row) => row.check === 'Master key');
     expect(key?.status).toBe('✓');
-    expect(key?.detail).toBe(`${sandbox.keyPath} (mode 600)`);
+    expect(key?.detail).toBe(`${box.keyPath} (mode 600)`);
   });
 
   /**
@@ -738,14 +532,14 @@ describe('doctor.sh on a GNU userland', () => {
    * the mode, not about accepting whatever it reads.
    */
   it('still refuses a group-readable key', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const shimDir = greenShims(box);
     writeGnuStatShim(shimDir, '644');
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
     });
 
     expect(result.status).toBe(1);
@@ -756,149 +550,17 @@ describe('doctor.sh on a GNU userland', () => {
   });
 });
 
-describe('doctor.sh service probes', () => {
-  /**
-   * The defect these rows were rebuilt for: the check was a bare TCP connect, so ANY listener on
-   * the port read as healthy — an unrelated container bound to the database port reported a
-   * working Postgres. The listener in this sandbox is exactly that: a socket that accepts and
-   * answers nothing. The row now follows the probe's verdict, so it fails, and it says why.
-   */
-  it('fails the Postgres row when the listener does not answer SELECT 1', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
-    const helper = helperShim(shimDir);
-    const result = spawnScript(scriptPath, {
-      shimDir,
-      args: ['--json'],
-      env: greenEnv(sandbox, {
-        AH_DOCTOR_HELPER_CMD: helper.path,
-        AH_SHIM_PROBE_LINES: 'POSTGRES=no-select-1\nREDIS=ok',
-      }),
-    });
-    expect(result.status).toBe(1);
-    const rows = JSON.parse(result.stdout) as {
-      check: string;
-      status: string;
-      detail: string;
-      fix: string;
-    }[];
-    const postgres = rows.find((row) => row.check === 'Postgres');
-    expect(postgres?.status).toBe('✗');
-    expect(postgres?.detail).toContain('listener is not agent_hangar_default');
-    expect(postgres?.detail).toContain('no-select-1');
-    expect(postgres?.fix).toContain(String(sandbox.portBase + 1));
-    expect(rows.find((row) => row.check === 'Redis')?.status).toBe('✓');
-    expect(rows.find((row) => row.check === 'Migrations')?.detail).toBe('postgres down');
-  });
-
-  /**
-   * The same for the cache: a socket that never replies to `PING` is not a Redis.
-   */
-  it('fails the Redis row when the listener does not answer PING', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
-    const helper = helperShim(shimDir);
-    const result = spawnScript(scriptPath, {
-      shimDir,
-      args: ['--json'],
-      env: greenEnv(sandbox, {
-        AH_DOCTOR_HELPER_CMD: helper.path,
-        AH_SHIM_PROBE_LINES: 'POSTGRES=ok\nREDIS=no-pong',
-      }),
-    });
-    expect(result.status).toBe(1);
-    const rows = JSON.parse(result.stdout) as { check: string; status: string; detail: string }[];
-    const redis = rows.find((row) => row.check === 'Redis');
-    expect(redis?.status).toBe('✗');
-    expect(redis?.detail).toContain('did not answer PING');
-    expect(rows.find((row) => row.check === 'Postgres')?.status).toBe('✓');
-  });
-
-  /**
-   * A healthy row says what it established, not merely that a port was open.
-   */
-  it('names the answer each healthy service gave', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
-    const helper = helperShim(shimDir);
-    const result = spawnScript(scriptPath, {
-      shimDir,
-      args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
-    });
-    expect(result.status).toBe(0);
-    const rows = JSON.parse(result.stdout) as { check: string; detail: string }[];
-    expect(rows.find((row) => row.check === 'Postgres')?.detail).toContain(
-      'agent_hangar_default answered SELECT 1',
-    );
-    expect(rows.find((row) => row.check === 'Redis')?.detail).toContain('answered PING with PONG');
-  });
-
-  /**
-   * A probe that cannot run at all is a different problem from an unhealthy service, and is
-   * reported as such rather than being quietly rendered as either verdict.
-   */
-  it('reports a probe that could not run instead of guessing a verdict', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
-    const helper = helperShim(shimDir);
-    const result = spawnScript(scriptPath, {
-      shimDir,
-      args: ['--json'],
-      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path, AH_SHIM_PROBE_RC: '9' }),
-    });
-    expect(result.status).toBe(1);
-    const rows = JSON.parse(result.stdout) as { check: string; status: string; detail: string }[];
-    for (const name of ['Postgres', 'Redis']) {
-      const row = rows.find((entry) => entry.check === name);
-      expect(row?.status).toBe('✗');
-      expect(row?.detail).toContain('probe-unavailable');
-    }
-  });
-
-  /**
-   * With neither port held there is nothing to interrogate, so the probe process is not started
-   * at all and both rows report the plain "nothing listening" cause with the `pnpm infra:up` fix.
-   */
-  it('skips the probe entirely when nothing is listening', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
-    const helper = writeExtraShim(
-      shimDir,
-      'logging-helper.sh',
-      [
-        'log="${AH_SHIM_LOG:?AH_SHIM_LOG is not set}"',
-        'printf \'%s\\n\' "helper $1" >> "$log"',
-        helperBody(),
-      ].join('\n'),
-    );
-    const result = spawnScript(scriptPath, {
-      shimDir,
-      args: ['--json'],
-      env: greenEnv(sandbox, {
-        AH_DOCTOR_HELPER_CMD: helper,
-        AH_PORT_BASE: String(await closedPortBase()),
-      }),
-    });
-    expect(result.status).toBe(1);
-    const rows = JSON.parse(result.stdout) as { check: string; detail: string; fix: string }[];
-    expect(rows.find((row) => row.check === 'Postgres')?.detail).toContain('nothing listening');
-    expect(rows.find((row) => row.check === 'Redis')?.fix).toBe('pnpm infra:up');
-    expect(readShimLog(sandbox.log).some((line) => line.includes('service-probes'))).toBe(false);
-  });
-});
-
 describe('doctor.sh usage', () => {
   /**
    * An unrecognised flag exits 2 with a usage line.
    */
   it('rejects an unknown flag', async () => {
-    const sandbox = await greenSandbox();
-    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const box = await sandbox();
+    const shimDir = greenShims(box);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--nope'],
-      env: greenEnv(sandbox),
+      env: greenEnv(box),
     });
     expect(result.status).toBe(2);
     expect(result.stderr).toContain('usage');
