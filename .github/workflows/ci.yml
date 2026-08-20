@@ -21,10 +21,22 @@ env:
   # Local compose Postgres credentials (not a secret: loopback-only service in CI and on laptops).
   COMPOSE_DB_CREDENTIALS: 'ah:ah'
 
+# Every job below declares `timeout-minutes`. Without one a hung job holds a runner for the
+# platform default of six hours, so a deadlocked test or a stalled download costs a working day
+# instead of failing fast.
+#
+# The values are ceilings for a hang, not budgets. Each is derived from the slowest completed run
+# of that job over the last forty runs of this workflow — lint 2:00, typecheck 1:16, unit 8:18,
+# integration 2:45, e2e 3:21, build 2:39, secret-scan 0:33 — and then rounded well above it, so a
+# runner having a bad day still finishes. `e2e` keeps the same headroom as `integration` although
+# it is short today: no specs are committed yet, so it currently skips the browser install and the
+# suite itself, and both arrive the moment the first spec lands. Raise a value when the job
+# legitimately grows; never trim one back to the last measurement.
 jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -48,6 +60,7 @@ jobs:
   typecheck:
     name: typecheck
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:
@@ -65,6 +78,7 @@ jobs:
   unit:
     name: unit
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
         with:
@@ -97,6 +111,7 @@ jobs:
   integration:
     name: integration
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:18-alpine
@@ -157,6 +172,7 @@ jobs:
   e2e:
     name: e2e
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     services:
       postgres:
         image: postgres:18-alpine
@@ -255,6 +271,7 @@ jobs:
   build:
     name: build
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
         with:
@@ -279,6 +296,7 @@ jobs:
   secret-scan:
     name: secret-scan
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
         with:

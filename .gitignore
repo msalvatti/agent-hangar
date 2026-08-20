@@ -17,6 +17,11 @@ test-results/
 # Generated code
 packages/core/src/persistence/generated/
 
+# Live recordings of the OpenAI Responses stream (`pnpm --filter @agent-hangar/core
+# fixtures:record`). They carry whatever the API returned for a real key and are meant to be
+# diffed against the committed synthetic fixtures and then deleted — never committed.
+packages/core/fixtures/openai/recorded-*.ndjson
+
 # Local environment and secrets (never commit; `.env.example` documents the keys)
 .env
 .env.*

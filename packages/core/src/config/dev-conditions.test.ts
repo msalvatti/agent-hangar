@@ -1,11 +1,23 @@
 /**
  * Contract test between the package exports and the scripts that run from source.
  *
- * Layer: integration (reads the workspace manifests; no I/O beyond the file system).
+ * Layer: integration (reads the workspace manifests and resolves the package's own entry points;
+ * no I/O beyond the file system).
  * Goal: `@agent-hangar/core` resolves to its build output by default and to its TypeScript source
  * only under the `development` condition. Node does not enable that condition on its own, so a dev
  * process that forgets to ask for it dies with ERR_MODULE_NOT_FOUND on `dist/index.js` in a tree
  * that has never been built — which is every fresh clone and every fresh worktree.
+ *
+ * Manifest text alone cannot show that: a declaration test passes just as happily in a tree with
+ * no build output as in one holding a stale build, because it never asks the resolver anything.
+ * The last test here therefore imports `@agent-hangar/core/testing` for real — the subpath every
+ * suite in this repository loads its doubles from — and compares module identity with the source
+ * barrel, which only holds when the source is what the resolver reached. That one import is
+ * written inside the test rather than at the top of the file on purpose: `import-x/order` groups a
+ * static import by what the resolver finds for it, and this package referring to itself by name
+ * resolves only once `dist` exists, so the required order flipped between a built tree and a fresh
+ * checkout. An import in the body belongs to no group, and the specifier is still a literal, so the
+ * runner resolves it exactly as it resolves every other consumer's.
  * Mocks: none.
  */
 import { readFileSync } from 'node:fs';
@@ -13,6 +25,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
+
+import * as sourceTestingBarrel from '../testing/index.ts';
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..', '..');
 
@@ -104,5 +118,28 @@ describe('resolution of @agent-hangar/core from source', () => {
     );
     expect(spawnAt, 'run.sh must spawn its children with concurrently').toBeGreaterThan(0);
     expect(exportAt, 'the export must precede the children').toBeLessThan(spawnAt);
+  });
+
+  /**
+   * What the resolver did, rather than what the manifest says it should do. Every suite in this
+   * repository loads its doubles from `@agent-hangar/core/testing`, and the runner resolves that
+   * subpath through the package `exports` — so if the `development` condition ever stopped winning
+   * there, the suites would quietly start running against whatever `dist` happened to hold.
+   *
+   * The subpath and the source barrel are imported into the same module graph and compared by
+   * identity. Resolving through `development` loads one module, so the two namespaces are the same
+   * object. Resolving through `default` loads a second copy out of `dist`: a different object when
+   * a build is present, stale or not, and an unresolvable specifier when it is not — which is why
+   * this fails in a tree with a stale build instead of passing like a text check would. Identity
+   * is asserted rather than the exported names, because two copies of one barrel export the same
+   * names and comparing those would pass either way.
+   */
+  it('resolves the testing subpath to the source barrel and not to a copy in dist', async () => {
+    const packageTestingEntry = await import('@agent-hangar/core/testing');
+    expect(
+      Object.keys(sourceTestingBarrel).length,
+      'the barrel must export something',
+    ).toBeGreaterThan(0);
+    expect(packageTestingEntry).toBe(sourceTestingBarrel);
   });
 });
