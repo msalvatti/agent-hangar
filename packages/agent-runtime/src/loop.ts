@@ -148,6 +148,44 @@ function emitDetached(deps: LoopDeps, event: AgentEvent): void {
   void deps.emit(event).catch(() => undefined);
 }
 
+/** An output hook that remembers whether the tool ever used it. */
+interface TrackedOutput {
+  /**
+   * Streams one piece of a tool's output.
+   *
+   * @param stream - Which of the tool's streams produced the text.
+   * @param text - The piece of output.
+   */
+  onOutput: (stream: 'stdout' | 'stderr', text: string) => void;
+  /**
+   * Reports whether anything was streamed.
+   *
+   * @returns `true` once {@link TrackedOutput.onOutput} has been called at least once.
+   */
+  streamed(): boolean;
+}
+
+/**
+ * Wraps the loop's output hook so the caller can tell a tool that streamed from one that did not.
+ *
+ * Only the caller of the hook can know: a result says what the tool produced, never how it was
+ * delivered, and the tools that go through here differ on exactly that.
+ *
+ * @param deps - Loop dependencies.
+ * @param callId - Identifier the output belongs to.
+ * @returns The hook, and a reader for whether it was ever called.
+ */
+function trackOutput(deps: LoopDeps, callId: string): TrackedOutput {
+  let seen = false;
+  return {
+    onOutput: (stream, text) => {
+      seen = true;
+      emitDetached(deps, { type: 'tool.output.delta', callId, stream, text });
+    },
+    streamed: () => seen,
+  };
+}
+
 /**
  * Emits the event that ends the turn.
  *
@@ -326,13 +364,26 @@ async function runToolCall(
     });
   }
   const startedAt = clock.now();
+  const output = trackOutput(deps, call.callId);
   const result = await deps.tools.execute(call.name, args, {
     signal: deps.signal,
-    onOutput: (stream, text) => {
-      emitDetached(deps, { type: 'tool.output.delta', callId: call.callId, stream, text });
-    },
+    onOutput: output.onOutput,
   });
   if (known.success) {
+    // A tool that produces its result in one piece never calls the hook above — only `run_shell`
+    // streams, and even it stays silent when it fails before the child is spawned. `tool.result`
+    // carries the size and the status but not the text, so without this the call's output would
+    // reach the model and nothing else: the transcript row would read "No output" beside a byte
+    // count, and the summary a later turn is shown would be empty. A failure message goes to
+    // stderr because that is what it is — the reason the call did not work.
+    if (!output.streamed() && result.output !== '') {
+      emitDetached(deps, {
+        type: 'tool.output.delta',
+        callId: call.callId,
+        stream: result.status === 'SUCCEEDED' ? 'stdout' : 'stderr',
+        text: result.output,
+      });
+    }
     await deps.emit({
       type: 'tool.result',
       callId: call.callId,
