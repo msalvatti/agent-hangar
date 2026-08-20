@@ -155,6 +155,25 @@ describe('createShimDir', () => {
   );
 
   /**
+   * `docker ps` fails when availability is `down`, mirroring a daemon that cannot be reached, and
+   * an explicit `psExitCode` wins over that availability-derived default.
+   */
+  it.each([
+    [{ availability: 'down' } as const, 1],
+    [{ psExitCode: 7 } as const, 7],
+    [{ availability: 'down', psExitCode: 0 } as const, 0],
+  ])('docker ps exits with the configured code (%j)', (docker, expectedStatus) => {
+    const { log } = freshLogPath();
+    const shimDir = createShimDir({ log, docker });
+    const result = spawnScript(join(shimDir, 'docker'), {
+      shimDir,
+      env: { AH_SHIM_LOG: log },
+      args: ['ps', '-aq', '--filter', 'label=ah.instance=x'],
+    });
+    expect(result.status).toBe(expectedStatus);
+  });
+
+  /**
    * `docker rm -f <ids>` echoes each id and exits 0.
    */
   it('docker rm -f prints each removed id', () => {

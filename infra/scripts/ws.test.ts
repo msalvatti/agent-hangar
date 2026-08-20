@@ -87,6 +87,25 @@ describe('ws.sh reap', () => {
   });
 
   /**
+   * An id carrying whitespace stays a single argument to `docker rm`. The lookup output is split
+   * on line boundaries into an array, so the number of arguments comes from the number of lines
+   * and never from the whitespace inside one of them.
+   */
+  it('passes an id containing whitespace as one argument', () => {
+    const { log } = sandbox();
+    const shimDir = createShimDir({ log, docker: { psIds: ['abc 123'] } });
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['reap'],
+      env: { HOME: '/tmp', AH_INSTANCE: 'feat-x', AH_SHIM_LOG: log },
+    });
+    expect(result.status).toBe(0);
+    const args = readShimLog(log).filter((line) => line.startsWith('rm-arg '));
+    expect(args).toEqual(['rm-arg abc 123']);
+    expect(result.stdout).toContain('Removed 1 workspace container(s)');
+  });
+
+  /**
    * `reap` with nothing to remove reports zero and never calls `docker rm`.
    */
   it('reports zero and skips rm -f when nothing matches', () => {

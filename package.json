@@ -12,7 +12,7 @@
   "scripts": {
     "dev": "bash infra/scripts/run.sh",
     "build": "pnpm -r --if-present build",
-    "start": "pnpm -r --if-present --parallel start",
+    "start": "bash infra/scripts/run.sh --production",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
@@ -27,7 +27,7 @@
     "infra:up": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && docker compose -f infra/docker-compose.yml up -d --wait'",
     "infra:down": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && docker compose -f infra/docker-compose.yml down'",
     "infra:reset": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && docker compose -f infra/docker-compose.yml down -v'",
-    "infra:image": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && docker build -t \"$WORKSPACE_IMAGE\" infra/workspace'",
+    "infra:image": "bash infra/scripts/image.sh",
     "db:generate": "pnpm --filter @agent-hangar/core db:generate",
     "db:migrate": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && pnpm --filter @agent-hangar/core db:migrate'",
     "db:studio": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && pnpm --filter @agent-hangar/core exec prisma studio'",

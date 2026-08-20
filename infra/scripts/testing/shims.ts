@@ -42,6 +42,8 @@ export interface DockerShimOptions {
   image?: WorkspaceImagePresence;
   /** Exit code of `docker compose … up`/`down …`. Default `0`, or `1` when `availability` is `'down'`. */
   composeExitCode?: number;
+  /** Exit code of `docker ps …`. Default `0`, or `1` when `availability` is `'down'`. */
+  psExitCode?: number;
   /** Container names printed by `docker ps --format …` (workspace-container listing). */
   psNames?: string[];
   /** Container ids printed by `docker ps -aq --filter …` (workspace-container id lookups). */
@@ -127,6 +129,7 @@ function dockerShimBody(options: DockerShimOptions): string {
   const availability = options.availability ?? 'up';
   const infoExit = availability === 'up' ? 0 : 1;
   const composeExit = options.composeExitCode ?? (availability === 'up' ? 0 : 1);
+  const psExit = options.psExitCode ?? (availability === 'up' ? 0 : 1);
   const imageExit = (options.image ?? 'missing') === 'present' ? 0 : 1;
   const psIdsLines = (options.psIds ?? []).map((id) => `printf '%s\\n' '${shellSingleQuote(id)}'`);
   const psNameLines = (options.psNames ?? []).map(
@@ -146,6 +149,10 @@ case "\${1:-}" in
     exit ${imageExit}
     ;;
   ps)
+    if [ ${psExit} -ne 0 ]; then
+      printf '%s\\n' 'Cannot connect to the Docker daemon' >&2
+      exit ${psExit}
+    fi
     if printf '%s\\n' "$*" | grep -q -- '-aq'; then
       ${psIdsLines.length > 0 ? psIdsLines.join('\n      ') : ': no ids'}
       exit 0
@@ -160,6 +167,9 @@ case "\${1:-}" in
       case "$id" in
         -*) continue ;;
       esac
+      # One line per argument, so a test can tell "one id containing a space" apart from "two
+      # ids" — a distinction the flat "docker rm -f …" line above cannot carry.
+      printf '%s\\n' "rm-arg $id" >> "$log"
       printf '%s\\n' "$id"
     done
     exit 0
@@ -200,6 +210,11 @@ function pnpmShimBody(options: PnpmShimOptions): string {
   return `
 log="\${AH_SHIM_LOG:?AH_SHIM_LOG is not set}"
 printf '%s\\n' "pnpm $*" >> "$log"
+# Only for the one invocation that stands in for the app processes: a test needs to see the
+# resolution conditions those children would inherit, which the printed command line cannot show.
+if [ "\${1:-}" = 'exec' ] && [ "\${2:-}" = 'concurrently' ]; then
+  printf '%s\\n' "node-options \${NODE_OPTIONS:-}" >> "$log"
+fi
 if [ "\${1:-}" = '-v' ]; then
   printf '%s\\n' '${version}'
   exit 0

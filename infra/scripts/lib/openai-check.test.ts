@@ -53,7 +53,7 @@ async function depsWithStoredKey(
 ): Promise<OpenaiCheckDeps> {
   const repository = createInMemoryRepositories().secrets;
   const keyPath = tempKeyPath();
-  const service = createFileBackedSecretsService(repository, keyPath);
+  const service = await createFileBackedSecretsService(repository, keyPath);
   await service.set('OPENAI_API_KEY', OPENAI_CANARY);
   return {
     env: {},

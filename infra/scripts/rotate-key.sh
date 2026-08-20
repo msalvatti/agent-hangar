@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # rotate-key.sh — generates a new master key, re-encrypts every stored secret under it, then
-# swaps the key file atomically and keeps a timestamped backup of the old one. Failure at any
-# point leaves the current master key unchanged and every stored secret decryptable with it.
+# swaps the key file atomically and keeps a timestamped backup of the old one.
+#
+# Guarantee, stated exactly as it holds: every failure the helper can roll back leaves the current
+# master key unchanged and every stored secret decryptable with it, and the half-written key file
+# is removed. The one failure it cannot roll back is a database that disappears mid-rollback; the
+# helper reports that as exit 4, and this script then KEEPS "<key>.new", because part of the store
+# is sealed under it and deleting it would destroy those credentials.
 #
 # Flags:
 #   --yes      required to actually rotate; without it the plan is printed and nothing runs
@@ -28,10 +33,16 @@ while [ $# -gt 0 ]; do
 done
 
 # run_helper <relative .main.ts path>: sets HELPER_OUTPUT and HELPER_RC.
+#
+# The default prefix is three words and the override is a single executable path, so both are held
+# in an array: expanded as "${cmd[@]}" the word boundaries come from the array, never from
+# splitting a string on whitespace, and a path containing a space still resolves to one command.
 run_helper() {
-  local cmd="${AH_DOCTOR_HELPER_CMD:-pnpm exec tsx}"
-  # shellcheck disable=SC2086
-  if HELPER_OUTPUT=$($cmd "$here/lib/$1" 2>&1); then
+  local cmd=(pnpm exec tsx)
+  if [ -n "${AH_DOCTOR_HELPER_CMD:-}" ]; then
+    cmd=("$AH_DOCTOR_HELPER_CMD")
+  fi
+  if HELPER_OUTPUT=$("${cmd[@]}" "$here/lib/$1" 2>&1); then
     HELPER_RC=0
   else
     HELPER_RC=$?
@@ -79,6 +90,14 @@ if [ "$rc" = "0" ]; then
   chmod 600 "$key"
   echo "Master key rotated. Backup: $key.bak-$ts — it can still decrypt the PREVIOUS ciphertext; delete it once you verified the app (pnpm doctor) and keep it out of backups."
   exit 0
+fi
+
+# Exit 4 is the one outcome that is not an abort: the rollback itself failed, so some rows are
+# sealed under "$key.new" and the rest under "$key". Removing the new key here would make those
+# rows permanently unreadable, so it stays on disk and the operator is told both files matter.
+if [ "$rc" = "4" ]; then
+  echo "Rotation failed during rollback. Part of the store is now sealed under $key.new and the rest under $key: KEEP BOTH files (mode 600, out of backups) — deleting either one destroys the credentials it holds. Re-run with --resume once the database is reachable again." >&2
+  exit "$rc"
 fi
 
 if [ $resume -ne 1 ]; then

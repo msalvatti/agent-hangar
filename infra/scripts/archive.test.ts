@@ -92,6 +92,45 @@ describe('archive.sh', () => {
   });
 
   /**
+   * An id carrying whitespace stays a single argument to `docker rm`: the lookup output is split
+   * on line boundaries into an array, so argument count follows line count, never the whitespace
+   * inside a line.
+   */
+  it('passes an id containing whitespace as one argument', () => {
+    const { envFile, log } = sandbox();
+    const shimDir = createShimDir({ log, docker: { psIds: ['abc 123'] } });
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      env: { HOME: '/tmp', AH_INSTANCE: 'feat-x', AH_ENV_FILE: envFile, AH_SHIM_LOG: log },
+    });
+    expect(result.status).toBe(0);
+    expect(readShimLog(log).filter((line) => line.startsWith('rm-arg '))).toEqual([
+      'rm-arg abc 123',
+    ]);
+    expect(result.stdout).toContain('Removed 1 workspace container(s)');
+  });
+
+  /**
+   * Teardown is best-effort end to end: with Docker unreachable both the compose teardown and the
+   * container lookup fail, yet the run still reaches the env-file step, removes it, and exits 0.
+   * A lookup failure that propagated under `set -e` would abort before that last step, which is
+   * the one step that never needed Docker in the first place.
+   */
+  it('still removes the env file when Docker is unreachable', () => {
+    const { envFile, log } = sandbox();
+    const shimDir = createShimDir({ log, docker: { availability: 'down' } });
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      env: { HOME: '/tmp', AH_INSTANCE: 'feat-x', AH_ENV_FILE: envFile, AH_SHIM_LOG: log },
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('compose teardown failed');
+    expect(result.stderr).toContain('could not list workspace containers');
+    expect(result.stdout).toContain('No workspace containers for instance feat-x');
+    expect(existsSync(envFile)).toBe(false);
+  });
+
+  /**
    * `--dry-run` prints the three planned actions, calls neither `down` nor `rm`, and leaves the
    * env file in place.
    */

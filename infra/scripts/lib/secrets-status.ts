@@ -19,7 +19,7 @@ import type { SecretsService } from '../../../packages/core/src/secrets/types.js
 /** Reported on stderr when the database does not answer. */
 export const DB_UNREACHABLE_MESSAGE = 'error db-unreachable';
 
-/** Reported on stderr when the master key file is missing or unreadable. */
+/** Reported on stderr when the master key file is missing, unreadable, or refused when loaded. */
 export const MASTER_KEY_MISSING_MESSAGE = 'error master-key-missing';
 
 /** Exit code for {@link DB_UNREACHABLE_MESSAGE}. */
@@ -46,11 +46,15 @@ export interface SecretsStatusDeps<TClient = unknown> {
   /** Builds the secret repository over a reachable client. */
   createSecretRepository: (client: TClient) => SecretRepository;
   /**
-   * Builds the secrets service over the repository and the master key at `masterKeyPath`.
+   * Builds the secrets service over the repository and the master key at `masterKeyPath`, loading
+   * that key so an unusable one is reported here rather than surfacing later as a healthy row.
    *
-   * @throws when the master key file is missing or unreadable.
+   * @throws when the master key file is missing, unreadable, or rejected when loaded.
    */
-  createSecretsService: (repository: SecretRepository, masterKeyPath: string) => SecretsService;
+  createSecretsService: (
+    repository: SecretRepository,
+    masterKeyPath: string,
+  ) => Promise<SecretsService>;
 }
 
 /**
@@ -84,7 +88,7 @@ export async function secretsStatus<TClient>(
   const repository = deps.createSecretRepository(client);
   let service: SecretsService;
   try {
-    service = deps.createSecretsService(repository, config.MASTER_KEY_PATH);
+    service = await deps.createSecretsService(repository, config.MASTER_KEY_PATH);
   } catch {
     return { lines: [MASTER_KEY_MISSING_MESSAGE], exitCode: EXIT_MASTER_KEY_MISSING };
   }

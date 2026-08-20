@@ -55,8 +55,11 @@ export interface OpenaiCheckDeps<TClient = unknown> {
   assertDatabaseReachable: (client: TClient) => Promise<void>;
   /** Builds the secret repository over a reachable client. */
   createSecretRepository: (client: TClient) => SecretRepository;
-  /** Builds the secrets service over the repository and the master key. */
-  createSecretsService: (repository: SecretRepository, masterKeyPath: string) => SecretsService;
+  /** Builds the secrets service over the repository and the master key, loading that key. */
+  createSecretsService: (
+    repository: SecretRepository,
+    masterKeyPath: string,
+  ) => Promise<SecretsService>;
   /** Builds the model provider the revealed key is checked against. */
   createProvider: (apiKey: string, baseURL: string | undefined) => ModelLister;
 }
@@ -72,7 +75,7 @@ async function revealApiKey<TClient>(deps: OpenaiCheckDeps<TClient>): Promise<st
   const client = deps.createDatabaseClient(config.DATABASE_URL);
   await deps.assertDatabaseReachable(client);
   const repository = deps.createSecretRepository(client);
-  const service = deps.createSecretsService(repository, config.MASTER_KEY_PATH);
+  const service = await deps.createSecretsService(repository, config.MASTER_KEY_PATH);
   return service.reveal('OPENAI_API_KEY');
 }
 

@@ -46,12 +46,23 @@ if ! docker compose -f "$root/infra/docker-compose.yml" down -v --remove-orphans
 fi
 
 echo "2/3 Reaping workspace containers of instance $AH_INSTANCE"
-ids="$(docker ps -aq --filter "label=ah.instance=$AH_INSTANCE")"
-if [ -n "$ids" ]; then
-  # shellcheck disable=SC2086
-  docker rm -f $ids >/dev/null
-  count=$(printf '%s\n' "$ids" | wc -l | tr -d ' ')
-  echo "Removed $count workspace container(s) of instance $AH_INSTANCE"
+# The lookup is allowed to fail: an unreachable Docker daemon must not stop the teardown before
+# the env file is dealt with, which is the one step that never needs Docker at all.
+if ! listing="$(docker ps -aq --filter "label=ah.instance=$AH_INSTANCE")"; then
+  listing=""
+  echo "warning: could not list workspace containers (Docker may be unreachable)" >&2
+fi
+# One id per line, collected into an array: expanded as "${ids[@]}" every id stays a separate
+# argument to `docker rm`, so an id carrying whitespace can never split into two.
+ids=()
+while IFS= read -r id; do
+  if [ -n "$id" ]; then
+    ids+=("$id")
+  fi
+done <<< "$listing"
+if [ ${#ids[@]} -gt 0 ]; then
+  docker rm -f "${ids[@]}" >/dev/null
+  echo "Removed ${#ids[@]} workspace container(s) of instance $AH_INSTANCE"
 else
   echo "No workspace containers for instance $AH_INSTANCE"
 fi

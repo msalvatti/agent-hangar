@@ -4,8 +4,10 @@
  * Layer: unit (spawns bash with PATH shims; no real Postgres, no real `tsx`).
  * Goal: without `--yes` nothing runs and the plan is printed; a successful rotation swaps the key
  * file atomically and keeps a mode-600 backup; a failed rotation leaves the current key
- * untouched and removes the half-written `.new`; a pre-existing `.new` is refused unless
- * `--resume`, in which case `openssl` is not called again.
+ * untouched and removes the half-written `.new`; the one failure that cannot be rolled back
+ * (helper exit 4) keeps `.new` instead, because part of the store is sealed under it; a
+ * pre-existing `.new` is refused unless `--resume`, in which case `openssl` is not called again;
+ * and a helper override whose path contains a space still resolves to a single command.
  * Mocks: `openssl` via `infra/scripts/testing/shims.ts`; a bespoke `AH_DOCTOR_HELPER_CMD` shim
  * standing in for the secrets-status/rotate-key helpers.
  */
@@ -166,6 +168,61 @@ describe('rotate-key.sh --yes failure', () => {
     expect(result.stderr).toContain('Rotation aborted');
     expect(readFileSync(box.keyPath, 'utf8')).toBe(`${'a'.repeat(64)}\n`);
     expect(existsSync(`${box.keyPath}.new`)).toBe(false);
+  });
+
+  /**
+   * Helper exit 4 means the rollback itself failed: part of the store is sealed under `.new`.
+   * Deleting that file would destroy those credentials, so it is kept and the operator is told
+   * both key files now matter.
+   */
+  it('keeps .new and names both files when the rollback itself failed', () => {
+    const box = sandbox();
+    const shimDir = createShimDir({ log: box.log });
+    const helper = helperShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--yes'],
+      env: {
+        HOME: box.dir,
+        MASTER_KEY_PATH: box.keyPath,
+        AH_SHIM_LOG: box.log,
+        AH_DOCTOR_HELPER_CMD: helper,
+        AH_SHIM_ROTATE_RC: '4',
+      },
+    });
+    expect(result.status).toBe(4);
+    expect(result.stderr).toContain('KEEP BOTH');
+    expect(result.stderr).not.toContain('Rotation aborted');
+    expect(readFileSync(box.keyPath, 'utf8')).toBe(`${'a'.repeat(64)}\n`);
+    expect(existsSync(`${box.keyPath}.new`)).toBe(true);
+  });
+
+  /**
+   * The helper override is one executable path, not a word list: a path containing a space must
+   * still resolve to a single command instead of being split into a missing executable and a
+   * stray argument.
+   */
+  it('runs a helper override whose path contains a space', () => {
+    const box = sandbox();
+    const shimDir = createShimDir({ log: box.log });
+    const helper = writeExtraShim(
+      shimDir,
+      'helper with space.sh',
+      ['printf \'%s\\n\' "rotated 1 secret(s)"', 'exit 0'].join('\n'),
+    );
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--yes'],
+      env: {
+        HOME: box.dir,
+        MASTER_KEY_PATH: box.keyPath,
+        AH_SHIM_LOG: box.log,
+        AH_DOCTOR_HELPER_CMD: helper,
+      },
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('rotated 1 secret(s)');
+    expect(result.stdout).toContain('Master key rotated');
   });
 });
 

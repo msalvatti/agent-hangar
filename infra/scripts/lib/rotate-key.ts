@@ -1,29 +1,62 @@
 /**
- * Master-key rotation: re-encrypts every stored secret under a new key with `keyVersion + 1`.
+ * Master-key rotation: re-encrypts every stored secret under a new key.
  *
  * Layer: service (composition, host-side diagnostic).
+ *
+ * The key *version* stamped on an envelope is deliberately left where it is. Every ordinary reader
+ * builds its master key provider without a version, so it decrypts at {@link MASTER_KEY_VERSION};
+ * `decryptSecret` refuses any envelope whose `keyVersion` differs. Advancing the version on
+ * rotation would therefore make every rotated credential unreadable by the web app and the worker
+ * — the key material is what rotation replaces, and AES-GCM authentication is what tells the two
+ * keys apart.
  *
  * Two phases, so a failure never leaves a secret unreadable. Phase 1 is read-only: every set
  * secret is revealed under the current key into memory; any decryption failure aborts before a
  * single byte is written. Phase 2 writes each revealed value under the new key; if a write fails
- * partway through, every secret already rotated is written back under the OLD key
- * (compensation), so the current master key stays fully authoritative for every row regardless of
- * where the failure happened. The revealed plaintexts live only in a local `Map`, cleared in a
- * `finally` so they never outlive this function.
+ * partway through, every secret already rotated is written back under the OLD key (compensation),
+ * so the current master key stays fully authoritative for every row.
+ *
+ * Compensation can itself fail — the database can disappear mid-rollback. That case is reported
+ * separately ({@link EXIT_COMPENSATION_INCOMPLETE}) instead of being presented as a clean abort:
+ * the store is then split across the two keys, and the only recoverable state is one where BOTH
+ * key files are kept. The caller must not delete the new key file on that outcome. Which key opens
+ * which row needs no bookkeeping: an envelope authenticates under exactly one of the two keys and
+ * fails closed under the other.
+ *
+ * The revealed plaintexts live only in a local `Map`, cleared in a `finally` so they never outlive
+ * this function.
  */
 import type { SecretRepository } from '../../../packages/core/src/persistence/ports.js';
 import { MASTER_KEY_VERSION } from '../../../packages/core/src/secrets/master-key.js';
 import { SECRET_KEYS } from '../../../packages/core/src/secrets/types.js';
 import type { SecretKey, SecretsService } from '../../../packages/core/src/secrets/types.js';
 
+/** Exit code when nothing was written because a secret could not be decrypted. */
+export const EXIT_ABORTED = 2;
+
+/** Exit code when a partial rotation was fully rolled back onto the current key. */
+export const EXIT_ROLLED_BACK = 3;
+
+/** Exit code when rollback failed and the store is split across the old and the new key. */
+export const EXIT_COMPENSATION_INCOMPLETE = 4;
+
 /** Outcome of {@link rotateSecrets}. */
 export interface RotateSecretsResult {
   /** Number of secrets successfully re-encrypted under the new key. */
   rotated: number;
-  /** Key version stamped on the rotated secrets (`current + 1`). */
+  /** Key version stamped on the stored envelopes; rotation never changes it. */
   keyVersion: number;
-  /** `0` success, `2` aborted before any write, `3` rolled back after a partial write. */
-  exitCode: 0 | 2 | 3;
+  /**
+   * `0` success, {@link EXIT_ABORTED} aborted before any write,
+   * {@link EXIT_ROLLED_BACK} rolled back after a partial write, and
+   * {@link EXIT_COMPENSATION_INCOMPLETE} rollback itself failed — both keys are needed.
+   */
+  exitCode: 0 | typeof EXIT_ABORTED | typeof EXIT_ROLLED_BACK | typeof EXIT_COMPENSATION_INCOMPLETE;
+  /**
+   * Secrets left sealed under the new key by a failed rollback, in storage order. Empty on every
+   * other outcome; non-empty only together with {@link EXIT_COMPENSATION_INCOMPLETE}.
+   */
+  strandedKeys: SecretKey[];
 }
 
 /** Collaborators of {@link rotateSecrets}. */
@@ -59,16 +92,38 @@ async function currentKeyVersion(repository: SecretRepository): Promise<number> 
 }
 
 /**
+ * Writes every already-rotated secret back under the old key.
+ *
+ * @param serviceA - Service bound to the current (old) master key.
+ * @param rotated - Secrets written under the new key, with their plaintext.
+ * @returns The keys that could not be written back and are still sealed under the new key.
+ */
+async function compensate(
+  serviceA: SecretsService,
+  rotated: readonly [SecretKey, string][],
+): Promise<SecretKey[]> {
+  const stranded: SecretKey[] = [];
+  for (const [key, plaintext] of rotated) {
+    try {
+      await serviceA.set(key, plaintext);
+    } catch {
+      stranded.push(key);
+    }
+  }
+  return stranded;
+}
+
+/**
  * Re-encrypts every stored secret from the current master key to a new one.
  *
  * @param deps - Injected collaborators.
- * @returns How many secrets moved, the resulting key version, and the outcome code.
+ * @returns How many secrets moved, the stored key version, the outcome code, and any secret left
+ * under the new key by a failed rollback.
  */
 export async function rotateSecrets(deps: RotateSecretsDeps): Promise<RotateSecretsResult> {
-  const current = await currentKeyVersion(deps.repos.secrets);
-  const nextVersion = current + 1;
-  const serviceA = deps.createService(deps.oldKey, current);
-  const serviceB = deps.createService(deps.newKey, nextVersion);
+  const version = await currentKeyVersion(deps.repos.secrets);
+  const serviceA = deps.createService(deps.oldKey, version);
+  const serviceB = deps.createService(deps.newKey, version);
 
   const revealed = new Map<SecretKey, string>();
 
@@ -83,7 +138,7 @@ export async function rotateSecrets(deps: RotateSecretsDeps): Promise<RotateSecr
         }
       } catch {
         deps.log(`abort: cannot decrypt ${key} with the current master key`);
-        return { rotated: 0, keyVersion: current, exitCode: 2 };
+        return { rotated: 0, keyVersion: version, exitCode: EXIT_ABORTED, strandedKeys: [] };
       }
     }
 
@@ -94,15 +149,24 @@ export async function rotateSecrets(deps: RotateSecretsDeps): Promise<RotateSecr
         rotated.push([key, plaintext]);
       }
     } catch {
-      for (const [key, plaintext] of rotated) {
-        await serviceA.set(key, plaintext);
+      const strandedKeys = await compensate(serviceA, rotated);
+      if (strandedKeys.length > 0) {
+        deps.log(
+          `rollback incomplete: ${strandedKeys.join(', ')} still sealed under the NEW key — keep both key files`,
+        );
+        return {
+          rotated: 0,
+          keyVersion: version,
+          exitCode: EXIT_COMPENSATION_INCOMPLETE,
+          strandedKeys,
+        };
       }
       deps.log(`rolled back ${rotated.length} secret(s)`);
-      return { rotated: 0, keyVersion: current, exitCode: 3 };
+      return { rotated: 0, keyVersion: version, exitCode: EXIT_ROLLED_BACK, strandedKeys: [] };
     }
 
-    deps.log(`rotated ${revealed.size} secret(s) to keyVersion ${nextVersion}`);
-    return { rotated: revealed.size, keyVersion: nextVersion, exitCode: 0 };
+    deps.log(`rotated ${revealed.size} secret(s) under keyVersion ${version}`);
+    return { rotated: revealed.size, keyVersion: version, exitCode: 0, strandedKeys: [] };
   } finally {
     revealed.clear();
   }

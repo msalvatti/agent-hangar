@@ -134,6 +134,40 @@ function greenPnpm(overrides: PnpmShimOptions = {}): PnpmShimOptions {
 
 describe('doctor.sh — all green', () => {
   /**
+   * The helper command override is one executable path, not a word list: a path containing a
+   * space must still resolve to a single command. Splitting it on whitespace would look for an
+   * executable that does not exist and turn the Secrets row into a helper error.
+   */
+  it('runs a helper override whose path contains a space', async () => {
+    const sandbox = await greenSandbox();
+    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const helperPath = writeExtraShim(
+      shimDir,
+      'helper with space.sh',
+      [
+        'case "$1" in',
+        '  *secrets-status*)',
+        '    printf \'%s\\n\' "$AH_SHIM_SECRETS_LINES"',
+        '    exit 0',
+        '    ;;',
+        '  *openai-check*)',
+        '    printf \'%s\\n\' "$AH_SHIM_OPENAI_LINE"',
+        '    exit 0',
+        '    ;;',
+        'esac',
+        'exit 9',
+      ].join('\n'),
+    );
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helperPath }),
+    });
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('GitHub PAT: set (…ab12)');
+    expect(result.stdout).not.toContain('helper error');
+  });
+
+  /**
    * Every required row passes and both optional rows report success: exit 0.
    */
   it('exits 0 when every check passes', async () => {

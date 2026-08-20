@@ -14,15 +14,20 @@ ws_list() {
 }
 
 ws_reap() {
-  ids="$(docker ps -aq --filter "label=ah.instance=$AH_INSTANCE")"
-  if [ -n "$ids" ]; then
-    # shellcheck disable=SC2086
-    docker rm -f $ids >/dev/null
-    count=$(printf '%s\n' "$ids" | wc -l | tr -d ' ')
-  else
-    count=0
+  local listing id
+  local ids=()
+  listing="$(docker ps -aq --filter "label=ah.instance=$AH_INSTANCE")"
+  # One id per line, collected into an array: expanded as "${ids[@]}" every id stays a separate
+  # argument to `docker rm`, so an id carrying whitespace can never split into two.
+  while IFS= read -r id; do
+    if [ -n "$id" ]; then
+      ids+=("$id")
+    fi
+  done <<< "$listing"
+  if [ ${#ids[@]} -gt 0 ]; then
+    docker rm -f "${ids[@]}" >/dev/null
   fi
-  echo "Removed $count workspace container(s) of instance $AH_INSTANCE"
+  echo "Removed ${#ids[@]} workspace container(s) of instance $AH_INSTANCE"
 }
 
 case "${1:-}" in

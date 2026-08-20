@@ -44,10 +44,16 @@ ah_tcp_open() {
 }
 
 # run_helper <relative .main.ts path>: sets HELPER_OUTPUT and HELPER_RC.
+#
+# The default prefix is three words and the override is a single executable path, so both are held
+# in an array: expanded as "${cmd[@]}" the word boundaries come from the array, never from
+# splitting a string on whitespace, and a path containing a space still resolves to one command.
 run_helper() {
-  local cmd="${AH_DOCTOR_HELPER_CMD:-pnpm exec tsx}"
-  # shellcheck disable=SC2086
-  if HELPER_OUTPUT=$($cmd "$root/infra/scripts/lib/$1" 2>&1); then
+  local cmd=(pnpm exec tsx)
+  if [ -n "${AH_DOCTOR_HELPER_CMD:-}" ]; then
+    cmd=("$AH_DOCTOR_HELPER_CMD")
+  fi
+  if HELPER_OUTPUT=$("${cmd[@]}" "$root/infra/scripts/lib/$1" 2>&1); then
     HELPER_RC=0
   else
     HELPER_RC=$?

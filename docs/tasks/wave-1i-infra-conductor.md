@@ -21,8 +21,8 @@ Everything is keyed by instance (`AH_INSTANCE` / `AH_PORT_BASE`, with `CONDUCTOR
 ## Rules of this lane
 
 1. Owned paths only. The root `package.json` **scripts block** is owned here and nowhere else in Wave 1; do not touch `dependencies`, `devDependencies`, `packageManager` or `engines`. No new dependencies (`concurrently`, `tsx`, `vitest` are already installed by W0).
-2. Bash 3.2 compatible (`#!/usr/bin/env bash`, `set -euo pipefail`; no associative arrays, no `mapfile`, no `${var,,}`); `shellcheck`-clean by inspection (it is not installed — do not add it). All script output in English. Never echo secrets; never write the master key inside the repo; never log `DATABASE_URL` passwords beyond the fixed `ah:ah` dev credentials.
-3. Node helpers under `infra/scripts/lib/*.ts` are run with `pnpm exec tsx <file>` and import `@agent-hangar/core` **by relative path** to `packages/core/src/**` (the `infra/` folder is not a workspace package, so bare specifiers do not resolve there). They are TypeScript-strict, JSDoc'd, English, no `enum`, no suppression comments, 100 % covered by the root `scripts` Vitest project.
+2. Bash 3.2 compatible (`#!/usr/bin/env bash`, `set -euo pipefail`; no associative arrays, no `mapfile`, no `${var,,}`); `shellcheck`-clean by inspection (it is not installed — do not add it), and clean without suppressions: a `# shellcheck disable=` comment is a suppression like any other, so a list of arguments is held in a bash array and expanded as `"${arr[@]}"` rather than relying on word splitting. All script output in English. Never echo secrets; never write the master key inside the repo; never log `DATABASE_URL` passwords beyond the fixed `ah:ah` dev credentials.
+3. Node helpers under `infra/scripts/lib/*.ts` are run with `pnpm exec tsx <file>` and import `@agent-hangar/core` **by relative path** to `packages/core/src/**` (the `infra/` folder is not a workspace package, so bare specifiers do not resolve there). They are TypeScript-strict, JSDoc'd, English, no `enum`, no suppression comments, 100 % covered by the root `scripts` Vitest project. `infra/scripts/tsconfig.json` is a `composite` project referencing `packages/core` and is listed in the root `tsconfig.json` `references`, so `pnpm typecheck` really covers these files — a project no root script builds is a project nothing checks.
 4. Every script honours the same overrides so tests are hermetic: `MASTER_KEY_PATH`, `AH_ENV_FILE` (path of the `.env.local` to read/write; default `<repo>/.env.local` — add this override to `env.sh` if W0 did not, as an additive change) and `PATH` (tests prepend a directory of shim executables `docker`, `pnpm`, `node`, `openssl`, `concurrently` that record their argv to `$AH_SHIM_LOG` and print canned output).
 5. `doctor.sh` exits non-zero if any **required** row is ✗ (node, pnpm, docker, postgres, redis, migrations, image, master key). Secrets and the OpenAI check are **optional** rows (⚠ when missing) and never fail the exit code.
 6. Tests live in `infra/scripts/*.test.ts` and run in the root `vitest.config.ts` `scripts` project (created by W0 Task 0.6); shell behaviour is proven by spawning the scripts with `node:child_process` (`spawnSync`/`execFileSync`) and asserting stdout, exit code and the shim log. Root `scripts` project `coverage.include: ['infra/scripts/lib/**']`, thresholds 100×4.
@@ -46,7 +46,7 @@ Everything is keyed by instance (`AH_INSTANCE` / `AH_PORT_BASE`, with `CONDUCTOR
 | 1I.1 | `run.sh`, `setup.sh` completion, compose finishing, `.env.example` final, root scripts block | ✅ | P0 | M | — |
 | 1I.2 | `archive.sh`, `ws.sh` (`ws:list` / `ws:reap`), `db-prune.sh` | ✅ | P0 | S | 1I.1 |
 | 1I.3 | `doctor.sh` + node helpers (secrets status, OpenAI model check) with snapshot tests | ✅ | P0 | L | 1I.1, W1-A + W1-C + W1-E merged |
-| 1I.4 | `rotate-key.sh` + `lib/rotate-key.ts` (re-encrypt with `keyVersion + 1`, atomic key swap, backup) | ✅ | P1 | M | 1I.3 |
+| 1I.4 | `rotate-key.sh` + `lib/rotate-key.ts` (re-encrypt under new key material at the stored `keyVersion`, atomic key swap, backup) | ✅ | P1 | M | 1I.3 |
 | 1I.5 | `.conductor/settings.toml`, two-instance manual checklist, README "Working with Conductor" draft (appendix) | ✅ | P0 | S | 1I.1, 1I.2 |
 | 1I.6 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 1I.1–1I.5 |
 
@@ -59,7 +59,7 @@ Everything is keyed by instance (`AH_INSTANCE` / `AH_PORT_BASE`, with `CONDUCTOR
 **Description.** Replace the `run.sh` stub with the single entry point used by `pnpm dev` and by Conductor's Run button; make `setup.sh` truly idempotent (safe re-run, `--force` env rewrite, doctor at the end); finish `infra/docker-compose.yml` (project `name` from env, tuned healthchecks); finalise `.env.example`; and write the final root `package.json` scripts block that every later lane relies on.
 
 **Acceptance criteria**
-- [x] `infra/scripts/run.sh`: `eval "$(infra/scripts/env.sh --print)"`, creates `.env.local` if absent, prints `Agent Hangar · instance=<i> · http://localhost:<WEB_PORT>` before launching, then `exec pnpm exec concurrently -n web,worker -c blue,magenta --kill-others-on-fail "pnpm --filter web dev --port <WEB_PORT>" "pnpm --filter worker dev"` with the derived env exported; `--print-only` flag prints the command without running it (used by tests)
+- [x] `infra/scripts/run.sh`: `eval "$(infra/scripts/env.sh --print-effective)"`, creates `.env.local` if absent, prints `Agent Hangar · instance=<i> · http://localhost:<WEB_PORT>` before launching, then `exec pnpm exec concurrently -n web,worker -c blue,magenta --kill-others-on-fail "pnpm --filter web dev --port <WEB_PORT>" "pnpm --filter worker dev"` with the derived env exported; `--production` swaps both children for their `start` scripts and drops the `--conditions=development` export (the build output must be loaded, not the sources), so `pnpm start` gets the same instance ports, database and Redis as `pnpm dev`; `--print-only` prints the command without running it (used by tests); an unknown flag → usage + exit 2
 - [x] `infra/scripts/setup.sh`: re-running on a configured machine performs no destructive action (env not overwritten, key not regenerated, compose `up -d --wait` idempotent, migrations no-op, image rebuild only when `--rebuild-image` or image missing); `--force` rewrites `.env.local`; detects and prints the Docker socket in use; calls `doctor.sh` at the end and propagates its exit code; `--skip-doctor` for CI
 - [x] `infra/docker-compose.yml`: `name: ${COMPOSE_PROJECT_NAME:-agent-hangar-default}`, healthchecks `interval: 2s`, `timeout: 3s`, `retries: 30`, `start_period: 5s`, `restart: unless-stopped`, ports bound to `127.0.0.1`, volumes `pgdata`/`redisdata`
 - [x] `.env.example` lists every variable of spec 05 §3 in that order, with the default, one-line comment, and the header stating that PAT/OpenAI key are entered in Settings, never in env
@@ -104,9 +104,14 @@ DELIVERABLES
    [ -f "${AH_ENV_FILE:-$root/.env.local}" ] || bash "$here/env.sh"
    eval "$(bash "$here/env.sh" --print)"
    echo "Agent Hangar · instance=$AH_INSTANCE · http://localhost:$WEB_PORT"
-   cmd=(pnpm exec concurrently -n web,worker -c blue,magenta --kill-others-on-fail
-        "pnpm --filter web dev --port $WEB_PORT" "pnpm --filter worker dev")
-   if [ "${1:-}" = "--print-only" ]; then printf '%q ' "${cmd[@]}"; echo; exit 0; fi
+   if [ $production -eq 0 ]; then export NODE_OPTIONS="${NODE_OPTIONS:-} --conditions=development"; fi
+   cmd=(pnpm exec concurrently -n web,worker -c blue,magenta --kill-others-on-fail)
+   if [ $production -eq 1 ]; then
+     cmd+=("pnpm --filter web start --port $WEB_PORT" "pnpm --filter worker start")
+   else
+     cmd+=("pnpm --filter web dev --port $WEB_PORT" "pnpm --filter worker dev")
+   fi
+   if [ $print_only -eq 1 ]; then printf '%q ' "${cmd[@]}"; echo; exit 0; fi
    cd "$root" && exec "${cmd[@]}"
    ```
    Export every variable from `env.sh --print` so `next dev` and `tsx watch` inherit `DATABASE_URL`, `REDIS_URL`, `WEB_PORT`, etc. `apps/web` must bind to `WEB_PORT` (the `--port` flag) — do not rely on Next's default 3000.
@@ -125,7 +130,7 @@ DELIVERABLES
    ```json
    "dev": "bash infra/scripts/run.sh",
    "build": "pnpm -r --if-present build",
-   "start": "pnpm -r --if-present --parallel start",
+   "start": "bash infra/scripts/run.sh --production",
    "lint": "eslint .",
    "lint:fix": "eslint . --fix",
    "format": "prettier --write .",
@@ -140,7 +145,7 @@ DELIVERABLES
    "infra:up": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && docker compose -f infra/docker-compose.yml up -d --wait'",
    "infra:down": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && docker compose -f infra/docker-compose.yml down'",
    "infra:reset": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && docker compose -f infra/docker-compose.yml down -v'",
-   "infra:image": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && docker build -t \"$WORKSPACE_IMAGE\" infra/workspace'",
+   "infra:image": "bash infra/scripts/image.sh",
    "db:generate": "pnpm --filter @agent-hangar/core db:generate",
    "db:migrate": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && pnpm --filter @agent-hangar/core db:migrate'",
    "db:studio": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && pnpm --filter @agent-hangar/core exec prisma studio'",
@@ -222,7 +227,7 @@ DELIVERABLES
 1. `infra/scripts/archive.sh`:
    - `eval "$(bash "$here/env.sh" --print)"`; flags `--keep-env`, `--dry-run`; unknown → usage, exit 2.
    - Step 1: `docker compose -f "$root/infra/docker-compose.yml" down -v --remove-orphans` (env exported so `COMPOSE_PROJECT_NAME`, `POSTGRES_DB`, ports resolve). Tolerate "no such project" (compose exits 0 when nothing exists; if it exits non-zero because Docker is down, print the R2 hint and continue to step 2 — archive must be best-effort).
-   - Step 2: `ids="$(docker ps -aq --filter "label=ah.instance=$AH_INSTANCE")"`; if non-empty → `docker rm -f $ids` (word-split intentionally; ids are hex) and print `Removed N workspace container(s) of instance <i>`; else print `No workspace containers for instance <i>`.
+   - Step 2: the lookup is best-effort (`if ! listing="$(docker ps -aq --filter "label=ah.instance=$AH_INSTANCE")"; then listing=""; warn; fi`, so an unreachable daemon does not abort the run before the env-file step); its lines are read into a bash array and passed as `docker rm -f "${ids[@]}"`, never as an unquoted string — argument boundaries must come from the array, not from word splitting. Print `Removed N workspace container(s) of instance <i>`, or `No workspace containers for instance <i>` when the array is empty.
    - Step 3: unless `--keep-env`, `rm -f "$AH_ENV_FILE"` and say so.
    - `--dry-run`: print the three actions with the resolved values and perform none (no `down`, no `rm`).
    - Always exit 0 at the end unless the flag parsing fails. Never touch `~/.agent-hangar` (master key is shared across instances — spec 05 §6 table).
@@ -344,12 +349,12 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1i-infra-condu
 
 **Status:** ✅ Done · **Priority:** P1 · **Size:** M · **Depends on:** 1I.3
 
-**Description.** Provide the master-key rotation path the README promises (spec 04 (d) controls table: "README explains backup/rotation (`keyVersion`)"): generate a new key, re-encrypt every `Secret` row with `keyVersion + 1` using core's `SecretsService`, swap the key file atomically and keep a timestamped backup of the old key. Failure at any point leaves the old key active and the rows decryptable.
+**Description.** Provide the master-key rotation path the README promises (spec 04 (d) controls table: "README explains backup/rotation (`keyVersion`)"): generate a new key, re-encrypt every `Secret` row under it using core's `SecretsService`, swap the key file atomically and keep a timestamped backup of the old key. The stored `keyVersion` stays where it is — every ordinary reader builds its provider without a version and decrypts at `MASTER_KEY_VERSION`, so advancing it would make every rotated credential unreadable. Failure that can be rolled back leaves the old key active and the rows decryptable; the one failure that cannot (a store that becomes unreachable mid-rollback) is reported separately so the new key file is kept rather than deleted.
 
 **Acceptance criteria**
-- [x] `infra/scripts/lib/rotate-key.ts` exports `rotateSecrets(deps)` that: reads current `keyVersion` (max over rows, default 1), builds service A (old key) and service B (new key, `keyVersion + 1`), reveals every set secret into memory first (any `SecretIntegrityError` → abort before writing, exit 2), writes each with B, and on a write failure re-writes the already-rotated keys with A (compensation) and exits 3; prints `rotated N secret(s) to keyVersion V`
+- [x] `infra/scripts/lib/rotate-key.ts` exports `rotateSecrets(deps)` that: reads the stored `keyVersion` (max over rows, default 1), builds service A (old key) and service B (new key) at that same version, reveals every set secret into memory first (any `SecretIntegrityError` → abort before writing, exit 2), writes each with B, and on a write failure re-writes the already-rotated keys with A (compensation) and exits 3; a compensation write that itself fails exits 4 and names the secrets left under the new key; prints `rotated N secret(s) under keyVersion V`
 - [x] `infra/scripts/rotate-key.sh`: `--yes` required (otherwise prints the plan and exits 2); generates `<MASTER_KEY_PATH>.new` (0600, `openssl rand -hex 32`); runs the helper with `AH_NEW_MASTER_KEY_PATH`; on helper success `mv master.key master.key.bak-<YYYYMMDDHHMMSS>` then `mv master.key.new master.key`; on failure removes `.new` and leaves the old key untouched; prints the backup path and the reminder that backups hold a key that can still decrypt the old ciphertext (delete after verifying); refuses to run if `master.key.new` already exists (previous aborted rotation) unless `--resume`
-- [x] Tests: helper unit with in-memory `SecretRepository` + W1-A real service against two temp keys (rotates both secrets; `keyVersion` advanced; `reveal` with the new key returns the original values; old key can no longer decrypt; tamper → abort with no writes; injected write failure on the second secret → first secret restored to the old key, exit 3; no canary in output); shell test with shims (`openssl` shim + helper shim): plan-only without `--yes`, success path renames files and keeps mode 600, failure path keeps old key and removes `.new`, `.new` present → refuse unless `--resume`
+- [x] Tests: helper unit with in-memory `SecretRepository` + W1-A real service against two temp keys (rotates both secrets; `keyVersion` unchanged; a rotated secret is still readable through the ordinary `MasterKeyFile` construction path; `reveal` with the new key returns the original values; old key can no longer decrypt; tamper → abort with no writes; injected write failure on the second secret → first secret restored to the old key, exit 3; a failing compensation → exit 4 naming the stranded secret; no canary in output); shell test with shims (`openssl` shim + helper shim): plan-only without `--yes`, success path renames files and keeps mode 600, failure path keeps old key and removes `.new`, helper exit 4 keeps `.new` and names both files, `.new` present → refuse unless `--resume`, helper override path containing a space still resolves to one command
 
 **Files to create/modify**
 `infra/scripts/rotate-key.sh`, `infra/scripts/lib/rotate-key.ts`, `infra/scripts/lib/rotate-key.main.ts`, `infra/scripts/lib/rotate-key.test.ts`, `infra/scripts/rotate-key.test.ts`.
@@ -375,15 +380,15 @@ REQUIRED READING (only these):
 - infra/scripts/lib/secrets-status.ts (reuse its deps pattern), infra/scripts/testing/shims.ts
 
 TASK
-Implement master-key rotation: a TypeScript helper that re-encrypts every stored secret under a new key with `keyVersion + 1` (abort-safe, with compensation), and a bash wrapper that generates the new key, runs the helper, swaps the key file atomically and keeps a timestamped backup.
+Implement master-key rotation: a TypeScript helper that re-encrypts every stored secret under new key material at the stored `keyVersion` (abort-safe, with compensation), and a bash wrapper that generates the new key, runs the helper, swaps the key file atomically and keeps a timestamped backup.
 
 DELIVERABLES
 
-1. `infra/scripts/lib/rotate-key.ts` — `export async function rotateSecrets(deps: { repos: { secrets: SecretRepository }; createService: (key: Uint8Array | string, keyVersion: number) => SecretsService; oldKey; newKey; log: (line: string) => void }): Promise<{ rotated: number; keyVersion: number; exitCode: 0 | 2 | 3 }>`:
-   - `current = max(keyVersion of rows) ?? 1` (use `repos.secrets.get(key)` for both keys); `A = createService(oldKey, current)`, `B = createService(newKey, current + 1)`.
+1. `infra/scripts/lib/rotate-key.ts` — `export async function rotateSecrets(deps: { repos: { secrets: SecretRepository }; createService: (key: Uint8Array | string, keyVersion: number) => SecretsService; oldKey; newKey; log: (line: string) => void }): Promise<{ rotated: number; keyVersion: number; exitCode: 0 | 2 | 3 | 4; strandedKeys: SecretKey[] }>`:
+   - `current = max(keyVersion of rows) ?? 1` (use `repos.secrets.get(key)` for both keys); `A = createService(oldKey, current)`, `B = createService(newKey, current)` — the same version on both sides, because an ordinary reader decrypts at `MASTER_KEY_VERSION` and would refuse anything stamped higher.
    - Phase 1 (read-only): for each key with `status().set` → `A.reveal(key)`; any throw (integrity/wrong key) → log `abort: cannot decrypt <key> with the current master key` and return exit 2 with no writes.
-   - Phase 2: for each revealed key → `B.set(key, plaintext)`; on throw → for each already-rotated key `A.set(key, plaintext)` (compensation), log `rolled back N secret(s)`, return exit 3.
-   - Success: log `rotated N secret(s) to keyVersion <current+1>`; return 0. Plaintext values live only in a local `Map` that is cleared (`map.clear()`) in a `finally`.
+   - Phase 2: for each revealed key → `B.set(key, plaintext)`; on throw → for each already-rotated key `A.set(key, plaintext)` (compensation), log `rolled back N secret(s)`, return exit 3. A compensation write that itself throws leaves the store split across the two keys: collect those keys, log `rollback incomplete: … keep both key files`, return exit 4.
+   - Success: log `rotated N secret(s) under keyVersion <current>`; return 0. Plaintext values live only in a local `Map` that is cleared (`map.clear()`) in a `finally`.
    - How `createService` is built from core depends on W1-A's API (e.g. `createSecretsService({ repository, masterKey, keyVersion })` or a `MasterKeyFile` loader) — read `packages/core/src/secrets/index.ts` and adapt; the deps signature above is what the tests inject.
 2. `infra/scripts/lib/rotate-key.main.ts` — real wiring: `loadConfig`, prisma + `assertDatabaseReachable`, `createRepositories`, read old key from `MASTER_KEY_PATH`, new key from `AH_NEW_MASTER_KEY_PATH`, call `rotateSecrets`, `process.exit(code)`. ≤ 20 lines; excluded from coverage by the `*.main.ts` pattern.
 3. `infra/scripts/rotate-key.sh`:
@@ -391,12 +396,13 @@ DELIVERABLES
    - Without `--yes`: print the plan (key path, backup name pattern, "re-encrypts N secrets" where N comes from `secrets-status` helper output count of `set:`), exit 2.
    - If `"$key.new"` exists and not `--resume` → print `A previous rotation was interrupted; inspect <key>.new and re-run with --resume, or delete it` and exit 1.
    - Generate: `umask 077; openssl rand -hex 32 > "$key.new"; chmod 600 "$key.new"` (skip when `--resume`).
-   - Run helper: `${AH_DOCTOR_HELPER_CMD:-pnpm exec tsx} "$here/lib/rotate-key.main.ts"` with `AH_NEW_MASTER_KEY_PATH="$key.new"` exported; capture exit code without `set -e` aborting (`if ! …; then rc=$?; fi`).
+   - Run helper: the default prefix `pnpm exec tsx` or, when `AH_DOCTOR_HELPER_CMD` is set, that single executable path — held in a bash array and expanded as `"${cmd[@]}"`, never as an unquoted string — applied to `"$here/lib/rotate-key.main.ts"` with `AH_NEW_MASTER_KEY_PATH="$key.new"` exported; capture exit code without `set -e` aborting (`if ! …; then rc=$?; fi`).
    - Success: `ts="$(date +%Y%m%d%H%M%S)"; mv "$key" "$key.bak-$ts"; mv "$key.new" "$key"; chmod 600 "$key"`; print `Master key rotated. Backup: <key>.bak-<ts> — it can still decrypt the PREVIOUS ciphertext; delete it once you verified the app (pnpm doctor) and keep it out of backups.`
-   - Failure (rc ≠ 0): remove `"$key.new"` (except under `--resume`, where the file is kept so the user can inspect it), print `Rotation aborted (helper exit <rc>); the current master key is unchanged.` and exit `rc`.
+   - Failure (rc = 4, the rollback itself failed): KEEP `"$key.new"` — part of the store is sealed under it and deleting it destroys those credentials — print a message naming both files and exit 4.
+   - Failure (any other rc ≠ 0): remove `"$key.new"` (except under `--resume`, where the file is kept so the user can inspect it), print `Rotation aborted (helper exit <rc>); the current master key is unchanged.` and exit `rc`.
 4. Tests:
-   - `lib/rotate-key.test.ts` (unit, 100 %): in-memory repositories from `@agent-hangar/core/testing`; W1-A real service factory with two random 32-byte keys; store `GITHUB_CANARY`/`OPENAI_CANARY` under key 1 → rotate → `status()` shows same `last4`, `reveal` with B returns the canaries, `reveal` with A now throws `SecretIntegrityError`; `keyVersion` on rows is 2; zero secrets → `rotated 0`; tampered ciphertext (flip a byte via the repository) → exit 2 and rows untouched (compare envelopes byte-wise); a `createService` returning a B whose `set` throws on the second call → exit 3, first key re-encrypted with A and revealable, log contains `rolled back 1`; every log line passes `assertNoCanary`.
-   - `rotate-key.test.ts` (spawned, shims for `openssl` and the helper via `AH_DOCTOR_HELPER_CMD`): no `--yes` → exit 2 and plan text; success path (helper shim exit 0) → `master.key` content equals the generated value, a `master.key.bak-*` exists with the old content, modes 600; failure path (helper shim exit 3) → old key unchanged, no `.new`, exit 3; pre-existing `.new` → exit 1 unless `--resume`, in which case `openssl` is not called and the helper runs.
+   - `lib/rotate-key.test.ts` (unit, 100 %): in-memory repositories from `@agent-hangar/core/testing`; W1-A real service factory with two random 32-byte keys; store `GITHUB_CANARY`/`OPENAI_CANARY` under key 1 → rotate → `status()` shows same `last4`, `reveal` with B returns the canaries, `reveal` with A now throws `SecretIntegrityError`; `keyVersion` on rows is still 1 and a rotated secret is readable through a `MasterKeyFile` provider built with no version at all; zero secrets → `rotated 0`; tampered ciphertext (flip a byte via the repository) → exit 2 and rows untouched (compare envelopes byte-wise); a `createService` returning a B whose `set` throws on the second call → exit 3, first key re-encrypted with A and revealable, log contains `rolled back 1`; every log line passes `assertNoCanary`.
+   - `rotate-key.test.ts` (spawned, shims for `openssl` and the helper via `AH_DOCTOR_HELPER_CMD`): no `--yes` → exit 2 and plan text; success path (helper shim exit 0) → `master.key` content equals the generated value, a `master.key.bak-*` exists with the old content, modes 600; failure path (helper shim exit 3) → old key unchanged, no `.new`, exit 3; helper exit 4 → old key unchanged, `.new` KEPT, message names both files; a helper override path containing a space still resolves to one command; pre-existing `.new` → exit 1 unless `--resume`, in which case `openssl` is not called and the helper runs.
 
 Constraints:
 - Bash 3.2; `umask 077` before writing keys; never print key material or plaintext; English.

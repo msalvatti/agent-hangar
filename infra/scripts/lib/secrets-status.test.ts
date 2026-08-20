@@ -75,7 +75,7 @@ describe('secretsStatus', () => {
   it('reports a stored key masked to its last four characters', async () => {
     const repository = createInMemoryRepositories().secrets;
     const keyPath = tempKeyPath();
-    const service = createFileBackedSecretsService(repository, keyPath);
+    const service = await createFileBackedSecretsService(repository, keyPath);
     await service.set('GITHUB_PAT', GITHUB_CANARY);
 
     const result = await secretsStatus(
@@ -129,16 +129,17 @@ describe('secretsStatus', () => {
   it('falls back to an empty mask when a set entry omits last4', async () => {
     const result = await secretsStatus(
       baseDeps({
-        createSecretsService: () => ({
-          set: () => Promise.reject(new Error('not used')),
-          remove: () => Promise.reject(new Error('not used')),
-          reveal: () => Promise.reject(new Error('not used')),
-          status: () =>
-            Promise.resolve({
-              GITHUB_PAT: { set: true },
-              OPENAI_API_KEY: { set: false },
-            }),
-        }),
+        createSecretsService: () =>
+          Promise.resolve({
+            set: () => Promise.reject(new Error('not used')),
+            remove: () => Promise.reject(new Error('not used')),
+            reveal: () => Promise.reject(new Error('not used')),
+            status: () =>
+              Promise.resolve({
+                GITHUB_PAT: { set: true },
+                OPENAI_API_KEY: { set: false },
+              }),
+          }),
       }),
     );
     expect(result.lines[0]).toBe('GITHUB_PAT=set:');
