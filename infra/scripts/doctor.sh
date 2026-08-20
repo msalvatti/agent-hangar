@@ -68,14 +68,19 @@ run_helper() {
   fi
 }
 
+# The root manifest asks for `"node": ">=24 <25"` and pnpm refuses to install outside that range
+# (`engineStrict` in pnpm-workspace.yaml), so the accepted set is the single major 24. A lower
+# bound alone would report ✓ for a Node 25 on which `pnpm install` stops, and a diagnostic that
+# disagrees with the gate sends the reader looking everywhere except at the version they are
+# running. The literal is kept in step with `engines.node` by environment-contract.test.ts.
 check_node() {
   local version major
   version=$(node -v 2>/dev/null || printf '')
   major=$(printf '%s' "$version" | sed -E 's/^v([0-9]+).*/\1/')
-  if [ -n "$major" ] && [ "$major" -ge 24 ] 2>/dev/null; then
+  if [ -n "$major" ] && [ "$major" -eq 24 ] 2>/dev/null; then
     row_status="✓"; row_fix=""
   else
-    row_status="✗"; row_fix="nvm install 24 && nvm use 24"
+    row_status="✗"; row_fix="Install Node 24 (the project requires >=24 <25): nvm install 24 && nvm use 24"
   fi
   row_detail="${version:-not found}"
 }
@@ -328,7 +333,7 @@ check_secrets_ok() {
   if [ "${github%%:*}" = "set" ] && [ "${openai%%:*}" = "set" ]; then
     row_status="✓"; row_fix=""
   else
-    row_status="⚠"; row_fix="Open http://localhost:$WEB_PORT/settings and save the missing key"
+    row_status="⚠"; row_fix="Open http://127.0.0.1:$WEB_PORT/settings and save the missing key"
   fi
   if [ "${openai%%:*}" = "set" ]; then
     secrets_openai_set=1

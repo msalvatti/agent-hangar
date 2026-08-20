@@ -210,6 +210,15 @@ ah_missing_env_keys() {
 # it — one instance in the shell, another on the ports. And a file missing AH_INSTANCE has nothing
 # left to derive *from* except the shell it was written to overrule. Regenerating the file is the
 # only repair that leaves every reader agreeing, so that is what this asks for.
+#
+# The remedy is spelled `pnpm run setup --force`, with the `run`, and so is the one in
+# ah_assert_agreement below. `setup` is also the name of a built-in pnpm command, and pnpm parses
+# the flags after a built-in name against that command's own option list before it decides to fall
+# back to the package script. `--force` is one of the built-in's options, so it is consumed there
+# and the script is invoked with no arguments at all — the file is preserved, and this same error
+# is printed again. Advice that reproduces the failure it is advising about is worse than none, so
+# every remedy that carries a flag names the script through `run`, which passes the rest through
+# untouched.
 ah_assert_complete() {
   local target="$1" missing key
   missing=$(ah_missing_env_keys "$target")
@@ -222,7 +231,7 @@ ah_assert_complete() {
     echo "  * $key" >&2
   done
   echo "A key that appears only in a comment does not count: the file is read with comments stripped." >&2
-  echo "Regenerate it with \"pnpm setup --force\", or add the missing lines by hand." >&2
+  echo "Regenerate it with \"pnpm run setup --force\", or add the missing lines by hand." >&2
   echo "To see what a complete file looks like: bash infra/scripts/env.sh --print" >&2
   return 4
 }
@@ -270,7 +279,7 @@ ah_assert_agreement() {
   fi
   echo "Refusing to guess which instance this command should act on. Three ways forward:" >&2
   echo "  * unset AH_INSTANCE / AH_PORT_BASE (and CONDUCTOR_WORKSPACE_NAME / CONDUCTOR_PORT) to act on the instance this checkout was set up for;" >&2
-  echo "  * run \"pnpm setup --force\" to move this checkout to the instance the shell names;" >&2
+  echo "  * run \"pnpm run setup --force\" to move this checkout to the instance the shell names;" >&2
   echo "  * point AH_ENV_FILE at the env file of the other instance to act on it from here without disturbing this checkout. An instance that has none yet gets one with:" >&2
   echo "      AH_ENV_FILE=<path> AH_INSTANCE=<name> AH_PORT_BASE=<base> bash infra/scripts/env.sh --force" >&2
   return 3

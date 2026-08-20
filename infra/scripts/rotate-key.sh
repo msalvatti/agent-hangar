@@ -347,5 +347,5 @@ else
 fi
 
 put_key_in_place "$backup"
-echo "Master key rotated. Backup: $backup — it can still decrypt the PREVIOUS ciphertext; delete it once you verified the app (pnpm doctor) and keep it out of backups."
+echo "Master key rotated. Backup: $backup — it can still decrypt the PREVIOUS ciphertext; delete it once you verified the app (pnpm infra:doctor) and keep it out of backups."
 exit 0
