@@ -21,7 +21,18 @@ describe('RepoChip', () => {
     expect(screen.getByText('acme/api · agent/k3x9')).toBeInTheDocument();
   });
 
-  // A URL that is not a plain GitHub repository is shown as-is rather than dropped.
+  /**
+   * Rule this protects: a chat on a forge the operator allowed reads like any other. The chip
+   * refused to shorten a foreign origin, so a self-hosted repository showed its whole URL.
+   */
+  it('shows the short name for a repository on any origin', () => {
+    render(
+      <RepoChip repoUrl="https://git.acme.test/acme/infra" baseBranch="trunk" workBranch={null} />,
+    );
+    expect(screen.getByText('acme/infra · trunk')).toBeInTheDocument();
+  });
+
+  // A URL that names anything other than one repository is shown as-is rather than dropped.
   it('falls back to the raw URL', () => {
     render(<RepoChip repoUrl="https://example.com/x" baseBranch="main" workBranch={null} />);
     expect(screen.getByText('https://example.com/x · main')).toBeInTheDocument();

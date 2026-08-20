@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
+import { repoLabel } from '@/shared/lib/repo-label';
 import { relativeTime } from '@/shared/transcript';
 import { Switch } from '@/shared/ui/switch';
 import { TableCell, TableRow } from '@/shared/ui/table';
@@ -29,10 +30,6 @@ export interface JobRowProps {
   onEdit: (job: JobSummary) => void;
   onRunNow: (job: JobSummary) => void;
   onDelete: (job: JobSummary) => void;
-}
-
-function repoLabel(repoUrl: string): string {
-  return repoUrl.replace(/^https:\/\/github\.com\//, '').replace(/\.git$/, '');
 }
 
 /**

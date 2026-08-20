@@ -5,9 +5,8 @@
  */
 import { Box } from 'lucide-react';
 
+import { repoLabel } from '@/shared/lib/repo-label';
 import { Badge } from '@/shared/ui/badge';
-
-import { parseRepoUrl } from '../lib/repo-url';
 
 /** Props of {@link RepoChip}. */
 export interface RepoChipProps {
@@ -23,13 +22,12 @@ export interface RepoChipProps {
  * @param props - The chat's repository URL and its two branches.
  */
 export function RepoChip({ repoUrl, baseBranch, workBranch }: RepoChipProps) {
-  const parsed = parseRepoUrl(repoUrl);
   const branch = workBranch ?? baseBranch;
   return (
     <Badge variant="outline" title={repoUrl} className="font-mono text-xs font-normal">
       <Box aria-hidden="true" className="size-3.5 shrink-0" />
       <span className="truncate">
-        {parsed?.fullName ?? repoUrl} · {branch}
+        {repoLabel(repoUrl)} · {branch}
       </span>
     </Badge>
   );

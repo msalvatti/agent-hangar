@@ -6,21 +6,24 @@
 import { jobUpsertRequest } from '@agent-hangar/core';
 import type { JobSummary, JobUpsertRequest, RepoSummary } from '@agent-hangar/core';
 
+import { repoLabel } from '@/shared/lib/repo-label';
+
 import { validateCron } from './cron';
 import { listTimezones, systemTimezone } from './timezones';
 
-const GITHUB_REPO_URL_PATTERN = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/;
-
 /**
  * Form field each request field maps back to, so a schema rejection is shown under the input the
- * user can act on rather than under whichever field happens to be last.
+ * user can act on rather than under whichever field happens to be last. Every field the form
+ * renders is spelled out even where the two names coincide: the table is what makes a request key
+ * the form does NOT render fall through to the default instead of naming a field that is not
+ * there.
  */
 const FIELD_BY_REQUEST_KEY: Readonly<Record<string, keyof JobFormValues>> = {
   name: 'name',
   cron: 'cron',
   timezone: 'timezone',
   prompt: 'prompt',
-  repoUrl: 'repo',
+  repoUrl: 'repoUrl',
   branch: 'branch',
   enabled: 'enabled',
 };
@@ -43,7 +46,13 @@ const MAX_PROMPT_LENGTH = 4000;
 /** Editable fields of the job create/edit dialog. */
 export interface JobFormValues {
   name: string;
-  repo: string | null;
+  /**
+   * The repository's own URL, as the listing reported it or as the job stored it, and the single
+   * source of truth for which repository the job runs against. The `owner/name` the dialog shows
+   * is derived from it with {@link repoDisplayName}, never the other way round: rebuilding a URL
+   * from the short form would pin every job to one hard-coded forge.
+   */
+  repoUrl: string | null;
   branch: string | null;
   cron: string;
   timezone: string;
@@ -62,7 +71,7 @@ export type JobFormErrors = Partial<Record<keyof JobFormValues, string>>;
 export function emptyJobForm(): JobFormValues {
   return {
     name: '',
-    repo: null,
+    repoUrl: null,
     branch: null,
     cron: '',
     timezone: systemTimezone(),
@@ -75,10 +84,20 @@ export function emptyJobForm(): JobFormValues {
  * Reduces a repository picked in the palette to the value the form stores.
  *
  * @param repo - The chosen repository, or `null` when the choice was cleared.
- * @returns The `owner/name` the form holds, or `null`.
+ * @returns The repository's own URL, or `null`.
  */
-export function repoFullName(repo: RepoSummary | null): string | null {
-  return repo === null ? null : repo.fullName;
+export function pickedRepoUrl(repo: RepoSummary | null): string | null {
+  return repo === null ? null : repo.url;
+}
+
+/**
+ * The `owner/name` the repository and branch pickers work in, derived from the stored URL.
+ *
+ * @param repoUrl - The form's repository URL, or `null` while none is chosen.
+ * @returns The short form, or `null` when no repository is chosen.
+ */
+export function repoDisplayName(repoUrl: string | null): string | null {
+  return repoUrl === null ? null : repoLabel(repoUrl);
 }
 
 /**
@@ -88,10 +107,9 @@ export function repoFullName(repo: RepoSummary | null): string | null {
  * @returns The form values.
  */
 export function jobToForm(job: JobSummary): JobFormValues {
-  const match = GITHUB_REPO_URL_PATTERN.exec(job.repoUrl);
   return {
     name: job.name,
-    repo: match?.[1] ?? job.repoUrl,
+    repoUrl: job.repoUrl,
     branch: job.branch,
     cron: job.cron,
     timezone: job.timezone,
@@ -104,8 +122,8 @@ export function jobToForm(job: JobSummary): JobFormValues {
  * Maps form values to the API request body.
  *
  * @param values - The form values.
- * @returns The request body (repo/branch coerced to empty strings when unset; schema validation
- *   catches that at the caller).
+ * @returns The request body (repository URL and branch coerced to empty strings when unset;
+ *   schema validation catches that at the caller).
  */
 export function formToRequest(values: JobFormValues): JobUpsertRequest {
   return {
@@ -113,7 +131,7 @@ export function formToRequest(values: JobFormValues): JobUpsertRequest {
     cron: values.cron.trim(),
     timezone: values.timezone,
     prompt: values.prompt,
-    repoUrl: `https://github.com/${values.repo ?? ''}`,
+    repoUrl: values.repoUrl ?? '',
     branch: values.branch ?? '',
     enabled: values.enabled,
   };
@@ -136,8 +154,8 @@ export function validateJobForm(values: JobFormValues): JobFormErrors {
     errors.name = `Name must be ${String(MAX_NAME_LENGTH)} characters or fewer.`;
   }
 
-  if (values.repo === null || values.repo.trim().length === 0) {
-    errors.repo = 'Repository is required.';
+  if (values.repoUrl === null) {
+    errors.repoUrl = 'Repository is required.';
   }
 
   if (values.branch === null || values.branch.trim().length === 0) {

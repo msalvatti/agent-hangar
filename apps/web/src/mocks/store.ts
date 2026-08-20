@@ -48,7 +48,7 @@ export interface MockStore {
 /** Seeded repo full names, also used as {@link REPO_BRANCHES}'s keys so indexing needs no `?? []`
  * fallback (unlike `Record<string, T>`, a literal key union tells `noUncheckedIndexedAccess` the
  * lookup can't miss). */
-type SeededRepoName = 'acme/api' | 'acme/web' | 'acme/docs';
+type SeededRepoName = 'acme/api' | 'acme/web' | 'acme/docs' | 'acme/infra';
 
 const REPO_BRANCHES: Record<SeededRepoName, BranchSummary[]> = {
   'acme/api': [
@@ -58,6 +58,7 @@ const REPO_BRANCHES: Record<SeededRepoName, BranchSummary[]> = {
   ],
   'acme/web': [{ name: 'main', sha: 'd4e5f6a1b2c3', protected: true }],
   'acme/docs': [{ name: 'master', sha: 'e5f6a1b2c3d4', protected: false }],
+  'acme/infra': [{ name: 'trunk', sha: 'f6a1b2c3d4e5', protected: true }],
 };
 
 function seedRepos(): RepoSummary[] {
@@ -83,6 +84,17 @@ function seedRepos(): RepoSummary[] {
       private: false,
       description: null,
     },
+    // Deliberately not on github.com. Which forges are reachable is the operator's
+    // `ALLOWED_REPO_HOSTS`, so the listing may legitimately answer with any origin; a fixture set
+    // that only ever names one forge cannot catch a client that rebuilds the clone URL against a
+    // hard-coded host and quietly discards the URL the API returned.
+    {
+      fullName: 'acme/infra',
+      url: 'https://git.acme.test/acme/infra',
+      defaultBranch: 'trunk',
+      private: true,
+      description: 'Self-hosted infrastructure repository.',
+    },
   ];
 }
 
@@ -91,6 +103,7 @@ function seedBranches(): Record<SeededRepoName, BranchSummary[]> {
     'acme/api': REPO_BRANCHES['acme/api'].map((branch) => ({ ...branch })),
     'acme/web': REPO_BRANCHES['acme/web'].map((branch) => ({ ...branch })),
     'acme/docs': REPO_BRANCHES['acme/docs'].map((branch) => ({ ...branch })),
+    'acme/infra': REPO_BRANCHES['acme/infra'].map((branch) => ({ ...branch })),
   };
 }
 

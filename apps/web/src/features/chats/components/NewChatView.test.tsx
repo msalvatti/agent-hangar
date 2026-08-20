@@ -14,12 +14,21 @@ import { NewChatView } from './NewChatView';
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
 
-/** Chooses `acme/api` in the repository picker and waits for the branch to default. */
-async function chooseRepository(): Promise<void> {
+/**
+ * Chooses a repository in the picker and waits for the branch picker to default itself.
+ *
+ * @param fullName - The repository row to click.
+ * @param defaultBranch - The branch the picker is expected to settle on.
+ */
+async function chooseRepository(fullName: string, defaultBranch: string): Promise<void> {
   await userEvent.click(await screen.findByRole('button', { name: /Choose repository/ }));
-  await userEvent.click(await screen.findByRole('option', { name: /acme\/api/ }));
+  await userEvent.click(
+    await screen.findByRole('option', { name: (name: string) => name.startsWith(fullName) }),
+  );
   await waitFor(() => {
-    expect(screen.getByRole('button', { name: /main/ })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: (name: string) => name.includes(defaultBranch) }),
+    ).toBeInTheDocument();
   });
 }
 
@@ -63,13 +72,43 @@ describe('NewChatView', () => {
   // The whole flow against the mock API: choose a repository, type, send, navigate.
   it('creates a chat and navigates to it', async () => {
     render(<NewChatView />);
-    await chooseRepository();
+    await chooseRepository('acme/api', 'main');
     await userEvent.type(screen.getByLabelText('Prompt'), 'Explain the auth flow.');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     await waitFor(() => {
       expect(push).toHaveBeenCalledTimes(1);
     });
     expect(push.mock.calls[0]?.[0]).toMatch(/^\/chats\/.+/);
+  });
+
+  /**
+   * Rule this protects: the whole path — picker, composer, hook, request — carries the URL the
+   * listing reported. The picker's `owner/name` is a label; rebuilding a clone URL from it against
+   * a hard-coded forge made every repository outside github.com unreachable from the interface,
+   * however the operator configured `ALLOWED_REPO_HOSTS`.
+   */
+  it('posts the URL of a repository on a self-hosted forge, not a rebuilt github URL', async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      http.post('/api/chats', async ({ request }) => {
+        bodies.push(await request.clone().json());
+        return undefined;
+      }),
+    );
+    render(<NewChatView />);
+    await chooseRepository('acme/infra', 'trunk');
+    await userEvent.type(screen.getByLabelText('Prompt'), 'Audit the terraform.');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => {
+      expect(push).toHaveBeenCalledTimes(1);
+    });
+    expect(bodies).toEqual([
+      {
+        repoUrl: 'https://git.acme.test/acme/infra',
+        baseBranch: 'trunk',
+        prompt: 'Audit the terraform.',
+      },
+    ]);
   });
 
   // Without credentials the composer is replaced, so nothing can be sent.
@@ -114,7 +153,7 @@ describe('NewChatView', () => {
       ),
     );
     render(<NewChatView />);
-    await chooseRepository();
+    await chooseRepository('acme/api', 'main');
     await userEvent.type(screen.getByLabelText('Prompt'), 'Explain the auth flow.');
     await userEvent.click(screen.getByRole('button', { name: 'Send' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Could not start the chat');

@@ -24,7 +24,7 @@ afterEach(() => {
 
 const validValues: JobFormValues = {
   name: 'Weekly report',
-  repo: 'acme/api',
+  repoUrl: 'https://github.com/acme/api',
   branch: 'main',
   cron: '0 8 * * 1',
   timezone: 'UTC',
