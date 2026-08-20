@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   FakeSecretsService,
   happyJobScript as happyScript,
+  ImagelessRunner,
   JOB_CRON as CRON,
   jobDelivery as delivery,
   requestSentTo,
@@ -277,6 +278,40 @@ describe('createRunScheduledJobProcessor', () => {
     expect(container.runner.calls).toHaveLength(0);
     expect(container.commands.subscriptions).toBe(0);
     vi.restoreAllMocks();
+  });
+
+  /**
+   * Provisioning is the slow part the user is watching, so it is where Stop is pressed — and the
+   * two ways out of it must agree. A cancellation arriving while the container is built is honoured
+   * by the executor, which seeds its state from the same watch; one arriving while the build fails
+   * must be honoured too, instead of recording the build failure over an answer the cancel route
+   * already gave. The Stop is emitted from the workspace row provisioning opens, which is after the
+   * check made before preparation and before the failure is written.
+   */
+  it('cancels a run stopped while the workspace it never got was failing', async () => {
+    const container = setupProcessorContainer({ runner: (opts) => new ImagelessRunner(opts) });
+    const job = await seedJob(container);
+    const manual = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+    const create = container.repos.workspaces.create.bind(container.repos.workspaces);
+    vi.spyOn(container.repos.workspaces, 'create').mockImplementation(async (input) => {
+      const row = await create(input);
+      expect(container.commands.emitCancel(manual.id)).toBe(true);
+      return row;
+    });
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: manual.id }));
+    vi.restoreAllMocks();
+
+    const closed = await container.repos.jobRuns.get(manual.id);
+    expect(closed?.status).toBe('CANCELLED');
+    expect(closed?.error).toBeNull();
+    expect(container.publisher.eventsFor(manual.id).at(-1)).toEqual({ type: 'turn.cancelled' });
+    expect([...container.repos.store.workspaces.values()][0]?.status).toBe('FAILED');
   });
 
   /**
