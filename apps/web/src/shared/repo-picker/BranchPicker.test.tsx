@@ -147,6 +147,23 @@ describe('BranchPicker', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  /**
+   * An existing repository with no branches has no commits — GitHub creates the first ref on the
+   * first push — and that is a dead end nothing else on screen explains: the branch stays unset,
+   * so Send never enables. "No branches found." on its own reads as a glitch, so the empty state
+   * says what is actually true and what the user would have to do about it.
+   */
+  it('says why a repository with no commits has no branches', async () => {
+    server.use(http.get('/api/repos/branches', () => HttpResponse.json({ branches: [] })));
+    const user = userEvent.setup();
+    render(<BranchPicker repo="acme/api" value={null} onChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /Choose branch/i }));
+
+    const explanation = await screen.findByText(/no commits/i);
+    expect(explanation).toBeInTheDocument();
+    expect(explanation.textContent).toContain('first commit');
+  });
+
   // The loading skeleton shows while the initial fetch is still in flight.
   it('shows a loading skeleton before the list arrives', async () => {
     let resolveBranches: () => void = () => {

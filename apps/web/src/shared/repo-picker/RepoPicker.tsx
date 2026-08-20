@@ -17,6 +17,7 @@ import { useState } from 'react';
 
 import { cn } from '@/shared/lib/cn';
 import { assertPresent, maskSecretShapes } from '@/shared/transcript';
+import { Badge } from '@/shared/ui/badge';
 import { Button } from '@/shared/ui/button';
 import {
   Command,
@@ -29,6 +30,7 @@ import {
 } from '@/shared/ui/command';
 import { Skeleton } from '@/shared/ui/skeleton';
 
+import { REPO_LIST_SCOPE_NOTE, repoReadiness } from './readiness';
 import { getRecentRepos, pushRecentRepo } from './recent';
 import { useRepos } from './useRepos';
 
@@ -42,7 +44,18 @@ export interface RepoPickerProps {
   className?: string;
 }
 
-/** A repo row: name, muted default branch, and a check mark when selected. */
+/**
+ * A repo row: name, a badge when the agent could not push here, muted default branch, and a check
+ * mark when selected.
+ *
+ * Only the rows that would disappoint carry a badge, and none of them is hidden or disabled.
+ * Filtering read-only repositories out would silently break the configuration this product tells
+ * people to use when they only want questions answered — a read-only token — and a badge on every
+ * row would be read as decoration within a screenful. So the badge marks exactly the rows where a
+ * push would fail, and says why in the same breath.
+ *
+ * @param props - The repository, whether it is the chosen one, and the select handler.
+ */
 function RepoRow({
   repo,
   selected,
@@ -52,9 +65,18 @@ function RepoRow({
   selected: boolean;
   onSelect: () => void;
 }) {
+  const readiness = repoReadiness({ access: repo.access });
   return (
     <CommandItem value={repo.fullName} onSelect={onSelect}>
       <span className="flex-1 truncate">{repo.fullName}</span>
+      {readiness.level === 'limited' && (
+        <Badge variant="outline" className="shrink-0">
+          <span>{readiness.label}</span>
+          {/* The reason travels with the badge rather than in a tooltip: a palette row is not
+              hovered before it is chosen with the keyboard, and a tooltip is not read out. */}
+          <span className="sr-only"> — {readiness.reason}</span>
+        </Badge>
+      )}
       <span className="text-muted-foreground shrink-0 text-xs">{repo.defaultBranch}</span>
       {selected && <Check aria-hidden="true" className="size-4 shrink-0" />}
     </CommandItem>
@@ -152,7 +174,9 @@ export function RepoPicker({
               </div>
             )}
             {status === 'success' && repos.length === 0 && (
-              <CommandEmpty>No repositories match.</CommandEmpty>
+              <CommandEmpty>
+                {query.trim() === '' ? 'No repositories to show.' : 'No repositories match.'}
+              </CommandEmpty>
             )}
             {status === 'success' && recentRepos.length > 0 && (
               <CommandGroup heading="Recent">
@@ -183,6 +207,13 @@ export function RepoPicker({
               </CommandGroup>
             )}
           </CommandList>
+          {status === 'success' && (
+            // Shown whether or not the list is empty. "Where is my repository?" is asked just as
+            // often about a list of forty as about a list of none, and the answer is the same one.
+            <p className="text-muted-foreground border-border border-t px-3 py-2 text-xs">
+              {REPO_LIST_SCOPE_NOTE}
+            </p>
+          )}
         </Command>
       </CommandDialog>
     </>

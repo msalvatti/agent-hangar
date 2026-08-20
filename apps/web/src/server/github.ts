@@ -38,9 +38,19 @@ import { ApiHttpError, GithubApiError, ValidationError } from './errors';
 export interface RepoSummary {
   fullName: string;
   url: string;
+  /**
+   * The repository's configured default branch name.
+   *
+   * A name, not a promise that the ref exists: a repository with no commits reports `main` here
+   * just like any other, because GitHub stores the setting from the moment the repository is
+   * created and only creates the ref on the first push. Nothing may treat a present
+   * `defaultBranch` as evidence that the repository can be cloned or worked in.
+   */
   defaultBranch: string;
   private: boolean;
   description: string | null;
+  /** What the token may do here, or absent when the upstream did not report it. */
+  access?: { canPush: boolean; archived: boolean };
 }
 
 /** One branch of a repository. */
@@ -113,7 +123,17 @@ function isRepoSlug(repo: string): boolean {
   );
 }
 
-/** The repository fields this client reads, as GitHub reports them. */
+/**
+ * The repository fields this client reads, as GitHub reports them.
+ *
+ * `permissions` and `archived` are the two optional members, and the optionality is deliberate
+ * rather than defensive. GitHub documents both as required on the repository schema behind
+ * `/user/repos`, but as optional on the minimal-repository schema several sibling listings return,
+ * and `GITHUB_API_BASE_URL` is configurable — a GitHub Enterprise deployment or the local forge
+ * the end-to-end suite serves may answer without them. Requiring them would turn "this forge says
+ * less about permissions" into a failed listing and an empty picker; see {@link toAccess} for what
+ * their absence means instead.
+ */
 const githubRepoPage = z.array(
   z.object({
     full_name: z.string().min(1),
@@ -121,8 +141,33 @@ const githubRepoPage = z.array(
     default_branch: z.string().min(1),
     private: z.boolean(),
     description: z.string().nullable(),
+    permissions: z.object({ push: z.boolean().optional() }).optional(),
+    archived: z.boolean().optional(),
   }),
 );
+
+/** One repository as {@link githubRepoPage} parses it. */
+type GithubRepo = z.infer<typeof githubRepoPage>[number];
+
+/**
+ * Reads what the token may do with one repository out of the upstream's answer.
+ *
+ * An upstream that does not say whether the token may push is reported as saying nothing —
+ * `undefined` — and never as saying "yes". The picker renders that silence as no claim at all, so
+ * the one thing this must never do is invent a permissive default: a fabricated `canPush: true`
+ * would put a "the agent can push here" reading on a repository nobody has vouched for, which is
+ * the exact failure this field exists to prevent.
+ *
+ * `archived` is the one field with a default, because GitHub documents `false` as its default and
+ * a forge with no notion of archiving has nothing else to mean.
+ *
+ * @param repo - One parsed repository from the listing.
+ * @returns The access, or `undefined` when the upstream reported no push permission either way.
+ */
+function toAccess(repo: GithubRepo): RepoSummary['access'] {
+  const canPush = repo.permissions?.push;
+  return canPush === undefined ? undefined : { canPush, archived: repo.archived ?? false };
+}
 
 /** The branch fields this client reads, as GitHub reports them. */
 const githubBranchPage = z.array(
@@ -151,13 +196,20 @@ export function createGithubClient(deps: GithubClientDeps): GithubClient {
       const needle = query.trim().toLowerCase();
       return repos
         .filter((repo) => repo.full_name.toLowerCase().includes(needle))
-        .map((repo) => ({
-          fullName: repo.full_name,
-          url: repo.html_url,
-          defaultBranch: repo.default_branch,
-          private: repo.private,
-          description: repo.description,
-        }));
+        .map((repo) => {
+          const access = toAccess(repo);
+          return {
+            fullName: repo.full_name,
+            url: repo.html_url,
+            defaultBranch: repo.default_branch,
+            private: repo.private,
+            description: repo.description,
+            // Spread rather than assigned: under `exactOptionalPropertyTypes` an explicit
+            // `access: undefined` is a different type from an absent one, and absent is what
+            // "the upstream did not say" means here.
+            ...(access === undefined ? {} : { access }),
+          };
+        });
     },
 
     async listBranches(repo: string): Promise<BranchSummary[]> {

@@ -427,3 +427,87 @@ describe('failures', () => {
     );
   });
 });
+
+describe('repository access', () => {
+  /**
+   * Telling a repository the agent could push to from one it could only read is the whole point of
+   * the picker's badge, so the two fields that decide it are parsed rather than discarded — and
+   * the result still satisfies the API contract the route hands the listing straight to.
+   */
+  it('maps permissions and the archived flag onto the contract', async () => {
+    const { deps } = harness(() =>
+      jsonResponse([
+        { ...GITHUB_REPO, permissions: { push: true, pull: true }, archived: false },
+        {
+          ...GITHUB_REPO,
+          full_name: 'acme/legacy',
+          permissions: { push: false, pull: true },
+          archived: true,
+        },
+      ]),
+    );
+
+    const repos = await createGithubClient(deps).listRepos('');
+
+    expect(repos.map((repo) => repo.access)).toEqual([
+      { canPush: true, archived: false },
+      { canPush: false, archived: true },
+    ]);
+    expect(repos.every((repo) => repoSummary.safeParse(repo).success)).toBe(true);
+  });
+
+  /**
+   * `permissions` is required on the repository schema GitHub documents for `/user/repos` but
+   * optional on the minimal-repository schema sibling listings return, and the API base URL is
+   * configurable — so a forge that says nothing must be reported as having said nothing. The
+   * listing still succeeds, and the one thing that must never happen is a fabricated `canPush`.
+   */
+  it.each([
+    ['no permissions object at all', {}],
+    ['a permissions object without push', { permissions: { pull: true } }],
+  ])('reports an unstated push permission as unknown, not as writable (%s)', async (_l, extra) => {
+    const { deps } = harness(() =>
+      jsonResponse([
+        { ...GITHUB_REPO, permissions: { push: true } },
+        { ...GITHUB_REPO, full_name: 'acme/silent', ...extra },
+      ]),
+    );
+
+    const repos = await createGithubClient(deps).listRepos('');
+
+    // The stated one is answered, so the silent one's `undefined` is the absence of a claim rather
+    // than a client that reads no permissions at all.
+    expect(repos[0]?.access).toEqual({ canPush: true, archived: false });
+    expect(repos[1]?.access).toBeUndefined();
+    expect(Object.hasOwn(repos[1] ?? {}, 'access')).toBe(false);
+  });
+
+  /**
+   * `archived` is the one field with a default: GitHub documents `false` for it, and a forge with
+   * no notion of archiving has nothing else to mean. A stated push permission is therefore enough
+   * to answer both halves.
+   */
+  it('treats an unreported archived flag as not archived', async () => {
+    const { deps } = harness(() => jsonResponse([{ ...GITHUB_REPO, permissions: { push: true } }]));
+
+    const repos = await createGithubClient(deps).listRepos('');
+
+    expect(repos[0]?.access).toEqual({ canPush: true, archived: false });
+  });
+
+  /**
+   * Guard for the field that reads as proof and is not: GitHub reports the configured default
+   * branch name from the moment a repository is created and only creates the ref on the first
+   * push, so a repository with no commits is indistinguishable here from one with a hundred.
+   * Nothing may infer from this field that a repository can be cloned.
+   */
+  it('reports a default branch name without vouching for the ref', async () => {
+    const { deps } = harness(() =>
+      jsonResponse([{ ...GITHUB_REPO, permissions: { push: true }, default_branch: 'main' }]),
+    );
+
+    const repos = await createGithubClient(deps).listRepos('');
+
+    expect(repos[0]?.defaultBranch).toBe('main');
+  });
+});

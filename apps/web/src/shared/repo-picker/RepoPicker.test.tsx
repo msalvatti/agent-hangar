@@ -1,7 +1,9 @@
 /**
  * Tests for the repository command-palette picker: opening, listing from the mock API, filtering,
- * the recent group, selection, loading/empty/error states, disabled, and aria attributes.
+ * the recent group, selection, loading/empty/error states, disabled, aria attributes, and what a
+ * row says about what the token can actually do with it.
  */
+import type { RepoSummary } from '@agent-hangar/core';
 import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
@@ -9,12 +11,56 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { server } from '@/mocks/server';
 
+import { REPO_LIST_SCOPE_NOTE } from './readiness';
 import { pushRecentRepo } from './recent';
 import { RepoPicker } from './RepoPicker';
 
 afterEach(() => {
   localStorage.clear();
 });
+
+/**
+ * Builds one repository, writable unless told otherwise.
+ *
+ * @param fullName - The repository's `owner/name`.
+ * @param access - What the token may do with it; omitted means the forge did not say.
+ * @returns The repository, shaped exactly like the contract.
+ */
+function repo(fullName: string, access?: RepoSummary['access']): RepoSummary {
+  return {
+    fullName,
+    url: `https://github.com/${fullName}`,
+    defaultBranch: 'main',
+    private: false,
+    description: null,
+    ...(access === undefined ? {} : { access }),
+  };
+}
+
+/**
+ * Answers `GET /api/repos` with exactly these repositories, whatever the query.
+ *
+ * @param repos - The listing to serve.
+ */
+function serveRepos(repos: RepoSummary[]): void {
+  server.use(http.get('/api/repos', () => HttpResponse.json({ repos })));
+}
+
+/**
+ * Finds the palette row for one repository.
+ *
+ * @param fullName - The repository's `owner/name`.
+ * @returns The row element.
+ */
+function rowFor(fullName: string): HTMLElement {
+  const row = [...document.querySelectorAll('[data-slot="command-item"]')].find((item) =>
+    item.textContent.includes(fullName),
+  );
+  if (row === undefined) {
+    throw new Error(`Expected a command-item row for ${fullName}`);
+  }
+  return row as HTMLElement;
+}
 
 describe('RepoPicker', () => {
   // The trigger shows the placeholder until a value is chosen, then the chosen repo's name.
@@ -176,5 +222,124 @@ describe('RepoPicker', () => {
     await user.click(screen.getByLabelText('Search repositories'));
     await user.keyboard('{Enter}');
     expect(onChange).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('RepoPicker access', () => {
+  /**
+   * A repository the token can only read is offered — that is a supported way to run this product,
+   * and hiding it would break it silently — but the row says so before it is chosen, instead of a
+   * whole turn ending at a rejected push. The sentence is in the row, not a tooltip, so it reaches
+   * a screen reader too.
+   */
+  it('marks a read-only repository and says what it means', async () => {
+    serveRepos([repo('acme/readable', { canPush: false, archived: false })]);
+    const user = userEvent.setup();
+    render(<RepoPicker value={null} onChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+    await screen.findByText('acme/readable');
+
+    const row = rowFor('acme/readable');
+    expect(within(row).getByText('Read-only')).toBeInTheDocument();
+    expect(row.textContent).toContain('cannot push a branch back');
+  });
+
+  /**
+   * An archived repository is readable and unpushable by anybody, so it is marked for the same
+   * reason as a read-only one — and named separately, because unarchiving is the fix and a wider
+   * token is not.
+   */
+  it('marks an archived repository even when the token could push', async () => {
+    serveRepos([repo('acme/legacy', { canPush: true, archived: true })]);
+    const user = userEvent.setup();
+    render(<RepoPicker value={null} onChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+    await screen.findByText('acme/legacy');
+
+    const row = rowFor('acme/legacy');
+    expect(within(row).getByText('Archived')).toBeInTheDocument();
+    expect(within(row).queryByText('Read-only')).toBeNull();
+  });
+
+  /**
+   * The badge means something only if most rows do not carry one: a repository the token may push
+   * to gets none, and neither does one whose forge said nothing about permissions — the absence of
+   * a claim is not a claim.
+   */
+  it('leaves a writable repository and an unreported one unmarked', async () => {
+    serveRepos([repo('acme/writable', { canPush: true, archived: false }), repo('acme/unknown')]);
+    const user = userEvent.setup();
+    render(<RepoPicker value={null} onChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+    await screen.findByText('acme/writable');
+
+    for (const name of ['acme/writable', 'acme/unknown']) {
+      const row = rowFor(name);
+      expect(within(row).queryByText('Read-only')).toBeNull();
+      expect(within(row).queryByText('Archived')).toBeNull();
+      expect(row.textContent).toBe(`${name}main`);
+    }
+  });
+
+  /**
+   * A read-only repository is still selectable. Disabling the row would take away the one thing it
+   * is good for — having the agent read it and answer questions — which is exactly the setup this
+   * product's own guidance describes.
+   */
+  it('still lets a read-only repository be chosen', async () => {
+    serveRepos([repo('acme/readable', { canPush: false, archived: false })]);
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    render(<RepoPicker value={null} onChange={onChange} />);
+    await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+    await user.click(await screen.findByText('acme/readable'));
+
+    expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ fullName: 'acme/readable' }));
+  });
+
+  /**
+   * A token that reaches nothing produces a bare "no results" today, which tells somebody who is
+   * certain the repository exists nothing they can act on. The empty state names the token as what
+   * decides the list, and it does not claim a search found no match when nothing was searched for.
+   */
+  it('explains an empty list instead of reporting no match', async () => {
+    serveRepos([]);
+    const user = userEvent.setup();
+    render(<RepoPicker value={null} onChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+
+    expect(await screen.findByText('No repositories to show.')).toBeInTheDocument();
+    expect(screen.queryByText('No repositories match.')).toBeNull();
+    expect(screen.getByText(REPO_LIST_SCOPE_NOTE)).toBeInTheDocument();
+  });
+
+  /**
+   * The same explanation follows a search that matched nothing: "no match" and "the token cannot
+   * see it" look identical from the outside, so the thing that decides the list is named either
+   * way.
+   */
+  it('explains the scope of the list when a search matches nothing', async () => {
+    const user = userEvent.setup();
+    render(<RepoPicker value={null} onChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+    await user.type(screen.getByLabelText('Search repositories'), 'nonexistent-repo-name');
+
+    await waitFor(() => {
+      expect(screen.getByText('No repositories match.')).toBeInTheDocument();
+    });
+    expect(screen.getByText(REPO_LIST_SCOPE_NOTE)).toBeInTheDocument();
+  });
+
+  /**
+   * "Where is my repository?" is asked just as often of a list with results as of an empty one, so
+   * the explanation is not an empty-state consolation prize.
+   */
+  it('explains the scope of the list even when it has results', async () => {
+    const user = userEvent.setup();
+    render(<RepoPicker value={null} onChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+    await screen.findByText('acme/api');
+
+    expect(screen.getByText(REPO_LIST_SCOPE_NOTE)).toBeInTheDocument();
   });
 });
