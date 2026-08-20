@@ -3,14 +3,14 @@
 | | |
 |---|---|
 | **Lane** | W0 (single agent, sequential — critical path) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 Merged |
 | **Progress** | 8/8 tasks |
 | **Branch** | `feat/w0-foundation` |
 | **Owned paths** | everything (only lane in this wave) |
 | **Depends on** | — |
 | **Unblocks** | every Wave 1 lane (W1-A … W1-I) |
 | **Source** | [docs/plan.md §5](../plan.md) · spec [01](../spec/01-overview.md) [02](../spec/02-data-model.md) [03](../spec/03-interfaces.md) [05](../spec/05-local-dev.md) [06](../spec/06-testing.md) [10](../spec/10-ui-design.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 

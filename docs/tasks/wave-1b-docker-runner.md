@@ -3,14 +3,14 @@
 | | |
 |---|---|
 | **Lane** | W1-B 🐳 (Docker-integration lane — the orchestrator runs at most one 🐳 lane at a time) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 Merged |
 | **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1b-docker-runner` |
 | **Owned paths** | `packages/core/src/runner/docker/**`, `infra/workspace/**` (Dockerfile, askpass.sh, .dockerignore, README.md, .gitignore) · additive-only edits allowed in `packages/core/vitest.config.ts` (`coverage.include`) and `packages/core/package.json` (`exports` subpath `./runner/docker`) |
 | **Depends on** | W0 merged to `main` |
 | **Unblocks** | W2-B 🐳 (worker processors) · coordination with W1-D (Dockerfile `COPY` lines applied by the orchestrator when merging the later of W1-B / W1-D) |
 | **Source** | [docs/plan.md §6 W1-B](../plan.md) · spec [03 §1](../spec/03-interfaces.md) [05 §5](../spec/05-local-dev.md) [06 §2–3](../spec/06-testing.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 

@@ -3,14 +3,14 @@
 | | |
 |---|---|
 | **Lane** | W1-A (Wave 1, parallel with W1-B … W1-I) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 Merged |
 | **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1a-secrets-redaction` |
 | **Owned paths** | `packages/core/src/secrets/**` (except the frozen `types.ts`), `packages/core/src/redaction/**`, `packages/core/src/logging/**` — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./secrets/index.js`, `./redaction/index.js`, `./logging/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
 | **Unblocks** | W2-A (settings routes, status-only secrets), W2-B (worker reveal + inject + redact) |
 | **Source** | [docs/plan.md §6 W1-A](../plan.md) · spec [03 §6](../spec/03-interfaces.md) · [04 (d)](../spec/04-flows.md) · [06 §2](../spec/06-testing.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 

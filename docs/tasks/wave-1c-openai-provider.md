@@ -3,14 +3,14 @@
 | | |
 |---|---|
 | **Lane** | W1-C (Wave 1, parallel with W1-A … W1-I) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 Merged |
 | **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1c-openai-provider` |
 | **Owned paths** | `packages/core/src/model/openai/**`, `packages/core/src/model/registry.ts` (+ `registry.test.ts`), `packages/core/fixtures/openai/**`, `packages/core/scripts/record-fixtures.ts` — plus three append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only), (the root `packages/core/src/index.ts` is frozen — it already re-exports `./model/index.js`; this lane adds exports only to `packages/core/src/model/index.ts` and `model/openai/index.ts`), `packages/core/package.json` (one script `fixtures:record` only) |
 | **Depends on** | W0 merged to `main` |
 | **Unblocks** | W2-B (worker builds the provider via the registry; agent-runtime W1-D consumes the same provider through core) |
 | **Source** | [docs/plan.md §6 W1-C](../plan.md) · spec [03 §2](../spec/03-interfaces.md) · [06 §2](../spec/06-testing.md) (model/openai) · [06 §7](../spec/06-testing.md) (recorded fixtures) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 

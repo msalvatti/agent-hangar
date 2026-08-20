@@ -3,14 +3,14 @@
 | | |
 |---|---|
 | **Lane** | W1-F (Wave 1, parallel with W1-A … W1-I) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 Merged |
 | **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1f-scheduling-workspace` |
 | **Owned paths** | `packages/core/src/scheduling/**` (except the frozen `types.ts`), `packages/core/src/workspace/**` (except the frozen `types.ts`), `packages/core/src/restore/**`, `packages/core/src/queues/queues.ts`, `packages/core/src/queues/schedulers.ts` (+ their `*.test.ts` / `*.integration.test.ts`; `queues/contracts.ts` is frozen) — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./scheduling/index.js`, `./workspace/index.js`, `./restore/index.js`, `./queues/index.js`; this lane adds exports only to those folder barrels) |
 | **Depends on** | W0 merged to `main` |
 | **Unblocks** | W2-A (cron validation + `nextRunAt` + scheduler upsert in `/api/jobs`, `describeCron` for the UI preview), W2-B (ensure-workspace decision, state machine, restore/turn-request builder, queue/worker factories, reconcile on boot) |
 | **Source** | [docs/plan.md §6 W1-F](../plan.md) · spec [02 §4](../spec/02-data-model.md) · [03 §5](../spec/03-interfaces.md) · [04 (b)(c)](../spec/04-flows.md) · [06 §2–3](../spec/06-testing.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 
