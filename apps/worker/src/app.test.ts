@@ -282,7 +282,9 @@ describe('startWorker', () => {
     ).rejects.toThrow('docker.sock');
 
     expect((await test.repos.workspaces.get(ids.stopping))?.status).toBe('DESTROYED');
-    expect((await test.repos.workspaces.get(ids.busyJob))?.status).toBe('DESTROYED');
+    // A `BUSY` row is not this pass's to take, whatever the daemon is doing: its owner is executing
+    // inside that container, and a sibling worker's hold is invisible from here.
+    expect((await test.repos.workspaces.get(ids.busyJob))?.status).toBe('BUSY');
     expect(factory.workers).toHaveLength(0);
   });
 

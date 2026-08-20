@@ -445,15 +445,24 @@ async function closeUnrunnableRun(
  * teardown that got far enough, or by an earlier recovery — must not be destroyed twice or walked
  * back out of a terminal status the lifecycle forbids leaving.
  *
- * Past that re-read the write is unconditional, and safely so: a run records its `workspaceId` only
- * after taking the row `BUSY`, and nothing else writes a `BUSY` row.
+ * A live row is this run's to destroy unless it is `STOPPING`, which is the one live status a
+ * competitor can put it in: a run records the workspace before it takes it, so the collector may
+ * have won the race for it since, and a teardown that reached `STOPPING` has committed to
+ * destroying that container itself. Destroying it here as well would be the overwrite the
+ * conditional take exists to prevent. Every other live status — `CREATING` from a provisioning that
+ * never finished, `READY` from one that did, `BUSY` from a run that took it — belongs to this run,
+ * because a job workspace is created for one run and never reused.
  *
  * @param deps - Runner, repositories and logger.
  * @param workspaceId - The workspace the abandoned run was using.
  */
 async function destroyAbandonedWorkspace(deps: ProcessorDeps, workspaceId: string): Promise<void> {
   const workspace = await deps.repos.workspaces.get(workspaceId);
-  if (workspace === null || !isLiveWorkspaceStatus(workspace.status)) {
+  if (
+    workspace === null ||
+    !isLiveWorkspaceStatus(workspace.status) ||
+    workspace.status === 'STOPPING'
+  ) {
     return;
   }
   try {
@@ -565,9 +574,13 @@ async function openRun(
 /**
  * Takes the workspace this run provisioned, or ends the run because something else took it first.
  *
- * A run that loses records nothing about the workspace: the teardown that won owns both the row and
- * the container. That also keeps the premise the stalled-run recovery relies on — a run naming a
- * workspace has taken it `BUSY`. Why the take is conditional is {@link takeReadyWorkspace}.
+ * The workspace is recorded on the run *before* it is taken, not after. That is what leaves the
+ * stalled-run recovery a handle on the row when a process dies between the two writes — the run's
+ * `workspaceId` is the only link there is, because the row carries no reference back to its run. It
+ * is safe to record early precisely because a job workspace is created for one run and never reused,
+ * so a row this run names can only ever have been this run's; what a losing run must not do is
+ * *destroy* it, and {@link destroyAbandonedWorkspace} is where that is enforced, by acting only on a
+ * row still `BUSY`. Why the take is conditional is {@link takeReadyWorkspace}.
  *
  * @param deps - The processor's collaborators.
  * @param teardown - Filled in once the workspace is this run's, so the `finally` tears it down.
@@ -584,6 +597,7 @@ async function takeWorkspaceForRun(
   watch: CancellationWatch,
 ): Promise<boolean> {
   const { runId } = teardown;
+  await deps.repos.jobRuns.setStatus(runId, 'PREPARING', { workspaceId: workspace.id });
   if ((await takeReadyWorkspace(deps, workspace.id)) === null) {
     deps.logger.warn(
       { runId, workspaceId: workspace.id },
@@ -600,7 +614,7 @@ async function takeWorkspaceForRun(
   }
   teardown.handle = handle;
   teardown.workspaceId = workspace.id;
-  await deps.repos.jobRuns.setStatus(runId, 'RUNNING', { workspaceId: workspace.id });
+  await deps.repos.jobRuns.setStatus(runId, 'RUNNING');
   return true;
 }
 

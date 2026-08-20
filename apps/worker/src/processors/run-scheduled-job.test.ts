@@ -72,7 +72,10 @@ describe('createRunScheduledJobProcessor', () => {
     const runs = await container.repos.jobRuns.listByJob(job.id);
     expect(runs[0]?.status).toBe('FAILED');
     expect(runs[0]?.error).toContain(WORKSPACE_RECLAIMED_CODE);
-    expect(runs[0]?.workspaceId).toBeNull();
+    // The run names the workspace it provisioned, which is what lets a later recovery find the row
+    // if this process dies; what losing means is that it never took it, and the collector's
+    // teardown — not this run — owns the container from here.
+    expect(runs[0]?.workspaceId).not.toBeNull();
     expect(container.logs.join('')).toContain('was reclaimed before it could be used');
   });
 

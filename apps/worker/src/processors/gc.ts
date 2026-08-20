@@ -21,7 +21,7 @@ import type { Workspace, WorkspaceHandle, WorkspaceStatus } from '@agent-hangar/
 
 import { workspaceClaimKey } from '../claims.js';
 
-import { LABELS, STALLED_RUN_REASON } from './constants.js';
+import { LABELS } from './constants.js';
 import { teardownWorkspace } from './teardown-workspace.js';
 import type { ProcessorDeps, ProcessorJob } from './types.js';
 
@@ -73,25 +73,27 @@ const RECONCILABLE_STATUSES: readonly WorkspaceStatus[] = ['READY', 'STOPPING'];
 /**
  * Reports why a live workspace can only be one a previous incarnation of this worker left behind.
  *
- * `STOPPING` is written by a teardown that has committed to destroying the container and writes its
- * own next status straight after. `BUSY` on a `JOB` workspace is written by a scheduled run that is
- * executing, and a run executes only inside a worker process. Neither can be true of a row a worker
- * finds at boot, because at boot no teardown and no run of this instance exists.
+ * `STOPPING` is the only status that qualifies, and what qualifies it is not that a booting process
+ * holds no teardown — it is what the row's owner has already committed to. A teardown reaches
+ * `STOPPING` only after deciding to destroy the container, and writes `DESTROYED` or `FAILED` next.
+ * So even where the "one worker per instance" assumption fails and a live sibling owns the row, both
+ * writers want the same thing, and the worst outcome is a row reading `FAILED` instead of
+ * `DESTROYED` and a container the orphan pass removes.
  *
- * A `BUSY` `CHAT` workspace is deliberately not in the set. `recoverStalledWorkspace` owns that
- * case on the next turn of the chat, and it does something this pass cannot: it appends the SYSTEM
- * message telling the model the filesystem it remembers writing to is gone. Closing the row out
- * here would make `findLiveByChat` answer `null` on that turn, so the note would never be written
- * and the model would go on believing its files persisted.
+ * `BUSY` does not qualify, and the difference is the whole point: a `BUSY` row's owner has committed
+ * to the opposite — it is executing inside that container. A second worker booting cannot see the
+ * sibling's process-local claim, so closing the row out would hand its container to the orphan pass
+ * with a live exec still in it. That is the cross-process race these conditional writes exist to
+ * remove, so this pass may not be the thing that reintroduces it. A `JOB` workspace left `BUSY` is
+ * reclaimed instead by the stalled-run recovery, which finds it through the `workspaceId` its run
+ * records before taking it; a `CHAT` one by `recoverStalledWorkspace`, which also writes the SYSTEM
+ * note telling the model its filesystem is gone.
  *
  * @param workspace - A live row.
  * @returns What to record as its `failureReason`, or `null` when the row may still have an owner.
  */
 function abandonedReason(workspace: Workspace): string | null {
-  if (workspace.status === 'STOPPING') {
-    return ABANDONED_TEARDOWN_REASON;
-  }
-  return workspace.status === 'BUSY' && workspace.kind === 'JOB' ? STALLED_RUN_REASON : null;
+  return workspace.status === 'STOPPING' ? ABANDONED_TEARDOWN_REASON : null;
 }
 
 /**

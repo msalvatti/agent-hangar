@@ -15,7 +15,7 @@ import type { Workspace } from '@agent-hangar/core';
 import { FakeClock } from '@agent-hangar/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 
-import { chatClaimKey, workspaceClaimKey } from '../claims.js';
+import { chatClaimKey, createWorkspaceClaims, workspaceClaimKey } from '../claims.js';
 import {
   createTestContainer,
   FIXTURE_REPO_URL,
@@ -27,7 +27,6 @@ import {
 } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
-import { STALLED_RUN_REASON } from './constants.js';
 import {
   ABANDONED_TEARDOWN_REASON,
   CONTAINER_MISSING_REASON,
@@ -652,47 +651,29 @@ describe('recoverAbandonedWorkspaces', () => {
   });
 
   /**
-   * A scheduled run takes its workspace `BUSY` and only then records which workspace it took, so a
-   * process that dies in between leaves a row whose run cannot name it: the run is `PREPARING` with
-   * `workspaceId` still null. Every steady-state pass refuses it — idle selection and a teardown
-   * take only `READY`, reconciliation takes `READY` or `STOPPING`, and the stalled-run recovery
-   * destroys a workspace only when the run recorded one. Boot is the one place that can conclude
-   * nobody owns it, and closing the row out hands the container to the orphan pass.
+   * The case that decides which statuses this pass may take, and the reason `BUSY` is not one of
+   * them. A second worker of the same instance boots while the first is executing a run: its claim
+   * register is its own, so nothing process-local can see the sibling's hold. Only what the row's
+   * owner has committed to can, and a `BUSY` row's owner is running inside that container.
+   *
+   * Measured before this was narrowed: the boot pass closed the row out, and the very next
+   * reconciliation destroyed the container with a live exec in it — the cross-process race the
+   * conditional writes exist to remove.
    */
-  it('closes out a job workspace whose run died before it could name it', async () => {
-    const container = createTestContainer();
-    const workspace = await seedJobWorkspace(container);
-    await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'BUSY');
+  it('leaves a job workspace a sibling worker is executing in, boot register or not', async () => {
+    const workerA = createTestContainer();
+    const workspace = await seedJobWorkspace(workerA);
+    await workerA.repos.workspaces.claimStatus(workspace.id, 'READY', 'BUSY');
+    workerA.claims.claim(workspaceClaimKey(workspace));
+    const workerB = { ...workerA, claims: createWorkspaceClaims() };
 
-    const recovered = await recoverAbandonedWorkspaces(container);
-    const result = await collect(container, JOB_NAMES.reapIdle);
-
-    expect(recovered).toBe(1);
-    expect(await container.repos.workspaces.get(workspace.id)).toMatchObject({
-      status: 'DESTROYED',
-      failureReason: STALLED_RUN_REASON,
-    });
-    expect(result.orphansDestroyed).toBe(1);
-    expect(container.runner.getWorkspace(workspace.id)?.status).toBe('gone');
-  });
-
-  /**
-   * The half a status rule alone would break. A run that is genuinely still executing leaves a row
-   * indistinguishable from one a dead run left, so the recovery decides by whether anything here
-   * owns the workspace rather than by how the row looks.
-   */
-  it('leaves a job workspace whose run is still in flight alone', async () => {
-    const container = createTestContainer();
-    const workspace = await seedJobWorkspace(container);
-    await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'BUSY');
-    container.claims.claim(workspaceClaimKey(workspace));
-
-    const recovered = await recoverAbandonedWorkspaces(container);
+    const recovered = await recoverAbandonedWorkspaces(workerB);
+    const result = await collect(workerB, JOB_NAMES.reapIdle);
 
     expect(recovered).toBe(0);
-    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
-    expect(container.runner.getWorkspace(workspace.id)?.status).toBe('running');
-    expect(container.logs.join('')).toContain('still in flight');
+    expect((await workerA.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
+    expect(result.orphansDestroyed).toBe(0);
+    expect(workerA.runner.getWorkspace(workspace.id)?.status).toBe('running');
   });
 
   /**
