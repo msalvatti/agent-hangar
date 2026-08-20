@@ -592,29 +592,70 @@ async function prepareAndRunJob(
 }
 
 /**
- * Listens for a cancellation, then runs the job.
+ * Runs the delivery once its watch is open, from the job lookup through to teardown.
  *
- * The subscription is taken before the workspace exists. A manual run is watched by a browser from
- * the moment the API answered with its id, cancellation travels over Redis pub/sub, and pub/sub
- * keeps nothing for a subscriber that has not arrived yet — so a Stop pressed while the container
- * is being created must find somebody already listening.
+ * The subscription opens as early as the run's identity allows, and no earlier: a manual run
+ * already has an id when this delivery is read — the API created the row and answered the
+ * request with it before the job was ever enqueued — so `earlyWatch` is that subscription,
+ * already receiving. A scheduled tick carries no id, and pub/sub cannot be asked to listen for a
+ * key that does not exist yet, so its watch cannot open before {@link openRun} mints one; opening
+ * it the moment that call returns is the earliest a subscriber could possibly matter, because
+ * nothing could have named this run for cancellation any sooner than that.
  *
  * @param deps - The processor's collaborators.
- * @param job - The job definition.
- * @param runId - The run this delivery drives.
+ * @param payload - The parsed delivery.
+ * @param delivery - The raw delivery, for its timestamp and stalled counter.
+ * @param earlyWatch - The manual run's subscription, or `null` for a tick, whose own subscription
+ *   this function opens and — unlike `earlyWatch`, which the caller owns — also closes.
+ * @throws IneligibleRunError When the delivery names a run row it may not adopt.
  * @throws Error When the Docker daemon is unreachable, so BullMQ retries.
  */
-async function runWatchedJob(deps: ProcessorDeps, job: ScheduledJob, runId: string): Promise<void> {
-  const watch = await openCancellationWatch(deps, runId);
+async function runDelivery(
+  deps: ProcessorDeps,
+  payload: ScheduledDelivery,
+  delivery: ProcessorJob<ScheduledDelivery>,
+  earlyWatch: CancellationWatch | null,
+): Promise<void> {
+  const job = await deps.repos.scheduledJobs.get(payload.jobId);
+  if (job === null) {
+    deps.logger.warn({ jobId: payload.jobId }, 'scheduled job is gone');
+    await closeUnrunnableRun(deps, payload, JOB_MISSING_CODE, JOB_MISSING_MESSAGE);
+    return;
+  }
+  if (!job.enabled) {
+    deps.logger.info({ jobId: job.id }, 'scheduled job is disabled');
+    await closeUnrunnableRun(deps, payload, JOB_DISABLED_CODE, JOB_DISABLED_MESSAGE);
+    return;
+  }
+  const scheduledFor =
+    delivery.timestamp === undefined ? deps.clock.now() : new Date(delivery.timestamp);
+
+  const running = await resolveRunningRun(deps, job.id, delivery.stalledCounter ?? 0);
+  // The run this delivery drives is either brand new or an adopted `QUEUED` row, and neither is
+  // what `findRunningByJob` answers with, so the two can never be the same record.
+  const run = await openRun(deps, job, payload, scheduledFor);
+  const watch = earlyWatch ?? (await openCancellationWatch(deps, run.id));
   try {
-    await prepareAndRunJob(deps, job, runId, watch);
+    const overlap = decideOverlap({ runningRun: running });
+    if (overlap.action === 'skip') {
+      await recordSkippedTick(deps, job, run, overlap.reason);
+      return;
+    }
+    await prepareAndRunJob(deps, job, run.id, watch);
   } finally {
-    await watch.close();
+    if (earlyWatch === null) {
+      await watch.close();
+    }
   }
 }
 
 /**
  * Builds the `run-scheduled-job` consumer.
+ *
+ * A manual run's watch opens here, before the job row is even read: `payload.runId` arriving on
+ * the delivery is what makes that possible, and every read this consumer does after parsing the
+ * payload is time in which a Stop already has somewhere to land. {@link runDelivery} opens a
+ * tick's watch itself, once its run row exists.
  *
  * @param deps - The processor's collaborators.
  * @returns A BullMQ processor for the `scheduled-jobs` queue.
@@ -624,29 +665,12 @@ export function createRunScheduledJobProcessor(
 ): (job: ProcessorJob<ScheduledDelivery>) => Promise<void> {
   return async (delivery: ProcessorJob<ScheduledDelivery>): Promise<void> => {
     const payload = scheduledDeliveryPayload.parse(delivery.data);
-    const job = await deps.repos.scheduledJobs.get(payload.jobId);
-    if (job === null) {
-      deps.logger.warn({ jobId: payload.jobId }, 'scheduled job is gone');
-      await closeUnrunnableRun(deps, payload, JOB_MISSING_CODE, JOB_MISSING_MESSAGE);
-      return;
+    const earlyWatch =
+      payload.runId === undefined ? null : await openCancellationWatch(deps, payload.runId);
+    try {
+      await runDelivery(deps, payload, delivery, earlyWatch);
+    } finally {
+      await earlyWatch?.close();
     }
-    if (!job.enabled) {
-      deps.logger.info({ jobId: job.id }, 'scheduled job is disabled');
-      await closeUnrunnableRun(deps, payload, JOB_DISABLED_CODE, JOB_DISABLED_MESSAGE);
-      return;
-    }
-    const scheduledFor =
-      delivery.timestamp === undefined ? deps.clock.now() : new Date(delivery.timestamp);
-
-    const running = await resolveRunningRun(deps, job.id, delivery.stalledCounter ?? 0);
-    // The run this delivery drives is either brand new or an adopted `QUEUED` row, and neither is
-    // what `findRunningByJob` answers with, so the two can never be the same record.
-    const run = await openRun(deps, job, payload, scheduledFor);
-    const overlap = decideOverlap({ runningRun: running });
-    if (overlap.action === 'skip') {
-      await recordSkippedTick(deps, job, run, overlap.reason);
-      return;
-    }
-    await runWatchedJob(deps, job, run.id);
   };
 }

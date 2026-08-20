@@ -210,6 +210,40 @@ describe('createRunScheduledJobProcessor', () => {
   });
 
   /**
+   * The gap this fix closes: a manual run's id already exists when this delivery is read — the
+   * API created its row and answered the request with it before the job was ever enqueued — so a
+   * Stop pressed while the worker is still looking up the job row must already find a subscriber.
+   * Emitting the cancellation from inside that very lookup, well before the workspace would be
+   * built, proves the watch opened ahead of the first database read rather than merely ahead of
+   * provisioning.
+   */
+  it('cancels a manual run stopped before the worker reads the job row', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const manual = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+    const getJob = container.repos.scheduledJobs.get.bind(container.repos.scheduledJobs);
+    vi.spyOn(container.repos.scheduledJobs, 'get').mockImplementation(async (id) => {
+      // A subscriber must already be in place for this to reach anyone: with the watch opened
+      // only after this lookup, as it used to be, nothing is listening yet and this returns
+      // `false`, and the run below finishes `SUCCEEDED` instead of `CANCELLED`.
+      const reached = container.commands.emitCancel(manual.id);
+      expect(reached).toBe(true);
+      return getJob(id);
+    });
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: manual.id }));
+
+    expect((await container.repos.jobRuns.get(manual.id))?.status).toBe('CANCELLED');
+    expect(container.runner.calls).toHaveLength(0);
+    vi.restoreAllMocks();
+  });
+
+  /**
    * A run cancelled while the runtime ignores the signal is still recorded as cancelled, and its
    * container is still destroyed.
    */
