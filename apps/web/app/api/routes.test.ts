@@ -155,6 +155,34 @@ describe('repository routes', () => {
   });
 });
 
+describe('settings and health routes', () => {
+  /**
+   * The settings collection is read-only; the per-key route hosts the write and the removal, and
+   * both refuse a key the system does not store.
+   */
+  it('wires the settings status, write and removal', async () => {
+    const collection = await import('./settings/route');
+    expect(collection.dynamic).toBe('force-dynamic');
+    expect((await collection.GET()).status).toBe(200);
+
+    const item = await import('./settings/[key]/route');
+    const ctx = context({ key: 'NOPE' });
+    expect(
+      (await item.PUT(request('/api/settings/NOPE', 'PUT', { value: 'x'.repeat(20) }), ctx)).status,
+    ).toBe(404);
+    expect((await item.DELETE(request('/api/settings/NOPE', 'DELETE'), ctx)).status).toBe(404);
+  });
+
+  /**
+   * Health answers even when every dependency is unreachable, which is the whole point of it.
+   */
+  it('wires the health route', async () => {
+    const route = await import('./health/route');
+    expect(route.dynamic).toBe('force-dynamic');
+    expect((await route.GET()).status).toBe(200);
+  });
+});
+
 describe('turn routes', () => {
   /**
    * Cancel is the one route under `/api/turns`, and it reaches the handler that decides between

@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W2-A (one agent; runs in parallel with W2-B 🐳 and W2-C) |
 | **Status** | 🟦 running |
-| **Progress** | 3/6 tasks |
+| **Progress** | 4/6 tasks |
 | **Branch** | `feat/w2a-web-api-sse` |
 | **Owned paths** | `apps/web/app/api/**`, `apps/web/src/server/**` · plus, by explicit exception: `apps/web/vitest.config.ts` (`coverage.include` + test `include` globs only), `apps/web/package.json` (`scripts.test:integration` only), and **additive** lines in `packages/core/src/queues/contracts.ts`, `packages/core/src/api/contracts.ts`, `packages/core/src/config/schema.ts` (listed in Task 2A.1; every such addition is reported under `contractChangeRequests`) |
 | **Depends on** | W0, W1-A (secrets/redaction/logging), W1-E (persistence repositories), W1-F (scheduling, queues) — all merged to `main` |
@@ -50,7 +50,7 @@ Two decisions are taken here and must be stated in the PR description:
 | 2A.1 | Server DI container, HTTP helpers, test container, GitHub client, additive core contracts | ✅ | P0 | M | — |
 | 2A.2 | Chats, messages, archive/restore, delete, turn cancel routes | ✅ | P0 | M | 2A.1 |
 | 2A.3 | Jobs CRUD + manual run, runs list/detail, repos + branches routes | ✅ | P0 | M | 2A.1 |
-| 2A.4 | Settings (status/set/remove, no request logging) and health routes | 📋 | P0 | S | 2A.1 |
+| 2A.4 | Settings (status/set/remove, no request logging) and health routes | ✅ | P0 | S | 2A.1 |
 | 2A.5 | SSE: stream factory, `chats/[id]/events`, `runs/[id]/events`, `@redis` integration | 📋 | P0 | L | 2A.1, 2A.2 |
 | 2A.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 2A.1–2A.5 |
 
@@ -349,16 +349,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 
 ## Task 2A.4 — Settings (status/set/remove, no request logging) and health routes
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 2A.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 2A.1
 
 **Description.** Implement `GET /api/settings`, `PUT`/`DELETE /api/settings/:key` using only `status`/`set`/`remove` of `SecretsService`, with request logging disabled and responses that never contain plaintext; and `GET /api/health` combining DB ping, Redis ping, the worker heartbeat key and DB-derived live-workspace counters.
 
 **Acceptance criteria**
-- [ ] `GET /api/settings` → `settingsStatus` (`githubPat`/`openaiKey` `{ set, last4?, updatedAt? }`, `model`), `Cache-Control: no-store`
-- [ ] `PUT /api/settings/:key` (`key` ∈ `GITHUB_PAT | OPENAI_API_KEY`, else 404) with `putSecretRequest` → `secrets.set` → 200 `putSecretResponse { set: true, last4 }`; `DELETE` → `secrets.remove` → 204; handlers log only `{ key, action }`, never the body/value; `Cache-Control: no-store`
-- [ ] A test captures all logger output and asserts with `assertNoCanary` that neither logs nor responses contain the canaries; a test asserts `reveal` is never called by settings handlers (`FakeSecretsService.revealCalls` empty)
-- [ ] `GET /api/health` → 200 `healthResponse` with `db`, `redis`, `worker` (from `workerHeartbeatKey(instance)` parsed by `workerHeartbeatSchema`; `ok = false` when absent/invalid/older than TTL), `liveWorkspaces` (`repos.workspaces.listLive()` grouped by kind), `image`, `ports`, `instance`, `ok`; `?require=worker|all` → 503 until satisfied; each probe bounded by a 2 s timeout and never throws
-- [ ] 100 % coverage
+- [x] `GET /api/settings` → `settingsStatus` (`githubPat`/`openaiKey` `{ set, last4?, updatedAt? }`, `model`), `Cache-Control: no-store`
+- [x] `PUT /api/settings/:key` (`key` ∈ `GITHUB_PAT | OPENAI_API_KEY`, else 404) with `putSecretRequest` → `secrets.set` → 200 `putSecretResponse { set: true, last4 }`; `DELETE` → `secrets.remove` → 204; handlers log only `{ key, action }`, never the body/value; `Cache-Control: no-store`
+- [x] A test captures all logger output and asserts with `assertNoCanary` that neither logs nor responses contain the canaries; a test asserts `reveal` is never called by settings handlers (`FakeSecretsService.revealCalls` empty)
+- [x] `GET /api/health` → 200 `healthResponse` with `db`, `redis`, `worker` (from `workerHeartbeatKey(instance)` parsed by `workerHeartbeatSchema`; `ok = false` when absent/invalid/older than TTL), `liveWorkspaces` (`repos.workspaces.listLive()` grouped by kind), `image`, `ports`, `instance`, `ok`; `?require=worker|all` → 503 until satisfied; each probe bounded by a 2 s timeout and never throws
+- [x] 100 % coverage
 
 **Files to create**
 `apps/web/src/server/handlers/{settings,health}.ts` + tests; `apps/web/app/api/settings/route.ts`, `app/api/settings/[key]/route.ts`, `app/api/health/route.ts`; `app/api/routes.test.ts` extended.
@@ -606,6 +606,7 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 
+- 2A.4 ✅ 2026-08-19 — settings routes that never echo or log a credential, and a health route that reports Docker from the worker heartbeat
 - 2A.3 ✅ 2026-08-19 — scheduled-job CRUD with scheduler sync, manual run, run history and detail, and the GitHub repository and branch pickers
 - 2A.2 ✅ 2026-08-19 — chat, message, rename, archive, restore, delete and turn-cancel routes over the in-memory repositories and the BullMQ double
 - 2A.1 ✅ 2026-08-19 — server container, HTTP helpers, same-origin guard, GitHub client, test doubles and the additive core contracts
