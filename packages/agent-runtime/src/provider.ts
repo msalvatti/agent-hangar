@@ -4,9 +4,9 @@
  * Layer: adapter.
  *
  * The bundle carries the fake provider and a seam for the real one. The OpenAI client is not
- * imported here: a factory is injected by whoever composes the runtime, which keeps the OpenAI SDK
- * — and its transitive dependencies — out of the bundle until something actually wires it in, and
- * keeps this module free of any code that reads an API key.
+ * imported here: a factory is injected by whoever composes the runtime — `composition.ts` — so the
+ * module that decides which provider a turn runs against holds no code that reads an API key, and
+ * a suite can exercise every branch of that decision without the SDK.
  *
  * A supplied script arrives as text, so a scripted step that has to carry the workspace's GitHub
  * credential — the way to prove the credential is redacted on its way to a row — writes a
@@ -35,10 +35,16 @@ export interface ProviderFactoryOptions {
   baseURL?: string;
 }
 
-/** Factories for the providers this build cannot construct on its own. */
+/**
+ * Factories for the providers this module does not construct on its own.
+ *
+ * Every member is required. A half-filled object was once expressible — and a build that supplied
+ * one type-checked, shipped, and only failed on the operator's first real turn — so the type now
+ * refuses it: a composition that names this type has to wire every provider in it.
+ */
 export interface ProviderFactories {
   /** Builds the OpenAI provider from the API key and the optional endpoint. */
-  openai?: (options: ProviderFactoryOptions) => AgentModelProvider;
+  openai: (options: ProviderFactoryOptions) => AgentModelProvider;
 }
 
 /**
@@ -100,20 +106,21 @@ function createFakeProvider(env: Readonly<Record<string, string | undefined>>): 
  * Builds the OpenAI provider through the injected factory.
  *
  * @param env - Container environment.
- * @param factories - Factories supplied by whoever composed the runtime.
+ * @param factories - Factories supplied by whoever composed the runtime, absent in a build that
+ *   wired none.
  * @returns The provider.
  * @throws ConfigError when no factory was wired in or no API key was injected.
  */
 function createOpenAiProvider(
   env: Readonly<Record<string, string | undefined>>,
-  factories: ProviderFactories,
+  factories: ProviderFactories | undefined,
 ): AgentModelProvider {
-  const { openai } = factories;
-  if (openai === undefined) {
+  if (factories === undefined) {
     throw new ConfigError(
-      'the openai provider is not wired into this build; see packages/agent-runtime/src/provider.ts',
+      'the openai provider is not wired into this build; see packages/agent-runtime/src/composition.ts',
     );
   }
+  const { openai } = factories;
   const configured = env.OPENAI_API_KEY ?? '';
   if (configured.length === 0) {
     throw new ConfigError('OPENAI_API_KEY is not set in the workspace environment');
@@ -125,16 +132,20 @@ function createOpenAiProvider(
 /**
  * Builds the provider the turn will stream from.
  *
+ * The factories have no default. Whoever calls this has to state what the build wired in, even
+ * when the answer is nothing, so that an omission is a decision on the page rather than a value
+ * that quietly appears at run time.
+ *
  * @param name - Provider name, from {@link resolveProviderName}.
  * @param env - Container environment.
- * @param factories - Factories for the providers this build cannot construct on its own.
+ * @param factories - Factories for the providers this module does not construct on its own.
  * @returns The provider.
  * @throws ConfigError when the name is unknown or the provider cannot be configured.
  */
 export function createProvider(
   name: string,
   env: Readonly<Record<string, string | undefined>>,
-  factories: ProviderFactories = {},
+  factories: ProviderFactories | undefined,
 ): AgentModelProvider {
   if (name === 'fake') {
     return createFakeProvider(env);
