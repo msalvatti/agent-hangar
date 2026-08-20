@@ -154,6 +154,30 @@ describe('FakeQueue', () => {
   });
 
   /**
+   * The property this double exists to reproduce, and the one it used to get wrong: BullMQ answers
+   * an `add` for a `jobId` it still holds by returning the held job instead of enqueuing a new one,
+   * silently. Retention keeps a finished job holding its id, so overwriting here would report a
+   * re-dispatch as successful while the real queue ran nothing — which is exactly the defect a
+   * handler test is supposed to catch.
+   */
+  it('declines an enqueue whose id is already held, as BullMQ does', async () => {
+    const queue = new FakeQueue('q');
+    const first = await queue.add('run-turn', { turnId: 't1' }, { jobId: 't1' });
+    first.state = 'completed';
+
+    const second = await queue.add('run-turn', { turnId: 't1' }, { jobId: 't1' });
+
+    expect(second).toBe(first);
+    expect(queue.added).toHaveLength(1);
+
+    // Releasing the finished job is what frees the id again.
+    await first.remove();
+    const third = await queue.add('run-turn', { turnId: 't1' }, { jobId: 't1' });
+    expect(third).not.toBe(first);
+    expect(queue.added).toHaveLength(2);
+  });
+
+  /**
    * A producer that sets no id still gets a job back, mirroring BullMQ generating one; the cancel
    * path also needs a queue that hides its jobs, which is how BullMQ behaves once a job is gone.
    */

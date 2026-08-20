@@ -251,6 +251,87 @@ describe('ChatView', () => {
     expect(turnIds('chat-failed')).toEqual(['turn-failed-1']);
   });
 
+  // Retrying is not idempotent from the user's side: the first click moves the turn out of FAILED,
+  // so a second click races it and is answered TURN_NOT_RETRYABLE — a refusal for something they
+  // already asked for successfully. The button has to stop accepting clicks while it is in flight.
+  it('stops accepting Retry clicks while one is in flight', async () => {
+    let calls = 0;
+    let release: (() => void) | undefined;
+    server.use(
+      http.post('/api/turns/:id/retry', async () => {
+        calls += 1;
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    renderChat('chat-failed');
+    expect(await screen.findByText('The turn failed')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    const inFlight = await screen.findByRole('button', { name: 'Retrying…' });
+    expect(inFlight).toBeDisabled();
+    await userEvent.click(inFlight);
+
+    expect(calls).toBe(1);
+    release?.();
+  });
+
+  // The two actions keep their own error state, so reading them in a fixed order shows whichever
+  // happens to be set rather than what just happened. A retry refused after a send failed must
+  // report the retry's reason, not the older one still sitting in the send hook.
+  it('reports the retry refusal rather than an earlier send failure', async () => {
+    server.use(
+      http.post('/api/chats/:id/messages', () =>
+        HttpResponse.json(
+          { error: { code: 'CHAT_ARCHIVED', message: 'Send failed first' } },
+          { status: 409 },
+        ),
+      ),
+      http.post('/api/turns/:id/retry', () =>
+        HttpResponse.json(
+          { error: { code: 'SECRETS_MISSING', message: 'Retry failed second' } },
+          { status: 409 },
+        ),
+      ),
+    );
+    renderChat('chat-failed');
+    await screen.findByText('The turn failed');
+    await userEvent.type(screen.getByLabelText('Prompt'), 'another go');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByText(/Send failed first/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByText(/Retry failed second/)).toBeInTheDocument();
+    expect(screen.queryByText(/Send failed first/)).toBeNull();
+  });
+
+  // The mirror case: a retry failure must not outlive a send that afterwards succeeded, or the
+  // screen keeps blaming a cause that no longer applies.
+  it('clears a retry failure once a later send succeeds', async () => {
+    server.use(
+      http.post('/api/turns/:id/retry', () =>
+        HttpResponse.json(
+          { error: { code: 'SECRETS_MISSING', message: 'Retry failed' } },
+          { status: 409 },
+        ),
+      ),
+    );
+    renderChat('chat-failed');
+    await screen.findByText('The turn failed');
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText(/Retry failed/)).toBeInTheDocument();
+
+    await userEvent.type(screen.getByLabelText('Prompt'), 'never mind, carry on');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => {
+      expect(screen.queryByText(/Retry failed/)).toBeNull();
+    });
+  });
+
   // An archived chat is read-only until it is restored.
   it('offers to restore an archived chat', async () => {
     renderChat('chat-archived');

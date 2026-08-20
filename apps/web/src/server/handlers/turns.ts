@@ -47,7 +47,7 @@ import { assertSameOrigin } from '../same-origin';
 
 import { CANCEL_REQUESTED_STATUS, removeQueuedJob } from './cancel';
 import { compensate } from './compensate';
-import { dispatchTurn } from './dispatch';
+import { redispatchTurn } from './dispatch';
 import {
   CLAIM_RELEASED,
   NO_USAGE,
@@ -59,6 +59,10 @@ import {
 
 /** Why a turn that did not fail is not run again; one sentence for both ways of reaching it. */
 const RETRY_REFUSED = 'Only a failed turn can be retried; send the prompt again to start a new one';
+
+/** Why a turn that is no longer the chat's most recent one is not run again. */
+const RETRY_SUPERSEDED =
+  'A later turn has superseded this one; only the most recent turn can be retried';
 
 /** Statuses a turn can no longer leave. */
 const TERMINAL_STATUSES: readonly string[] = ['SUCCEEDED', 'FAILED', 'CANCELLED'];
@@ -118,6 +122,14 @@ export function cancelTurn(
  * `POST /api/turns/:id/retry` — runs a failed turn again, against the prompt already attached to
  * it.
  *
+ * Only the chat's most recent turn may be run again, and only when it failed. The "most recent"
+ * half is not a nicety: the events route streams `turns.at(-1)`, the sidebar dot and the
+ * transcript's phase both read it, and the worker rebuilds its context from the chat's whole
+ * message history. Re-running an older row would therefore answer the newest prompt while the
+ * client followed a different turn, and record the result against one nobody is looking at. In a
+ * linear chat there is no coherent meaning for "run the third turn again"; the way to ask an
+ * earlier question again is to ask it again.
+ *
  * `FAILED` is the only status this accepts, and the two near misses are refused on purpose.
  * `CANCELLED` is a decision the user made — Stop was pressed — and re-running it silently would
  * undo that decision rather than recover from an accident; the way to run a cancelled prompt again
@@ -171,6 +183,10 @@ export function retryTurn(
       throw new ConflictError('CHAT_ARCHIVED', 'Restore the chat before retrying the turn');
     }
     await requireNoLiveTurn(container, turn.chatId);
+    const turns = await container.repos.turns.listByChat(turn.chatId);
+    if (turns.at(-1)?.id !== turn.id) {
+      throw new ConflictError('TURN_NOT_RETRYABLE', RETRY_SUPERSEDED);
+    }
     if (turn.status !== 'FAILED') {
       throw new ConflictError('TURN_NOT_RETRYABLE', RETRY_REFUSED);
     }
@@ -192,7 +208,7 @@ export function retryTurn(
       );
       throw error;
     }
-    await dispatchTurn(container, requeued);
+    await redispatchTurn(container, requeued);
     return jsonResponse(okResponse, { ok: true });
   });
 }

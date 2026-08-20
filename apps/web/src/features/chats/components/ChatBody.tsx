@@ -21,6 +21,8 @@ export interface ChatBodyProps {
   /** `true` for an archived chat: the transcript is read-only and the composer is locked. */
   archived: boolean;
   onRetry: () => void;
+  /** `true` while a retry request is in flight, which disables the Retry button. */
+  retrying: boolean;
   /** Lets the header scroll the failure card into view. */
   errorRef: RefObject<HTMLDivElement | null>;
   draft: string;
@@ -57,6 +59,7 @@ export function ChatBody({
   phase,
   archived,
   onRetry,
+  retrying,
   errorRef,
   draft,
   onDraftChange,
@@ -75,7 +78,7 @@ export function ChatBody({
         className="min-h-0 flex-1"
         renderError={(item) => (
           <div ref={errorRef}>
-            <TurnErrorCard error={item} onRetry={onRetry} />
+            <TurnErrorCard error={item} onRetry={onRetry} busy={retrying} />
           </div>
         )}
       />

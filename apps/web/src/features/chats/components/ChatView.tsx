@@ -124,6 +124,11 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
 
   const [draft, setDraft] = useState('');
   const [stopOpen, setStopOpen] = useState(false);
+  // Which action the visible failure belongs to. Send and retry each clear only their own error,
+  // so reading them in a fixed order shows whichever happens to be set rather than what just
+  // happened: a refused retry would hide behind an older send failure, and a retry failure would
+  // outlive a send that afterwards succeeded. Only the last action's outcome is ever true.
+  const [lastAction, setLastAction] = useState<'send' | 'retry' | null>(null);
   const errorRef = useRef<HTMLDivElement>(null);
 
   const { phase, connection } = stream.state;
@@ -139,6 +144,7 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
   useEscapeToStop(running, openStop);
 
   async function submit(prompt: string): Promise<void> {
+    setLastAction('send');
     const turnId = await send.send(prompt);
     if (turnId === null) {
       return;
@@ -171,6 +177,7 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
       stream.activeTurnId ?? lastTurnId,
       'A failure on screen belongs to a turn',
     );
+    setLastAction('retry');
     void (async () => {
       if (!(await retryAction.retry(turnId))) {
         return;
@@ -223,8 +230,9 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
         onSubmit={() => {
           void submit(draft);
         }}
-        sending={send.busy || retryAction.busy}
-        actionError={send.error ?? retryAction.error}
+        sending={send.busy}
+        retrying={retryAction.busy}
+        actionError={lastAction === 'retry' ? retryAction.error : send.error}
         turnLive={running}
         model={settings.data?.model}
       />

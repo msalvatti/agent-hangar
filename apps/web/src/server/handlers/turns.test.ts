@@ -10,9 +10,17 @@
  * stated code.
  * Mocks: the `bullmq` module.
  */
-import { JOB_NAMES, okResponse, turnCommand, turnCommandChannel } from '@agent-hangar/core';
+import {
+  JOB_NAMES,
+  okResponse,
+  TURN_EVENT_FIELD,
+  turnCommand,
+  turnCommandChannel,
+  turnEventsStreamKey,
+} from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { FakeJobState } from '../testing/fake-queue';
 import { foreignRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
@@ -87,12 +95,24 @@ async function seedTurn(harness: TestContainer): Promise<string> {
 }
 
 /**
- * Creates a chat whose only turn has failed, with its queue job already consumed.
+ * Creates a chat whose only turn has failed, in the state the worker actually leaves behind.
+ *
+ * The queue job is put into a terminal state rather than dropped, because that is the precondition
+ * the retry has to cope with: retention keeps the finished job holding the turn's id, and BullMQ
+ * answers the next `add` for that id by returning the held job instead of enqueuing work. A turn
+ * that failed while its job is still `waiting` does not occur.
+ *
+ * `completed` is the ordinary case — the processor only throws for a transport error, so an OpenAI
+ * or workspace failure is recorded on the turn while the job itself completes.
  *
  * @param harness - The test container.
+ * @param jobState - Terminal state the consumed job is left in.
  * @returns The chat id and the failed turn id.
  */
-async function seedFailedTurn(harness: TestContainer): Promise<{ chatId: string; turnId: string }> {
+async function seedFailedTurn(
+  harness: TestContainer,
+  jobState: FakeJobState = 'completed',
+): Promise<{ chatId: string; turnId: string }> {
   const seeded = await seedChatTurn(harness);
   await harness.doubles.repos.turns.setStatus(seeded.turnId, 'PREPARING');
   await harness.doubles.repos.turns.finish(
@@ -101,6 +121,11 @@ async function seedFailedTurn(harness: TestContainer): Promise<{ chatId: string;
     { inputTokens: 11, outputTokens: 7, stepCount: 2 },
     'OpenAI rejected the request',
   );
+  const job = harness.doubles.queues.chatTurns.jobs.get(seeded.turnId);
+  if (job === undefined) {
+    throw new Error('The seeded chat did not enqueue a job');
+  }
+  job.state = jobState;
   harness.doubles.queues.chatTurns.added.length = 0;
   return seeded;
 }
@@ -352,6 +377,88 @@ describe('retryTurn', () => {
       outputTokens: null,
       stepCount: 0,
     });
+  });
+
+  /**
+   * The transport-error shape of the same precondition: the processor threw, so BullMQ retained
+   * the job as `failed` rather than `completed`. Retention keeps both, and both would swallow the
+   * re-dispatch, so both are pinned.
+   */
+  it('re-dispatches a turn whose job was retained as failed', async () => {
+    const harness = createTestContainer();
+    const { turnId } = await seedFailedTurn(harness, 'failed');
+
+    const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(200);
+    expect(harness.doubles.queues.chatTurns.added).toHaveLength(1);
+    expect(harness.doubles.queues.chatTurns.added[0]?.data).toEqual({ turnId });
+  });
+
+  /**
+   * Reusing the turn row means reusing its event stream, and that stream still ends in the
+   * previous attempt's terminal event. A client that joins without a resume point — every client
+   * that loaded the failure from history — would replay it and be told the turn failed before the
+   * new attempt had written anything. The attempt boundary is the deleted stream.
+   */
+  it('clears the events of the previous attempt before re-dispatching', async () => {
+    const harness = createTestContainer();
+    const { turnId } = await seedFailedTurn(harness);
+    await harness.doubles.redis.xadd(
+      turnEventsStreamKey(turnId),
+      TURN_EVENT_FIELD,
+      JSON.stringify({ type: 'turn.failed', error: { code: 'auth', message: 'nope' } }),
+    );
+    expect(await harness.doubles.redis.xrange(turnEventsStreamKey(turnId), '-', '+')).toHaveLength(
+      1,
+    );
+
+    await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
+
+    expect(await harness.doubles.redis.xrange(turnEventsStreamKey(turnId), '-', '+')).toEqual([]);
+  });
+
+  /**
+   * A turn that is no longer the newest one cannot be run again. The events route streams the
+   * chat's last turn and the worker rebuilds its context from the whole message history, so
+   * re-running an older row would answer the newest prompt while the client watched a different
+   * turn — and record the result against one nobody is looking at.
+   */
+  it('refuses to retry a failed turn that a later turn has superseded', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedFailedTurn(harness);
+    const newer = await harness.doubles.repos.turns.create({ chatId, model: 'gpt-5.6-sol' });
+    await harness.doubles.repos.turns.finish(newer.id, 'SUCCEEDED', {
+      inputTokens: 1,
+      outputTokens: 1,
+      stepCount: 1,
+    });
+
+    const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: 'TURN_NOT_RETRYABLE' } });
+    expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({ status: 'FAILED' });
+    expect(harness.doubles.queues.chatTurns.added).toEqual([]);
+  });
+
+  /**
+   * A Redis that refuses to clear the previous attempt leaves the turn failed rather than queued
+   * behind a job that would replay the old events, so the retry can simply be pressed again.
+   */
+  it('fails the turn again when the previous attempt cannot be cleared', async () => {
+    const harness = createTestContainer();
+    const { turnId } = await seedFailedTurn(harness);
+    vi.spyOn(harness.doubles.redis, 'del').mockRejectedValue(new Error('redis unreachable'));
+
+    const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(500);
+    expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({
+      status: 'FAILED',
+      error: ENQUEUE_FAILED,
+    });
+    expect(harness.doubles.queues.chatTurns.added).toEqual([]);
   });
 
   /**

@@ -398,6 +398,7 @@ describe('createSseResponse', () => {
       ping: () => Promise.resolve('PONG'),
       get: () => Promise.resolve(null),
       exists: () => Promise.resolve(1),
+      del: () => Promise.resolve(1),
       publish: () => Promise.resolve(0),
       xrange: () => Promise.resolve([]),
       xread: (): Promise<StreamRead[] | null> => Promise.reject(new TypeError('unexpected reply')),

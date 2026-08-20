@@ -17,6 +17,14 @@ import type { TurnErrorAction } from '../lib/turn-error';
 export interface TurnErrorCardProps {
   error: { code: string; message: string };
   onRetry: () => void;
+  /**
+   * `true` while a retry is in flight, which disables the button.
+   *
+   * Retrying is not idempotent from the user's side: the first click moves the turn out of
+   * `FAILED`, so a second click races it and is answered `TURN_NOT_RETRYABLE` — a refusal for
+   * something they already successfully asked for.
+   */
+  busy?: boolean;
 }
 
 /**
@@ -47,9 +55,9 @@ function secondaryAction(action: TurnErrorAction) {
 /**
  * An `ErrorCard` describing why the turn failed, with Retry and any code-specific next step.
  *
- * @param props - The failure and the retry handler.
+ * @param props - The failure, the retry handler and whether a retry is already in flight.
  */
-export function TurnErrorCard({ error, onRetry }: TurnErrorCardProps) {
+export function TurnErrorCard({ error, onRetry, busy = false }: TurnErrorCardProps) {
   const described = describeTurnError(error);
   return (
     <ErrorCard
@@ -58,8 +66,8 @@ export function TurnErrorCard({ error, onRetry }: TurnErrorCardProps) {
       code={error.code}
       actions={
         <>
-          <Button type="button" variant="outline" size="sm" onClick={onRetry}>
-            Retry
+          <Button type="button" variant="outline" size="sm" onClick={onRetry} disabled={busy}>
+            {busy ? 'Retrying…' : 'Retry'}
           </Button>
           {secondaryAction(described.action)}
         </>
