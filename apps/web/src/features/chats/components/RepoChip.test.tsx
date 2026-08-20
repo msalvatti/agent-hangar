@@ -7,13 +7,17 @@ import { describe, expect, it } from 'vitest';
 import { RepoChip } from './RepoChip';
 
 describe('RepoChip', () => {
-  // Before the agent branches, the chip shows the base branch.
+  /**
+   * Before the agent branches, the chip shows the base branch.
+   */
   it('shows the base branch', () => {
     render(<RepoChip repoUrl="https://github.com/acme/api" baseBranch="main" workBranch={null} />);
     expect(screen.getByText('acme/api · main')).toBeInTheDocument();
   });
 
-  // Once a work branch exists it is the one that matters.
+  /**
+   * Once a work branch exists it is the one that matters.
+   */
   it('prefers the work branch', () => {
     render(
       <RepoChip repoUrl="https://github.com/acme/api" baseBranch="main" workBranch="agent/k3x9" />,
@@ -32,7 +36,9 @@ describe('RepoChip', () => {
     expect(screen.getByText('acme/infra · trunk')).toBeInTheDocument();
   });
 
-  // A URL that names anything other than one repository is shown as-is rather than dropped.
+  /**
+   * A URL that names anything other than one repository is shown as-is rather than dropped.
+   */
   it('falls back to the raw URL', () => {
     render(<RepoChip repoUrl="https://example.com/x" baseBranch="main" workBranch={null} />);
     expect(screen.getByText('https://example.com/x · main')).toBeInTheDocument();

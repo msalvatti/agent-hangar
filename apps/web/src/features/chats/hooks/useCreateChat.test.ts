@@ -29,7 +29,9 @@ describe('useCreateChat', () => {
     localStorage.clear();
   });
 
-  // The happy path posts the chat, remembers the repo and navigates to the new conversation.
+  /**
+   * The happy path posts the chat, remembers the repo and navigates to the new conversation.
+   */
   it('creates a chat, records the repo and navigates to it', async () => {
     const { result } = renderHook(() => useCreateChat());
     await act(async () => {
@@ -70,8 +72,10 @@ describe('useCreateChat', () => {
     expect(push).toHaveBeenCalledTimes(1);
   });
 
-  // The short form is still what the recent list remembers, since that is what the picker matches
-  // its rows against.
+  /**
+   * The short form is still what the recent list remembers, since that is what the picker matches
+   * its rows against.
+   */
   it('records the short form of a repository on any origin', async () => {
     const { result } = renderHook(() => useCreateChat());
     await act(async () => {
@@ -80,7 +84,9 @@ describe('useCreateChat', () => {
     expect(getRecentRepos()).toEqual(['acme/infra']);
   });
 
-  // Success must refresh the sidebar list, which is keyed by the `chats` prefix.
+  /**
+   * Success must refresh the sidebar list, which is keyed by the `chats` prefix.
+   */
   it('invalidates the chat list queries', async () => {
     const loader = vi.fn().mockResolvedValue({ chats: [] });
     const { result } = renderHook(() => ({
@@ -103,7 +109,9 @@ describe('useCreateChat', () => {
     });
   });
 
-  // A rejected request leaves the composer usable and shows why it failed.
+  /**
+   * A rejected request leaves the composer usable and shows why it failed.
+   */
   it('reports a validation failure without navigating', async () => {
     const { result } = renderHook(() => useCreateChat());
     await act(async () => {
@@ -114,7 +122,9 @@ describe('useCreateChat', () => {
     expect(result.current.error).toBeDefined();
   });
 
-  // A rejection that is not an `Error` (a network layer can produce one) still yields a message.
+  /**
+   * A rejection that is not an `Error` (a network layer can produce one) still yields a message.
+   */
   it('reports a non-Error rejection', async () => {
     const original = globalThis.fetch;
     globalThis.fetch = vi.fn().mockRejectedValue('socket closed');
@@ -129,7 +139,9 @@ describe('useCreateChat', () => {
     }
   });
 
-  // `reset` clears the message so a resubmission starts from a clean state.
+  /**
+   * `reset` clears the message so a resubmission starts from a clean state.
+   */
   it('clears the error on reset', async () => {
     const { result } = renderHook(() => useCreateChat());
     await act(async () => {
