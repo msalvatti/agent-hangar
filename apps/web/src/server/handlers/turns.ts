@@ -39,6 +39,7 @@
  * retry survives only in the log, and Postgres cannot answer how often a turn was run.
  */
 import { enqueueRunTurn, okResponse, turnCommand, turnCommandChannel } from '@agent-hangar/core';
+import type { Turn } from '@agent-hangar/core';
 
 import type { ServerContainer } from '../container';
 import { ConflictError, ResourceNotFoundError } from '../errors';
@@ -119,6 +120,43 @@ export function cancelTurn(
 }
 
 /**
+ * Resolves the turn a retry names and decides whether it may run again.
+ *
+ * Every refusal here is read-only, so a request that gets one has changed nothing. The order is
+ * chosen for what the caller can do next: a chat that is gone or archived first, then work that is
+ * still under way — `TURN_IN_PROGRESS` tells them to wait or cancel — then the two "this is not the
+ * turn to retry" answers, which share a code because they are one rule seen from two sides.
+ *
+ * @param container - The server container.
+ * @param turnId - Turn named by the route.
+ * @returns The turn, once it is established that it may be run again.
+ * @throws ResourceNotFoundError 404 when the turn, or the chat behind it, does not exist.
+ * @throws ConflictError 409 `CHAT_ARCHIVED`, `TURN_IN_PROGRESS` or `TURN_NOT_RETRYABLE`.
+ */
+async function requireRetryableTurn(container: ServerContainer, turnId: string): Promise<Turn> {
+  const turn = await container.repos.turns.get(turnId);
+  if (turn === null) {
+    throw new ResourceNotFoundError('Turn not found');
+  }
+  const chat = await container.repos.chats.getById(turn.chatId);
+  if (chat === null) {
+    throw new ResourceNotFoundError('Chat not found');
+  }
+  if (chat.status !== 'ACTIVE') {
+    throw new ConflictError('CHAT_ARCHIVED', 'Restore the chat before retrying the turn');
+  }
+  await requireNoLiveTurn(container, turn.chatId);
+  const turns = await container.repos.turns.listByChat(turn.chatId);
+  if (turns.at(-1)?.id !== turn.id) {
+    throw new ConflictError('TURN_NOT_RETRYABLE', RETRY_SUPERSEDED);
+  }
+  if (turn.status !== 'FAILED') {
+    throw new ConflictError('TURN_NOT_RETRYABLE', RETRY_REFUSED);
+  }
+  return turn;
+}
+
+/**
  * `POST /api/turns/:id/retry` — runs a failed turn again, against the prompt already attached to
  * it.
  *
@@ -171,25 +209,7 @@ export function retryTurn(
 ): Promise<Response> {
   return withErrorHandling(container, async () => {
     assertSameOrigin(request);
-    const turn = await container.repos.turns.get(params.id);
-    if (turn === null) {
-      throw new ResourceNotFoundError('Turn not found');
-    }
-    const chat = await container.repos.chats.getById(turn.chatId);
-    if (chat === null) {
-      throw new ResourceNotFoundError('Chat not found');
-    }
-    if (chat.status !== 'ACTIVE') {
-      throw new ConflictError('CHAT_ARCHIVED', 'Restore the chat before retrying the turn');
-    }
-    await requireNoLiveTurn(container, turn.chatId);
-    const turns = await container.repos.turns.listByChat(turn.chatId);
-    if (turns.at(-1)?.id !== turn.id) {
-      throw new ConflictError('TURN_NOT_RETRYABLE', RETRY_SUPERSEDED);
-    }
-    if (turn.status !== 'FAILED') {
-      throw new ConflictError('TURN_NOT_RETRYABLE', RETRY_REFUSED);
-    }
+    const turn = await requireRetryableTurn(container, params.id);
     await requireSecrets(container);
     const requeued = await container.repos.turns.requeue(turn.id);
     if (requeued === null) {
