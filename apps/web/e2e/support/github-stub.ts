@@ -117,8 +117,10 @@ export function rewriteRepoUrls(fixtures: GithubFixtures, repoBaseUrl: string): 
     branches: fixtures.branches,
     repos: fixtures.repos.map((repo) => ({
       ...repo,
-      html_url: `${base}/${repo.name}${GIT_SUFFIX}`,
-      clone_url: `${base}/${repo.name}${GIT_SUFFIX}`,
+      // `full_name`, not `name`: a repository URL carries its owner, and the git server serves
+      // the same owner-and-repository path.
+      html_url: `${base}/${repo.full_name}${GIT_SUFFIX}`,
+      clone_url: `${base}/${repo.full_name}${GIT_SUFFIX}`,
     })),
   };
 }

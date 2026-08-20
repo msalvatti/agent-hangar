@@ -675,3 +675,14 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   `repos.turns.get`, a `Turn` lookup — a `JobRun` id is not a `Turn` id, so it answers 404. The
   mock hides it because its handler accepts either kind of id, which is exactly why only a real
   run would have shown it.
+- 2C.13 ✅ 2026-08-20 — made the fixture conform to the widened repository-URL rules before they
+  land, since it is correct against the old rules too. The seed repository moved from
+  `/repos/sample.git` to `/repos/e2e/sample.git` and the shim now requires an owner segment: every
+  repository URL in this product has the owner-and-repository shape, and the widening keeps that
+  while dropping only the hostname. The allow-list entry for the git server became a whole origin,
+  `http://<host>:<port>`, because a credential is delivered to a scheme, a host *and* a port, so
+  that triple is what an operator authorises and a bare entry would stand for the default port.
+  · Re-verified against a rebuilt image: clone and anonymous push over `/e2e/sample.git` work, the
+  old flat path answers 404, and `/../etc/passwd.git`, `/../../repos/e2e/sample.git` and
+  `/./sample.git` all answer 404 — the owner pattern admits `.` and `..` as segments, so they are
+  refused explicitly. Seed SHAs are unchanged, so the branch fixtures still match.

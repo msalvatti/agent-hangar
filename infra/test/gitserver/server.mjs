@@ -21,8 +21,16 @@ const PORT = Number(process.env.PORT ?? '8080');
 /** Root holding the bare repositories, as `git http-backend` expects it. */
 const PROJECT_ROOT = process.env.GIT_PROJECT_ROOT ?? '/repos';
 
-/** `/<name>.git/<rest>`; anything else is not a git request. */
-const REPO_REQUEST = /^\/([A-Za-z0-9._-]+\.git)(\/.*)$/u;
+/**
+ * `/<owner>/<name>.git/<rest>`; anything else is not a git request.
+ *
+ * The owner segment is required because every repository URL in this product has the
+ * owner-and-repository shape, and the fixture has to serve what the product will ask for.
+ */
+const REPO_REQUEST = /^\/([A-Za-z0-9._-]+)\/([A-Za-z0-9._-]+\.git)(\/.*)$/u;
+
+/** Segments that would climb out of the project root; the pattern above admits them otherwise. */
+const TRAVERSAL_SEGMENTS = new Set(['.', '..']);
 
 /** Status returned when the CGI child names none. */
 const DEFAULT_STATUS = 200;
@@ -188,14 +196,24 @@ const server = createServer((request, response) => {
   }
 
   const match = REPO_REQUEST.exec(rawPath);
-  if (match === null) {
+  const owner = match?.[1];
+  const repository = match?.[2];
+  if (match === null || owner === undefined || repository === undefined) {
+    response.writeHead(NOT_FOUND, { 'content-type': 'text/plain' });
+    response.end('not found\n');
+    log(NOT_FOUND);
+    return;
+  }
+  if (TRAVERSAL_SEGMENTS.has(owner) || TRAVERSAL_SEGMENTS.has(repository.slice(0, -4))) {
     response.writeHead(NOT_FOUND, { 'content-type': 'text/plain' });
     response.end('not found\n');
     log(NOT_FOUND);
     return;
   }
 
-  serveGit(request, response, `/${match[1]}${match[2]}`, query).then(log, () => log(SERVER_ERROR));
+  serveGit(request, response, `/${owner}/${repository}${String(match[3])}`, query).then(log, () =>
+    log(SERVER_ERROR),
+  );
 });
 
 server.listen(PORT, '0.0.0.0', () => {

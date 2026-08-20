@@ -38,9 +38,13 @@ describe('resolveE2eEnv', () => {
     expect(env.gitServerBindAddress).toBe('127.0.0.1');
     expect(env.workspaceImage).toBe(DEFAULT_WORKSPACE_IMAGE);
     expect(env.repoUrl).toBe(
-      `http://${DEFAULT_GITSERVER_HOST}:${String(DEFAULT_PORT_BASE + 7)}/sample.git`,
+      `http://${DEFAULT_GITSERVER_HOST}:${String(DEFAULT_PORT_BASE + 7)}/e2e/sample.git`,
     );
-    expect(env.allowedRepoHosts).toEqual(['github.com', DEFAULT_GITSERVER_HOST]);
+    // A whole origin, not a bare host: a bare entry would stand for the scheme's default port.
+    expect(env.allowedRepoOrigins).toEqual([
+      'github.com',
+      `http://${DEFAULT_GITSERVER_HOST}:${String(DEFAULT_PORT_BASE + 7)}`,
+    ]);
     expect(env.githubApiBaseUrl).toBe(`http://127.0.0.1:${String(DEFAULT_PORT_BASE + 8)}`);
   });
 
@@ -59,8 +63,8 @@ describe('resolveE2eEnv', () => {
     expect(env.postgresDb).toBe('agent_hangar_w2c_test');
     expect(env.gitServerHost).toBe('172.17.0.1');
     expect(env.gitServerBindAddress).toBe('172.17.0.1');
-    expect(env.repoUrl).toBe('http://172.17.0.1:4107/sample.git');
-    expect(env.allowedRepoHosts).toEqual(['github.com', '172.17.0.1']);
+    expect(env.repoUrl).toBe('http://172.17.0.1:4107/e2e/sample.git');
+    expect(env.allowedRepoOrigins).toEqual(['github.com', 'http://172.17.0.1:4107']);
     expect(env.workspaceImage).toBe('agent-hangar/workspace:ci');
   });
 
@@ -74,6 +78,18 @@ describe('resolveE2eEnv', () => {
   /** A port base that is not an integer must fail the run, not silently become NaN. */
   it('rejects a non-integer port base', () => {
     expect(() => resolveE2eEnv({ E2E_PORT_BASE: '39xx' })).toThrow(/must be an integer/);
+  });
+
+  /**
+   * A repository URL always names an owner and a repository. The fixture has to serve that shape,
+   * because the schemas that accept a repository URL require it whatever host it names.
+   */
+  it('names an owner and a repository in the clone URL', () => {
+    const { pathname } = new URL(resolveE2eEnv({ E2E_MODE: 'real' }).repoUrl);
+    expect(pathname.split('/').filter((segment) => segment.length > 0)).toEqual([
+      'e2e',
+      'sample.git',
+    ]);
   });
 
   /** The script and key paths are absolute and inside the suite's own folder. */
@@ -135,7 +151,11 @@ describe('serverEnv', () => {
     expect(block.REDIS_URL).toBe(env.redisUrl);
     expect(block.MASTER_KEY_PATH).toBe(env.masterKeyPath);
     expect(block.FAKE_PROVIDER_SCRIPT_PATH).toBe(env.fakeScriptPath);
-    expect(block.ALLOWED_REPO_HOSTS).toBe(`github.com,${env.gitServerHost}`);
+    // A whole origin, not a bare host: a bare entry stands for the scheme's default port.
+    expect(block.ALLOWED_REPO_HOSTS).toBe(env.allowedRepoOrigins.join(','));
+    expect(block.ALLOWED_REPO_HOSTS).toContain(
+      `http://${env.gitServerHost}:${String(env.gitServerPort)}`,
+    );
     expect(block.GITHUB_API_BASE_URL).toBe(env.githubApiBaseUrl);
     expect(block.WORKSPACE_NAME_PREFIX).toBe('ah-ws-test-');
     expect(block.WORKSPACE_IDLE_TTL_MIN).toBe('30');

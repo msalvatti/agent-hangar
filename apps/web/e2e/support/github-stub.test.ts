@@ -47,18 +47,22 @@ describe('loadGithubFixtures', () => {
 });
 
 describe('rewriteRepoUrls', () => {
-  /** Every repository URL points at the git server, which is what a container can clone. */
-  it('points every repository at the git server', () => {
+  /**
+   * Every repository URL points at the git server, which is what a container can clone, and
+   * carries its owner — the shape every repository URL in this product must have.
+   */
+  it('points every repository at the git server, owner and all', () => {
     for (const repo of fixtures.repos) {
-      expect(repo.clone_url).toBe(`${GIT_SERVER}/${repo.name}.git`);
-      expect(repo.html_url).toBe(`${GIT_SERVER}/${repo.name}.git`);
+      expect(repo.clone_url).toBe(`${GIT_SERVER}/${repo.full_name}.git`);
+      expect(repo.html_url).toBe(`${GIT_SERVER}/${repo.full_name}.git`);
+      expect(new URL(repo.clone_url).pathname.split('/').filter(Boolean)).toHaveLength(2);
     }
   });
 
   /** A trailing slash on the base URL must not produce a double slash in the clone URL. */
   it('tolerates a trailing slash on the base URL', () => {
     const rewritten = rewriteRepoUrls(fixtures, `${GIT_SERVER}/`);
-    expect(rewritten.repos[0]?.clone_url).toBe(`${GIT_SERVER}/sample.git`);
+    expect(rewritten.repos[0]?.clone_url).toBe(`${GIT_SERVER}/e2e/sample.git`);
   });
 });
 

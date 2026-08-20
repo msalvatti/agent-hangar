@@ -1,17 +1,22 @@
 #!/bin/sh
-# Creates the deterministic seed repository /repos/sample.git the first time the container starts.
+# Creates the deterministic seed repository the first time the container starts.
 # Fixed author, committer and dates keep the commit SHAs identical on every machine.
+#
+# The repository lives under an owner directory, so its URL has the owner-and-repository shape
+# every repository URL in this product must have: /<owner>/<name>.git, never /<name>.git.
 set -eu
 
 REPOS="${GIT_PROJECT_ROOT:-/repos}"
-BARE="$REPOS/sample.git"
+OWNER='e2e'
+NAME='sample'
+BARE="$REPOS/$OWNER/$NAME.git"
 
 if [ -d "$BARE" ]; then
   echo "seed: $BARE already exists"
   exit 0
 fi
 
-mkdir -p "$REPOS"
+mkdir -p "$REPOS/$OWNER"
 git init -q --bare --initial-branch=main "$BARE"
 git -C "$BARE" config http.receivepack true
 

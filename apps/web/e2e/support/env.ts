@@ -14,7 +14,7 @@ import { fileURLToPath } from 'node:url';
 
 import { resolveInstance } from '@agent-hangar/core';
 
-import { DEFAULT_PORT_BASE, LOOPBACK, PORT_OFFSETS, TEST_INSTANCE } from './constants';
+import { DEFAULT_PORT_BASE, LOOPBACK, PORT_OFFSETS, SAMPLE_REPO, TEST_INSTANCE } from './constants';
 import type { E2eMode } from './mode';
 import { readMode } from './mode';
 
@@ -58,8 +58,15 @@ export interface E2eEnv {
   githubApiBaseUrl: string;
   /** Clone URL of the seed repository, as a workspace container must dial it. */
   repoUrl: string;
-  /** Hosts the API may accept a repository URL for. */
-  allowedRepoHosts: readonly string[];
+  /**
+   * Origins the API may accept a repository URL for.
+   *
+   * Origins, not host names: a credential is delivered to a scheme, a host *and* a port, so that
+   * triple is what an operator authorises. A bare entry stands for the scheme's default port, so
+   * naming the git server without its port would authorise something else entirely. Passed
+   * through `ALLOWED_REPO_HOSTS`, whose name predates the distinction.
+   */
+  allowedRepoOrigins: readonly string[];
   /** Absolute path of the fake provider's script file. */
   fakeScriptPath: string;
   /** Absolute path of the master key file written for this run. */
@@ -187,8 +194,8 @@ export function resolveE2eEnv(processEnv: E2eProcessEnv = process.env): E2eEnv {
     gitServerBindAddress: gitServerBindAddress(gitServerHost),
     githubStubPort,
     githubApiBaseUrl: `http://${LOOPBACK}:${String(githubStubPort)}`,
-    repoUrl: `http://${gitServerHost}:${String(gitServerPort)}/sample.git`,
-    allowedRepoHosts: ['github.com', gitServerHost],
+    repoUrl: `http://${gitServerHost}:${String(gitServerPort)}/${SAMPLE_REPO}.git`,
+    allowedRepoOrigins: ['github.com', `http://${gitServerHost}:${String(gitServerPort)}`],
     fakeScriptPath: e2ePath('fake-provider/script.json'),
     masterKeyPath: `${tmpDir}/master.key`,
     tmpDir,
@@ -228,7 +235,7 @@ export function serverEnv(env: E2eEnv): Record<string, string> {
     MASTER_KEY_PATH: env.masterKeyPath,
     AGENT_MODEL_PROVIDER: 'fake',
     FAKE_PROVIDER_SCRIPT_PATH: env.fakeScriptPath,
-    ALLOWED_REPO_HOSTS: env.allowedRepoHosts.join(','),
+    ALLOWED_REPO_HOSTS: env.allowedRepoOrigins.join(','),
     GITHUB_API_BASE_URL: env.githubApiBaseUrl,
     LOG_LEVEL: 'info',
     NEXT_PUBLIC_API_MOCK: env.mode === 'mock' ? '1' : '0',
