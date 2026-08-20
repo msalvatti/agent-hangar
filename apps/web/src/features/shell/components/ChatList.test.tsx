@@ -115,4 +115,19 @@ describe('ChatList', () => {
       expect(screen.getByRole('list', { name: 'Chats' })).toBeInTheDocument();
     });
   });
+
+  /*
+   * Spec 10 §10 asks for a pointer cursor on every interactive element, and Tailwind's preflight
+   * gives `<button>` the default arrow unless something says otherwise. This retry was one of the
+   * two buttons in the sidebar that said nothing, and it is now covered by the shared primitive.
+   */
+  it('offers that retry with a pointer cursor', async () => {
+    server.use(
+      http.get('/api/chats', () =>
+        HttpResponse.json({ error: { code: 'BOOM', message: 'nope' } }, { status: 500 }),
+      ),
+    );
+    render(<ChatList activeId={null} />);
+    expect(await screen.findByRole('button', { name: 'Retry' })).toHaveClass('cursor-pointer');
+  });
 });
