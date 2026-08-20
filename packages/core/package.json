@@ -26,7 +26,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b",
+    "build": "tsc -b && tsx scripts/rewrite-declaration-specifiers.ts",
     "lint": "eslint .",
     "typecheck": "tsc -b",
     "test": "vitest run --project unit",

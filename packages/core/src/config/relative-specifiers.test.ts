@@ -85,11 +85,16 @@ describe('relative specifiers of @agent-hangar/core resolve without extension su
    * file is scanned, not just `index.ts`.
    */
   it('never points a relative specifier at a .js file that does not exist', () => {
+    // Files whose text deliberately feeds `.js`-suffixed samples to a pattern under test, rather
+    // than writing them as real import specifiers. Scanning them would report their own test data
+    // as offences.
+    const filesWithDeliberateJsSamples = [
+      fileURLToPath(import.meta.url),
+      join(coreSrcDir, 'config', 'declaration-specifiers.test.ts'),
+    ];
     const offenders: string[] = [];
     for (const file of listSourceFiles(coreSrcDir)) {
-      // This file is the one place where `.js` specifiers appear on purpose: the cases below feed
-      // deliberate samples to the pattern. Scanning it would report its own test data as offences.
-      if (file === fileURLToPath(import.meta.url)) {
+      if (filesWithDeliberateJsSamples.includes(file)) {
         continue;
       }
       const content = readFileSync(file, 'utf8');
