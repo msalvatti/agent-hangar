@@ -238,6 +238,42 @@ export async function enqueueRunTurn(queue: Queue, payload: RunTurnPayload): Pro
   return data.turnId;
 }
 
+/** Job states in which a job has finished and is only being retained for its history. */
+const TERMINAL_JOB_STATES: readonly string[] = ['completed', 'failed'];
+
+/**
+ * Releases the retained job of a turn that has finished, so the same id can be enqueued again.
+ *
+ * Retention and a deterministic job id pull in opposite directions, and re-running an existing
+ * turn is where they collide. `removeOnComplete`/`removeOnFail` are counts, not `true`, so a job
+ * stays in Redis long after it ran — and BullMQ answers an `add` for an id it still holds by
+ * returning the held job instead of enqueuing a new one, silently and without throwing. A
+ * re-dispatch under the original turn id therefore does nothing at all: no worker ever sees it.
+ * The same hazard is why `destroy-chat-workspace` keeps no history (see `DESTROY_RETENTION`);
+ * this queue does keep history, so the id is released deliberately at the one point it has to be.
+ *
+ * Only a job in a terminal state is released. A `waiting`, `active` or `delayed` job is live work,
+ * and the deterministic id exists precisely to stop a second dispatch of it — that guarantee is
+ * untouched here, because this never removes a job anyone is still waiting on.
+ *
+ * The cost is the released job's own Redis-side history: a turn that is re-run keeps only its
+ * latest attempt in the queue's completed/failed sets. The durable record of a turn is its row in
+ * Postgres, not the job, exactly as it is for a workspace teardown.
+ *
+ * @param queue - The queue holding the job.
+ * @param jobId - Id to release; the turn id for a chat turn.
+ * @returns `true` when a retained terminal job was removed, `false` when there was nothing to
+ *   release or the job is still live.
+ */
+export async function releaseTerminalJob(queue: Queue, jobId: string): Promise<boolean> {
+  const job = await queue.getJob(jobId);
+  if (job === undefined || !TERMINAL_JOB_STATES.includes(await job.getState())) {
+    return false;
+  }
+  await job.remove();
+  return true;
+}
+
 /**
  * Enqueues a one-off run of a scheduled job.
  *

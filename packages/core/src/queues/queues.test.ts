@@ -25,6 +25,7 @@ import {
   enqueueDestroyChatWorkspace,
   enqueueManualJobRun,
   enqueueRunTurn,
+  releaseTerminalJob,
   KEEP_COMPLETED_JOBS,
   KEEP_FAILED_JOBS,
 } from './queues.ts';
@@ -37,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   add: vi.fn<
     (name: string, data: unknown, options?: unknown) => Promise<{ id?: string | undefined }>
   >(),
+  getJob: vi.fn<(id: string) => Promise<unknown>>(),
 }));
 
 /** ioredis' documented default retry budget, mirrored so the producer path is realistic. */
@@ -56,6 +58,8 @@ vi.mock('ioredis', () => ({
 vi.mock('bullmq', () => ({
   Queue: class FakeQueue {
     readonly add = mocks.add;
+
+    readonly getJob = mocks.getJob;
 
     constructor(name: string, options: unknown) {
       mocks.queueCtor(name, options);
@@ -83,7 +87,19 @@ const fakeQueue = (): Queue => createQueue(QUEUE_NAMES.chatTurns, { connection: 
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.add.mockResolvedValue({ id: 'generated-id' });
+  mocks.getJob.mockResolvedValue(undefined);
 });
+
+/**
+ * Builds a job double reporting one state and recording its removal.
+ *
+ * @param state - State `getState` reports.
+ * @returns The job and a spy on its `remove`.
+ */
+function jobInState(state: string) {
+  const remove = vi.fn<() => Promise<void>>().mockResolvedValue(undefined);
+  return { job: { getState: () => Promise.resolve(state), remove }, remove };
+}
 
 describe('connections', () => {
   /**
@@ -347,5 +363,56 @@ describe('producers', () => {
   it('rejects a malformed destroy payload', async () => {
     await expect(enqueueDestroyChatWorkspace(fakeQueue(), { chatId: '' })).rejects.toThrow();
     expect(mocks.add).not.toHaveBeenCalled();
+  });
+});
+
+describe('releaseTerminalJob', () => {
+  /**
+   * The whole reason the function exists: retention is a count, so a finished job keeps its id
+   * taken, and BullMQ answers the next `add` for that id by returning the held job rather than
+   * enqueuing anything. Releasing a completed job is what lets a turn be dispatched a second time.
+   */
+  it('removes a completed job so its id can be enqueued again', async () => {
+    const { job, remove } = jobInState('completed');
+    mocks.getJob.mockResolvedValue(job);
+
+    await expect(releaseTerminalJob(fakeQueue(), 'turn-1')).resolves.toBe(true);
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * A turn whose worker threw leaves the job in `failed`, which retention keeps for even longer.
+   */
+  it('removes a failed job too', async () => {
+    const { job, remove } = jobInState('failed');
+    mocks.getJob.mockResolvedValue(job);
+
+    await expect(releaseTerminalJob(fakeQueue(), 'turn-1')).resolves.toBe(true);
+    expect(remove).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * The guarantee the deterministic id buys must survive this: live work is never released, so a
+   * second dispatch of a job somebody is still waiting on is still deduplicated by BullMQ.
+   */
+  it.each(['waiting', 'active', 'delayed', 'prioritized'])(
+    'leaves a %s job alone',
+    async (state) => {
+      const { job, remove } = jobInState(state);
+      mocks.getJob.mockResolvedValue(job);
+
+      await expect(releaseTerminalJob(fakeQueue(), 'turn-1')).resolves.toBe(false);
+      expect(remove).not.toHaveBeenCalled();
+    },
+  );
+
+  /**
+   * A turn dispatched for the first time has no job to release, which is an ordinary answer and
+   * not a failure — the caller enqueues straight after either way.
+   */
+  it('answers false when there is no such job', async () => {
+    mocks.getJob.mockResolvedValue(undefined);
+
+    await expect(releaseTerminalJob(fakeQueue(), 'turn-1')).resolves.toBe(false);
   });
 });
