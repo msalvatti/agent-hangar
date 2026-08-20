@@ -111,10 +111,14 @@ describe('BranchPicker', () => {
     });
 
     await user.click(screen.getByRole('button', { name: 'Switch repository' }));
+    // The recorded selection and the rendered trigger are two different moments: the harness pushes
+    // to `selections` inside `onSelect`, and the label needs the state that callback sets to be
+    // committed. Asserting the label after waiting on the array races that commit, so both are
+    // waited on together.
     await waitFor(() => {
       expect(selections).toEqual(['main', 'master']);
+      expect(screen.getByRole('button', { name: /master/i })).toBeInTheDocument();
     });
-    expect(screen.getByRole('button', { name: /master/i })).toBeInTheDocument();
   });
 
   // Selecting another branch from the list calls onChange with it.

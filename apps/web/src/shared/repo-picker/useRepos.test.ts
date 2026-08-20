@@ -57,13 +57,22 @@ describe('useRepos', () => {
     rerender({ query: 'ac' });
     rerender({ query: 'acm' });
     rerender({ query: 'acme' });
+    // Both conditions in the one waiter, because arriving is not settling: the handler records the
+    // query the moment the request reaches it, and the response, the promise that carries it, the
+    // state write and React's commit all still lie between that and a hook that reports `success`.
+    // Waiting on the recorded query alone and asserting the status on the next line races that gap,
+    // which is a race a slower machine wins — the status is `loading` until the load finishes, and
+    // no timeout can be long enough to make a proxy condition mean the thing it stands in for.
+    // The key comparison in `useApiQuery` is what makes the pair unambiguous: a `success` seen
+    // after `acme` has been requested can only be `acme`'s, never the mount query's left over.
     await waitFor(
       () => {
         expect(seenQueries).toContain('acme');
+        expect(result.current.status).toBe('success');
       },
       { timeout: 2_000 },
     );
-    expect(result.current.status).toBe('success');
+    // Settled, so the request list is final: nothing else can issue one.
     expect(seenQueries).toEqual(['a', 'acme']);
   });
 });

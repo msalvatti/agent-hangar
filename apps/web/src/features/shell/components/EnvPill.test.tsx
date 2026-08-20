@@ -1,7 +1,7 @@
 /**
  * Tests for `EnvPill` and the dialog it opens: the environment status in the sidebar footer.
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
@@ -51,7 +51,16 @@ describe('EnvPill', () => {
     render(<EnvPill />);
     await userEvent.click(await screen.findByRole('button', { name: /Environment status/ }));
     const dialog = await screen.findByRole('dialog');
-    expect(dialog).toHaveTextContent('Postgres');
+    // The dialog opens on the click alone, so finding it says nothing about the report inside it:
+    // until the health request lands it renders "Checking the environment…". Nor does anything
+    // earlier force that request to have finished — the accessible name is matched by a pattern
+    // the pre-load label ("Environment status: checking") satisfies just as well. Waiting on the
+    // probe list is waiting on the thing being asserted; waiting on the dialog was waiting on a
+    // round-trip's worth of nothing.
+    await waitFor(() => {
+      expect(dialog).toHaveTextContent('Postgres');
+    });
+    // One commit renders the whole list, so the rest is settled once the first probe is there.
     expect(dialog).toHaveTextContent('Workspace image');
     expect(dialog).toHaveTextContent('failing');
     expect(dialog).toHaveTextContent('Run `pnpm doctor` for details.');
