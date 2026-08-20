@@ -75,14 +75,17 @@ Shared files are append-only, one line per lane: each package's `vitest.config.t
 `packages/core/src/index.ts` (the root barrel itself is frozen), `apps/web/src/mocks/handlers.ts`.
 Contracts in `packages/core` are frozen after W0; changes are additive, one-file PRs.
 
-Every project reference is `composite`, so `tsc -b` **emits** — `typecheck` is a build with the
-output kept. `packages/core` writes relative `.ts` specifiers in its source (so the Next.js dev
-server resolves the package from source) and TypeScript does not rewrite those when it emits
-declarations, so a post-step fixes them up. That post-step is `packages/core`'s
-`declarations:rewrite` script, and **every** script that runs `tsc -b` where it can reach
-`packages/core` chains it: the root `typecheck`, and `build`/`typecheck` in `packages/core`,
-`apps/worker` and `packages/agent-runtime`. A new script that runs `tsc -b` must chain it too, or
-it leaves a `dist` whose declarations name `.ts` files that do not exist.
+`packages/core` is `composite`, so `tsc -b` reaching it — directly, or through any project that
+references it — **emits**: `typecheck` on that path is a build with the output kept. Not every
+project reference shares that: `apps/web` sets `composite: false` and type-checks with `tsc -p`,
+not `-b`, and `infra/scripts` sets `noEmit: true`, so neither ever writes a `dist`. `packages/core`
+writes relative `.ts` specifiers in its source (so the Next.js dev server resolves the package
+from source) and TypeScript does not rewrite those when it emits declarations, so a post-step
+fixes them up. That post-step is `packages/core`'s `declarations:rewrite` script, and **every**
+script that runs `tsc -b` where it can reach `packages/core` chains it: the root `typecheck`, and
+`build`/`typecheck` in `packages/core`, `apps/worker` and `packages/agent-runtime`. **A new script
+that runs `tsc -b` where it can reach `packages/core` must chain it too**, or it leaves a `dist`
+whose declarations name `.ts` files that do not exist.
 
 `packages/core` is published with `sideEffects: false`: client components import the contracts
 from `@agent-hangar/core` and the bundler prunes the Node-only modules (Prisma, pg, pino,
