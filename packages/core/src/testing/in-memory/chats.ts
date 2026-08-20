@@ -217,6 +217,23 @@ export class InMemoryTurnRepository implements TurnRepository {
     return { ...turn };
   }
 
+  async requeue(id: string): Promise<Turn | null> {
+    const turn = this.store.turns.get(id);
+    if (turn?.status !== 'FAILED') {
+      return null;
+    }
+    Object.assign(turn, {
+      status: 'QUEUED',
+      error: null,
+      startedAt: null,
+      finishedAt: null,
+      inputTokens: null,
+      outputTokens: null,
+      stepCount: 0,
+    });
+    return { ...turn };
+  }
+
   async listByChat(chatId: string): Promise<Turn[]> {
     return [...this.store.turns.values()]
       .filter((turn) => turn.chatId === chatId)

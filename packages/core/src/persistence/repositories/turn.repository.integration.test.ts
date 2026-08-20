@@ -7,7 +7,8 @@
  * canary in `error` before the write; `listByChat` orders by `queuedAt` asc; unknown ids resolve
  * per the port (`get` → null, `setStatus` → `NotFoundError`, `create` on a missing chat →
  * `NotFoundError('Chat', …)`); a `setStatus` whose status update fails rolls the `startedAt` stamp
- * back with it.
+ * back with it; `requeue` returns a FAILED turn to QUEUED with the failed attempt cleared and
+ * leaves every other status untouched.
  * Mocks: none — a real compose Postgres.
  */
 import { beforeEach, expect, it } from 'vitest';
@@ -142,6 +143,62 @@ describeDb('PrismaTurnRepository', () => {
     const second = await repo.create({ chatId, model: 'gpt-5.6-sol' });
     const turns = await repo.listByChat(chatId);
     expect(turns.map((t) => t.id)).toEqual([first.id, second.id]);
+  });
+
+  /**
+   * requeue() moves a FAILED turn back to QUEUED and leaves nothing of the failed attempt on the
+   * row. Read back with raw SQL rather than through the mapper, because what is being pinned is
+   * the state of the columns Postgres holds.
+   */
+  it('requeue() returns a FAILED turn to QUEUED with the failed attempt cleared', async () => {
+    const chatId = await seedChat(client);
+    const repo = new PrismaTurnRepository(client, testRedactor);
+    const turn = await repo.create({ chatId, model: 'gpt-5.6-sol' });
+    await repo.setStatus(turn.id, 'PREPARING');
+    await repo.finish(turn.id, 'FAILED', { inputTokens: 7, outputTokens: 3, stepCount: 2 }, 'boom');
+
+    const requeued = await repo.requeue(turn.id);
+
+    expect(requeued?.status).toBe('QUEUED');
+    const rows = await rawSelect<{
+      status: string;
+      error: string | null;
+      startedAt: Date | null;
+      finishedAt: Date | null;
+      inputTokens: number | null;
+      outputTokens: number | null;
+      stepCount: number;
+    }>(
+      client,
+      sqlTemplate(
+        'SELECT status, error, "startedAt", "finishedAt", "inputTokens", "outputTokens", "stepCount" FROM "Turn" WHERE id = ',
+      ),
+      turn.id,
+    );
+    expect(rows[0]).toMatchObject({
+      status: 'QUEUED',
+      error: null,
+      startedAt: null,
+      finishedAt: null,
+      inputTokens: null,
+      outputTokens: null,
+      stepCount: 0,
+    });
+  });
+
+  /**
+   * The FAILED condition lives in the `where` clause, so a turn in any other status is left
+   * exactly as it was and the call answers null instead of raising.
+   */
+  it('requeue() leaves a turn that is not FAILED untouched and answers null', async () => {
+    const chatId = await seedChat(client);
+    const repo = new PrismaTurnRepository(client, testRedactor);
+    const turn = await repo.create({ chatId, model: 'gpt-5.6-sol' });
+    await repo.finish(turn.id, 'SUCCEEDED', { inputTokens: 1, outputTokens: 1, stepCount: 1 });
+
+    expect(await repo.requeue(turn.id)).toBeNull();
+    expect(await repo.requeue('missing')).toBeNull();
+    expect((await repo.get(turn.id))?.status).toBe('SUCCEEDED');
   });
 
   /** get() on an unknown id returns null; setStatus() throws NotFoundError. */

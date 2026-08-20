@@ -9,6 +9,10 @@
  * update never leaves a QUEUED turn that looks started. A missing chat parent surfaces as Postgres
  * foreign-key violation P2003, translated to `NotFoundError('Chat', chatId)` like the in-memory
  * double raises.
+ *
+ * `requeue` is the one backwards transition this repository allows, and it is written as a
+ * conditional `updateMany` so the legality of the move is decided by the row Postgres holds rather
+ * than by a status the caller read a moment earlier.
  */
 import type { Redactor } from '../../secrets/types.ts';
 import type { TurnStatus } from '../../workspace/types.ts';
@@ -119,6 +123,27 @@ export class PrismaTurnRepository implements TurnRepository {
     } catch (caught) {
       translatePrismaError(caught, { entity: 'Turn', id });
     }
+  }
+
+  /** @inheritDoc */
+  async requeue(id: string): Promise<Turn | null> {
+    // `updateMany` rather than `update`: the status belongs in the `where` clause, so Postgres
+    // decides whether the transition is legal instead of the caller deciding it from a status it
+    // read a moment earlier. A row that is not FAILED then matches nothing and the count says so,
+    // where `update` would raise P2025 — an exception for what is an ordinary, expected answer.
+    const { count } = await this.prisma.turn.updateMany({
+      where: { id, status: toPrismaTurnStatus('FAILED') },
+      data: {
+        status: toPrismaTurnStatus('QUEUED'),
+        error: null,
+        startedAt: null,
+        finishedAt: null,
+        inputTokens: null,
+        outputTokens: null,
+        stepCount: 0,
+      },
+    });
+    return count === 0 ? null : this.get(id);
   }
 
   /** @inheritDoc */
