@@ -1,12 +1,18 @@
 /**
- * Presentation mapping for a job run's status: icon, label and tone (icon + text, never colour
- * alone).
+ * The run-status vocabulary of this feature: how a status is presented (icon, label and tone —
+ * icon plus text, never colour alone), how it maps onto the transcript's phase, and whether it
+ * means the run is still executing.
  *
  * Layer: presentation.
+ *
+ * Both activity predicates read one list of active statuses, so "is this run active" has a single
+ * answer whether the caller holds a status or the phase derived from it.
  */
 import type { JobRunStatus } from '@agent-hangar/core';
 import { Ban, CircleCheck, CircleDot, CircleX, Clock } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+
+import type { TurnPhase } from '@/shared/transcript';
 
 /** Visual tone of a status, mapped to a token-based text/icon colour by the caller. */
 export type StatusTone = 'success' | 'destructive' | 'warning' | 'accent' | 'muted';
@@ -37,12 +43,43 @@ export function runStatusPresentation(status: JobRunStatus): RunStatusPresentati
   return PRESENTATION_BY_STATUS[status];
 }
 
+/** The transcript phase each run status is shown as. */
+export const PHASE_BY_STATUS: Record<JobRunStatus, TurnPhase> = {
+  QUEUED: 'queued',
+  PREPARING: 'preparing',
+  RUNNING: 'running',
+  SUCCEEDED: 'succeeded',
+  FAILED: 'failed',
+  CANCELLED: 'cancelled',
+};
+
+/** The statuses a run is still executing in. Everything else has settled. */
+const ACTIVE_STATUSES: readonly JobRunStatus[] = ['QUEUED', 'PREPARING', 'RUNNING'];
+
+/** The same set expressed as transcript phases, derived so the two can never drift apart. */
+const ACTIVE_PHASES: ReadonlySet<TurnPhase> = new Set(
+  ACTIVE_STATUSES.map((status) => PHASE_BY_STATUS[status]),
+);
+
 /**
  * Whether a run status means the run is still executing (and should be polled/ticked live).
  *
  * @param status - The run's status.
- * @returns `true` for `QUEUED`, `PREPARING` or `RUNNING`.
+ * @returns `true` while the run is queued, preparing or running.
  */
 export function isRunActive(status: JobRunStatus): boolean {
-  return status === 'QUEUED' || status === 'PREPARING' || status === 'RUNNING';
+  return ACTIVE_PHASES.has(PHASE_BY_STATUS[status]);
+}
+
+/**
+ * Whether a transcript phase means the run is still executing.
+ *
+ * The phase-side answer to {@link isRunActive}, for callers that have already mapped a status —
+ * the run drawer works in phases because it also drives them from the live event stream.
+ *
+ * @param phase - The phase currently displayed.
+ * @returns `true` while the run is queued, preparing or running.
+ */
+export function isActivePhase(phase: TurnPhase): boolean {
+  return ACTIVE_PHASES.has(phase);
 }

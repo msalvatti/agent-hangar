@@ -47,6 +47,10 @@ function stubScrollIntoView(): void {
 }
 beforeEach(() => {
   currentSearch = '';
+  // The router doubles are module-scoped, so each test starts from a clean call log; otherwise a
+  // "did not navigate" assertion would still see an earlier test's navigation.
+  push.mockClear();
+  replace.mockClear();
   vi.stubGlobal('ResizeObserver', StubResizeObserver);
   Element.prototype.scrollIntoView = stubScrollIntoView;
 });
@@ -215,5 +219,53 @@ describe('JobDetailView', () => {
     await waitFor(() => {
       expect(push).toHaveBeenCalledWith('/scheduled');
     });
+  });
+
+  /**
+   * Navigating back is the claim that the job is gone, so a failed deletion must not trigger it:
+   * the user stays on the page of the job that still exists.
+   */
+  it('stays on the page when the deletion fails', async () => {
+    server.use(
+      http.delete('/api/jobs/:id', () =>
+        HttpResponse.json({ error: { code: 'SERVER_ERROR', message: 'boom' } }, { status: 500 }),
+      ),
+    );
+    const user = userEvent.setup();
+    render(<JobDetailView jobId="job-changelog" />);
+    await screen.findByText('Changelog');
+    await user.click(screen.getByRole('button', { name: 'Job actions' }));
+    await user.click(await screen.findByText('Delete'));
+    await user.click(await screen.findByRole('button', { name: 'Delete' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+    });
+    expect(push).not.toHaveBeenCalledWith('/scheduled');
+  });
+
+  /**
+   * A failed load is not the same as a slow one: the screen offers the message and the retry the
+   * rest of the application offers, instead of showing the bare header for ever.
+   */
+  it('shows an error card with a working retry when the job fails to load', async () => {
+    let failing = true;
+    server.use(
+      http.get('/api/jobs', () => {
+        if (failing) {
+          return HttpResponse.json(
+            { error: { code: 'SERVER_ERROR', message: 'jobs exploded' } },
+            { status: 500 },
+          );
+        }
+        return HttpResponse.json({ jobs: [] });
+      }),
+    );
+    const user = userEvent.setup();
+    render(<JobDetailView jobId="job-changelog" />);
+    expect(await screen.findByText('Could not load the job')).toBeInTheDocument();
+    expect(screen.getByText('jobs exploded')).toBeInTheDocument();
+    failing = false;
+    await user.click(screen.getByRole('button', { name: 'Retry' }));
+    expect(await screen.findByText('Job not found')).toBeInTheDocument();
   });
 });

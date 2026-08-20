@@ -171,6 +171,30 @@ describe('ScheduledView', () => {
     });
   });
 
+  /**
+   * A deletion that fails must not look like one that succeeded: the confirmation stays open, so
+   * the user is never told the job is gone while it still exists, and still has the button that
+   * retries.
+   */
+  it('keeps the confirmation open when the deletion fails', async () => {
+    server.use(
+      http.delete('/api/jobs/:id', () =>
+        HttpResponse.json({ error: { code: 'SERVER_ERROR', message: 'boom' } }, { status: 500 }),
+      ),
+    );
+    const user = userEvent.setup();
+    render(<ScheduledView />);
+    await screen.findByText('Changelog');
+    await user.click(screen.getByRole('button', { name: 'Actions for Changelog' }));
+    await user.click(await screen.findByText('Delete'));
+    await user.click(screen.getByRole('button', { name: 'Delete' }));
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Delete' })).toBeEnabled();
+    });
+    expect(screen.getByText('Delete job Changelog?')).toBeInTheDocument();
+    expect(screen.getByText('Changelog')).toBeInTheDocument();
+  });
+
   /** Toggling the enabled switch flips the row's state. */
   it('toggles a job enabled', async () => {
     const user = userEvent.setup();

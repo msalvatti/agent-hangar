@@ -31,7 +31,9 @@ const job: JobSummary = {
 describe('JobRowMenu', () => {
   /** The trigger has an accessible name naming the job. */
   it('has an accessible trigger name', () => {
-    render(<JobRowMenu job={job} onEdit={vi.fn()} onRunNow={vi.fn()} onDelete={vi.fn()} />);
+    render(
+      <JobRowMenu job={job} onEdit={vi.fn()} onRunNow={vi.fn()} onDelete={vi.fn()} busy={false} />,
+    );
     expect(screen.getByRole('button', { name: 'Actions for Nightly tests' })).toBeInTheDocument();
   });
 
@@ -39,7 +41,9 @@ describe('JobRowMenu', () => {
   it('calls onRunNow', async () => {
     const user = userEvent.setup();
     const onRunNow = vi.fn();
-    render(<JobRowMenu job={job} onEdit={vi.fn()} onRunNow={onRunNow} onDelete={vi.fn()} />);
+    render(
+      <JobRowMenu job={job} onEdit={vi.fn()} onRunNow={onRunNow} onDelete={vi.fn()} busy={false} />,
+    );
     await user.click(screen.getByRole('button', { name: 'Actions for Nightly tests' }));
     await user.click(await screen.findByText('Run now'));
     expect(onRunNow).toHaveBeenCalledWith(job);
@@ -49,7 +53,9 @@ describe('JobRowMenu', () => {
   it('calls onEdit', async () => {
     const user = userEvent.setup();
     const onEdit = vi.fn();
-    render(<JobRowMenu job={job} onEdit={onEdit} onRunNow={vi.fn()} onDelete={vi.fn()} />);
+    render(
+      <JobRowMenu job={job} onEdit={onEdit} onRunNow={vi.fn()} onDelete={vi.fn()} busy={false} />,
+    );
     await user.click(screen.getByRole('button', { name: 'Actions for Nightly tests' }));
     await user.click(await screen.findByText('Edit'));
     expect(onEdit).toHaveBeenCalledWith(job);
@@ -59,9 +65,29 @@ describe('JobRowMenu', () => {
   it('calls onDelete', async () => {
     const user = userEvent.setup();
     const onDelete = vi.fn();
-    render(<JobRowMenu job={job} onEdit={vi.fn()} onRunNow={vi.fn()} onDelete={onDelete} />);
+    render(
+      <JobRowMenu job={job} onEdit={vi.fn()} onRunNow={vi.fn()} onDelete={onDelete} busy={false} />,
+    );
     await user.click(screen.getByRole('button', { name: 'Actions for Nightly tests' }));
     await user.click(await screen.findByText('Delete'));
     expect(onDelete).toHaveBeenCalledWith(job);
+  });
+
+  /**
+   * A mutation already in flight disables the entries that mutate on click, so latency cannot be
+   * used to start a second run or a deletion for the same job. Edit only opens a dialog and stays
+   * available.
+   */
+  it('disables the mutating entries while the row is busy', async () => {
+    const user = userEvent.setup();
+    const onRunNow = vi.fn();
+    const onDelete = vi.fn();
+    render(<JobRowMenu job={job} onEdit={vi.fn()} onRunNow={onRunNow} onDelete={onDelete} busy />);
+    await user.click(screen.getByRole('button', { name: 'Actions for Nightly tests' }));
+    await user.click(await screen.findByText('Run now'));
+    await user.click(screen.getByText('Delete'));
+    expect(onRunNow).not.toHaveBeenCalled();
+    expect(onDelete).not.toHaveBeenCalled();
+    expect(screen.getByText('Edit')).not.toHaveAttribute('data-disabled');
   });
 });

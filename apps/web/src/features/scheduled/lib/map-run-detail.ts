@@ -4,9 +4,11 @@
  * Layer: service (adapter).
  */
 import { toolNameSchema } from '@agent-hangar/core';
-import type { JobRunStatus, JobSummary, RunDetail, ToolCallView } from '@agent-hangar/core';
+import type { JobSummary, RunDetail, ToolCallView } from '@agent-hangar/core';
 
 import type { ToolCallStatus, TranscriptItem, TurnPhase } from '@/shared/transcript';
+
+import { PHASE_BY_STATUS } from './status';
 
 /** Result of {@link mapRunDetail}. */
 export interface MappedRun {
@@ -15,15 +17,6 @@ export interface MappedRun {
   startedAt: number | null;
   finishedAt: number | null;
 }
-
-const PHASE_BY_STATUS: Record<JobRunStatus, TurnPhase> = {
-  QUEUED: 'queued',
-  PREPARING: 'preparing',
-  RUNNING: 'running',
-  SUCCEEDED: 'succeeded',
-  FAILED: 'failed',
-  CANCELLED: 'cancelled',
-};
 
 const TOOL_STATUS_BY_CONTRACT_STATUS: Record<ToolCallView['status'], ToolCallStatus> = {
   RUNNING: 'running',

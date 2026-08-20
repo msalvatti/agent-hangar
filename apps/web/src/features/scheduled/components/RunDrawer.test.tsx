@@ -13,7 +13,7 @@
 import type { JobSummary } from '@agent-hangar/core';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { http } from 'msw';
+import { HttpResponse, http } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { resetScheduledStore } from '@/mocks/scheduled';
@@ -266,5 +266,48 @@ describe('RunDrawer — active run (live stream)', () => {
     await screen.findByText('Nightly tests');
     await user.click(screen.getByRole('button', { name: 'Copy run id' }));
     expect(writeText).toHaveBeenCalledWith('run-nightly-running');
+  });
+
+  /**
+   * A queued run is active: the drawer must connect its stream and offer Stop for it, the same as
+   * a running one. Excluding queued here while `isRunActive` counted it left a run that could be
+   * neither watched nor stopped.
+   */
+  it('connects and offers Stop for a queued run', async () => {
+    server.use(
+      http.get('/api/runs/:id', () =>
+        HttpResponse.json({
+          run: {
+            id: 'run-queued',
+            jobId: 'job-nightly-tests',
+            status: 'QUEUED',
+            trigger: 'SCHEDULE',
+            model: 'gpt-5-mini',
+            usage: { inputTokens: null, outputTokens: null, stepCount: 0 },
+            error: null,
+            scheduledFor: '2026-08-19T10:00:00.000Z',
+            queuedAt: '2026-08-19T10:00:00.000Z',
+            startedAt: null,
+            finishedAt: null,
+          },
+          output: null,
+          toolCalls: [],
+        }),
+      ),
+    );
+    const { factory, instances } = createFakeEventSourceFactory();
+    render(
+      <RunDrawer
+        runId="run-queued"
+        job={job}
+        open
+        onOpenChange={vi.fn()}
+        createEventSource={factory}
+      />,
+    );
+    await waitFor(() => {
+      expect(instances.length).toBeGreaterThan(0);
+    });
+    expect(await screen.findByRole('button', { name: 'Stop run' })).toBeInTheDocument();
   });
 });

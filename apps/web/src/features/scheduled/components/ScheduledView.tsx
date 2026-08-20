@@ -51,11 +51,15 @@ export function ScheduledView() {
     void refetch();
   };
 
+  // The confirmation stays open when the request failed: closing it would report the job as gone
+  // while it still exists, and would take away the button that retries.
   const confirmDelete = async (job: JobSummary) => {
     setDeleting(true);
-    await remove(job);
+    const deleted = await remove(job);
     setDeleting(false);
-    setPendingDelete(null);
+    if (deleted) {
+      setPendingDelete(null);
+    }
   };
 
   const errorMessage = error?.message ?? '';

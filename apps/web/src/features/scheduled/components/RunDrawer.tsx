@@ -27,6 +27,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/shared/ui/tabs';
 import { useRun } from '../hooks/useRun';
 import { useRunActions } from '../hooks/useRunActions';
 import { mapRunDetail } from '../lib/map-run-detail';
+import { isActivePhase } from '../lib/status';
 
 import { RunRawOutput } from './RunRawOutput';
 import { StopRunDialog } from './StopRunDialog';
@@ -40,8 +41,6 @@ export interface RunDrawerProps {
   /** `EventSource` factory, injectable for tests. */
   createEventSource?: CreateEventSource;
 }
-
-const ACTIVE_PHASES = new Set(['preparing', 'running']);
 
 /**
  * The run detail drawer: a `Transcript` (streaming live via SSE while the run is active) and a
@@ -57,7 +56,7 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
 
   const loadErrorMessage = runQuery.error?.message ?? '';
   const mapped = runQuery.data === undefined ? null : mapRunDetail(runQuery.data, job);
-  const wasActiveOnLoad = mapped !== null && ACTIVE_PHASES.has(mapped.phase);
+  const wasActiveOnLoad = mapped !== null && isActivePhase(mapped.phase);
   const eventsUrl = wasActiveOnLoad && runId !== null ? `/api/runs/${runId}/events` : null;
 
   const { state, dispatch } = useTurnEvents({
@@ -99,7 +98,7 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
     }
   }, [state.connection, refetch]);
 
-  const isActiveNow = ACTIVE_PHASES.has(displayPhase);
+  const isActiveNow = isActivePhase(displayPhase);
   const lastAssistantText =
     displayItems
       .filter((item) => item.kind === 'assistant')

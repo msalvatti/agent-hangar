@@ -68,6 +68,8 @@ export function RunRow({ run, onOpen }: RunRowProps) {
   const totalTokens = (run.usage.inputTokens ?? 0) + (run.usage.outputTokens ?? 0);
   const hasTokens = run.usage.inputTokens !== null || run.usage.outputTokens !== null;
 
+  const startedLabel = new Date(run.queuedAt).toLocaleString();
+
   return (
     <TableRow
       className="h-11 cursor-pointer"
@@ -76,9 +78,26 @@ export function RunRow({ run, onOpen }: RunRowProps) {
       }}
     >
       <TableCell>
+        {/*
+          The row-wide click is a pointer convenience; this button is what actually opens the run,
+          so the action is reachable by keyboard and by switch access. It lives in a cell rather
+          than wrapping the row, which would swallow the other cells' own semantics.
+        */}
         <Tooltip>
-          <TooltipTrigger render={<span />}>
-            {new Date(run.queuedAt).toLocaleString()}
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                className="cursor-pointer rounded-sm text-left underline-offset-2 hover:underline focus-visible:ring-3 focus-visible:outline-none"
+                aria-label={`Open run from ${startedLabel}`}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onOpen(run.id);
+                }}
+              />
+            }
+          >
+            {startedLabel}
           </TooltipTrigger>
           <TooltipContent>{relativeTime(run.queuedAt, now)}</TooltipContent>
         </Tooltip>

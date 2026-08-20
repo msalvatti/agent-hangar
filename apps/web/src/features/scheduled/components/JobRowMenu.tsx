@@ -23,14 +23,20 @@ export interface JobRowMenuProps {
   onEdit: (job: JobSummary) => void;
   onRunNow: (job: JobSummary) => void;
   onDelete: (job: JobSummary) => void;
+  /** `true` while a mutation for this job is in flight; disables the entries that mutate. */
+  busy: boolean;
 }
 
 /**
  * Row actions menu: run now, edit, delete.
  *
- * @param props - The job and its action callbacks.
+ * Run now and Delete mutate the moment they are chosen, so a request already in flight disables
+ * them — otherwise latency is long enough to start a second run, or a deletion, for the same job.
+ * Edit only opens a dialog and stays available.
+ *
+ * @param props - The job, its action callbacks, and whether a mutation is in flight.
  */
-export function JobRowMenu({ job, onEdit, onRunNow, onDelete }: JobRowMenuProps) {
+export function JobRowMenu({ job, onEdit, onRunNow, onDelete, busy }: JobRowMenuProps) {
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
@@ -40,6 +46,7 @@ export function JobRowMenu({ job, onEdit, onRunNow, onDelete }: JobRowMenuProps)
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuItem
+          disabled={busy}
           onClick={() => {
             onRunNow(job);
           }}
@@ -56,6 +63,7 @@ export function JobRowMenu({ job, onEdit, onRunNow, onDelete }: JobRowMenuProps)
         <DropdownMenuSeparator />
         <DropdownMenuItem
           variant="destructive"
+          disabled={busy}
           onClick={() => {
             onDelete(job);
           }}

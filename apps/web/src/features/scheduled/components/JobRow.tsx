@@ -112,7 +112,7 @@ export function JobRow({ job, enabled, busy, onToggle, onEdit, onRunNow, onDelet
           event.stopPropagation();
         }}
       >
-        <JobRowMenu job={job} onEdit={onEdit} onRunNow={onRunNow} onDelete={onDelete} />
+        <JobRowMenu job={job} busy={busy} onEdit={onEdit} onRunNow={onRunNow} onDelete={onDelete} />
       </TableCell>
     </TableRow>
   );

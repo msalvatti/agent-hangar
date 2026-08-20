@@ -56,6 +56,7 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
   // fallback are exercised across the component's normal render cycle: `runsQuery.error` is
   // `undefined` on every render before a failure, and only becomes set together with `status`.
   const runsErrorMessage = runsQuery.error?.message ?? '';
+  const jobErrorMessage = jobQuery.error?.message ?? '';
 
   const openDrawer = (runId: string) => {
     const next = new URLSearchParams(searchParams);
@@ -77,12 +78,29 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
     setRunningNow(false);
   };
 
+  // Navigating back is the claim that the job is gone, so it only happens when the request
+  // actually succeeded; a failure leaves the user on the page the job still has.
   const confirmDelete = async (currentJob: JobSummary) => {
     setDeleting(true);
-    await remove(currentJob);
+    const deleted = await remove(currentJob);
     setDeleting(false);
-    router.push('/scheduled');
+    if (deleted) {
+      router.push('/scheduled');
+    }
   };
+
+  if (jobQuery.status === 'error') {
+    return (
+      <div className="flex flex-col gap-4 p-6">
+        <PageHeader title="Job" />
+        <ErrorCard
+          title="Could not load the job"
+          message={jobErrorMessage}
+          actions={<Button onClick={() => void jobQuery.refetch()}>Retry</Button>}
+        />
+      </div>
+    );
+  }
 
   if (jobQuery.notFound) {
     return (

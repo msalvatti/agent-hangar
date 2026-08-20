@@ -3,8 +3,8 @@
  *
  * Layer: unit.
  * Goal: rows render for every run in order, trigger badges and token formatting render, a
- * terminal run's duration is static while an active run's duration ticks, and click/Enter opens
- * the row.
+ * terminal run's duration is static while an active run's duration ticks, and a run can be opened
+ * by pointer and by keyboard alone.
  * Mocks: none — fake timers for the ticking duration.
  */
 import type { RunSummary } from '@agent-hangar/core';
@@ -69,6 +69,34 @@ describe('RunsTable', () => {
     const onOpen = vi.fn();
     render(<RunsTable runs={[finishedRun]} onOpen={onOpen} />);
     await user.click(screen.getByText('ok'));
+    expect(onOpen).toHaveBeenCalledWith('run-1');
+  });
+
+  /**
+   * Every run must be openable without a pointer: the row's click handler is a mouse convenience,
+   * so a focusable control in a cell is what actually carries the action. Tabbing to it and
+   * pressing Enter opens the run — the path a keyboard or switch-access user takes.
+   */
+  it('opens a run from the keyboard alone', async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    render(<RunsTable runs={[finishedRun]} onOpen={onOpen} />);
+    await user.tab();
+    expect(screen.getByRole('button', { name: /^Open run from / })).toHaveFocus();
+    await user.keyboard('{Enter}');
+    expect(onOpen).toHaveBeenCalledWith('run-1');
+  });
+
+  /**
+   * The control opens the run exactly once: it sits inside a row that also handles clicks, so
+   * without stopping propagation a pointer user would open the drawer twice.
+   */
+  it('opens the run once when its control is clicked', async () => {
+    const user = userEvent.setup();
+    const onOpen = vi.fn();
+    render(<RunsTable runs={[finishedRun]} onOpen={onOpen} />);
+    await user.click(screen.getByRole('button', { name: /^Open run from / }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
     expect(onOpen).toHaveBeenCalledWith('run-1');
   });
 

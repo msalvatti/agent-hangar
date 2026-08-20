@@ -20,8 +20,8 @@ export interface UseJobActionsResult {
   toggleEnabled: (job: JobSummary, enabled: boolean) => Promise<void>;
   /** Triggers a manual run; a 409 (overlap) is toasted rather than thrown. */
   runNow: (job: JobSummary) => Promise<void>;
-  /** Deletes a job and its run history. */
-  remove: (job: JobSummary) => Promise<void>;
+  /** Deletes a job and its run history; resolves `false` when the request failed. */
+  remove: (job: JobSummary) => Promise<boolean>;
   /** Whether a mutation is in flight for a given job id. */
   pending: Readonly<Record<string, boolean>>;
   /** Optimistic `enabled` overrides, keyed by job id. Read them with {@link resolveEnabled}. */
@@ -114,8 +114,10 @@ export function useJobActions(): UseJobActionsResult {
       await deleteJob(job.id);
       toast.success('Job deleted');
       invalidateQueries(['jobs']);
+      return true;
     } catch {
       toast.error('Could not delete job');
+      return false;
     } finally {
       setPending((prev) => withoutEntry(prev, job.id));
     }
