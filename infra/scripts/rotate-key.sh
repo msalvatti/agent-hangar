@@ -13,6 +13,10 @@
 #   --resume   continue a previously interrupted rotation (a "<key>.new" from a prior run)
 set -euo pipefail
 
+# Helper exit code meaning "the rollback itself failed"; mirrors EXIT_COMPENSATION_INCOMPLETE in
+# lib/rotate-key.ts, which is the only place that produces it.
+readonly EXIT_COMPENSATION_INCOMPLETE=4
+
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 eval "$(bash "$here"/env.sh --print)"
@@ -95,7 +99,7 @@ fi
 # Exit 4 is the one outcome that is not an abort: the rollback itself failed, so some rows are
 # sealed under "$key.new" and the rest under "$key". Removing the new key here would make those
 # rows permanently unreadable, so it stays on disk and the operator is told both files matter.
-if [ "$rc" = "4" ]; then
+if [ "$rc" = "$EXIT_COMPENSATION_INCOMPLETE" ]; then
   echo "Rotation failed during rollback. Part of the store is now sealed under $key.new and the rest under $key: KEEP BOTH files (mode 600, out of backups) — deleting either one destroys the credentials it holds. Re-run with --resume once the database is reachable again." >&2
   exit "$rc"
 fi

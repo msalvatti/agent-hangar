@@ -42,7 +42,11 @@ export const EXIT_COMPENSATION_INCOMPLETE = 4;
 
 /** Outcome of {@link rotateSecrets}. */
 export interface RotateSecretsResult {
-  /** Number of secrets successfully re-encrypted under the new key. */
+  /**
+   * Number of secrets a completed rotation moved. `0` on every failure outcome, including the
+   * one where rows are left under the new key — {@link RotateSecretsResult.strandedKeys} is what
+   * reports those, and a caller must never read a `0` here as "the store is untouched".
+   */
   rotated: number;
   /** Key version stamped on the stored envelopes; rotation never changes it. */
   keyVersion: number;
@@ -114,6 +118,38 @@ async function compensate(
 }
 
 /**
+ * Reveals every stored secret under the current key into memory.
+ *
+ * Read-only: nothing is written, so an abort here leaves the store exactly as it was. The map is
+ * cleared before the failure is reported, so a plaintext never outlives the attempt.
+ *
+ * @param service - Service bound to the current (old) master key.
+ * @param log - Receives the abort line; never a plaintext value.
+ * @returns The revealed plaintexts by key, or `null` when one of them could not be decrypted.
+ */
+async function revealAll(
+  service: SecretsService,
+  log: (line: string) => void,
+): Promise<Map<SecretKey, string> | null> {
+  const revealed = new Map<SecretKey, string>();
+  for (const key of SECRET_KEYS) {
+    try {
+      // `reveal` itself distinguishes "nothing stored" (null, nothing to rotate) from a
+      // decryption failure (throws) — no separate `status()` call is needed to tell them apart.
+      const plaintext = await service.reveal(key);
+      if (plaintext !== null) {
+        revealed.set(key, plaintext);
+      }
+    } catch {
+      revealed.clear();
+      log(`abort: cannot decrypt ${key} with the current master key`);
+      return null;
+    }
+  }
+  return revealed;
+}
+
+/**
  * Re-encrypts every stored secret from the current master key to a new one.
  *
  * @param deps - Injected collaborators.
@@ -125,23 +161,12 @@ export async function rotateSecrets(deps: RotateSecretsDeps): Promise<RotateSecr
   const serviceA = deps.createService(deps.oldKey, version);
   const serviceB = deps.createService(deps.newKey, version);
 
-  const revealed = new Map<SecretKey, string>();
+  const revealed = await revealAll(serviceA, deps.log);
+  if (revealed === null) {
+    return { rotated: 0, keyVersion: version, exitCode: EXIT_ABORTED, strandedKeys: [] };
+  }
 
   try {
-    for (const key of SECRET_KEYS) {
-      try {
-        // `reveal` itself distinguishes "nothing stored" (null, nothing to rotate) from a
-        // decryption failure (throws) — no separate `status()` call is needed to tell them apart.
-        const plaintext = await serviceA.reveal(key);
-        if (plaintext !== null) {
-          revealed.set(key, plaintext);
-        }
-      } catch {
-        deps.log(`abort: cannot decrypt ${key} with the current master key`);
-        return { rotated: 0, keyVersion: version, exitCode: EXIT_ABORTED, strandedKeys: [] };
-      }
-    }
-
     const rotated: [SecretKey, string][] = [];
     try {
       for (const [key, plaintext] of revealed) {
