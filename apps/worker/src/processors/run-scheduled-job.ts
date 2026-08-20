@@ -36,15 +36,34 @@ import {
   nextRunAt,
   runScheduledJobPayload,
 } from '@agent-hangar/core';
-import type { AgentEvent, JobRun, ScheduledJob, WorkspaceHandle } from '@agent-hangar/core';
+import type {
+  AgentEvent,
+  JobRun,
+  ScheduledJob,
+  Workspace,
+  WorkspaceHandle,
+} from '@agent-hangar/core';
 import { z } from 'zod';
 
 import { openCancellationWatch } from './cancellation.js';
 import type { CancellationWatch } from './cancellation.js';
-import { NO_USAGE, STALLED_RUN_REASON, WORKER_ERROR_PREFIX } from './constants.js';
+import {
+  JOB_DISABLED_CODE,
+  JOB_DISABLED_MESSAGE,
+  JOB_MISSING_CODE,
+  JOB_MISSING_MESSAGE,
+  NO_USAGE,
+  OVERLAP_SKIP_CODE,
+  STALLED_RUN_CODE,
+  STALLED_RUN_MESSAGE,
+  STALLED_RUN_REASON,
+  WORKER_ERROR_PREFIX,
+  WORKSPACE_RECLAIMED_CODE,
+  WORKSPACE_RECLAIMED_MESSAGE,
+} from './constants.js';
 import { buildTurnInstructions } from './instructions.js';
-import { provisionWorkspace } from './provision-workspace.js';
-import { formatRunError, publishCancellation, publishFailure } from './run-outcome.js';
+import { provisionWorkspace, takeReadyWorkspace } from './provision-workspace.js';
+import { cancelRun, failRun, formatRunError } from './run-outcome.js';
 import { createToolCallRecorder } from './tool-call-recorder.js';
 import type { ToolCallRecorder } from './tool-call-recorder.js';
 import { executeRuntimeTurn } from './turn-executor.js';
@@ -66,28 +85,6 @@ const scheduledDeliveryPayload = runScheduledJobPayload.extend({
 
 /** A delivery of `run-scheduled-job`. */
 export type ScheduledDelivery = z.infer<typeof scheduledDeliveryPayload>;
-
-/** Failure code recorded on a tick dropped because the previous run was still executing. */
-export const OVERLAP_SKIP_CODE = 'overlapping_run';
-
-/** Failure code recorded on a run whose worker died while it was executing. */
-export const STALLED_RUN_CODE = 'stalled_run';
-
-/** What the user is told about a run no worker is driving any more. */
-export const STALLED_RUN_MESSAGE =
-  'The worker stopped while this run was executing; its workspace has been reclaimed.';
-
-/** Failure code recorded on a manual run whose job no longer exists. */
-export const JOB_MISSING_CODE = 'job_not_found';
-
-/** What the user is told when the job was deleted between the request and the run. */
-export const JOB_MISSING_MESSAGE = 'This scheduled job no longer exists.';
-
-/** Failure code recorded on a manual run whose job was disabled before it started. */
-export const JOB_DISABLED_CODE = 'job_disabled';
-
-/** What the user is told when the job was disabled between the request and the run. */
-export const JOB_DISABLED_MESSAGE = 'This scheduled job is disabled; enable it and run it again.';
 
 /**
  * Raised when a delivery names a run row it is not entitled to drive.
@@ -112,39 +109,6 @@ interface Teardown {
   handle: WorkspaceHandle | null;
   workspaceId: string | null;
   job: ScheduledJob;
-}
-
-/**
- * Records a run as failed and ends its event stream.
- *
- * @param deps - Publisher and repositories.
- * @param runId - The run.
- * @param code - Machine-readable failure code.
- * @param message - Human-readable detail; already safe to persist.
- */
-async function failRun(
-  deps: ProcessorDeps,
-  runId: string,
-  code: string,
-  message: string,
-): Promise<void> {
-  await publishFailure(deps, runId, code, message);
-  await deps.repos.jobRuns.finish(runId, {
-    status: 'FAILED',
-    usage: NO_USAGE,
-    error: formatRunError(code, message),
-  });
-}
-
-/**
- * Records a run as cancelled and ends its event stream.
- *
- * @param deps - Publisher and repositories.
- * @param runId - The run.
- */
-async function cancelRun(deps: ProcessorDeps, runId: string): Promise<void> {
-  await publishCancellation(deps, runId);
-  await deps.repos.jobRuns.finish(runId, { status: 'CANCELLED', usage: NO_USAGE });
 }
 
 /**
@@ -321,6 +285,9 @@ async function updateRunTimes(deps: ProcessorDeps, job: ScheduledJob): Promise<v
 /**
  * Destroys the run's workspace and leaves nothing half-written, whatever happened above.
  *
+ * The status write is unconditional because there is nobody to lose a race to: `teardown` names a
+ * workspace only once this run took it `BUSY`, and every other writer takes `READY` or `STOPPING`.
+ *
  * @param deps - Runner, repositories and logger.
  * @param teardown - The run, its container and the job it belongs to.
  */
@@ -444,12 +411,20 @@ async function closeUnrunnableRun(
  * teardown that got far enough, or by an earlier recovery — must not be destroyed twice or walked
  * back out of a terminal status the lifecycle forbids leaving.
  *
+ * A live row is this run's unless it is `STOPPING`, the one live status a competitor can put it in:
+ * a teardown that reached it has committed to destroying that container, so doing it here too is the
+ * overwrite the conditional take prevents. A job workspace serves one run, so the rest is this run's.
+ *
  * @param deps - Runner, repositories and logger.
  * @param workspaceId - The workspace the abandoned run was using.
  */
 async function destroyAbandonedWorkspace(deps: ProcessorDeps, workspaceId: string): Promise<void> {
   const workspace = await deps.repos.workspaces.get(workspaceId);
-  if (workspace === null || !isLiveWorkspaceStatus(workspace.status)) {
+  if (
+    workspace === null ||
+    !isLiveWorkspaceStatus(workspace.status) ||
+    workspace.status === 'STOPPING'
+  ) {
     return;
   }
   try {
@@ -559,6 +534,51 @@ async function openRun(
 }
 
 /**
+ * Takes the workspace this run provisioned, or ends the run because something else took it first.
+ *
+ * The run records the workspace *before* taking it, which is what leaves the stalled-run recovery a
+ * handle if a process dies between the two writes: the run's `workspaceId` is the only link, because
+ * the row carries no reference back. {@link destroyAbandonedWorkspace} is what stops a run that
+ * recorded but never took one destroying it; {@link takeReadyWorkspace}, why the take is
+ * conditional.
+ *
+ * @param deps - The processor's collaborators.
+ * @param teardown - Filled in once the workspace is this run's, so the `finally` tears it down.
+ * @param workspace - The row provisioning produced.
+ * @param handle - The container reference provisioning produced.
+ * @param watch - The run's cancellation subscription, consulted before the loss is recorded.
+ * @returns `true` when the run owns the workspace, `false` when the run has been ended here.
+ */
+async function takeWorkspaceForRun(
+  deps: ProcessorDeps,
+  teardown: Teardown,
+  workspace: Workspace,
+  handle: WorkspaceHandle,
+  watch: CancellationWatch,
+): Promise<boolean> {
+  const { runId } = teardown;
+  await deps.repos.jobRuns.setStatus(runId, 'PREPARING', { workspaceId: workspace.id });
+  if ((await takeReadyWorkspace(deps, workspace.id)) === null) {
+    deps.logger.warn(
+      { runId, workspaceId: workspace.id },
+      'the workspace this run provisioned was reclaimed before it could be used',
+    );
+    await endUnstartedRun(
+      deps,
+      runId,
+      watch,
+      WORKSPACE_RECLAIMED_CODE,
+      WORKSPACE_RECLAIMED_MESSAGE,
+    );
+    return false;
+  }
+  teardown.handle = handle;
+  teardown.workspaceId = workspace.id;
+  await deps.repos.jobRuns.setStatus(runId, 'RUNNING');
+  return true;
+}
+
+/**
  * Runs the prepared run to completion inside its own workspace.
  *
  * The prompt names the branch the request carries, derived by the same function the request
@@ -593,10 +613,11 @@ async function runInFreshWorkspace(
     await endUnstartedRun(deps, runId, watch, provisioned.reason, provisioned.message);
     return;
   }
-  teardown.handle = provisioned.handle;
-  teardown.workspaceId = provisioned.workspace.id;
-  await deps.repos.jobRuns.setStatus(runId, 'RUNNING', { workspaceId: provisioned.workspace.id });
-  await deps.repos.workspaces.setStatus(provisioned.workspace.id, 'BUSY');
+  if (
+    !(await takeWorkspaceForRun(deps, teardown, provisioned.workspace, provisioned.handle, watch))
+  ) {
+    return;
+  }
 
   const request = buildJobTurnRequest({
     runId,

@@ -11,6 +11,7 @@ import { QUEUE_NAMES } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
 import { defaultWorkerFactories, probeRunnerReachable, startWorker } from './app.js';
+import type { ImageProbe } from './app.js';
 import type { WorkerContainer } from './container.js';
 import { SHUTDOWN_GRACE_MS, WORKER_RELIABILITY } from './processors/constants.js';
 import {
@@ -58,20 +59,62 @@ function appContainer(test: TestContainer): { container: AppContainer; closed: s
 }
 
 /** Starts the application over the in-memory container. */
-async function start(options: { blocking?: boolean; imagePresent?: boolean } = {}): Promise<{
+async function start(
+  options: {
+    blocking?: boolean;
+    imagePresent?: boolean;
+    /** Runs against the container before the worker boots, to set the state boot must react to. */
+    seed?: (test: TestContainer) => Promise<void>;
+    /** Replaces the image probe; a rejecting one is what an unreachable daemon looks like. */
+    checkImage?: ImageProbe;
+  } = {},
+): Promise<{
   test: TestContainer;
   factory: FakeWorkerFactory;
   closed: string[];
   app: Awaited<ReturnType<typeof startWorker>>;
 }> {
   const test = createTestContainer();
+  await options.seed?.(test);
   const { container, closed } = appContainer(test);
   const factory = createFakeWorkerFactory({ blocking: options.blocking ?? false });
   const app = await startWorker(container, {
     createWorker: factory.createWorker.bind(factory),
-    checkImage: () => Promise.resolve(options.imagePresent ?? true),
+    checkImage:
+      options.checkImage ?? ((): Promise<boolean> => Promise.resolve(options.imagePresent ?? true)),
   });
   return { test, factory, closed, app };
+}
+
+/** Seeds the two rows a dead incarnation leaves: a teardown's and a scheduled run's. */
+async function seedAbandoned(test: TestContainer): Promise<{ stopping: string; busyJob: string }> {
+  const chat = await test.repos.chats.create({
+    title: 'Task',
+    repoUrl: 'https://github.com/octocat/Hello-World',
+    baseBranch: 'main',
+  });
+  const chatWorkspace = await test.repos.workspaces.create({
+    kind: 'CHAT',
+    chatId: chat.id,
+    runnerKind: 'fake',
+    image: 'image',
+    repoUrl: 'https://github.com/octocat/Hello-World',
+    branch: 'main',
+  });
+  await test.repos.workspaces.setStatus(chatWorkspace.id, 'READY');
+  await test.repos.workspaces.claimStatus(chatWorkspace.id, 'READY', 'STOPPING');
+
+  const jobWorkspace = await test.repos.workspaces.create({
+    kind: 'JOB',
+    runnerKind: 'fake',
+    image: 'image',
+    repoUrl: 'https://github.com/octocat/Hello-World',
+    branch: 'main',
+  });
+  await test.repos.workspaces.setStatus(jobWorkspace.id, 'READY');
+  await test.repos.workspaces.claimStatus(jobWorkspace.id, 'READY', 'BUSY');
+
+  return { stopping: chatWorkspace.id, busyJob: jobWorkspace.id };
 }
 
 describe('startWorker', () => {
@@ -176,6 +219,73 @@ describe('startWorker', () => {
 
     expect(test.queues.workspaceGc.scheduler('reap-idle')).toBeDefined();
     expect(test.logs.join('')).toContain('worker ready');
+  });
+
+  /**
+   * A workspace still marked `STOPPING` at boot belongs to an incarnation of this worker that is
+   * gone — a crash, or a job abandoned past the shutdown grace period — because a live teardown
+   * cannot exist before any consumer has started. It is closed out and reported, so an operator
+   * sees that a container was left behind rather than having to notice the leak later.
+   */
+  it('closes out a workspace a dead incarnation left half-torn-down, and says so', async () => {
+    let workspaceId = '';
+    const { test } = await start({
+      seed: async (seeded) => {
+        const chat = await seeded.repos.chats.create({
+          title: 'Task',
+          repoUrl: 'https://github.com/octocat/Hello-World',
+          baseBranch: 'main',
+        });
+        const created = await seeded.repos.workspaces.create({
+          kind: 'CHAT',
+          chatId: chat.id,
+          runnerKind: 'fake',
+          image: 'image',
+          repoUrl: 'https://github.com/octocat/Hello-World',
+          branch: 'main',
+        });
+        workspaceId = created.id;
+        await seeded.repos.workspaces.setStatus(created.id, 'READY');
+        await seeded.repos.workspaces.claimStatus(created.id, 'READY', 'STOPPING');
+      },
+    });
+
+    expect((await test.repos.workspaces.get(workspaceId))?.status).toBe('DESTROYED');
+    expect(test.logs.join('')).toContain(
+      'closed out workspaces the last incarnation was still holding',
+    );
+  });
+
+  /**
+   * The boot steps have different dependencies, and the recovery has the fewest: it reads and
+   * writes rows and never touches Docker. Running it after the probe made that untrue in the one
+   * situation it exists for — a daemon that is down is also the likeliest reason a worker died
+   * holding those rows — because the probe rejects rather than reporting, by its own deliberate
+   * design, and took the whole boot with it.
+   *
+   * So the assertion is made through `startWorker` rather than against the recovery directly: a
+   * test that called it directly would pass either way, which is the shape of check this project
+   * has now recorded several times.
+   */
+  it('closes out what a dead incarnation left even when the daemon is unreachable', async () => {
+    let ids = { stopping: '', busyJob: '' };
+    const test = createTestContainer();
+    ids = await seedAbandoned(test);
+    const { container } = appContainer(test);
+    const factory = createFakeWorkerFactory({ blocking: false });
+
+    await expect(
+      startWorker(container, {
+        createWorker: factory.createWorker.bind(factory),
+        checkImage: () => Promise.reject(new Error('connect ENOENT /var/run/docker.sock')),
+      }),
+    ).rejects.toThrow('docker.sock');
+
+    expect((await test.repos.workspaces.get(ids.stopping))?.status).toBe('DESTROYED');
+    // A `BUSY` row is not this pass's to take, whatever the daemon is doing: its owner is executing
+    // inside that container, and a sibling worker's hold is invisible from here.
+    expect((await test.repos.workspaces.get(ids.busyJob))?.status).toBe('BUSY');
+    expect(factory.workers).toHaveLength(0);
   });
 
   /**

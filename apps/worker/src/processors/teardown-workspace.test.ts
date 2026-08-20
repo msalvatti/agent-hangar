@@ -4,7 +4,9 @@
  * Layer: unit.
  * Goal: restore hints written only when nothing is unpushed, the normative note text for both
  * reasons, a snapshot failure that does not stop the destroy, a destroy failure recorded rather
- * than thrown, and a job workspace that leaves no message behind.
+ * than thrown, a workspace another writer took while the record was being written, the two live
+ * statuses a teardown may not take a workspace from, and a job workspace that leaves no message
+ * behind.
  * Mocks: `createTestContainer` plus runner subclasses for the failures the fake cannot produce.
  */
 import type { Workspace, WorkspaceSnapshot } from '@agent-hangar/core';
@@ -266,18 +268,89 @@ describe('teardownWorkspace', () => {
   });
 
   /**
+   * Reading the row, snapshotting the container and writing the chat's record all take time, and a
+   * turn can take the workspace while they run. The `STOPPING` write names the status that read
+   * reported, so the teardown that lost stops there: the row still says what the other writer put
+   * in it, and the container that turn is executing in is still standing.
+   */
+  it('stops rather than destroying a workspace another writer took while it recorded', async () => {
+    const container = createTestContainer();
+    const { workspace } = await seedChatWorkspace(container);
+    const append = container.repos.messages.append.bind(container.repos.messages);
+    vi.spyOn(container.repos.messages, 'append').mockImplementation(
+      async (chatId, role, content, turnId) => {
+        await container.repos.workspaces.setStatus(workspace.id, 'BUSY');
+        return append(chatId, role, content, turnId);
+      },
+    );
+
+    const outcome = await teardownWorkspace(container, workspace, {
+      reason: 'idle',
+      idleMinutes: 30,
+    });
+
+    expect(outcome).toBe('skipped');
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
+    expect(container.runner.calls.some((call) => call.method === 'destroy')).toBe(false);
+    expect(container.logs.join('')).toContain('was taken while its record was written');
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * `READY` is the only live status nobody owns. `CREATING` belongs to whoever is provisioning,
+   * `BUSY` to the turn executing inside the container, `STOPPING` to another teardown. A teardown
+   * handed a row in one of those has not lost a race — it never had a claim to make — so it stops
+   * before it snapshots anything, and the chat is told nothing: the note would say the workspace
+   * was reclaimed while the turn that owns it is still writing to the filesystem.
+   */
+  it('does not touch a workspace a turn is executing in', async () => {
+    const container = createTestContainer();
+    const { workspace, chatId } = await seedChatWorkspace(container);
+    const busy = await container.repos.workspaces.setStatus(workspace.id, 'BUSY');
+
+    const outcome = await teardownWorkspace(container, busy, { reason: 'archive' });
+
+    expect(outcome).toBe('skipped');
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
+    expect(container.runner.calls.some((call) => call.method === 'destroy')).toBe(false);
+    expect(await container.repos.messages.listByChat(chatId)).toHaveLength(0);
+    expect(container.logs.join('')).toContain('not free to stop');
+  });
+
+  /**
+   * The same rule read from the other side: a row left `STOPPING` by a teardown that died is owned
+   * by that teardown, not free. Naming the status found rather than `READY` would let two
+   * teardowns claim `STOPPING` from `STOPPING` and both believe they had won, destroying the same
+   * container twice.
+   */
+  it('does not let a second teardown claim a workspace already being stopped', async () => {
+    const container = createTestContainer();
+    const { workspace } = await seedChatWorkspace(container);
+    const stopping = await container.repos.workspaces.setStatus(workspace.id, 'STOPPING');
+
+    const first = await teardownWorkspace(container, stopping, { reason: 'archive' });
+    const second = await teardownWorkspace(container, stopping, { reason: 'archive' });
+
+    expect([first, second]).toEqual(['skipped', 'skipped']);
+    expect(container.runner.calls.filter((call) => call.method === 'destroy')).toHaveLength(0);
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('STOPPING');
+  });
+
+  /**
    * A scheduled run's workspace belongs to no chat, so there is nobody to write hints or a note
-   * for; it is simply destroyed.
+   * for; it is simply destroyed. It is `READY` here for the same reason every workspace a teardown
+   * is handed is: that is the only status one may be taken from.
    */
   it('leaves no message behind for a job workspace', async () => {
     const container = createTestContainer();
-    const workspace = await container.repos.workspaces.create({
+    const created = await container.repos.workspaces.create({
       kind: 'JOB',
       runnerKind: 'fake',
       image: 'image',
       repoUrl: 'https://github.com/octocat/Hello-World',
       branch: 'master',
     });
+    const workspace = await container.repos.workspaces.setStatus(created.id, 'READY');
 
     const outcome = await teardownWorkspace(container, workspace, { reason: 'archive' });
 

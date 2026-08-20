@@ -23,14 +23,14 @@ import {
   setupProcessorContainer,
 } from '../testing/index.js';
 
-import { STALLED_RUN_REASON } from './constants.js';
 import {
-  IneligibleRunError,
   JOB_DISABLED_CODE,
   JOB_MISSING_CODE,
   STALLED_RUN_CODE,
   STALLED_RUN_MESSAGE,
-} from './run-scheduled-job.js';
+  STALLED_RUN_REASON,
+} from './constants.js';
+import { IneligibleRunError } from './run-scheduled-job.js';
 
 describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
   /**
@@ -57,6 +57,79 @@ describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
     expect(skipped?.error).toContain(OVERLAP_SKIP_REASON);
     expect(container.runner.calls).toHaveLength(0);
     expect((await container.repos.scheduledJobs.get(job.id))?.lastRunAt).toBeNull();
+  });
+
+  /**
+   * The leak the boot pass used to answer, answered where it belongs instead. A run records the
+   * workspace before it takes it, so a process dying between those two writes still leaves the
+   * stalled-run recovery a handle on the row — the run's `workspaceId` is the only link there is,
+   * because the row carries no reference back to its run.
+   */
+  it('recovers a workspace whose run died between recording it and taking it', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const abandoned = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'SCHEDULE',
+      model: 'test-model',
+      scheduledFor: container.clock.now(),
+    });
+    const workspace = await container.repos.workspaces.create({
+      kind: 'JOB',
+      runnerKind: 'fake',
+      image: 'image',
+      repoUrl: FIXTURE_REPO_URL,
+      branch: 'master',
+    });
+    await container.repos.workspaces.setStatus(workspace.id, 'READY', { runnerRef: 'ref-dead' });
+    await container.repos.jobRuns.setStatus(abandoned.id, 'PREPARING', {
+      workspaceId: workspace.id,
+    });
+    await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'BUSY');
+
+    await run(container, delivery(job.id, 'SCHEDULE', { stalledCounter: 1 }));
+
+    expect(await container.repos.workspaces.get(workspace.id)).toMatchObject({
+      status: 'DESTROYED',
+      failureReason: STALLED_RUN_REASON,
+    });
+    expect((await container.repos.jobRuns.get(abandoned.id))?.status).toBe('FAILED');
+  });
+
+  /**
+   * The other side of recording it early: a run that never took the workspace must not destroy it.
+   * The collector won the race for this one and owns both the row and the container, so the
+   * abandoned run's recovery leaves them alone — `BUSY` is what says "this run took it".
+   */
+  it('does not destroy a workspace its run recorded but never took', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const abandoned = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'SCHEDULE',
+      model: 'test-model',
+      scheduledFor: container.clock.now(),
+    });
+    const workspace = await container.repos.workspaces.create({
+      kind: 'JOB',
+      runnerKind: 'fake',
+      image: 'image',
+      repoUrl: FIXTURE_REPO_URL,
+      branch: 'master',
+    });
+    await container.repos.workspaces.setStatus(workspace.id, 'READY', { runnerRef: 'ref-taken' });
+    await container.repos.jobRuns.setStatus(abandoned.id, 'PREPARING', {
+      workspaceId: workspace.id,
+    });
+    // The collector got there first and is committed to destroying the container.
+    await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'STOPPING');
+
+    await run(container, delivery(job.id, 'SCHEDULE', { stalledCounter: 1 }));
+
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('STOPPING');
+    expect(destroyedHandles(container).some((handle) => handle.runnerRef === 'ref-taken')).toBe(
+      false,
+    );
   });
 
   /**

@@ -38,6 +38,9 @@ export interface GcResult {
 /** `Workspace.failureReason` written for a row whose container no longer exists. */
 export const CONTAINER_MISSING_REASON = 'container missing';
 
+/** `Workspace.failureReason` written for a row whose teardown never came back. */
+export const ABANDONED_TEARDOWN_REASON = 'teardown abandoned';
+
 /** Nothing collected. */
 const NOTHING: GcResult = { reaped: 0, orphansDestroyed: 0, goneMarked: 0 };
 
@@ -56,12 +59,109 @@ const NOTHING: GcResult = { reaped: 0, orphansDestroyed: 0, goneMarked: 0 };
  * catch runs, and a `CREATING` row keeps a live container that nothing reclaims. Closing it needs a
  * staleness rule for `CREATING` rows, which is a threshold decision rather than a status one: too
  * short and a first-run image pull is reaped mid-create, which is exactly what this exclusion
- * exists to prevent. `STOPPING` is different — the only writer of it is a
- * teardown, teardowns run on this consumer's own single-slot queue and the idle one holds the
- * workspace's claim, so a `STOPPING` row a pass can see is one whose teardown is gone and which
- * nothing else will ever close out.
+ * exists to prevent. `STOPPING` is different, and for a reason that survives a second worker
+ * process: the only writer of it is a teardown, a teardown reaches `STOPPING` only after it has
+ * committed to destroying the container, and the only statuses it writes after that are
+ * `DESTROYED` and `FAILED`. So the two writers of a `STOPPING` row whose container is already gone
+ * — this pass and the teardown that removed it — agree on the terminal state, and whichever of
+ * them the conditional write lets through leaves the same row. That is what makes `STOPPING` safe
+ * to name here while it is not safe to name in a teardown's own claim, where the move would be
+ * `STOPPING -> STOPPING` and both callers would proceed to destroy.
  */
 const RECONCILABLE_STATUSES: readonly WorkspaceStatus[] = ['READY', 'STOPPING'];
+
+/**
+ * Reports why a live workspace can only be one a previous incarnation of this worker left behind.
+ *
+ * `STOPPING` is the only status that qualifies, and what qualifies it is not that a booting process
+ * holds no teardown — it is what the row's owner has already committed to. A teardown reaches
+ * `STOPPING` only after deciding to destroy the container, and writes `DESTROYED` or `FAILED` next.
+ * So even where the "one worker per instance" assumption fails and a live sibling owns the row, both
+ * writers want the same thing, and the worst outcome is a row reading `FAILED` instead of
+ * `DESTROYED` and a container the orphan pass removes.
+ *
+ * `BUSY` does not qualify, and the difference is the whole point: a `BUSY` row's owner has committed
+ * to the opposite — it is executing inside that container. A second worker booting cannot see the
+ * sibling's process-local claim, so closing the row out would hand its container to the orphan pass
+ * with a live exec still in it. That is the cross-process race these conditional writes exist to
+ * remove, so this pass may not be the thing that reintroduces it. A `JOB` workspace left `BUSY` is
+ * reclaimed instead by the stalled-run recovery, which finds it through the `workspaceId` its run
+ * records before taking it; a `CHAT` one by `recoverStalledWorkspace`, which also writes the SYSTEM
+ * note telling the model its filesystem is gone.
+ *
+ * @param workspace - A live row.
+ * @returns What to record as its `failureReason`, or `null` when the row may still have an owner.
+ */
+function abandonedReason(workspace: Workspace): string | null {
+  return workspace.status === 'STOPPING' ? ABANDONED_TEARDOWN_REASON : null;
+}
+
+/**
+ * Closes out the live rows a previous incarnation of this worker left behind.
+ *
+ * Every conditional write in the worker moves a row into a status whose owner is the process that
+ * wrote it, so each one needs an answer to "what reclaims this if the process dies immediately
+ * after?". Three of them answer for themselves: a write whose target is `DESTROYED` is terminal, and
+ * its container becomes an orphan that {@link reconcileOrphans} removes. A turn taking a chat
+ * workspace `BUSY` is answered by `recoverStalledWorkspace`, which finds the row through the chat
+ * rather than through the turn. The two that have no such handle are answered here: a teardown's
+ * `STOPPING`, and a scheduled run's `BUSY`, whose only link to its run is an id the run had not yet
+ * written when it died.
+ *
+ * What makes this recoverable without a threshold is *when* it runs. Age cannot tell a process that
+ * died from one that is merely slow — the two rows are identical — but at boot the question does not
+ * arise: this process holds neither, and an instance runs one worker, so a row in one of those
+ * statuses belongs to an incarnation that is gone. This is the same point `createShutdown` already
+ * names when it says an abandoned job leaves a container the next boot has to reconcile.
+ *
+ * It closes the row out and stops. Destroying the container is left to {@link reconcileOrphans},
+ * which is what that pass is for and which will find it the moment the row stops being live. So this
+ * needs the database and nothing else — which only helps if nothing ahead of it needs more, and a
+ * daemon that is down is the likeliest reason a worker died holding these rows. `prepareBoot` is
+ * where that ordering is kept, and where it is asserted.
+ *
+ * @param deps - Repositories, claims and logger.
+ * @returns How many rows were closed out.
+ */
+export async function recoverAbandonedWorkspaces(deps: ProcessorDeps): Promise<number> {
+  const live = await deps.repos.workspaces.listLive();
+  let recovered = 0;
+  for (const workspace of live) {
+    const failureReason = abandonedReason(workspace);
+    if (failureReason === null) {
+      continue;
+    }
+    const key = workspaceClaimKey(workspace);
+    if (!deps.claims.claim(key)) {
+      // Unreachable from the boot call, where nothing has started yet; the guard is what lets work
+      // of this process be in flight without this ever being the thing that took its row.
+      deps.logger.info(
+        { workspaceId: workspace.id },
+        'work is still in flight; its workspace is left alone',
+      );
+      continue;
+    }
+    try {
+      const closed = await deps.repos.workspaces.claimStatus(
+        workspace.id,
+        workspace.status,
+        'DESTROYED',
+        { failureReason },
+      );
+      if (closed === null) {
+        continue;
+      }
+      recovered += 1;
+      deps.logger.warn(
+        { workspaceId: workspace.id, failureReason },
+        'workspace closed out: the work holding it never came back',
+      );
+    } finally {
+      deps.claims.release(key);
+    }
+  }
+  return recovered;
+}
 
 /**
  * Destroys the containers this instance owns that no live row points at.
@@ -95,9 +195,9 @@ async function destroyOrphans(
  *
  * Which statuses qualify is {@link RECONCILABLE_STATUSES}: a pass that closed out an active
  * creation would mark it `DESTROYED` and leave the create to orphan a container or write over a
- * terminal row. The claim is what makes the state that was read the state at the moment of the
- * write, so a row somebody is working on is left for the next pass rather than closed out from a
- * stale listing.
+ * terminal row. The conditional write is what makes the state that was read the state at the
+ * moment of the write, so a row somebody is working on is left for the next pass rather than
+ * closed out from a stale listing.
  *
  * @param deps - Repositories, claims and logger.
  * @param live - The live rows, already read.
@@ -122,10 +222,28 @@ async function closeOutGoneRows(
       continue;
     }
     try {
-      await deps.repos.workspaces.setStatus(workspace.id, 'DESTROYED', {
-        failureReason: CONTAINER_MISSING_REASON,
-      });
-      goneMarked += 1;
+      // The listing this row came from was taken before the runner was asked what it still holds,
+      // so a turn may have taken the workspace since. Closing it out unconditionally would write
+      // `DESTROYED` over a workspace that is executing; naming the status the listing reported
+      // leaves that one alone and closes out only the row that has not moved. Naming the status
+      // found is safe here and nowhere else in this file: the target is terminal, so a second
+      // caller can never match the row this one wrote, and both statuses that reach here are
+      // rows whose only other writer would reach the same terminal state (see
+      // {@link RECONCILABLE_STATUSES}).
+      const closed = await deps.repos.workspaces.claimStatus(
+        workspace.id,
+        workspace.status,
+        'DESTROYED',
+        { failureReason: CONTAINER_MISSING_REASON },
+      );
+      if (closed === null) {
+        deps.logger.info(
+          { workspaceId: workspace.id, expectedStatus: workspace.status },
+          'workspace moved on since the listing; left for the next pass',
+        );
+      } else {
+        goneMarked += 1;
+      }
     } finally {
       deps.claims.release(key);
     }
@@ -157,10 +275,13 @@ async function reconcileOrphans(
 /**
  * Reclaims one workspace the snapshot found idle, if it is still idle and still free.
  *
- * The selection came from a listing taken earlier in the pass, and a turn can claim a `READY`
- * workspace at any point after it. So the teardown asks twice: the claim proves nothing is running
- * in the container right now, and re-reading the row proves it is still an idle `READY` one rather
- * than a workspace a turn has just used and released.
+ * The selection came from a listing taken earlier in the pass, and a turn can take a `READY`
+ * workspace at any point after it. So the teardown asks three times, and only the last answer is
+ * binding: the in-process claim skips work another consumer of this process is already doing,
+ * re-reading the row proves it is still an idle `READY` one rather than a workspace a turn has
+ * just used and released, and the conditional `STOPPING` write inside the teardown is what
+ * actually decides — it applies only while the row still holds what was read, whichever process
+ * the other writer is in.
  *
  * @param deps - Runner, repositories, claims, clock and logger.
  * @param candidate - The workspace the snapshot selected.
@@ -223,11 +344,16 @@ async function reapIdle(deps: ProcessorDeps): Promise<GcResult> {
 /**
  * Destroys the live workspace of a chat that was archived.
  *
- * The archive runs on its own queue, so it can arrive while a turn of the chat is executing. It
- * takes the same claim that turn holds rather than tearing the container down underneath it: a
+ * The archive runs on its own queue, so it can arrive while a turn of the chat is executing. Unlike
+ * the idle pass, which selects only `READY` rows, this one hands the teardown whatever live
+ * workspace the chat has — so the teardown's own rule that only a `READY` workspace may be taken is
+ * what protects the running turn, and the claim taken here only saves this worker the work. A
  * container removed mid-exec fails a turn the user is watching, and the archive loses nothing by
- * waiting — the chat takes no further turn, so the workspace falls idle and the collector reaps it
- * on a later pass.
+ * waiting: the chat takes no further turn, so the workspace falls idle and the collector reaps it
+ * on a later pass. The same holds for the two live statuses nobody can hand over either: a
+ * workspace still being created finishes and then falls idle, and one left `STOPPING` by a
+ * teardown that died is reclaimed by the reconciliation above once its container is gone. Neither
+ * is forced here, because forcing it is what would destroy a filesystem somebody is using.
  *
  * @param deps - Runner, repositories, claims and logger.
  * @param chatId - The archived chat.

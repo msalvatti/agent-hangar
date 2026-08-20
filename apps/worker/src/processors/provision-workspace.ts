@@ -176,6 +176,28 @@ async function openWorkspaceRow(deps: ProcessorDeps, input: ProvisionInput): Pro
 }
 
 /**
+ * Takes a workspace provisioning left `READY`, for the work about to run inside it.
+ *
+ * Conditional, because `READY` is the one live status nobody owns and the collector may take it
+ * first. A job workspace is the more exposed case: its idle clock is `lastActiveAt`, stamped when
+ * the row is inserted and never bumped for a job workspace, because only a chat turn calls
+ * `markActive`. Provisioning that outlives the TTL therefore leaves the row eligible the instant it
+ * turns `READY`, and the collector runs on its own queue — so it can take it inside this process,
+ * not merely across workers. An unconditional write would put the row back `BUSY` over a teardown
+ * that had already committed to destroying the container, and the work would exec into it.
+ *
+ * @param deps - Repositories.
+ * @param workspaceId - The workspace provisioning produced.
+ * @returns The row, now `BUSY`, or `null` when another writer took it first.
+ */
+export async function takeReadyWorkspace(
+  deps: ProcessorDeps,
+  workspaceId: string,
+): Promise<Workspace | null> {
+  return deps.repos.workspaces.claimStatus(workspaceId, 'READY', 'BUSY');
+}
+
+/**
  * The origin a stored repository URL names, when the operator still allows that origin.
  *
  * The list is read from configuration on every call rather than captured once, so removing an

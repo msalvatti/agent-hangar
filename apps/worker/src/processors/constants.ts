@@ -103,6 +103,35 @@ export const STALLED_RECOVERY_REASON = 'stalled turn recovery';
 /** `Workspace.failureReason` written for the container a run's dead worker left behind. */
 export const STALLED_RUN_REASON = 'stalled run recovery';
 
+/** Failure code recorded on a tick dropped because the previous run was still executing. */
+export const OVERLAP_SKIP_CODE = 'overlapping_run';
+
+/** Failure code recorded on a run whose worker died while it was executing. */
+export const STALLED_RUN_CODE = 'stalled_run';
+
+/** What the user is told about a run no worker is driving any more. */
+export const STALLED_RUN_MESSAGE =
+  'The worker stopped while this run was executing; its workspace has been reclaimed.';
+
+/** Failure code recorded on a run whose workspace was taken before it could be used. */
+export const WORKSPACE_RECLAIMED_CODE = 'workspace_reclaimed';
+
+/** What the user is told when the collector took the run's workspace before the run started. */
+export const WORKSPACE_RECLAIMED_MESSAGE =
+  'This run lost its workspace before it could start; the next tick creates a fresh one.';
+
+/** Failure code recorded on a manual run whose job no longer exists. */
+export const JOB_MISSING_CODE = 'job_not_found';
+
+/** What the user is told when the job was deleted between the request and the run. */
+export const JOB_MISSING_MESSAGE = 'This scheduled job no longer exists.';
+
+/** Failure code recorded on a manual run whose job was disabled before it started. */
+export const JOB_DISABLED_CODE = 'job_disabled';
+
+/** What the user is told when the job was disabled between the request and the run. */
+export const JOB_DISABLED_MESSAGE = 'This scheduled job is disabled; enable it and run it again.';
+
 /** SYSTEM message telling the model its previous filesystem is gone. */
 export const STALLED_RECOVERY_NOTE =
   'Previous workspace was lost while a turn was running; a fresh workspace was created.';

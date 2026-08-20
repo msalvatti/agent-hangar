@@ -1,5 +1,6 @@
 /**
- * Starting and stopping the worker: schedulers reconciled, three consumers running, one shutdown.
+ * Starting and stopping the worker: schedulers reconciled, workspaces a dead incarnation left
+ * half-torn-down closed out, three consumers running, one shutdown.
  *
  * Layer: service (composition).
  *
@@ -19,7 +20,7 @@ import type { ContainerDatabase, WorkerContainer, WorkerRedisClient } from './co
 import { startHeartbeat } from './heartbeat.js';
 import type { RunningHeartbeat } from './heartbeat.js';
 import { LABELS, SHUTDOWN_GRACE_MS, WORKER_RELIABILITY } from './processors/constants.js';
-import { createGcProcessor } from './processors/gc.js';
+import { createGcProcessor, recoverAbandonedWorkspaces } from './processors/gc.js';
 import { createRunScheduledJobProcessor } from './processors/run-scheduled-job.js';
 import { createRunTurnProcessor } from './processors/run-turn.js';
 import type { ProcessorJob } from './processors/types.js';
@@ -195,6 +196,54 @@ function createShutdown(
 }
 
 /**
+ * Everything that must happen before the first consumer starts.
+ *
+ * Running before the consumers is what lets the recovery conclude that a workspace still held is
+ * held by an incarnation that is gone rather than by work that is merely slow — a distinction its
+ * age can never make.
+ *
+ * The three steps do not need the same things, so they run in order of what they depend on and a
+ * step is never gated behind a dependency it does not use:
+ *
+ * 1. Closing out what a dead incarnation left needs the database and nothing else. It therefore
+ *    goes first, because a daemon that is down is the likeliest reason a worker died holding those
+ *    rows, and gating that repair on Docker would withhold it exactly when it is needed.
+ * 2. Reconciling the schedulers needs Redis as well. A failure is fatal, and should be: this
+ *    process exists to consume Redis queues, and a worker that started without its schedulers would
+ *    silently never fire a cron job.
+ * 3. Probing the runner needs Docker. Its two halves are deliberately not alike, and
+ *    {@link probeRunnerReachable} is where that is argued: a *missing image* is reported and not
+ *    fatal, because the user fixes it from the health card's banner while the process keeps
+ *    running, whereas an *unreachable daemon* rejects and takes the boot down.
+ *
+ * A failure of the database is fatal at step 1 for the same reason Redis is at step 2, and does not
+ * need saying twice: nothing the worker does is possible without it.
+ *
+ * @param container - The dependency container.
+ * @param probe - Reports whether the workspace image is present.
+ * @throws unknown Whatever the runner rejected with when the daemon is unreachable, and whatever
+ *   the database or Redis rejected with; each step's dependency is load-bearing for the steps after
+ *   it and for the consumers.
+ */
+async function prepareBoot<TDatabase extends ContainerDatabase, TRedis extends WorkerRedisClient>(
+  container: WorkerContainer<TDatabase, TRedis>,
+  probe: ImageProbe,
+): Promise<void> {
+  const { config, logger } = container;
+  const recovered = await recoverAbandonedWorkspaces(container);
+  if (recovered > 0) {
+    logger.warn({ recovered }, 'closed out workspaces the last incarnation was still holding');
+  }
+  await reconcileSchedulers(container);
+  if (!(await probe(container.runner, config.WORKSPACE_IMAGE, config.AH_INSTANCE))) {
+    logger.error(
+      { image: config.WORKSPACE_IMAGE },
+      'workspace image missing — build it with: pnpm infra:image',
+    );
+  }
+}
+
+/**
  * Starts the worker application.
  *
  * @param container - The dependency container.
@@ -209,15 +258,7 @@ export async function startWorker<
   factories: StartWorkerFactories<TRedis>,
 ): Promise<RunningWorker> {
   const { config, logger } = container;
-  const probe = factories.checkImage ?? probeRunnerReachable;
-  if (!(await probe(container.runner, config.WORKSPACE_IMAGE, config.AH_INSTANCE))) {
-    logger.error(
-      { image: config.WORKSPACE_IMAGE },
-      'workspace image missing — build it with: pnpm infra:image',
-    );
-  }
-
-  await reconcileSchedulers(container);
+  await prepareBoot(container, factories.checkImage ?? probeRunnerReachable);
   const heartbeat = await startHeartbeat(container);
 
   const options = { connection: container.redis.worker, ...WORKER_RELIABILITY };

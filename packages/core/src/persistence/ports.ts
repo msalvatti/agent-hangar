@@ -6,6 +6,13 @@
  * Inputs and outputs are domain types from `./entities.ts`; Prisma types never cross this
  * boundary. Repositories are the only writers and redact every free-text column on write.
  * Every method resolves with the fresh row it produced so callers never re-query.
+ *
+ * Writes come in two shapes. An unconditional one — `setStatus` and its siblings — overwrites
+ * whatever the row currently holds, which is right when the caller is the only writer of that row.
+ * A conditional one names the status the caller read and resolves with `null` when the row is no
+ * longer in it, which is the only way a caller can find out that somebody else moved the row
+ * between its read and its write. Two writers of one row must use the conditional shape: the
+ * unconditional one cannot tell "I moved it" from "I overwrote what somebody else moved it to".
  */
 import type { SecretEnvelope, SecretKey, SecretStatus } from '../secrets/types.ts';
 import type {
@@ -160,6 +167,39 @@ export interface WorkspaceRepository {
     status: WorkspaceStatus,
     update?: WorkspaceStatusUpdate,
   ): Promise<Workspace>;
+  /**
+   * Moves a workspace out of the status the caller read, in one conditional write.
+   *
+   * The turn processor and the workspace collector both decide from a row they read earlier, and
+   * either can act between the other's read and its write. This is what lets them arbitrate: the
+   * expected status is part of the write, so exactly one of two writers moves the row and the
+   * other is told it lost, instead of overwriting a state it never saw.
+   *
+   * Stamps the same timestamps as {@link setStatus} and applies the same optional fields, so a
+   * caller that switches from one to the other changes only what happens when it loses.
+   *
+   * The move must be one the workspace lifecycle allows, which rules out `from === to`: a row that
+   * never leaves its status has not been moved by anybody, so every concurrent caller would be told
+   * it won and the guarantee above would be false. That is refused rather than answered `null`,
+   * because it is a caller naming an impossible move rather than a caller losing a race — the two
+   * deserve different answers. `setStatus` makes no such promise and enforces no such rule; this
+   * method does, because arbitration is the whole of what it offers.
+   *
+   * @param id - Workspace to move.
+   * @param from - Status the caller read; the write applies only while the row still holds it.
+   * @param to - Status to write; must be a successor of `from`.
+   * @param update - Same optional columns {@link setStatus} accepts.
+   * @returns The row this call produced, or `null` when it no longer held `from` — because
+   *   another writer moved it, or because it does not exist.
+   * @throws IllegalTransitionError When the workspace lifecycle does not allow `from` to `to`,
+   *   self-transitions included.
+   */
+  claimStatus(
+    id: string,
+    from: WorkspaceStatus,
+    to: WorkspaceStatus,
+    update?: WorkspaceStatusUpdate,
+  ): Promise<Workspace | null>;
   /** Bumps `lastActiveAt` (idle-TTL clock). */
   markActive(id: string): Promise<void>;
   /** `READY` workspaces whose `lastActiveAt` is before `before` (idle GC candidates). */
