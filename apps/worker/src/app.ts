@@ -196,6 +196,38 @@ function createShutdown(
 }
 
 /**
+ * Everything that must happen before the first consumer starts.
+ *
+ * The order is what matters, not the steps: the schedulers are reconciled and the rows a previous
+ * incarnation left half-written are closed out while nothing is consuming yet. That is what lets
+ * the recovery conclude that a workspace still marked `STOPPING` belongs to a worker that is gone
+ * rather than to a teardown that is merely slow — a distinction its age can never make.
+ *
+ * A missing image is reported and not fatal: the user fixes it from the banner the health card
+ * shows while the process keeps running.
+ *
+ * @param container - The dependency container.
+ * @param probe - Reports whether the runner is reachable and the workspace image is present.
+ */
+async function prepareBoot<TDatabase extends ContainerDatabase, TRedis extends WorkerRedisClient>(
+  container: WorkerContainer<TDatabase, TRedis>,
+  probe: ImageProbe,
+): Promise<void> {
+  const { config, logger } = container;
+  if (!(await probe(container.runner, config.WORKSPACE_IMAGE, config.AH_INSTANCE))) {
+    logger.error(
+      { image: config.WORKSPACE_IMAGE },
+      'workspace image missing — build it with: pnpm infra:image',
+    );
+  }
+  await reconcileSchedulers(container);
+  const recovered = await recoverAbandonedTeardowns(container);
+  if (recovered > 0) {
+    logger.warn({ recovered }, 'closed out workspaces whose teardown never came back');
+  }
+}
+
+/**
  * Starts the worker application.
  *
  * @param container - The dependency container.
@@ -210,22 +242,7 @@ export async function startWorker<
   factories: StartWorkerFactories<TRedis>,
 ): Promise<RunningWorker> {
   const { config, logger } = container;
-  const probe = factories.checkImage ?? probeRunnerReachable;
-  if (!(await probe(container.runner, config.WORKSPACE_IMAGE, config.AH_INSTANCE))) {
-    logger.error(
-      { image: config.WORKSPACE_IMAGE },
-      'workspace image missing — build it with: pnpm infra:image',
-    );
-  }
-
-  await reconcileSchedulers(container);
-  // Before any consumer starts, which is what makes it safe to conclude that a workspace still
-  // marked STOPPING belongs to an incarnation of this worker that is gone rather than to a
-  // teardown that is merely slow.
-  const recovered = await recoverAbandonedTeardowns(container);
-  if (recovered > 0) {
-    logger.warn({ recovered }, 'closed out workspaces whose teardown never came back');
-  }
+  await prepareBoot(container, factories.checkImage ?? probeRunnerReachable);
   const heartbeat = await startHeartbeat(container);
 
   const options = { connection: container.redis.worker, ...WORKER_RELIABILITY };
