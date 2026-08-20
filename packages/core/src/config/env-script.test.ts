@@ -4,7 +4,8 @@
  * Layer: integration (spawns bash; no Docker, no network).
  * Goal: the shell derivation used by setup/compose prints exactly the values the TypeScript
  * derivation computes, for defaults, explicit `AH_*`, Conductor fallbacks, slugify and port
- * validation — so .env.local and the apps can never disagree.
+ * validation — so .env.local and the apps can never disagree; and the one place the two do differ
+ * on purpose, an identity variable exported into the shell, stays a decision rather than drift.
  * Mocks: none.
  */
 import { execFileSync, spawnSync } from 'node:child_process';
@@ -16,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { resolveInstance } from './instance.ts';
-import { COMPOSE_DB_CREDENTIALS } from './schema.ts';
+import { COMPOSE_DB_CREDENTIALS, loadConfig } from './schema.ts';
 
 const scriptPath = fileURLToPath(new URL('../../../../infra/scripts/env.sh', import.meta.url));
 const setupPath = fileURLToPath(new URL('../../../../infra/scripts/setup.sh', import.meta.url));
@@ -244,5 +245,50 @@ describe('infra/scripts/env.sh --print-effective', () => {
     const setup = readFileSync(setupPath, 'utf8');
     expect(setup).toContain('env.sh --print-effective');
     expect(setup).not.toContain('env.sh --print)');
+  });
+});
+
+describe('env.sh and loadConfig on the identity block', () => {
+  /**
+   * The two treat an exported identity variable differently, and that asymmetry is deliberate
+   * rather than drift, so it is pinned from both sides at once.
+   *
+   * `env.sh` writes an environment: it is the one place a name and a set of ports are paired, so
+   * it derives them and ignores the shell. `loadConfig` reads an environment somebody else
+   * composed, and cannot tell a derived one from a deployment that legitimately addresses a
+   * database elsewhere — this repository's integration job being exactly that. Sealing the block
+   * on the reading side would refuse the case with no way to state it.
+   */
+  it('derives in the script and honours the environment in the library', () => {
+    const shell = { AH_INSTANCE: 'feat-x', AH_PORT_BASE: '4400', POSTGRES_PORT: '5432' };
+
+    expect(printEnv(shell).POSTGRES_PORT).toBe('4401');
+    expect(loadConfig(shell).POSTGRES_PORT).toBe(5432);
+  });
+
+  /**
+   * What has to hold instead, and the reason the asymmetry costs nothing: on every supported path
+   * the environment reaches `loadConfig` from the file `env.sh` wrote, and it round-trips to
+   * exactly the derived identity. An override only ever appears when somebody put it there.
+   */
+  it('round-trips the written file to the derived identity', () => {
+    const shell = { AH_INSTANCE: 'Feat_X', AH_PORT_BASE: '4400' };
+    const written = printEnv(shell);
+    const info = resolveInstance({ env: shell });
+
+    const config = loadConfig(written);
+
+    expect(config.AH_INSTANCE).toBe(info.instance);
+    expect(config.AH_PORT_BASE).toBe(info.portBase);
+    expect(config.WEB_PORT).toBe(info.webPort);
+    expect(config.POSTGRES_PORT).toBe(info.postgresPort);
+    expect(config.REDIS_PORT).toBe(info.redisPort);
+    expect(config.POSTGRES_DB).toBe(info.postgresDb);
+    expect(config.COMPOSE_PROJECT_NAME).toBe(info.composeProjectName);
+    expect(config.WORKSPACE_NAME_PREFIX).toBe(info.workspaceNamePrefix);
+    expect(config.DATABASE_URL).toBe(
+      `postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:${String(info.postgresPort)}/${info.postgresDb}`,
+    );
+    expect(config.REDIS_URL).toBe(`redis://127.0.0.1:${String(info.redisPort)}`);
   });
 });

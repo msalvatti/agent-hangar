@@ -113,6 +113,36 @@ describe('loadConfig', () => {
   });
 
   /**
+   * The identity variables are overridable here on purpose, and this pins that decision rather
+   * than merely recording today's behaviour.
+   *
+   * `infra/scripts/env.sh` derives the same values and ignores whatever the shell exported, which
+   * looks like a contradiction and is not: that script *writes* an environment, and is the one
+   * place a name and a set of ports get paired, so no shell can pair one instance's name with
+   * another's database. This function *reads* an environment somebody else composed. It cannot
+   * tell a derived one from a deployment pointing the app at a database elsewhere — which is what
+   * this repository's own integration job is: instance `test` against a Postgres published on
+   * 5432, a port no derivation produces. Sealing the block here would refuse that outright.
+   */
+  it('lets an explicit identity variable win, which is how a foreign database is addressed', () => {
+    const derived = loadConfig({ AH_INSTANCE: 'test' });
+    const foreign = `postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:5432/agent_hangar_test`;
+
+    const config = loadConfig({
+      AH_INSTANCE: 'test',
+      POSTGRES_PORT: '5432',
+      DATABASE_URL: foreign,
+    });
+
+    expect(derived.POSTGRES_PORT).toBe(3001);
+    expect(config.POSTGRES_PORT).toBe(5432);
+    expect(config.DATABASE_URL).toBe(foreign);
+    // The instance itself is still derived, so the name and the database keep their convention.
+    expect(config.AH_INSTANCE).toBe('test');
+    expect(config.POSTGRES_DB).toBe('agent_hangar_test');
+  });
+
+  /**
    * Empty strings (as produced by `.env` files with `KEY=`) count as unset, so defaults apply
    * instead of failing validation.
    */
