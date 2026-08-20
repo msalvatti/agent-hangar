@@ -1,0 +1,9 @@
+# Conductor workspace configuration (https://www.conductor.build/docs/reference/scripts)
+# AH_INSTANCE / AH_PORT_BASE are derived inside the scripts from CONDUCTOR_WORKSPACE_NAME / CONDUCTOR_PORT.
+"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"
+
+[scripts]
+setup = "./infra/scripts/setup.sh"
+run = "./infra/scripts/run.sh"
+archive = "./infra/scripts/archive.sh"
+run_mode = "concurrent"

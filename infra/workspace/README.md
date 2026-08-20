@@ -25,9 +25,13 @@ bundle. Credentials arrive as container environment at `create` time.
 ## Build
 
 ```bash
-pnpm infra:image                                        # honours WORKSPACE_IMAGE from .env.local
-docker build -t agent-hangar/workspace:dev infra/workspace   # the raw equivalent
+pnpm infra:image   # honours WORKSPACE_IMAGE from .env.local
 ```
+
+There is no bare `docker build -t agent-hangar/workspace:dev infra/workspace` equivalent: the
+runtime bundle below is staged into the build context by `pnpm infra:image` itself, not by
+Docker, so a bare `docker build` here fails on a fresh clone that has no `runtime/` directory yet.
+`infra/scripts/setup.sh` already goes through `pnpm infra:image` for the same reason.
 
 A warm-cache rebuild takes a few seconds; a cold build is dominated by the `apt-get` layer and stays
 well under three minutes.

@@ -71,18 +71,38 @@ describe('resolution of @agent-hangar/core from source', () => {
   });
 
   /**
-   * The root dev script exports the condition so any further child process — a tsx helper added by
-   * a later lane, for instance — inherits it instead of rediscovering this failure. The export has
-   * to happen before the children are spawned, so its position relative to `concurrently` is part
-   * of the contract, and both tokens are asserted present rather than compared blindly.
+   * The root `dev` script no longer spawns `concurrently` itself: it delegates to
+   * `infra/scripts/run.sh`, the single entry point shared by `pnpm dev` and the Conductor Run
+   * button, so the two callers cannot silently diverge. That delegation is asserted first — a
+   * later change that inlines a different command here would break the guarantee even if
+   * `run.sh` itself stayed correct. `run.sh` is then read from disk, the same way `readManifest`
+   * reads the workspace manifests, and it must export the condition before it spawns its
+   * children — a further child process, such as a tsx helper added by a later lane, inherits it
+   * instead of rediscovering this failure. Comment lines are stripped before the search: the
+   * script's own header comment talks about `NODE_OPTIONS` and `--conditions=development` in
+   * prose, so matching the raw file text would pass even with the real `export` line deleted.
+   * Both tokens are asserted present in the remaining code, not just compared positionally,
+   * because a naive position check passes when a token is missing entirely (`indexOf` returns
+   * -1).
    */
   it('exports the development condition before spawning the children of the root dev script', () => {
     const dev = readManifest('package.json').scripts?.dev ?? '';
-    const exportAt = dev.indexOf('NODE_OPTIONS');
-    const spawnAt = dev.indexOf('concurrently');
-    expect(dev).toContain('--conditions=development');
-    expect(exportAt, 'the dev script must export NODE_OPTIONS').toBeGreaterThanOrEqual(0);
-    expect(spawnAt, 'the dev script must spawn its children with concurrently').toBeGreaterThan(0);
+    expect(dev, 'pnpm dev and the Conductor Run button must share one entry point').toBe(
+      'bash infra/scripts/run.sh',
+    );
+
+    const runScript = readFileSync(join(repoRoot, 'infra/scripts/run.sh'), 'utf8');
+    const code = runScript
+      .split('\n')
+      .filter((line) => !/^\s*#/.test(line))
+      .join('\n');
+    const exportAt = code.indexOf('export NODE_OPTIONS');
+    const spawnAt = code.indexOf('concurrently');
+    expect(code).toContain('--conditions=development');
+    expect(exportAt, 'run.sh must export NODE_OPTIONS outside of a comment').toBeGreaterThanOrEqual(
+      0,
+    );
+    expect(spawnAt, 'run.sh must spawn its children with concurrently').toBeGreaterThan(0);
     expect(exportAt, 'the export must precede the children').toBeLessThan(spawnAt);
   });
 });

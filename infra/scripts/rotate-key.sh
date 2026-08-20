@@ -1,0 +1,342 @@
+#!/usr/bin/env bash
+# rotate-key.sh — generates a new master key, re-encrypts every stored secret under it, then puts
+# the new key in place and keeps a timestamped backup of the old one.
+#
+# A rotation changes two things that cannot be changed together: the rows in Postgres and the key
+# file on disk. The phase it has reached is therefore written to "<key>.rotation" before each step,
+# and `--resume` reads it back:
+#
+#   prepared      the new key file exists and the database has not been touched. Resuming
+#                 re-encrypts exactly as a fresh run would.
+#   reencrypting  the helper was started. Rows may be under the current key, under the new key, or
+#                 split between them (a rollback that could not finish leaves them split).
+#                 Resuming re-encrypts in salvage mode: each row is opened with whichever of the
+#                 two keys authenticates it — AES-GCM makes that unambiguous, an envelope opens
+#                 under exactly one key and fails closed under the other — and rewritten under the
+#                 new key. Salvage is correct for all three of those states, which is also why a
+#                 lost state file falls back to it.
+#   reencrypted   every row is under the new key and only the key files are left to put in place.
+#                 Resuming skips the helper entirely, so the swap finishes even while the database
+#                 is unreachable.
+#
+# Putting the key in place copies "<key>" to the backup first and then RENAMES "<key>.new" over
+# "<key>". "<key>" therefore always exists — holding either the old material or the new one, never
+# nothing — and the old material is already on disk under the backup name before it stops being the
+# current key.
+#
+# No key file is ever deleted while a row might still be sealed under it. "<key>" is never deleted
+# at all (it is copied, then replaced in place); "<key>.new" is deleted only when the helper
+# reported that every row is back under the current key.
+#
+# One instance at a time, too. The key file is shared across instances while a rotation only
+# re-encrypts the current instance's database, so the run refuses while Docker can see another
+# Agent Hangar instance that the swap would strand. See the block that performs the check for why
+# refusing is the option taken over sweeping every instance or splitting the key per instance.
+#
+# One rotation at a time. A per-key lock is taken before any state is inspected and held through
+# the swap and the cleanup, so two --yes runs cannot both decide a rotation is needed and then
+# re-encrypt the same rows into each other. A lock left behind by a killed run is reclaimed, but
+# only after its recorded pid is shown to be gone.
+#
+# The instance must not be running. `MasterKeyFile` caches the key for the lifetime of the process
+# that read it, so a web or worker still up keeps encrypting with the OLD key however long ago the
+# files were swapped — a credential saved in Settings afterwards would be sealed under a key no
+# reader will hold again. The same running process is what makes the re-encryption pass unsafe: a
+# Settings write landing between the reveal and the write silently replaces the new value with the
+# one revealed earlier, and one landing after it is unreadable the moment the key files swap.
+# Rotation therefore refuses to start while the instance's web port answers, and the app has to be
+# started again afterwards so it picks up the new key.
+#
+# Flags:
+#   --yes      required to actually rotate; without it the plan is printed and nothing runs
+#   --resume   continue a previously interrupted rotation
+set -euo pipefail
+
+# Helper exit codes, mirroring lib/rotate-key.ts, which is the only place that produces them.
+# EXIT_ABORTED: nothing was written. EXIT_ROLLED_BACK: a partial rotation was fully undone.
+# EXIT_COMPENSATION_INCOMPLETE: undoing it failed and the store is split across the two keys.
+readonly EXIT_ABORTED=2
+readonly EXIT_ROLLED_BACK=3
+readonly EXIT_COMPENSATION_INCOMPLETE=4
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+eval "$(bash "$here"/env.sh --print)"
+key="$MASTER_KEY_PATH"
+state="$key.rotation"
+lock="$key.lock"
+lock_held=0
+
+confirmed=0
+resume=0
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --yes) confirmed=1 ;;
+    --resume) resume=1 ;;
+    *)
+      echo "usage: rotate-key.sh [--yes] [--resume]" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+# run_helper <relative .main.ts path>: sets HELPER_OUTPUT and HELPER_RC.
+#
+# The default prefix is three words and the override is a single executable path, so both are held
+# in an array: expanded as "${cmd[@]}" the word boundaries come from the array, never from
+# splitting a string on whitespace, and a path containing a space still resolves to one command.
+run_helper() {
+  local cmd=(pnpm exec tsx)
+  if [ -n "${AH_DOCTOR_HELPER_CMD:-}" ]; then
+    cmd=("$AH_DOCTOR_HELPER_CMD")
+  fi
+  if HELPER_OUTPUT=$("${cmd[@]}" "$here/lib/$1" 2>&1); then
+    HELPER_RC=0
+  else
+    HELPER_RC=$?
+  fi
+}
+
+# release_lock: removes the lock, but only when this run is the one holding it. Registered as an
+# EXIT trap before the lock is taken, so it is a no-op on every path that never acquired one and
+# cannot remove a lock another run owns.
+release_lock() {
+  if [ "$lock_held" = "1" ]; then
+    rm -f "$lock"
+    lock_held=0
+  fi
+}
+
+# take_lock: creates "$lock" holding this run's pid, or fails when it already exists.
+#
+# The pid is written to a temporary file and the lock is hard-linked from it, rather than being
+# redirected straight into place: `ln` fails outright when the target exists, which is the atomic
+# test-and-set this needs, and the file is already complete before it becomes visible under the
+# lock name — so the lock never exists without naming its owner, not even for an instant.
+take_lock() {
+  local temp="$lock.$$"
+  printf '%s\n' "$$" > "$temp"
+  if ln "$temp" "$lock" 2>/dev/null; then
+    rm -f "$temp"
+    lock_held=1
+    return 0
+  fi
+  rm -f "$temp"
+  return 1
+}
+
+# ah_tcp_open <host> <port>: succeeds when something accepts a connection there.
+ah_tcp_open() {
+  (exec 3<>"/dev/tcp/$1/$2") 2>/dev/null
+}
+
+# read_state <field>: prints the value of the "<field>=<value>" line, or nothing when the state
+# file does not exist or does not carry that field.
+read_state() {
+  [ -f "$state" ] || return 0
+  sed -n "s/^$1=//p" "$state"
+}
+
+# write_state <phase> <backup path>: records the phase reached, before the step it describes runs.
+#
+# Written to a sibling and renamed over the real path, so the file a resume reads is always a whole
+# record. A plain redirect truncates first and fills after, leaving a window in which a crash would
+# strand a half-written phase line — and this file is what tells a resume whether the store has
+# been re-encrypted.
+write_state() {
+  printf 'phase=%s\nbackup=%s\n' "$1" "$2" > "$state.tmp"
+  chmod 600 "$state.tmp"
+  mv "$state.tmp" "$state"
+}
+
+# free_backup_path: prints a backup path no file occupies yet. The timestamp has a one-second
+# resolution, so two rotations of a small store can land on the same name; reusing it would replace
+# a backup that is still the only copy of the key it holds.
+free_backup_path() {
+  local stamp candidate suffix
+  stamp="$(date +%Y%m%d%H%M%S)"
+  candidate="$key.bak-$stamp"
+  suffix=1
+  while [ -e "$candidate" ]; do
+    candidate="$key.bak-$stamp.$suffix"
+    suffix=$((suffix + 1))
+  done
+  printf '%s' "$candidate"
+}
+
+# put_key_in_place <backup path>: keeps the current key under <backup path> and makes "<key>.new"
+# the current key. Idempotent — a crash anywhere inside it is finished by running it again — and it
+# leaves no instant in which "<key>" is missing.
+put_key_in_place() {
+  local backup="$1"
+  if [ -f "$key.new" ]; then
+    if [ ! -f "$backup" ]; then
+      # Copied to a sibling and renamed, never straight to the backup path: `cp` truncates its
+      # destination before it writes, so a kill mid-copy would leave a partial file exactly where
+      # the resume path looks. That check treats existence as completeness — which it now is,
+      # because the backup name only ever appears through a rename of a finished file.
+      cp "$key" "$backup.tmp"
+      chmod 600 "$backup.tmp"
+      mv "$backup.tmp" "$backup"
+    fi
+    mv "$key.new" "$key"
+    chmod 600 "$key"
+  fi
+  rm -f "$state" "$state.tmp"
+}
+
+if [ $confirmed -ne 1 ]; then
+  set +e
+  run_helper secrets-status.main.ts
+  set -e
+  set_count=0
+  if [ "$HELPER_RC" = "0" ]; then
+    set_count=$(printf '%s\n' "$HELPER_OUTPUT" | grep -c '=set:' || true)
+  fi
+  echo "Plan (not run without --yes):"
+  echo "  key: $key"
+  echo "  backup: $key.bak-<YYYYMMDDHHMMSS>"
+  echo "  re-encrypts $set_count secret(s)"
+  if [ -f "$state" ]; then
+    echo "  in progress: phase $(read_state phase) — finish it with --yes --resume"
+  fi
+  exit 2
+fi
+
+umask 077
+
+# Nothing below can run without the key it rotates away from: the helper decrypts with it and the
+# backup is a copy of it. Saying so here beats failing halfway with a bare `cp` error, and it is
+# also the state an operator lands in after restoring only part of a rotation by hand.
+if [ ! -f "$key" ]; then
+  echo "No master key at $key. Create one with pnpm setup, or restore it from a $key.bak-* backup, before rotating." >&2
+  exit 1
+fi
+
+# The master key file is shared by every instance on this machine — resolveInstance scopes ports,
+# databases and container names, but not the key path — while a rotation re-encrypts only THIS
+# instance's database. Swapping the shared file would therefore leave every other instance's rows
+# sealed under the old key and unreadable the moment those instances next start, and this command
+# would have reported success while doing it.
+#
+# Of the three ways out, this refuses. Rotating every instance cannot be made reliable: each one's
+# rows live in its own Postgres container, which the operator may well have stopped, so a sweep
+# would rotate what it could reach and strand the rest — the same failure with more moving parts.
+# Giving each instance its own key is the better end state but not this script's to make: the
+# default path comes from packages/core, whose contract test pins it, and changing it would strand
+# every store already sealed under the shared key. Refusing is what can be done here without
+# guessing, and it fails in the direction that keeps credentials readable.
+if ! compose_projects="$(docker ps -a --filter 'label=com.docker.compose.project' --format '{{.Label "com.docker.compose.project"}}' 2>/dev/null)"; then
+  echo "Cannot ask Docker which instances exist, and $key is shared by all of them, so this rotation cannot be shown to be safe. Start Docker and try again." >&2
+  exit 1
+fi
+instance_prefix="${COMPOSE_PROJECT_NAME%"$AH_INSTANCE"}"
+others="$(printf '%s\n' "$compose_projects" | grep "^$instance_prefix" | grep -v -x "$COMPOSE_PROJECT_NAME" | sort -u || true)"
+if [ -n "$others" ]; then
+  echo "Other Agent Hangar instances share $key: $(printf '%s' "$others" | tr '\n' ' ')" >&2
+  echo "Rotation re-encrypts only $POSTGRES_DB, so swapping that shared file would leave their stored secrets sealed under the old key and unreadable the next time they start. Archive them first (bash infra/scripts/archive.sh from each instance) and then rotate, or leave the key as it is." >&2
+  exit 1
+fi
+
+# This stops the app's writers. A second rotation is excluded separately, by the lock taken below;
+# what neither covers is something writing to the database directly, because the store has no lock
+# that side could share.
+if ah_tcp_open 127.0.0.1 "$WEB_PORT"; then
+  echo "Something is listening on 127.0.0.1:$WEB_PORT, so instance \"$AH_INSTANCE\" looks like it is running. Stop it before rotating and start it again afterwards: a running process caches the master key for its lifetime, so it would keep using the old one and any credential saved in Settings meanwhile would be sealed under a key nothing reads again." >&2
+  exit 1
+fi
+
+# Everything from here down — reading the state, generating the key, re-encrypting, swapping the
+# files, cleaning up — is one critical section. The state file being absent is a check, not a
+# claim: two --yes runs could both pass it before either created "<key>.new", then re-encrypt the
+# same rows independently and overwrite each other's key and state files, leaving the installed key
+# and the stored ciphertext mismatched. The lock is what makes the check a claim, and the EXIT trap
+# is registered first so it is released however this run ends.
+trap release_lock EXIT
+if ! take_lock; then
+  lock_owner="$(cat "$lock" 2>/dev/null || printf '')"
+  # A lock whose owner is still alive is never taken. One left behind by a killed run must not
+  # block every future rotation, so it is removed and re-acquired — and only then. The test errs
+  # safe in the one direction that matters: a recycled pid makes a dead owner look alive, which
+  # refuses a rotation rather than admitting a second one.
+  if [ -n "$lock_owner" ] && kill -0 "$lock_owner" 2>/dev/null; then
+    echo "Another rotation is already running for $key (pid $lock_owner). Wait for it to finish, or check $lock if you believe it is wrong." >&2
+    exit 1
+  fi
+  rm -f "$lock"
+  if ! take_lock; then
+    echo "Could not take the rotation lock at $lock — another run took it first. Try again once it finishes." >&2
+    exit 1
+  fi
+  echo "Removed a rotation lock left behind by pid ${lock_owner:-unknown}, which is no longer running." >&2
+fi
+
+phase="$(read_state phase)"
+backup="$(read_state backup)"
+
+if [ $resume -ne 1 ]; then
+  if [ -f "$key.new" ] || [ -f "$state" ]; then
+    echo "A previous rotation was interrupted (phase ${phase:-unknown}); re-run with --resume. Do not delete $key.new before then: secrets may be sealed under it." >&2
+    exit 1
+  fi
+  openssl rand -hex 32 > "$key.new"
+  chmod 600 "$key.new"
+  write_state prepared ""
+  phase="prepared"
+elif [ ! -f "$key.new" ] && [ ! -f "$state" ]; then
+  echo "Nothing to resume: neither $key.new nor $state exists." >&2
+  exit 1
+elif [ -z "$phase" ]; then
+  # The state file is gone but "<key>.new" is still here, so how far the interrupted run got is
+  # unknown. Salvage handles every pre-swap state, so assume the widest one.
+  phase="reencrypting"
+fi
+
+if [ "$phase" = "reencrypted" ]; then
+  if [ -z "$backup" ]; then
+    echo "Corrupt rotation state: $state records phase reencrypted without a backup path. Restore the backup line or move $key.new aside manually." >&2
+    exit 1
+  fi
+else
+  mode="salvage"
+  if [ "$phase" = "prepared" ]; then
+    mode="strict"
+  fi
+  write_state reencrypting ""
+  export AH_NEW_MASTER_KEY_PATH="$key.new"
+  export AH_ROTATION_MODE="$mode"
+  set +e
+  run_helper rotate-key.main.ts
+  rc=$HELPER_RC
+  set -e
+  unset AH_NEW_MASTER_KEY_PATH AH_ROTATION_MODE
+  echo "$HELPER_OUTPUT"
+
+  if [ "$rc" != "0" ]; then
+    # "$key.new" may only be removed when every row is provably back under the current key. The
+    # helper says so in exactly two ways: it rolled the partial rotation back, or it aborted a
+    # strict run — which writes nothing, to a store that was wholly under the current key to begin
+    # with. Any other outcome, a salvage abort and a killed helper included, leaves the split
+    # possible, and deleting either key file would then destroy the credentials it holds.
+    if [ "$rc" = "$EXIT_ROLLED_BACK" ] ||
+      { [ "$rc" = "$EXIT_ABORTED" ] && [ "$mode" = "strict" ]; }; then
+      rm -f "$key.new" "$state" "$state.tmp"
+      echo "Rotation aborted (helper exit $rc); the current master key is unchanged." >&2
+      exit "$rc"
+    fi
+    if [ "$rc" = "$EXIT_COMPENSATION_INCOMPLETE" ]; then
+      echo "Rotation failed during rollback. Part of the store is now sealed under $key.new and the rest under $key: KEEP BOTH files (mode 600, out of backups) — deleting either one destroys the credentials it holds. Re-run with --resume once the database is reachable again." >&2
+    else
+      echo "Rotation stopped in phase reencrypting (helper exit $rc). Rows may be sealed under $key.new: KEEP BOTH files (mode 600, out of backups) and re-run with --resume; it opens each row with whichever key authenticates it." >&2
+    fi
+    exit "$rc"
+  fi
+
+  backup="$(free_backup_path)"
+  write_state reencrypted "$backup"
+fi
+
+put_key_in_place "$backup"
+echo "Master key rotated. Backup: $backup — it can still decrypt the PREVIOUS ciphertext; delete it once you verified the app (pnpm doctor) and keep it out of backups."
+exit 0

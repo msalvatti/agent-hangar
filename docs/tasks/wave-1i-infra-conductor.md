@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Lane** | W1-I (parallel with W1-A … W1-H; no Docker-integration tests — scripts are tested with PATH shims) |
-| **Status** | 📋 ToDo |
-| **Progress** | 0/6 tasks |
-| **Branch** | `feat/w1i-infra-conductor` |
+| **Status** | 🟨 PR open |
+| **Progress** | 6/6 tasks |
+| **Branch** | `feat/w1i-infra-conductor` · PR [#18](https://github.com/bymaxone/agent-hangar/pull/18) |
 | **Owned paths** | `infra/scripts/{setup,run,archive,doctor,rotate-key,ws,db-prune}.sh`, `infra/scripts/lib/**` (node helpers), `infra/scripts/*.test.ts`, `.conductor/settings.toml`, `infra/docker-compose.yml`, `.env.example`, root `package.json` **scripts block only**, root `vitest.config.ts` (`scripts` project lines only). `infra/scripts/env.sh` is W0 output with no other Wave 1 owner — additive edits allowed (see rules). |
 | **Depends on** | W0 merged to `main` (Tasks 1I.3 and 1I.4 additionally need W1-A, W1-C, W1-E merged — this lane runs in the second Wave 1 batch, see plan §13) |
 | **Unblocks** | nothing hard; **merges FIRST in its batch** (root `package.json` scripts block) |
@@ -21,8 +21,8 @@ Everything is keyed by instance (`AH_INSTANCE` / `AH_PORT_BASE`, with `CONDUCTOR
 ## Rules of this lane
 
 1. Owned paths only. The root `package.json` **scripts block** is owned here and nowhere else in Wave 1; do not touch `dependencies`, `devDependencies`, `packageManager` or `engines`. No new dependencies (`concurrently`, `tsx`, `vitest` are already installed by W0).
-2. Bash 3.2 compatible (`#!/usr/bin/env bash`, `set -euo pipefail`; no associative arrays, no `mapfile`, no `${var,,}`); `shellcheck`-clean by inspection (it is not installed — do not add it). All script output in English. Never echo secrets; never write the master key inside the repo; never log `DATABASE_URL` passwords beyond the fixed `ah:ah` dev credentials.
-3. Node helpers under `infra/scripts/lib/*.ts` are run with `pnpm exec tsx <file>` and import `@agent-hangar/core` **by relative path** to `packages/core/src/**` (the `infra/` folder is not a workspace package, so bare specifiers do not resolve there). They are TypeScript-strict, JSDoc'd, English, no `enum`, no suppression comments, 100 % covered by the root `scripts` Vitest project.
+2. Bash 3.2 compatible (`#!/usr/bin/env bash`, `set -euo pipefail`; no associative arrays, no `mapfile`, no `${var,,}`); `shellcheck`-clean by inspection (it is not installed — do not add it), and clean without suppressions: a `# shellcheck disable=` comment is a suppression like any other, so a list of arguments is held in a bash array and expanded as `"${arr[@]}"` rather than relying on word splitting. All script output in English. Never echo secrets; never write the master key inside the repo; never log `DATABASE_URL` passwords beyond the fixed `ah:ah` dev credentials.
+3. Node helpers under `infra/scripts/lib/*.ts` are run with `pnpm exec tsx <file>` and import `@agent-hangar/core` **by relative path** to `packages/core/src/**` (the `infra/` folder is not a workspace package, so bare specifiers do not resolve there). They are TypeScript-strict, JSDoc'd, English, no `enum`, no suppression comments, 100 % covered by the root `scripts` Vitest project. `infra/scripts/tsconfig.json` is a `composite` project referencing `packages/core` and is listed in the root `tsconfig.json` `references`, so `pnpm typecheck` really covers these files — a project no root script builds is a project nothing checks.
 4. Every script honours the same overrides so tests are hermetic: `MASTER_KEY_PATH`, `AH_ENV_FILE` (path of the `.env.local` to read/write; default `<repo>/.env.local` — add this override to `env.sh` if W0 did not, as an additive change) and `PATH` (tests prepend a directory of shim executables `docker`, `pnpm`, `node`, `openssl`, `concurrently` that record their argv to `$AH_SHIM_LOG` and print canned output).
 5. `doctor.sh` exits non-zero if any **required** row is ✗ (node, pnpm, docker, postgres, redis, migrations, image, master key). Secrets and the OpenAI check are **optional** rows (⚠ when missing) and never fail the exit code.
 6. Tests live in `infra/scripts/*.test.ts` and run in the root `vitest.config.ts` `scripts` project (created by W0 Task 0.6); shell behaviour is proven by spawning the scripts with `node:child_process` (`spawnSync`/`execFileSync`) and asserting stdout, exit code and the shim log. Root `scripts` project `coverage.include: ['infra/scripts/lib/**']`, thresholds 100×4.
@@ -43,28 +43,28 @@ Everything is keyed by instance (`AH_INSTANCE` / `AH_PORT_BASE`, with `CONDUCTOR
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 1I.1 | `run.sh`, `setup.sh` completion, compose finishing, `.env.example` final, root scripts block | 📋 | P0 | M | — |
-| 1I.2 | `archive.sh`, `ws.sh` (`ws:list` / `ws:reap`), `db-prune.sh` | 📋 | P0 | S | 1I.1 |
-| 1I.3 | `doctor.sh` + node helpers (secrets status, OpenAI model check) with snapshot tests | 📋 | P0 | L | 1I.1, W1-A + W1-C + W1-E merged |
-| 1I.4 | `rotate-key.sh` + `lib/rotate-key.ts` (re-encrypt with `keyVersion + 1`, atomic key swap, backup) | 📋 | P1 | M | 1I.3 |
-| 1I.5 | `.conductor/settings.toml`, two-instance manual checklist, README "Working with Conductor" draft (appendix) | 📋 | P0 | S | 1I.1, 1I.2 |
-| 1I.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1I.1–1I.5 |
+| 1I.1 | `run.sh`, `setup.sh` completion, compose finishing, `.env.example` final, root scripts block | ✅ | P0 | M | — |
+| 1I.2 | `archive.sh`, `ws.sh` (`ws:list` / `ws:reap`), `db-prune.sh` | ✅ | P0 | S | 1I.1 |
+| 1I.3 | `doctor.sh` + node helpers (secrets status, OpenAI model check) with snapshot tests | ✅ | P0 | L | 1I.1, W1-A + W1-C + W1-E merged |
+| 1I.4 | `rotate-key.sh` + `lib/rotate-key.ts` (re-encrypt under new key material at the stored `keyVersion`, atomic key swap, backup) | ✅ | P1 | M | 1I.3 |
+| 1I.5 | `.conductor/settings.toml`, two-instance manual checklist, README "Working with Conductor" draft (appendix) | ✅ | P0 | S | 1I.1, 1I.2 |
+| 1I.6 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 1I.1–1I.5 |
 
 ---
 
 ## Task 1I.1 — `run.sh`, `setup.sh` completion, compose finishing, `.env.example` final, root scripts block
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Replace the `run.sh` stub with the single entry point used by `pnpm dev` and by Conductor's Run button; make `setup.sh` truly idempotent (safe re-run, `--force` env rewrite, doctor at the end); finish `infra/docker-compose.yml` (project `name` from env, tuned healthchecks); finalise `.env.example`; and write the final root `package.json` scripts block that every later lane relies on.
 
 **Acceptance criteria**
-- [ ] `infra/scripts/run.sh`: `eval "$(infra/scripts/env.sh --print)"`, creates `.env.local` if absent, prints `Agent Hangar · instance=<i> · http://localhost:<WEB_PORT>` before launching, then `exec pnpm exec concurrently -n web,worker -c blue,magenta --kill-others-on-fail "pnpm --filter web dev --port <WEB_PORT>" "pnpm --filter worker dev"` with the derived env exported; `--print-only` flag prints the command without running it (used by tests)
-- [ ] `infra/scripts/setup.sh`: re-running on a configured machine performs no destructive action (env not overwritten, key not regenerated, compose `up -d --wait` idempotent, migrations no-op, image rebuild only when `--rebuild-image` or image missing); `--force` rewrites `.env.local`; detects and prints the Docker socket in use; calls `doctor.sh` at the end and propagates its exit code; `--skip-doctor` for CI
-- [ ] `infra/docker-compose.yml`: `name: ${COMPOSE_PROJECT_NAME:-agent-hangar-default}`, healthchecks `interval: 2s`, `timeout: 3s`, `retries: 30`, `start_period: 5s`, `restart: unless-stopped`, ports bound to `127.0.0.1`, volumes `pgdata`/`redisdata`
-- [ ] `.env.example` lists every variable of spec 05 §3 in that order, with the default, one-line comment, and the header stating that PAT/OpenAI key are entered in Settings, never in env
-- [ ] Root `package.json` scripts block is exactly the final list in the prompt (alphabetised inside groups), `dev` → `bash infra/scripts/run.sh`
-- [ ] Tests in `infra/scripts/run.test.ts` and `setup.test.ts` with PATH shims: env precedence (`AH_*` beats `CONDUCTOR_*` beats defaults), slugify, port math in the printed URL and `--port`, setup idempotence (second run records no `openssl`, no `env.sh --force`, compose `up` called with `--wait`, image build skipped when shim reports image present), `--force` rewrites env, socket detection order
+- [x] `infra/scripts/run.sh`: `eval "$(infra/scripts/env.sh --print-effective)"`, creates `.env.local` if absent, prints `Agent Hangar · instance=<i> · http://localhost:<WEB_PORT>` before launching, then `exec pnpm exec concurrently -n web,worker -c blue,magenta --kill-others-on-fail "pnpm --filter web dev --port <WEB_PORT>" "pnpm --filter worker dev"` with the derived env exported; `--production` swaps both children for their `start` scripts and drops the `--conditions=development` export (the build output must be loaded, not the sources), so `pnpm start` gets the same instance ports, database and Redis as `pnpm dev`; `--print-only` prints the command without running it (used by tests); an unknown flag → usage + exit 2
+- [x] `infra/scripts/setup.sh`: re-running on a configured machine performs no destructive action (env not overwritten, key not regenerated, compose `up -d --wait` idempotent, migrations no-op, image rebuild only when `--rebuild-image` or image missing); `--force` rewrites `.env.local`; detects and prints the Docker socket in use; calls `doctor.sh` at the end and propagates its exit code; `--skip-doctor` for CI
+- [x] `infra/docker-compose.yml`: `name: ${COMPOSE_PROJECT_NAME:-agent-hangar-default}`, healthchecks `interval: 2s`, `timeout: 3s`, `retries: 30`, `start_period: 5s`, `restart: unless-stopped`, ports bound to `127.0.0.1`, volumes `pgdata`/`redisdata`
+- [x] `.env.example` lists every variable of spec 05 §3 in that order, with the default, one-line comment, and the header stating that PAT/OpenAI key are entered in Settings, never in env
+- [x] Root `package.json` scripts block is exactly the final list in the prompt (alphabetised inside groups), `dev` → `bash infra/scripts/run.sh`
+- [x] Tests in `infra/scripts/run.test.ts` and `setup.test.ts` with PATH shims: env precedence (`AH_*` beats `CONDUCTOR_*` beats defaults), slugify, port math in the printed URL and `--port`, setup idempotence (second run records no `openssl`, no `env.sh --force`, compose `up` called with `--wait`, image build skipped when shim reports image present), `--force` rewrites env, socket detection order
 
 **Files to create/modify**
 `infra/scripts/run.sh`, `infra/scripts/setup.sh`, `infra/scripts/env.sh` (additive: `AH_ENV_FILE`), `infra/docker-compose.yml`, `.env.example`, `package.json` (scripts block), `infra/scripts/{run.test,setup.test}.ts`, `infra/scripts/testing/shims.ts` (test helper creating the shim dir — TS, covered).
@@ -104,9 +104,14 @@ DELIVERABLES
    [ -f "${AH_ENV_FILE:-$root/.env.local}" ] || bash "$here/env.sh"
    eval "$(bash "$here/env.sh" --print)"
    echo "Agent Hangar · instance=$AH_INSTANCE · http://localhost:$WEB_PORT"
-   cmd=(pnpm exec concurrently -n web,worker -c blue,magenta --kill-others-on-fail
-        "pnpm --filter web dev --port $WEB_PORT" "pnpm --filter worker dev")
-   if [ "${1:-}" = "--print-only" ]; then printf '%q ' "${cmd[@]}"; echo; exit 0; fi
+   if [ $production -eq 0 ]; then export NODE_OPTIONS="${NODE_OPTIONS:-} --conditions=development"; fi
+   cmd=(pnpm exec concurrently -n web,worker -c blue,magenta --kill-others-on-fail)
+   if [ $production -eq 1 ]; then
+     cmd+=("pnpm --filter web start --port $WEB_PORT" "pnpm --filter worker start")
+   else
+     cmd+=("pnpm --filter web dev --port $WEB_PORT" "pnpm --filter worker dev")
+   fi
+   if [ $print_only -eq 1 ]; then printf '%q ' "${cmd[@]}"; echo; exit 0; fi
    cd "$root" && exec "${cmd[@]}"
    ```
    Export every variable from `env.sh --print` so `next dev` and `tsx watch` inherit `DATABASE_URL`, `REDIS_URL`, `WEB_PORT`, etc. `apps/web` must bind to `WEB_PORT` (the `--port` flag) — do not rely on Next's default 3000.
@@ -125,7 +130,7 @@ DELIVERABLES
    ```json
    "dev": "bash infra/scripts/run.sh",
    "build": "pnpm -r --if-present build",
-   "start": "pnpm -r --if-present --parallel start",
+   "start": "bash infra/scripts/run.sh --production",
    "lint": "eslint .",
    "lint:fix": "eslint . --fix",
    "format": "prettier --write .",
@@ -140,7 +145,7 @@ DELIVERABLES
    "infra:up": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && docker compose -f infra/docker-compose.yml up -d --wait'",
    "infra:down": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && docker compose -f infra/docker-compose.yml down'",
    "infra:reset": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && docker compose -f infra/docker-compose.yml down -v'",
-   "infra:image": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && docker build -t \"$WORKSPACE_IMAGE\" infra/workspace'",
+   "infra:image": "bash infra/scripts/image.sh",
    "db:generate": "pnpm --filter @agent-hangar/core db:generate",
    "db:migrate": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && pnpm --filter @agent-hangar/core db:migrate'",
    "db:studio": "bash -c 'eval \"$(bash infra/scripts/env.sh --print)\" && pnpm --filter @agent-hangar/core exec prisma studio'",
@@ -181,15 +186,15 @@ Completion Protocol (after you finish):
 
 ## Task 1I.2 — `archive.sh`, `ws.sh` (`ws:list` / `ws:reap`), `db-prune.sh`
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1I.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1I.1
 
 **Description.** Implement the teardown path Conductor calls when a workspace is archived, plus the two debug aids for workspace containers and the retention script from spec 02 §5. Archive must leave no `ah-ws-<instance>-*` container and no compose resources of the instance behind, and must never touch another instance.
 
 **Acceptance criteria**
-- [ ] `infra/scripts/archive.sh`: resolves env, runs `docker compose -f infra/docker-compose.yml down -v --remove-orphans` for the instance's project, then `docker rm -f` every container returned by `docker ps -aq --filter "label=ah.instance=<instance>"`; `--keep-env` keeps `.env.local`, default removes it; `--dry-run` prints what would be removed; exit 0 even when nothing exists
-- [ ] `infra/scripts/ws.sh list` prints `docker ps --filter "label=ah.instance=<instance>" --format 'table {{.Names}}\t{{.Status}}\t{{.Label "ah.kind"}}\t{{.Label "ah.chat"}}{{.Label "ah.jobRun"}}'`; `ws.sh reap` removes them (`docker rm -f`), printing the count; both scoped strictly by the instance label, never by name prefix alone
-- [ ] `infra/scripts/db-prune.sh [--days N]` (default 30) deletes `Workspace` rows with `status = 'DESTROYED' AND "destroyedAt" < now() - interval 'N days'` via `docker compose … exec -T postgres psql -U ah -d $POSTGRES_DB -c …`, prints the count, `--dry-run` counts only
-- [ ] Tests with shims: archive calls compose `down -v` with the right project env, calls `docker ps -aq --filter label=ah.instance=<slug>` and `docker rm -f <ids>` exactly once with all ids, never calls `rm -f` when `ps` returns nothing, removes/keeps the env file per flag, `--dry-run` performs no `rm`/`down`; `ws.sh list|reap` argv assertions; `db-prune.sh` SQL contains the interval and the status filter, `--days 7` → `7 days`, unknown subcommand → exit 2
+- [x] `infra/scripts/archive.sh`: resolves env, runs `docker compose -f infra/docker-compose.yml down -v --remove-orphans` for the instance's project, then `docker rm -f` every container returned by `docker ps -aq --filter "label=ah.instance=<instance>"`; `--keep-env` keeps `.env.local`, default removes it; `--dry-run` prints what would be removed; exit 0 even when nothing exists
+- [x] `infra/scripts/ws.sh list` prints `docker ps --filter "label=ah.instance=<instance>" --format 'table {{.Names}}\t{{.Status}}\t{{.Label "ah.kind"}}\t{{.Label "ah.chat"}}{{.Label "ah.jobRun"}}'`; `ws.sh reap` removes them (`docker rm -f`), printing the count; both scoped strictly by the instance label, never by name prefix alone
+- [x] `infra/scripts/db-prune.sh [--days N]` (default 30) deletes `Workspace` rows with `status = 'DESTROYED' AND "destroyedAt" < now() - interval 'N days'` via `docker compose … exec -T postgres psql -U ah -d $POSTGRES_DB -c …`, prints the count, `--dry-run` counts only
+- [x] Tests with shims: archive calls compose `down -v` with the right project env, calls `docker ps -aq --filter label=ah.instance=<slug>` and `docker rm -f <ids>` exactly once with all ids, never calls `rm -f` when `ps` returns nothing, removes/keeps the env file per flag, `--dry-run` performs no `rm`/`down`; `ws.sh list|reap` argv assertions; `db-prune.sh` SQL contains the interval and the status filter, `--days 7` → `7 days`, unknown subcommand → exit 2
 
 **Files to create/modify**
 `infra/scripts/archive.sh`, `infra/scripts/ws.sh`, `infra/scripts/db-prune.sh`, `infra/scripts/{archive.test,ws.test,db-prune.test}.ts`.
@@ -222,7 +227,7 @@ DELIVERABLES
 1. `infra/scripts/archive.sh`:
    - `eval "$(bash "$here/env.sh" --print)"`; flags `--keep-env`, `--dry-run`; unknown → usage, exit 2.
    - Step 1: `docker compose -f "$root/infra/docker-compose.yml" down -v --remove-orphans` (env exported so `COMPOSE_PROJECT_NAME`, `POSTGRES_DB`, ports resolve). Tolerate "no such project" (compose exits 0 when nothing exists; if it exits non-zero because Docker is down, print the R2 hint and continue to step 2 — archive must be best-effort).
-   - Step 2: `ids="$(docker ps -aq --filter "label=ah.instance=$AH_INSTANCE")"`; if non-empty → `docker rm -f $ids` (word-split intentionally; ids are hex) and print `Removed N workspace container(s) of instance <i>`; else print `No workspace containers for instance <i>`.
+   - Step 2: the lookup is best-effort (`if ! listing="$(docker ps -aq --filter "label=ah.instance=$AH_INSTANCE")"; then listing=""; warn; fi`, so an unreachable daemon does not abort the run before the env-file step); its lines are read into a bash array and passed as `docker rm -f "${ids[@]}"`, never as an unquoted string — argument boundaries must come from the array, not from word splitting. Print `Removed N workspace container(s) of instance <i>`, or `No workspace containers for instance <i>` when the array is empty.
    - Step 3: unless `--keep-env`, `rm -f "$AH_ENV_FILE"` and say so.
    - `--dry-run`: print the three actions with the resolved values and perform none (no `down`, no `rm`).
    - Always exit 0 at the end unless the flag parsing fails. Never touch `~/.agent-hangar` (master key is shared across instances — spec 05 §6 table).
@@ -255,17 +260,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1i-infra-condu
 
 ## Task 1I.3 — `doctor.sh` + node helpers (secrets status, OpenAI model check) with snapshot tests
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 1I.1, W1-A + W1-C + W1-E merged
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 1I.1, W1-A + W1-C + W1-E merged
 
 **Description.** Replace the `doctor.sh` stub with the diagnostic table of spec 05 §4: node/pnpm versions, Docker socket path and reachability, Postgres and Redis reachability, migrations applied, workspace image present, master key present with mode 0600, secrets configured (via a tiny node helper that calls core's `SecretsService.status()` — only `set`/`last4` ever printed), and OpenAI model reachable (only when a key is set; via `createModelProvider('openai').listModels()`). Each ✗ prints the exact fix command; the exit code is non-zero when any required row fails.
 
 **Acceptance criteria**
-- [ ] `doctor.sh` prints a fixed-width table with columns `Check | Status | Detail | Fix` and rows in this order: Node, pnpm, Docker socket, Postgres, Redis, Migrations, Workspace image, Master key, Secrets (optional), OpenAI model (optional); statuses `✓`, `✗`, `⚠` (optional missing), `–` (skipped with reason)
-- [ ] Each ✗/⚠ row's Fix is one of the exact commands listed in the prompt; required ✗ → exit 1; only optional ⚠ → exit 0
-- [ ] `--json` prints the same rows as a JSON array (`{ check, status, detail, fix }`) for tooling/tests
-- [ ] `infra/scripts/lib/secrets-status.ts` prints `GITHUB_PAT=set:<last4>|unset` and `OPENAI_API_KEY=set:<last4>|unset` using core `SecretsService.status()`; never prints plaintext; exits 3 with `db-unreachable` when Postgres is down, 4 with `master-key-missing` when the key file is absent/unreadable
-- [ ] `infra/scripts/lib/openai-check.ts` prints `ok <model>` when `OPENAI_MODEL` is in `listModels()`, `model-missing <model> (available: a, b, c…)` when not, `auth` on 401, `network` otherwise; exits non-zero except on `ok`; only ever called by doctor when the key is set
-- [ ] Snapshot tests with shims and `AH_DOCTOR_HELPER_CMD` override: all-green machine (exit 0), Docker down (exit 1 + R2 fix), image missing (fix `pnpm infra:image`), key mode 644 (fix `chmod 600`), migrations pending (fix `pnpm db:migrate`), secrets unset (⚠, exit 0, fix points at Settings URL with the instance's port), OpenAI skipped when key unset (`–`), `--json` parses and has 10 rows; helper TS files 100 % covered with in-memory repositories / fake provider
+- [x] `doctor.sh` prints a fixed-width table with columns `Check | Status | Detail | Fix` and rows in this order: Node, pnpm, Docker socket, Postgres, Redis, Migrations, Workspace image, Master key, Secrets (optional), OpenAI model (optional); statuses `✓`, `✗`, `⚠` (optional missing), `–` (skipped with reason)
+- [x] Each ✗/⚠ row's Fix is one of the exact commands listed in the prompt; required ✗ → exit 1; only optional ⚠ → exit 0
+- [x] `--json` prints the same rows as a JSON array (`{ check, status, detail, fix }`) for tooling/tests
+- [x] `infra/scripts/lib/secrets-status.ts` prints `GITHUB_PAT=set:<last4>|unset` and `OPENAI_API_KEY=set:<last4>|unset` using core `SecretsService.status()`; never prints plaintext; exits 3 with `db-unreachable` when Postgres is down, 4 with `master-key-missing` when the key file is absent/unreadable
+- [x] `infra/scripts/lib/openai-check.ts` prints `ok <model>` when `OPENAI_MODEL` is in `listModels()`, `model-missing <model> (available: a, b, c…)` when not, `auth` on 401, `network` otherwise; exits non-zero except on `ok`; only ever called by doctor when the key is set
+- [x] Snapshot tests with shims and `AH_DOCTOR_HELPER_CMD` override: all-green machine (exit 0), Docker down (exit 1 + R2 fix), image missing (fix `pnpm infra:image`), key mode 644 (fix `chmod 600`), migrations pending (fix `pnpm db:migrate`), secrets unset (⚠, exit 0, fix points at Settings URL with the instance's port), OpenAI skipped when key unset (`–`), `--json` parses and has 10 rows; helper TS files 100 % covered with in-memory repositories / fake provider
 
 **Files to create/modify**
 `infra/scripts/doctor.sh`, `infra/scripts/lib/{secrets-status,openai-check,cli-args}.ts` (+ `*.test.ts`), `infra/scripts/doctor.test.ts`, `infra/scripts/testing/shims.ts` (extend: `pg/redis` tcp behaviour flags, prisma `migrate status` output).
@@ -321,8 +326,8 @@ DELIVERABLES
    - Implementation hygiene: one function per row returning three values via globals `row_status`, `row_detail`, `row_fix` (bash 3.2 has no associative arrays), a `add_row` function appending to a newline-delimited string, and `emit_table`/`emit_json` at the end. Keep each function under 25 lines.
 5. Tests:
    - `cli-args.test.ts`, `secrets-status.test.ts`, `openai-check.test.ts` (unit, 100 %): inject `createInMemoryRepositories`, a fake `createSecretsService` built on the in-memory `SecretRepository` with a temp master key (use W1-A's real implementation against a temp key file so `status()` and `reveal()` are real; `OPENAI_CANARY` as the stored value), `FakeAgentModelProvider` for `listModels` (`['fake-model']`) — cover: unset/set status lines, db-unreachable exit 3, key-missing exit 4, ok/model-missing/auth/network/no-key exits, never printing the canary (`assertNoCanary` on all stdout/stderr).
-   - `doctor.test.ts` (spawned with shims; `AH_DOCTOR_HELPER_CMD` → a shim script `helper.sh` that prints fixture output selected by an env var `AH_SHIM_HELPER_CASE`): scenarios with exact stdout snapshots (`toMatchInlineSnapshot` after normalising the temp paths): all green → exit 0; docker down → row 3 ✗ with the R2 fix, rows 7 `–`, exit 1; postgres down (shim `AH_SHIM_PG_DOWN=1` makes the `/dev/tcp` port closed — implement by pointing `POSTGRES_PORT` at a port nothing listens on) → rows 4,6,9,10 as specified; image missing → `pnpm infra:image`; key mode 644 → `chmod 600`; migrations pending (shim `pnpm … prisma migrate status` exit 1) → `pnpm db:migrate`; secrets unset → ⚠ fix with `http://localhost:<WEB_PORT>/settings`, exit 0; OpenAI key set + helper `ok gpt-5.6-sol` → ✓; `--json` → `JSON.parse` gives 10 objects with the four keys.
-   - Redis/Postgres "reachable" in tests: start a throwaway `node:net` server in the test on an ephemeral port and pass it as `POSTGRES_PORT`/`REDIS_PORT` (env is exported to the script; `env.sh --print` must respect explicit `POSTGRES_PORT`/`REDIS_PORT` overrides — verify W0 does; if it recomputes from the base, add the override precedence additively in `env.sh` and test it).
+   - `doctor.test.ts` (spawned with shims; `AH_DOCTOR_HELPER_CMD` → a shim script `helper.sh` that prints fixture output selected by an env var `AH_SHIM_HELPER_CASE`): scenarios with exact stdout snapshots (`toMatchInlineSnapshot` after normalising the temp paths): all green → exit 0; docker down → row 3 ✗ with the R2 fix, rows 7 `–`, exit 1; postgres down (reserve a port base whose derived Postgres port nothing is listening on, so the `/dev/tcp` probe finds a closed port) → rows 4,6,9,10 as specified; image missing → `pnpm infra:image`; key mode 644 → `chmod 600`; migrations pending (shim `pnpm … prisma migrate status` exit 1) → `pnpm db:migrate`; secrets unset → ⚠ fix with `http://localhost:<WEB_PORT>/settings`, exit 0; OpenAI key set + helper `ok gpt-5.6-sol` → ✓; `--json` → `JSON.parse` gives 10 objects with the four keys.
+   - Redis/Postgres "reachable" in tests: bind the throwaway `node:net` listener on the port the derivation points at, instead of pointing the derivation at a port the test chose. `env.sh` derives `POSTGRES_PORT`/`REDIS_PORT` from `AH_PORT_BASE` and deliberately ignores same-named variables in the environment, so the test asks the OS for a free port, takes `AH_PORT_BASE = port - 1`, binds `base + 2` as well, and retries when that neighbour is already taken. **Do not relax the derivation to honour an explicit `POSTGRES_PORT`/`REDIS_PORT`** — that override existed once, for exactly this test, and it cost instance isolation: `AH_PORT_BASE=3100 POSTGRES_PORT=3001` produced an environment calling itself `feat-x` while its `DATABASE_URL` addressed the **default** instance's database, with every other value still naming `feat-x`, and `resolveInstance` deriving 3101 so the two halves of the system disagreed about which database they were talking to. An instance is a sealed sandbox; the identity block exists to make that state unrepresentable, and a test-only override is still an override. `infra/scripts/env.test.ts` pins the rule.
 
 Constraints:
 - Bash 3.2; `set -euo pipefail` (guard every command whose failure is a result, not an error, with `if …; then` or `|| true`); English; never print secrets (only `last4`).
@@ -342,14 +347,14 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1i-infra-condu
 
 ## Task 1I.4 — `rotate-key.sh` + `lib/rotate-key.ts`
 
-**Status:** 📋 ToDo · **Priority:** P1 · **Size:** M · **Depends on:** 1I.3
+**Status:** ✅ Done · **Priority:** P1 · **Size:** M · **Depends on:** 1I.3
 
-**Description.** Provide the master-key rotation path the README promises (spec 04 (d) controls table: "README explains backup/rotation (`keyVersion`)"): generate a new key, re-encrypt every `Secret` row with `keyVersion + 1` using core's `SecretsService`, swap the key file atomically and keep a timestamped backup of the old key. Failure at any point leaves the old key active and the rows decryptable.
+**Description.** Provide the master-key rotation path the README promises (spec 04 (d) controls table: "README explains backup/rotation (`keyVersion`)"): generate a new key, re-encrypt every `Secret` row under it using core's `SecretsService`, swap the key file atomically and keep a timestamped backup of the old key. The stored `keyVersion` stays where it is — every ordinary reader builds its provider without a version and decrypts at `MASTER_KEY_VERSION`, so advancing it would make every rotated credential unreadable. Failure that can be rolled back leaves the old key active and the rows decryptable; the one failure that cannot (a store that becomes unreachable mid-rollback) is reported separately so the new key file is kept rather than deleted.
 
 **Acceptance criteria**
-- [ ] `infra/scripts/lib/rotate-key.ts` exports `rotateSecrets(deps)` that: reads current `keyVersion` (max over rows, default 1), builds service A (old key) and service B (new key, `keyVersion + 1`), reveals every set secret into memory first (any `SecretIntegrityError` → abort before writing, exit 2), writes each with B, and on a write failure re-writes the already-rotated keys with A (compensation) and exits 3; prints `rotated N secret(s) to keyVersion V`
-- [ ] `infra/scripts/rotate-key.sh`: `--yes` required (otherwise prints the plan and exits 2); generates `<MASTER_KEY_PATH>.new` (0600, `openssl rand -hex 32`); runs the helper with `AH_NEW_MASTER_KEY_PATH`; on helper success `mv master.key master.key.bak-<YYYYMMDDHHMMSS>` then `mv master.key.new master.key`; on failure removes `.new` and leaves the old key untouched; prints the backup path and the reminder that backups hold a key that can still decrypt the old ciphertext (delete after verifying); refuses to run if `master.key.new` already exists (previous aborted rotation) unless `--resume`
-- [ ] Tests: helper unit with in-memory `SecretRepository` + W1-A real service against two temp keys (rotates both secrets; `keyVersion` advanced; `reveal` with the new key returns the original values; old key can no longer decrypt; tamper → abort with no writes; injected write failure on the second secret → first secret restored to the old key, exit 3; no canary in output); shell test with shims (`openssl` shim + helper shim): plan-only without `--yes`, success path renames files and keeps mode 600, failure path keeps old key and removes `.new`, `.new` present → refuse unless `--resume`
+- [x] `infra/scripts/lib/rotate-key.ts` exports `rotateSecrets(deps)` that: reads the stored `keyVersion` (max over rows, default 1), builds service A (old key) and service B (new key) at that same version, reveals every set secret into memory first (any `SecretIntegrityError` → abort before writing, exit 2), writes each with B, and on a write failure re-writes the already-rotated keys with A (compensation) and exits 3; a compensation write that itself fails exits 4 and names the secrets left under the new key; prints `rotated N secret(s) under keyVersion V`
+- [x] `infra/scripts/rotate-key.sh`: `--yes` required (otherwise prints the plan and exits 2); generates `<MASTER_KEY_PATH>.new` (0600, `openssl rand -hex 32`); runs the helper with `AH_NEW_MASTER_KEY_PATH`; on helper success `mv master.key master.key.bak-<YYYYMMDDHHMMSS>` then `mv master.key.new master.key`; on failure removes `.new` and leaves the old key untouched; prints the backup path and the reminder that backups hold a key that can still decrypt the old ciphertext (delete after verifying); refuses to run if `master.key.new` already exists (previous aborted rotation) unless `--resume`
+- [x] Tests: helper unit with in-memory `SecretRepository` + W1-A real service against two temp keys (rotates both secrets; `keyVersion` unchanged; a rotated secret is still readable through the ordinary `MasterKeyFile` construction path; `reveal` with the new key returns the original values; old key can no longer decrypt; tamper → abort with no writes; injected write failure on the second secret → first secret restored to the old key, exit 3; a failing compensation → exit 4 naming the stranded secret; no canary in output); shell test with shims (`openssl` shim + helper shim): plan-only without `--yes`, success path renames files and keeps mode 600, failure path keeps old key and removes `.new`, helper exit 4 keeps `.new` and names both files, `.new` present → refuse unless `--resume`, helper override path containing a space still resolves to one command
 
 **Files to create/modify**
 `infra/scripts/rotate-key.sh`, `infra/scripts/lib/rotate-key.ts`, `infra/scripts/lib/rotate-key.main.ts`, `infra/scripts/lib/rotate-key.test.ts`, `infra/scripts/rotate-key.test.ts`.
@@ -375,15 +380,15 @@ REQUIRED READING (only these):
 - infra/scripts/lib/secrets-status.ts (reuse its deps pattern), infra/scripts/testing/shims.ts
 
 TASK
-Implement master-key rotation: a TypeScript helper that re-encrypts every stored secret under a new key with `keyVersion + 1` (abort-safe, with compensation), and a bash wrapper that generates the new key, runs the helper, swaps the key file atomically and keeps a timestamped backup.
+Implement master-key rotation: a TypeScript helper that re-encrypts every stored secret under new key material at the stored `keyVersion` (abort-safe, with compensation), and a bash wrapper that generates the new key, runs the helper, swaps the key file atomically and keeps a timestamped backup.
 
 DELIVERABLES
 
-1. `infra/scripts/lib/rotate-key.ts` — `export async function rotateSecrets(deps: { repos: { secrets: SecretRepository }; createService: (key: Uint8Array | string, keyVersion: number) => SecretsService; oldKey; newKey; log: (line: string) => void }): Promise<{ rotated: number; keyVersion: number; exitCode: 0 | 2 | 3 }>`:
-   - `current = max(keyVersion of rows) ?? 1` (use `repos.secrets.get(key)` for both keys); `A = createService(oldKey, current)`, `B = createService(newKey, current + 1)`.
+1. `infra/scripts/lib/rotate-key.ts` — `export async function rotateSecrets(deps: { repos: { secrets: SecretRepository }; createService: (key: Uint8Array | string, keyVersion: number) => SecretsService; oldKey; newKey; log: (line: string) => void }): Promise<{ rotated: number; keyVersion: number; exitCode: 0 | 2 | 3 | 4; strandedKeys: SecretKey[] }>`:
+   - `current = max(keyVersion of rows) ?? 1` (use `repos.secrets.get(key)` for both keys); `A = createService(oldKey, current)`, `B = createService(newKey, current)` — the same version on both sides, because an ordinary reader decrypts at `MASTER_KEY_VERSION` and would refuse anything stamped higher.
    - Phase 1 (read-only): for each key with `status().set` → `A.reveal(key)`; any throw (integrity/wrong key) → log `abort: cannot decrypt <key> with the current master key` and return exit 2 with no writes.
-   - Phase 2: for each revealed key → `B.set(key, plaintext)`; on throw → for each already-rotated key `A.set(key, plaintext)` (compensation), log `rolled back N secret(s)`, return exit 3.
-   - Success: log `rotated N secret(s) to keyVersion <current+1>`; return 0. Plaintext values live only in a local `Map` that is cleared (`map.clear()`) in a `finally`.
+   - Phase 2: for each revealed key → `B.set(key, plaintext)`; on throw → for each already-rotated key `A.set(key, plaintext)` (compensation), log `rolled back N secret(s)`, return exit 3. A compensation write that itself throws leaves the store split across the two keys: collect those keys, log `rollback incomplete: … keep both key files`, return exit 4.
+   - Success: log `rotated N secret(s) under keyVersion <current>`; return 0. Plaintext values live only in a local `Map` that is cleared (`map.clear()`) in a `finally`.
    - How `createService` is built from core depends on W1-A's API (e.g. `createSecretsService({ repository, masterKey, keyVersion })` or a `MasterKeyFile` loader) — read `packages/core/src/secrets/index.ts` and adapt; the deps signature above is what the tests inject.
 2. `infra/scripts/lib/rotate-key.main.ts` — real wiring: `loadConfig`, prisma + `assertDatabaseReachable`, `createRepositories`, read old key from `MASTER_KEY_PATH`, new key from `AH_NEW_MASTER_KEY_PATH`, call `rotateSecrets`, `process.exit(code)`. ≤ 20 lines; excluded from coverage by the `*.main.ts` pattern.
 3. `infra/scripts/rotate-key.sh`:
@@ -391,12 +396,13 @@ DELIVERABLES
    - Without `--yes`: print the plan (key path, backup name pattern, "re-encrypts N secrets" where N comes from `secrets-status` helper output count of `set:`), exit 2.
    - If `"$key.new"` exists and not `--resume` → print `A previous rotation was interrupted; inspect <key>.new and re-run with --resume, or delete it` and exit 1.
    - Generate: `umask 077; openssl rand -hex 32 > "$key.new"; chmod 600 "$key.new"` (skip when `--resume`).
-   - Run helper: `${AH_DOCTOR_HELPER_CMD:-pnpm exec tsx} "$here/lib/rotate-key.main.ts"` with `AH_NEW_MASTER_KEY_PATH="$key.new"` exported; capture exit code without `set -e` aborting (`if ! …; then rc=$?; fi`).
+   - Run helper: the default prefix `pnpm exec tsx` or, when `AH_DOCTOR_HELPER_CMD` is set, that single executable path — held in a bash array and expanded as `"${cmd[@]}"`, never as an unquoted string — applied to `"$here/lib/rotate-key.main.ts"` with `AH_NEW_MASTER_KEY_PATH="$key.new"` exported; capture exit code without `set -e` aborting (`if ! …; then rc=$?; fi`).
    - Success: `ts="$(date +%Y%m%d%H%M%S)"; mv "$key" "$key.bak-$ts"; mv "$key.new" "$key"; chmod 600 "$key"`; print `Master key rotated. Backup: <key>.bak-<ts> — it can still decrypt the PREVIOUS ciphertext; delete it once you verified the app (pnpm doctor) and keep it out of backups.`
-   - Failure (rc ≠ 0): remove `"$key.new"` (except under `--resume`, where the file is kept so the user can inspect it), print `Rotation aborted (helper exit <rc>); the current master key is unchanged.` and exit `rc`.
+   - Failure (rc = 4, the rollback itself failed): KEEP `"$key.new"` — part of the store is sealed under it and deleting it destroys those credentials — print a message naming both files and exit 4.
+   - Failure (any other rc ≠ 0): remove `"$key.new"` (except under `--resume`, where the file is kept so the user can inspect it), print `Rotation aborted (helper exit <rc>); the current master key is unchanged.` and exit `rc`.
 4. Tests:
-   - `lib/rotate-key.test.ts` (unit, 100 %): in-memory repositories from `@agent-hangar/core/testing`; W1-A real service factory with two random 32-byte keys; store `GITHUB_CANARY`/`OPENAI_CANARY` under key 1 → rotate → `status()` shows same `last4`, `reveal` with B returns the canaries, `reveal` with A now throws `SecretIntegrityError`; `keyVersion` on rows is 2; zero secrets → `rotated 0`; tampered ciphertext (flip a byte via the repository) → exit 2 and rows untouched (compare envelopes byte-wise); a `createService` returning a B whose `set` throws on the second call → exit 3, first key re-encrypted with A and revealable, log contains `rolled back 1`; every log line passes `assertNoCanary`.
-   - `rotate-key.test.ts` (spawned, shims for `openssl` and the helper via `AH_DOCTOR_HELPER_CMD`): no `--yes` → exit 2 and plan text; success path (helper shim exit 0) → `master.key` content equals the generated value, a `master.key.bak-*` exists with the old content, modes 600; failure path (helper shim exit 3) → old key unchanged, no `.new`, exit 3; pre-existing `.new` → exit 1 unless `--resume`, in which case `openssl` is not called and the helper runs.
+   - `lib/rotate-key.test.ts` (unit, 100 %): in-memory repositories from `@agent-hangar/core/testing`; W1-A real service factory with two random 32-byte keys; store `GITHUB_CANARY`/`OPENAI_CANARY` under key 1 → rotate → `status()` shows same `last4`, `reveal` with B returns the canaries, `reveal` with A now throws `SecretIntegrityError`; `keyVersion` on rows is still 1 and a rotated secret is readable through a `MasterKeyFile` provider built with no version at all; zero secrets → `rotated 0`; tampered ciphertext (flip a byte via the repository) → exit 2 and rows untouched (compare envelopes byte-wise); a `createService` returning a B whose `set` throws on the second call → exit 3, first key re-encrypted with A and revealable, log contains `rolled back 1`; every log line passes `assertNoCanary`.
+   - `rotate-key.test.ts` (spawned, shims for `openssl` and the helper via `AH_DOCTOR_HELPER_CMD`): no `--yes` → exit 2 and plan text; success path (helper shim exit 0) → `master.key` content equals the generated value, a `master.key.bak-*` exists with the old content, modes 600; failure path (helper shim exit 3) → old key unchanged, no `.new`, exit 3; helper exit 4 → old key unchanged, `.new` KEPT, message names both files; a helper override path containing a space still resolves to one command; pre-existing `.new` → exit 1 unless `--resume`, in which case `openssl` is not called and the helper runs.
 
 Constraints:
 - Bash 3.2; `umask 077` before writing keys; never print key material or plaintext; English.
@@ -414,15 +420,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1i-infra-condu
 
 ## Task 1I.5 — `.conductor/settings.toml`, two-instance manual checklist, README "Working with Conductor" draft
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1I.1, 1I.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1I.1, 1I.2
 
 **Description.** Commit the Conductor configuration exactly as spec 05 §6, prove it by a test that parses the TOML minimally and checks the referenced scripts exist and are executable, run the two-instance side-by-side checklist manually and record the expected outputs in the appendix of this file, and draft the README section that W3-B will paste (W1-I does not own `README.md`).
 
 **Acceptance criteria**
-- [ ] `.conductor/settings.toml` content is exactly: `"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"`, `[scripts]` with `setup = "./infra/scripts/setup.sh"`, `run = "./infra/scripts/run.sh"`, `archive = "./infra/scripts/archive.sh"`, `run_mode = "concurrent"` (comments allowed)
-- [ ] `infra/scripts/conductor.test.ts` parses the file with a ~30-line inline TOML subset parser (`[table]`, `key = "string"`, `"quoted key" = "string"`, `#` comments) and asserts the four values + `$schema`; asserts each referenced script exists relative to the repo root and is executable (`fs.accessSync(path, X_OK)`); asserts `run_mode` is `concurrent`
-- [ ] Appendix A of this file filled with the manual two-instance checklist (exact commands, expected `doctor` tables, `docker ps` names/ports, archive result) and marked as executed with date and outcome
-- [ ] Appendix B of this file contains the README "Working with Conductor" section text (English), ready for W3-B to paste verbatim
+- [x] `.conductor/settings.toml` content is exactly: `"$schema" = "https://conductor.build/schemas/settings.repo.schema.json"`, `[scripts]` with `setup = "./infra/scripts/setup.sh"`, `run = "./infra/scripts/run.sh"`, `archive = "./infra/scripts/archive.sh"`, `run_mode = "concurrent"` (comments allowed)
+- [x] `infra/scripts/conductor.test.ts` parses the file with a ~30-line inline TOML subset parser (`[table]`, `key = "string"`, `"quoted key" = "string"`, `#` comments) and asserts the four values + `$schema`; asserts each referenced script exists relative to the repo root and is executable (`fs.accessSync(path, X_OK)`); asserts `run_mode` is `concurrent`
+- [x] Appendix A of this file filled with the manual two-instance checklist (exact commands, expected `doctor` tables, `docker ps` names/ports, archive result) and marked as executed with date and outcome
+- [x] Appendix B of this file contains the README "Working with Conductor" section text (English), ready for W3-B to paste verbatim
 
 **Files to create/modify**
 `.conductor/settings.toml`, `infra/scripts/conductor.test.ts`, this file (appendices A and B).
@@ -504,17 +510,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1i-infra-condu
 
 ## Task 1I.6 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1I.1–1I.5
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1I.1–1I.5
 
 **Description.** Run every gate, bring the code review to zero findings, update the plan dashboard and the tasks index, and open the PR. This PR is merged first in its batch, so keep it conflict-free with `main` (rebase before opening).
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` — exit 0
-- [ ] `pnpm vitest run --project scripts --coverage` — green, 100/100/100/100 on `infra/scripts/lib/**` (minus `*.main.ts`) and `infra/scripts/testing/**`; `pnpm test` green
-- [ ] Manual: `pnpm setup` twice (idempotent), `pnpm doctor` exit 0, `pnpm dev` serves the URL it prints, `AH_INSTANCE=feat-x AH_PORT_BASE=3100 bash infra/scripts/archive.sh --dry-run` lists the right project
-- [ ] `/bymax-quality:code-review` → zero open findings (or justified in PR body)
-- [ ] `docs/plan.md` §12 row W1-I → 🟨 with branch/PR; `docs/tasks/README.md` row updated
-- [ ] PR opened; structured result returned
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` — exit 0
+- [x] `pnpm vitest run --project scripts --coverage` — green, 100/100/100/100 on `infra/scripts/lib/**` (minus `*.main.ts`) and `infra/scripts/testing/**`; `pnpm test` green (one pre-existing, out-of-scope failure — see PR body's Contract change requests)
+- [x] Manual: `pnpm setup` twice (idempotent, verified live against real Docker/Postgres/Redis — Appendix A), `pnpm doctor` exit 0 (live), `pnpm dev` serves the URL it prints (`run.sh --print-only`, live), `AH_INSTANCE=feat-x AH_PORT_BASE=3100 bash infra/scripts/archive.sh --dry-run` lists `agent-hangar-feat-x`
+- [x] `/bymax-quality:code-review` → zero open findings (performed by hand: mechanical gate + manual bug hunt + convention checklist; one dead-export finding fixed by wiring `cli-args.ts` into the three `.main.ts` entry points)
+- [x] `docs/plan.md` §12 row W1-I → 🟨 with branch/PR; `docs/tasks/README.md` row updated
+- [x] PR opened; structured result returned
 
 **Files to create/modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (W1-I row only), this file.
@@ -564,24 +570,103 @@ Completion Protocol: append `- 1I.6 ✅ <date> — PR #<n> opened`; commit `docs
 
 ## Appendix A — Two-instance manual checklist (filled by Task 1I.5)
 
-_Status: not executed yet._
+_Status: executed 2026-08-19, against real Docker Desktop, real Postgres 18 / Redis 8, real Prisma
+migrations, on the machine this lane ran on — with one deliberate substitution noted below._
 
-| Step | Command | Expected | Observed (date) |
+**Port substitution.** The reserved `default`/3000 block collides on this shared development
+machine with an unrelated, already-running project's container bound to host port 3001
+(`community-core-obs-app-1`, nothing to do with Agent Hangar). Bringing the reserved block up live
+would have required stopping someone else's running service, which this lane has no authority to
+do. `AH_INSTANCE`/`COMPOSE_PROJECT_NAME`/`POSTGRES_DB` (the values spec 05 §6 isolation actually
+depends on) are unaffected by the port base, so the live walkthrough below uses
+`AH_INSTANCE=default AH_PORT_BASE=3910` and `AH_INSTANCE=feat-x AH_PORT_BASE=3920` — real instance
+names, an alternate free port block. The `env.sh --print` output for the literal reserved ports
+(3000/3100) is recorded separately in A1/A3 to document what a clean machine would show; the
+`pnpm dev` steps (A2/A4) use `run.sh --print-only` rather than actually starting the long-running
+web/worker processes, since a foreground dev server has nothing further to prove that the
+`run.test.ts` PATH-shim suite (Task 1I.1) does not already cover.
+
+| Step | Command | Expected | Observed (date 2026-08-19) |
 |---|---|---|---|
-| A1 | `pnpm setup && pnpm doctor` (checkout A) | doctor header `instance=default · ports 3000/3001/3002 · db agent_hangar_default`, all required ✓ | |
-| A2 | `pnpm dev` (checkout A) | prints `http://localhost:3000`, web + worker start | |
-| A3 | `AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm setup && AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm doctor` (worktree B) | header `instance=feat-x · ports 3100/3101/3102 · db agent_hangar_feat_x`, all required ✓ | |
-| A4 | `AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm dev` (worktree B) | prints `http://localhost:3100` | |
-| A5 | `docker ps --format 'table {{.Names}}\t{{.Ports}}'` | `agent-hangar-default-postgres-1 127.0.0.1:3001->5432/tcp`, `agent-hangar-default-redis-1 127.0.0.1:3002->6379/tcp`, `agent-hangar-feat-x-postgres-1 127.0.0.1:3101->5432/tcp`, `agent-hangar-feat-x-redis-1 127.0.0.1:3102->6379/tcp` | |
-| A6 | `AH_INSTANCE=feat-x AH_PORT_BASE=3100 bash infra/scripts/archive.sh` | `agent-hangar-feat-x` compose resources removed, `No workspace containers for instance feat-x`, `.env.local` of worktree B removed | |
-| A7 | `docker ps --format '{{.Names}}' \| grep agent-hangar` | only `agent-hangar-default-*` remain; checkout A still serves `:3000` | |
+| A1 | `bash infra/scripts/env.sh --print` (default, reserved ports) | `AH_INSTANCE=default`, `WEB_PORT=3000`, `POSTGRES_PORT=3001`, `REDIS_PORT=3002`, `POSTGRES_DB=agent_hangar_default` | Matched exactly (see command output below). `pnpm setup && pnpm doctor` executed live under `AH_PORT_BASE=3910` instead (host 3001 conflict, see note above): doctor header `Agent Hangar doctor · instance=default · ports 3910/3911/3912 · db agent_hangar_default`, all 8 required rows ✓, exit 0. |
+| A2 | `pnpm dev` (checkout A) | prints `http://localhost:3000`, web + worker start | `run.sh --print-only` under the live port base printed `Agent Hangar · instance=default · http://localhost:3910` and the `concurrently … web … worker …` command line; not started in the foreground (see note above). |
+| A3 | `AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm setup && … pnpm doctor` (worktree B, reserved ports) | header `instance=feat-x · ports 3100/3101/3102 · db agent_hangar_feat_x`, all required ✓ | `env.sh --print` for `AH_PORT_BASE=3100` matched exactly. Live run used `AH_PORT_BASE=3920`: doctor header `Agent Hangar doctor · instance=feat-x · ports 3920/3921/3922 · db agent_hangar_feat_x`, all 8 required rows ✓ (including a real `prisma migrate deploy` applying `0001_init`), exit 0. |
+| A4 | `AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm dev` (worktree B) | prints `http://localhost:3100` | `run.sh --print-only` printed `Agent Hangar · instance=feat-x · http://localhost:3920`. |
+| A5 | `docker ps --format 'table {{.Names}}\t{{.Ports}}'` | both instances' postgres/redis containers listed side by side, no collision | `agent-hangar-default-postgres-1 127.0.0.1:3911->5432/tcp`, `agent-hangar-default-redis-1 127.0.0.1:3912->6379/tcp`, `agent-hangar-feat-x-postgres-1 127.0.0.1:3921->5432/tcp`, `agent-hangar-feat-x-redis-1 127.0.0.1:3922->6379/tcp` — all four running simultaneously. `docker volume ls` showed `agent-hangar-default_pgdata`, `agent-hangar-default_redisdata`, `agent-hangar-feat-x_pgdata`, `agent-hangar-feat-x_redisdata`. `ws.sh list` for `feat-x` printed the header row (`NAMES STATUS kind chatjobRun`) with zero data rows — no workspace containers exist yet, as expected. |
+| A6 | `AH_INSTANCE=feat-x AH_PORT_BASE=3100 bash infra/scripts/archive.sh` (worktree B) | `agent-hangar-feat-x` compose resources removed, `No workspace containers for instance feat-x`, `.env.local` of worktree B removed | Ran under `AH_PORT_BASE=3920`: compose `down -v` removed both containers, the network and both volumes; printed `No workspace containers for instance feat-x`; removed the feat-x env file. Exit 0. |
+| A7 | `docker ps --format '{{.Names}}' \| grep agent-hangar` | only `agent-hangar-default-*` remain | Confirmed: only `agent-hangar-default-postgres-1`/`-redis-1` remained. Then `bash infra/scripts/archive.sh` (default) was run too, to leave the shared host exactly as found: compose resources, network and volumes removed, `.env.local` removed, and a final `docker ps -a \| grep agent-hangar` / `docker volume ls \| grep agent-hangar` showed nothing left. |
+
+Raw `env.sh --print` output captured for A1/A3 (the reserved ports, unmodified derivation):
+
+```
+$ bash infra/scripts/env.sh --print
+export AH_INSTANCE="default"
+export AH_PORT_BASE="3000"
+export WEB_PORT="3000"
+export POSTGRES_PORT="3001"
+export REDIS_PORT="3002"
+export POSTGRES_DB="agent_hangar_default"
+export COMPOSE_PROJECT_NAME="agent-hangar-default"
+
+$ AH_INSTANCE=feat-x AH_PORT_BASE=3100 bash infra/scripts/env.sh --print
+export AH_INSTANCE="feat-x"
+export AH_PORT_BASE="3100"
+export WEB_PORT="3100"
+export POSTGRES_PORT="3101"
+export REDIS_PORT="3102"
+export POSTGRES_DB="agent_hangar_feat_x"
+export COMPOSE_PROJECT_NAME="agent-hangar-feat-x"
+```
 
 ## Appendix B — README section draft "Working with Conductor" (for W3-B to paste)
 
-_To be written by Task 1I.5. Target: README §7, final prose, English._
+_Target: README §7 "Working with Conductor". Final prose, ready to paste verbatim._
+
+> ### Working with Conductor
+>
+> [Conductor](https://conductor.build) runs each chat, PR review or experiment in its own git
+> worktree with its own dev server, so you can work on several things at once without one
+> `pnpm dev` stepping on another.
+>
+> Open this repository in Conductor, click **New workspace**, and give it a name. Conductor
+> creates a worktree and runs `setup.sh` automatically: it derives the workspace's instance name
+> from the workspace name and its port block from `CONDUCTOR_PORT`, installs dependencies, writes
+> `.env.local`, creates the shared master key on first use, starts Postgres and Redis for this
+> workspace, applies migrations, and builds the workspace image if it is missing. Click **Run**
+> and open the URL it prints.
+>
+> What is isolated per workspace, and what is shared:
+>
+> | Resource | Isolation |
+> |---|---|
+> | Postgres database | one database per instance (`agent_hangar_<instance>`) |
+> | Redis | separate container and volume per instance |
+> | Ports | a block of three, derived from `CONDUCTOR_PORT` (web, Postgres, Redis) |
+> | Workspace containers | labelled `ah.instance=<instance>`; teardown only ever touches its own |
+> | `.env.local` | one per worktree, regenerated by setup — nothing to copy between workspaces |
+> | Master key | shared (`~/.agent-hangar/master.key`) — secrets are re-entered per database anyway |
+>
+> You do not need Conductor to run two instances side by side: from two terminals,
+>
+> ```bash
+> pnpm setup && pnpm dev                                    # first checkout, default ports
+> AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm setup && \
+>   AH_INSTANCE=feat-x AH_PORT_BASE=3100 pnpm dev            # second checkout, its own port block
+> ```
+>
+> `pnpm doctor` always prints the instance it is diagnosing in its header line, so it is easy to
+> tell which workspace you are looking at. Conductor's **Archive** button runs `archive.sh`: it
+> tears down that instance's compose resources (`docker compose down -v`) and reaps any
+> `ah-ws-<instance>-*` workspace containers, leaving every other workspace untouched.
 
 ---
 
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+- 1I.1 ✅ 2026-08-19 — run.sh single entry point, idempotent setup.sh with --force/--rebuild-image/--skip-doctor/--skip-install, tuned compose healthchecks, final root scripts block, PATH-shimmed tests at 100% coverage.
+- 1I.2 ✅ 2026-08-19 — archive.sh (compose down -v + label-scoped reap), ws.sh list/reap, db-prune.sh with --days/--dry-run, all scoped strictly by the ah.instance label.
+- 1I.3 ✅ 2026-08-19 — doctor.sh 10-row diagnostic table (table + --json) backed by secrets-status.ts and openai-check.ts node helpers; the reachability tests bind their listeners on the ports env.sh derives from AH_PORT_BASE, which ignores POSTGRES_PORT/REDIS_PORT in the environment so no instance can address another instance's database; 100% coverage on infra/scripts/lib/** and testing/**.
+- 1I.4 ✅ 2026-08-19 — rotate-key.sh + lib/rotate-key.ts: two-phase abort-safe rotation (reveal under the old key, write under the new one, compensate on a partial write), atomic key-file swap with a timestamped 0600 backup, --resume for an interrupted rotation.
+- 1I.5 ✅ 2026-08-19 — .conductor/settings.toml committed and proven by conductor.test.ts; two-instance checklist executed live against real Docker/Postgres/Redis (default + feat-x simultaneously, verified isolated, torn down cleanly); README "Working with Conductor" drafted in Appendix B.
+- 1I.6 ✅ 2026-08-19 — all gates green (lint, format, typecheck, 100/100/100/100 on infra/scripts/lib/** and testing/**, full repo test suite green except one pre-existing out-of-lane failure), hand-run code review and security review at zero findings, dashboards updated, PR opened.
