@@ -90,7 +90,7 @@ flowchart TB
 | Lane | Needs merged | Why |
 |---|---|---|
 | W1-A … W1-H | W0 | contracts, tooling, deps |
-| W1-I | W0 (+ W1-A, W1-C, W1-E for the doctor/rotate-key tasks) | runs in the second Wave 1 batch; merges first within that batch (root scripts block) |
+| W1-I | 🟨 PR open | PR #18 | scripts 100 (all four metrics) | run, doctor, archive, prune and the Conductor wiring; the two-instance walkthrough was executed against real Docker, not simulated |
 | W2-A (web API) | W1-A, W1-E, W1-F | secrets status, repositories, scheduling validation |
 | W2-B (worker) | W1-A, W1-B, W1-C, W1-D, W1-E, W1-F | everything the processors orchestrate |
 | W2-C (E2E authoring) | W1-G, W1-H | UI selectors; specs run for real only in W3-A |
@@ -302,9 +302,9 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | W1-D | 🟩 merged | PR #11 | 100/100/100/100 (agent-runtime `src/**`) | three Dockerfile `COPY` lines (bundle, map, `{"type":"module"}` manifest) written in the PR body for the infra lane to apply, not in this diff; path confinement resolves symlinks |
 | W1-E | 🟩 merged | PR #8 | core 100 (all four metrics) | status stamps are transactional; `ScheduledJob.prompt` and `Chat.title` redacted on write |
 | W1-F | 🟩 merged | PR #12 | core 100 (all four metrics) | BullMQ 6 API read from the installed types |
-| W1-G | 🟦 running | `feat/w1g-web-chats` | — | 1G.1–1G.3 done, 1G.4 in progress; `shared/transcript` pushed, so W1-H is unblocked |
-| W1-H | 🟥 blocked | `feat/w1h-web-scheduled-settings` | web 100 (all four metrics) | 1H.1–1H.5 done and pushed; stopped at the close-out because opening a pull request now would ship 18 `TEMP-STUB(W1-H)` files standing in for W1-G's modules. The orchestrator finalises it once W1-G merges |
-| W1-I | 🟦 running | `feat/w1i-infra-conductor` | — | started once W1-A, W1-C and W1-E were merged |
+| W1-G | 🟨 PR open | PR #19 | web 100 (all four metrics) | chats list, composer and streaming detail; Lighthouse a11y 100 on both routes. Routed a pre-existing blocker: `next dev` cannot resolve `@agent-hangar/core` from source under Turbopack |
+| W1-H | 🟥 blocked | `feat/w1h-web-scheduled-settings` | web 100 (all four metrics) | 1H.1–1H.5 done and pushed; stopped at its close-out because opening a pull request now would ship 18 `TEMP-STUB(W1-H)` files standing in for W1-G's modules. The orchestrator finalises it once W1-G merges |
+| W1-I | 🟨 PR open | PR #18 | scripts 100 (all four metrics) | run, doctor, archive, prune and the Conductor wiring; the two-instance walkthrough was executed against real Docker, not simulated |
 | W2-A | 🟦 running | `feat/w2a-web-api-sse` | — | started once W1-A, W1-E and W1-F were merged |
 | W2-B 🐳 | 🟦 running | `feat/w2b-worker` | — | started once W1-A…W1-F were merged; its 🐳 suite needs the runtime bundled into the image (PR #16) |
 | W2-C | ⬜ | — | — | gate is W1-G and W1-H merged — both are still running |
