@@ -13,7 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { setScenario } from '@/mocks/scenario';
 import { resetStore } from '@/mocks/store';
 
-import { deleteSecret, getHealth, getSettings, putSecret } from './settings-api';
+import { deleteSecret, getSettings, putSecret } from './settings-api';
 
 afterEach(() => {
   resetStore();
@@ -58,13 +58,5 @@ describe('deleteSecret', () => {
     await deleteSecret('OPENAI_API_KEY');
     const settings = await getSettings();
     expect(settings.openaiKey.set).toBe(false);
-  });
-});
-
-describe('getHealth', () => {
-  /** Returns the health response. */
-  it('returns a healthy response by default', async () => {
-    const health = await getHealth();
-    expect(health.ok).toBe(true);
   });
 });

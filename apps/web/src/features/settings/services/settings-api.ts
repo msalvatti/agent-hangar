@@ -1,10 +1,13 @@
 /**
- * Typed HTTP calls for settings (masked secret status, secret mutations, health), over the shared
- * `apiFetch` client.
+ * Typed HTTP calls for settings — the masked secret status and the secret mutations — over the
+ * shared `apiFetch` client.
  *
  * Layer: service.
+ *
+ * The environment card's health read is not here: the sidebar pill and the chat composer need the
+ * same report under the same query key, so it lives in `shared/health`.
  */
-import type { HealthResponse, SecretKey, SettingsStatus } from '@agent-hangar/core';
+import type { SecretKey, SettingsStatus } from '@agent-hangar/core';
 
 import { apiFetch } from '@/shared/api/client';
 
@@ -37,14 +40,4 @@ export async function putSecret(key: SecretKey, value: string): Promise<string> 
  */
 export async function deleteSecret(key: SecretKey): Promise<void> {
   await apiFetch('deleteSecret', { params: { key } });
-}
-
-/**
- * Fetches the instance's health summary.
- *
- * @param signal - Aborts the request.
- * @returns The health response.
- */
-export async function getHealth(signal?: AbortSignal): Promise<HealthResponse> {
-  return apiFetch('getHealth', signal === undefined ? {} : { signal });
 }

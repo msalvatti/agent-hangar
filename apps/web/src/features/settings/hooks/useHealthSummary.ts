@@ -7,10 +7,10 @@
 
 import { useApiQuery } from '@/shared/api/use-api-query';
 import type { UseApiQueryResult } from '@/shared/api/use-api-query';
+import { getHealth } from '@/shared/health';
 
 import { summarizeHealth } from '../lib/health';
 import type { HealthSummary } from '../lib/health';
-import { getHealth } from '../services/settings-api';
 
 const REFETCH_INTERVAL_MS = 30_000;
 

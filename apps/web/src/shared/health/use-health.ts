@@ -7,8 +7,10 @@
  * the sidebar pill from it, and the chat composer refuses to send while the dependency that would
  * run the turn is down. Features do not import each other, so the meeting point is `shared/`.
  *
- * Every caller shares one `['health']` query key, so the several components that read it make one
- * request between them rather than one each.
+ * The shared `['health']` key makes one `invalidateQueries(['health'])` refresh every reader at
+ * once; it does not pool the requests, because `useApiQuery` keeps no cache across mounts. Two
+ * mounted readers therefore poll separately, which is affordable here and nowhere near worth a
+ * cache: the route runs two bounded probes and one Redis read, for one user on their own machine.
  */
 'use client';
 
