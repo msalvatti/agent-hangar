@@ -12,7 +12,13 @@ import { listRunsResponse, runDetail } from '@agent-hangar/core';
 import { test, expect } from './fixtures';
 import { JobDetailPage, ScheduledPage } from './pages';
 import { chatTarget } from './support/chat-flows';
-import { API_SETTLE_TIMEOUT_MS, JOB_RUN_TIMEOUT_MS, PROMPTS } from './support/constants';
+import {
+  API_SETTLE_TIMEOUT_MS,
+  JOB_RUN_TIMEOUT_MS,
+  PROMPTS,
+  WORKSPACE_GONE_TIMEOUT_MS,
+} from './support/constants';
+import { listWorkspaceContainers } from './support/docker';
 import { skipUnlessReal } from './support/mode';
 import { COPY } from './support/selectors';
 
@@ -37,6 +43,7 @@ const SUCCEEDED_LABEL = 'ok';
 test('a scheduled job runs on demand and reports its output', async ({
   page,
   api,
+  env,
   mode,
   seedSettings,
 }) => {
@@ -94,6 +101,17 @@ test('a scheduled job runs on demand and reports its output', async ({
   const run = await api.get(`/api/runs/${first.id}`, runDetail);
   expect(run.output).not.toBeNull();
   expect(run.toolCalls.map((call) => call.toolName)).toEqual(['run_shell']);
+
+  // A job workspace is disposable by design, which is the half of that promise a status cannot
+  // show: the run reaches a terminal status before the processor's teardown destroys the
+  // container, so this polls rather than reads once. Without it a regression that leaves every job
+  // container running still passes the whole spec.
+  await expect
+    .poll(async () => (await listWorkspaceContainers(env.workspaceNamePrefix)).length, {
+      timeout: WORKSPACE_GONE_TIMEOUT_MS,
+      message: 'the run workspace was still there after the run finished',
+    })
+    .toBe(0);
 
   await page.goto('/scheduled');
   await scheduled.deleteJob(JOB_NAME);

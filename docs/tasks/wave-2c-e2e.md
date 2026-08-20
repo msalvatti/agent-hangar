@@ -862,3 +862,28 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   started, and the reader propagates that case instead of reporting absence. Both comments that
   claimed the old protection are gone; the `@throws` on `stopWorker` was already written for this
   behaviour and is now true.
+- 2C.20 ✅ 2026-08-20 — rebased onto the build wrapper and the repository-capability work, then
+  measured real mode again on an image built from this checkout and tagged `agent-hangar/workspace:w2c`,
+  with both the shipped `askpass.sh` and the runtime bundle checked against the tree by digest
+  before the run. The shared `:dev` tag was not read or written.
+  · **A critical flow passes end to end.** `scheduled-job-run` is green in real mode: the cron
+  validates in place, the job saves, Run now produces a run the worker executes in a fresh
+  workspace, its output and its `run_shell` tool call come back through the API, and the workspace
+  is gone afterwards. `chat-create-run` still fails on the status-pill assertion for the reason
+  2C.19 recorded — the turn settles before the browser can observe it — and its second test passes.
+  · The reviewer's suppressed observations were triaged rather than left in the collapsed block.
+  Two were real and are fixed here. The git server's image was built only when its tag was absent,
+  so an edit to `server.mjs`, `seed.sh` or the Dockerfile left the old image in place and the suite
+  cloned from the previous checkout's fixture — the same hazard as the shared workspace tag, one
+  layer down. It is rebuilt every run, and a container still running from an earlier build of the
+  tag is replaced rather than reused, since a rebuild moves the tag while a container keeps the
+  image it was created from. And `scheduled-job-run` promised in its own header that a job
+  workspace is disposable without ever checking it; it now polls the instance's workspace
+  containers to zero, which is a poll rather than a read because the run reaches a terminal status
+  before the processor's teardown destroys the container.
+  · The third observation is real and deliberately not acted on here. The job is created on an
+  every-minute schedule, so a scheduled run can start while the spec inspects the manual one, and
+  the spec's closing UI delete does not settle a live run the way the fixture's reset does. Every
+  remedy — disabling the job first, or moving the cron outside the window — changes what the spec
+  exercises and interacts with the `MANUAL` trigger filter that closed an earlier finding on these
+  same assertions. It belongs with that triage rather than ahead of it.
