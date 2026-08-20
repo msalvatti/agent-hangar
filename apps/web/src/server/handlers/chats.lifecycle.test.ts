@@ -126,9 +126,14 @@ describe('postMessage', () => {
 
   /**
    * Two messages sent at the same instant both find the chat idle, because the live-turn check and
-   * the turn that answers the message are separate writes. The rule this protects is that the chat
-   * never ends up with two live turns racing the worker for one container: at most one request is
-   * accepted, and the transcript gains exactly as many messages as were accepted.
+   * the turn that answers the message are separate writes. Two rules are protected here. The chat
+   * never ends up with two live turns racing the worker for one container — at most one request is
+   * accepted, and the transcript gains exactly as many messages as were accepted. And whatever the
+   * outcome, the chat is left usable: refusing on sight of a rival means both requests can back off
+   * and neither message land, which is allowed, but a claim left behind by either of them would
+   * wedge the chat against every later message, which is not. The upper bound rather than an exact
+   * count is deliberate — which side wins depends on how the two inserts and reads interleave, and
+   * pinning the count would assert the scheduler rather than the rule.
    */
   it('never lets two simultaneous messages both queue a turn', async () => {
     const harness = createTestContainer();
@@ -161,6 +166,15 @@ describe('postMessage', () => {
     expect(await harness.doubles.repos.messages.listByChat(chatId)).toHaveLength(
       1 + accepted.length,
     );
+
+    for (const turn of live) {
+      await harness.doubles.repos.turns.finish(turn.id, 'SUCCEEDED', {
+        inputTokens: 0,
+        outputTokens: 0,
+        stepCount: 0,
+      });
+    }
+    expect((await send('third')).status).toBe(201);
   });
 
   /**

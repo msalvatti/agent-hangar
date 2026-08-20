@@ -11,13 +11,23 @@
  *
  * Sending a message claims the chat's single work slot with the turn row itself. The row is
  * `QUEUED` from the instant it is created, so a second request that creates one sees the first and
- * gives its own back instead of enqueueing a rival turn. The claim is a committed row rather than
- * an in-process lock, so it holds between two web processes reading the same database. Two limits
- * are worth naming: when each request observes the other, both give their claim back and neither
- * message is accepted, which the caller resolves by sending it again; and if giving the claim back
- * fails, the chat keeps a `QUEUED` turn no worker will run until it is cancelled through
- * `POST /api/turns/:id/cancel`. Postgres has no partial unique index over a chat's live turn, so
- * the invariant is enforced here rather than declared once in the schema.
+ * gives its own back instead of enqueueing a rival turn. Each request's own insert precedes its own
+ * read, so the two orderings that would let both proceed contradict each other and the chat can
+ * never end up with two live turns. The claim is a committed row rather than an in-process lock, so
+ * it holds between two web processes reading the same database. Postgres has no partial unique
+ * index over a chat's live turn, so the invariant is enforced here rather than declared once in the
+ * schema.
+ *
+ * What the claim buys is mutual exclusion, not a winner. Refusing on sight of any rival is what
+ * makes the rule single-valued, and the price is that when both inserts land before either read —
+ * the ordinary outcome for two genuinely simultaneous requests, not a rare corner — *both* requests
+ * give their claim back and neither message is accepted. A double-click or a client retry whose
+ * latencies match is therefore answered twice with 409, and the caller has to send the message
+ * again; nothing here breaks the tie for them. Two further limits: if giving a claim back fails,
+ * the chat keeps a `QUEUED` turn no worker will run until it is cancelled through
+ * `POST /api/turns/:id/cancel`; and the ordering bump that closes an accepted message is not
+ * guarded, so a failure of that last write answers 500 for a turn the worker already has — a
+ * caller that retries on it meets its own turn as `TURN_IN_PROGRESS`.
  *
  * Archiving and restoring each write the chat's status before a second operation that can fail —
  * enqueuing the teardown job, appending the restoration notice — and each is a status the guards
