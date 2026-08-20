@@ -297,17 +297,18 @@ export function persistedText(container: TestContainer): string {
  * Seeds a chat with its opening user message and a queued turn.
  *
  * @param container - The test container.
- * @param options - Repository URL override, for the cases where it must be invalid.
+ * @param options - Repository URL and base-branch overrides, for the cases where a stored value
+ *   must be one the protocol refuses.
  * @returns The chat and the turn.
  */
 export async function seedChatWithTurn(
   container: TestContainer,
-  options: { repoUrl?: string; prompt?: string } = {},
+  options: { repoUrl?: string; baseBranch?: string; prompt?: string } = {},
 ): Promise<{ chat: Chat; turn: Turn }> {
   const chat = await container.repos.chats.create({
     title: 'First task',
     repoUrl: options.repoUrl ?? FIXTURE_REPO_URL,
-    baseBranch: 'main',
+    baseBranch: options.baseBranch ?? 'main',
   });
   await container.repos.messages.append(
     chat.id,

@@ -118,6 +118,25 @@ describe('parseAllowedRepoOrigin', () => {
   });
 
   /**
+   * Cleartext to a host that is not loopback is authorised when the operator spells it out. The
+   * local forge a workspace container clones from is published on the host gateway, which is a
+   * remote address from inside the container, so a loopback-only rule would refuse the one
+   * plaintext case the product needs. Unlike `GITHUB_API_BASE_URL` — which carries the PAT in an
+   * `Authorization` header on every call and so admits `http` only to this machine — a repository
+   * URL reaches `git`, whose askpass helper requires `https` before it releases anything.
+   */
+  it('authorises a plaintext origin that is not loopback when the entry says so', () => {
+    expect(parseAllowedRepoOrigin('http://host.docker.internal:3907')).toBe(
+      'http://host.docker.internal:3907',
+    );
+    expect(
+      isAllowedRepoUrl('http://host.docker.internal:3907/acme/sample.git', [
+        'http://host.docker.internal:3907',
+      ]),
+    ).toBe(true);
+  });
+
+  /**
    * An entry is a bare authority. Anything else is a typo the operator would otherwise never see
    * — it can never match a URL — and a userinfo entry would suggest the list is a place to put a
    * credential.
@@ -148,6 +167,9 @@ describe('isAllowedRepoUrl', () => {
       ['github.com', 'http://127.0.0.1:3907'],
     ],
     ['a host written in another case', 'https://GitHub.com/acme/widgets', ['github.com']],
+    // A single-label entry is an origin like any other: it authorises `https://com` itself and
+    // nothing under that suffix, which is the whole-origin rule and not a special case.
+    ['the exact origin a single-label entry names', 'https://com/acme/widgets', ['com']],
   ])('accepts %s', (_name, value, hosts) => {
     expect(isAllowedRepoUrl(value, hosts)).toBe(true);
   });

@@ -49,7 +49,15 @@ export function expandHomePrefix(value: string): string {
 /** Upper bound of `WORKER_TURN_CONCURRENCY` (one container per turn; more would starve a laptop). */
 export const MAX_WORKER_TURN_CONCURRENCY = 32;
 
-/** Hosts a repository may be cloned from when `ALLOWED_REPO_HOSTS` is not set. */
+/**
+ * Hosts a repository may be cloned from when `ALLOWED_REPO_HOSTS` is absent or blank.
+ *
+ * `loadConfig` treats an empty string as unset, so both spellings of "not configured" resolve to
+ * this value rather than to an empty list. Allowing no forge at all is therefore something an
+ * operator states rather than something a missing variable produces: it needs a non-blank value
+ * that names no host, such as `,,`. The fallback is the product's own forge and nothing else, so
+ * an unconfigured install still refuses every other origin.
+ */
 export const DEFAULT_ALLOWED_REPO_HOSTS = 'github.com';
 
 /** GitHub REST base URL used by the repository picker when `GITHUB_API_BASE_URL` is not set. */
@@ -63,7 +71,10 @@ export const DEFAULT_GITHUB_API_BASE_URL = 'https://api.github.com';
  * `[http://|https://]host[:port]`, so an operator who points the app at another forge — or who
  * wants the default forge refused outright — has one place to say so.
  *
- * A list that yields no entries admits nothing; it never falls back to a built-in forge.
+ * A value that names no host — `,,` — yields no entries and therefore admits nothing: the parser
+ * never substitutes a forge for a list the operator emptied. Leaving the variable out is a
+ * different statement, answered earlier by {@link DEFAULT_ALLOWED_REPO_HOSTS}, which this function
+ * never sees.
  *
  * @param value - Comma-separated host list.
  * @returns The entries, trimmed, lower-cased and free of empty ones.

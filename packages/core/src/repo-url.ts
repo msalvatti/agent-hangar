@@ -160,9 +160,22 @@ export function isPlainRepoUrl(value: string): boolean {
  * `https://github.com` on the default port and nothing else, while a local forge reached over
  * plaintext is written in full, `http://127.0.0.1:3907`. Scheme and port are part of the entry
  * rather than free for the URL to choose, because the PAT is delivered to whatever origin the
- * repository URL names: a bare loopback entry must not open every daemon on the machine, and an
- * entry for a public forge must not admit a cleartext clone that an on-path attacker can
- * challenge for the token.
+ * repository URL names: a bare loopback entry must not open every daemon on the machine, and a
+ * bare entry for a public forge must not admit a cleartext clone that an on-path attacker can
+ * challenge for the token. Omitting the scheme therefore means `https`, and cleartext has to be
+ * asked for.
+ *
+ * Asked for, it is granted, for any host and not only a loopback one — deliberately, and unlike
+ * `GITHUB_API_BASE_URL`, which admits `http` only to this machine. The two carry the token
+ * differently. That base URL is fetched by this process with the PAT in an `Authorization` header
+ * on every call, so plaintext to anywhere but this machine puts the token on the wire with no
+ * further gate. A repository URL is handed to `git` inside a workspace container, where the
+ * credential is released by the askpass helper, which independently requires `https` and an exact
+ * host before it answers a prompt — so a cleartext entry authorises a clone, not a token. It has
+ * to be allowed because the local forge a container clones from is reached through the host
+ * gateway (`host.docker.internal`, the `docker0` address), which is a remote address from inside
+ * the container and would fail a loopback rule. Anything that later derives the askpass host from
+ * this list must keep that helper's scheme check rather than inherit this one.
  *
  * Both sides of the later comparison are normalised by the same `URL` implementation, so
  * `GitHub.com`, `github.com:443` and `github.com` are one entry, and an IPv6 literal is compared
@@ -184,9 +197,11 @@ export function parseAllowedRepoOrigin(entry: string): string | null {
 /**
  * Whether a URL names one repository on an origin the operator allowed.
  *
- * The comparison is between whole origins, never a substring: an entry for `github.com` does not
- * admit `github.com.evil.test`, and an entry for `com` admits nothing. An empty list admits
- * nothing either — a missing or blank `ALLOWED_REPO_HOSTS` must close the door, never open it.
+ * The comparison is between whole origins, never a substring, so an entry authorises the origin it
+ * spells and no other: `github.com` does not admit `github.com.evil.test` or `mygithub.com`, and a
+ * single-label entry such as `com` admits only the origin `https://com` itself rather than every
+ * host under that suffix. An empty list admits nothing, because there is no entry to equal; the
+ * predicate never substitutes a forge for a list that names none.
  *
  * @param value - A URL string.
  * @param allowedHosts - Entries of `ALLOWED_REPO_HOSTS`, trimmed and lower-cased.

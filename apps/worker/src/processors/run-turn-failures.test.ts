@@ -407,12 +407,14 @@ describe('createRunTurnProcessor, failing a turn', () => {
   });
 
   /**
-   * A request the protocol rejects — a chat whose repository URL predates validation, say — must
-   * still leave the turn terminal and the workspace usable.
+   * A request the protocol rejects — a chat whose stored base branch predates validation, say —
+   * must still leave the turn terminal and the workspace usable. The repository URL cannot play
+   * that role any more: provisioning measures it against the allow-list first, so a stored URL the
+   * protocol would refuse never reaches the request builder.
    */
   it('settles the turn when preparing the request throws', async () => {
     const container = setupProcessorContainer();
-    const { chat, turn } = await seedChatWithTurn(container, { repoUrl: 'not a url' });
+    const { chat, turn } = await seedChatWithTurn(container, { baseBranch: '' });
 
     await expect(runTurnOn(container, turn.id)).rejects.toThrow();
 
@@ -420,6 +422,32 @@ describe('createRunTurnProcessor, failing a turn', () => {
     expect(failed?.status).toBe('FAILED');
     expect(failed?.error).toContain('worker error');
     expect((await container.repos.workspaces.findLiveByChat(chat.id))?.status).toBe('READY');
+  });
+
+  /**
+   * Removing an origin from `ALLOWED_REPO_HOSTS` has to stop the chats already pointed at it. A
+   * chat whose container is still running never provisions again, so checking only where a
+   * workspace is created would leave that container pushing to the removed forge with the PAT for
+   * as long as the idle collector left it standing. The second turn is refused instead.
+   */
+  it('refuses a further turn once the chat repository leaves the allow-list', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
+    const { chat, turn } = await seedChatWithTurn(container);
+    await runTurnOn(container, turn.id);
+    expect(await container.repos.workspaces.findLiveByChat(chat.id)).not.toBeNull();
+
+    const restricted: TestContainer = {
+      ...container,
+      config: { ...container.config, ALLOWED_REPO_HOSTS: 'git.example.test' },
+    };
+    const second = await container.repos.turns.create({ chatId: chat.id, model: 'test-model' });
+    container.runner.calls.length = 0;
+    await runTurnOn(restricted, second.id);
+
+    const refused = await container.repos.turns.get(second.id);
+    expect(refused?.status).toBe('FAILED');
+    expect(refused?.error).toContain('repo_url_not_allowed');
+    expect(container.runner.calls).toHaveLength(0);
   });
 });
 

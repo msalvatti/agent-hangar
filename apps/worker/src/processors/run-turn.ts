@@ -44,7 +44,12 @@ import {
   WORKER_ERROR_PREFIX,
 } from './constants.js';
 import { buildTurnInstructions } from './instructions.js';
-import { provisionWorkspace } from './provision-workspace.js';
+import {
+  isRepoUrlAllowed,
+  provisionWorkspace,
+  REPO_URL_NOT_ALLOWED_CODE,
+  REPO_URL_NOT_ALLOWED_MESSAGE,
+} from './provision-workspace.js';
 import { formatRunError, publishCancellation, publishFailure } from './run-outcome.js';
 import { createToolCallRecorder } from './tool-call-recorder.js';
 import type { ToolCallRecorder } from './tool-call-recorder.js';
@@ -220,6 +225,16 @@ async function ensureWorkspace(
   chat: Chat,
   messages: readonly Message[],
 ): Promise<EnsureResult> {
+  // Measured here and not only where a workspace is created: a chat whose container is still
+  // running reuses it, so an origin the operator has removed from the allow-list would keep
+  // receiving pushes for as long as the idle collector leaves that container standing.
+  if (!isRepoUrlAllowed(deps, chat.repoUrl)) {
+    return {
+      ok: false,
+      code: REPO_URL_NOT_ALLOWED_CODE,
+      message: REPO_URL_NOT_ALLOWED_MESSAGE,
+    };
+  }
   const live = await reviewLiveWorkspace(deps, chat.id);
   const decision = ensureWorkspaceDecision({
     liveWorkspace: live === null ? null : { id: live.id, status: live.status },

@@ -16,6 +16,7 @@ import { ConfigError } from '../errors.ts';
 import { resolveInstance } from './instance.ts';
 import {
   COMPOSE_DB_CREDENTIALS,
+  DEFAULT_ALLOWED_REPO_HOSTS,
   defaultMasterKeyPath,
   envSchema,
   expandHomePrefix,
@@ -309,11 +310,28 @@ describe('helpers', () => {
 
   /**
    * A list whose entries are all blank is a valid way to say "no forge at all"; it loads, and it
-   * admits nothing. What it must never do is fall back to a built-in host.
+   * admits nothing. That statement has to be spelled out, which is why the variable is not simply
+   * left empty: the two are different instructions and the next test pins the other one.
    */
   it('loads a list that names no host, and that list allows nothing', () => {
     const config = loadConfig({ ALLOWED_REPO_HOSTS: ',,' });
     expect(parseAllowedRepoHosts(config.ALLOWED_REPO_HOSTS)).toEqual([]);
+  });
+
+  /**
+   * An absent variable and a blank one are the same instruction — `loadConfig` treats an empty
+   * string as unset — and both resolve to the product's own forge, never to an empty list. An
+   * operator reading the documentation has to find that here, because the difference decides
+   * whether an unconfigured install clones from `github.com` or from nowhere.
+   */
+  it.each([
+    ['absent', {}],
+    ['blank', { ALLOWED_REPO_HOSTS: '' }],
+    ['whitespace', { ALLOWED_REPO_HOSTS: '   ' }],
+  ])('falls back to the default forge when the list is %s', (_name, env) => {
+    const config = loadConfig(env);
+    expect(config.ALLOWED_REPO_HOSTS).toBe(DEFAULT_ALLOWED_REPO_HOSTS);
+    expect(parseAllowedRepoHosts(config.ALLOWED_REPO_HOSTS)).toEqual(['github.com']);
   });
 
   /**
