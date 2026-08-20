@@ -32,6 +32,7 @@ import { Skeleton } from '@/shared/ui/skeleton';
 
 import { repoListNote, repoReadiness } from './readiness';
 import { getRecentRepos, pushRecentRepo } from './recent';
+import { PICKER_TRIGGER_CLASS } from './trigger';
 import { useRepos } from './useRepos';
 
 /** Props of {@link RepoPicker}. */
@@ -125,7 +126,7 @@ export function RepoPicker({
         onClick={() => {
           setOpen(true);
         }}
-        className={cn('min-w-0 justify-between', className)}
+        className={cn(PICKER_TRIGGER_CLASS, className)}
       >
         <span className="flex min-w-0 items-center gap-1.5">
           <Box aria-hidden="true" className="size-4 shrink-0" />

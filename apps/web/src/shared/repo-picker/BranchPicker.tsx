@@ -24,6 +24,7 @@ import {
 import { Skeleton } from '@/shared/ui/skeleton';
 
 import { repoReadiness } from './readiness';
+import { PICKER_TRIGGER_CLASS } from './trigger';
 import { useBranches } from './useBranches';
 
 /** Props of {@link BranchPicker}. */
@@ -91,7 +92,7 @@ export function BranchPicker({
         onClick={() => {
           setOpen(true);
         }}
-        className={cn('min-w-0 justify-between', className)}
+        className={cn(PICKER_TRIGGER_CLASS, className)}
       >
         <span className="flex min-w-0 items-center gap-1.5">
           <GitBranch aria-hidden="true" className="size-4 shrink-0" />

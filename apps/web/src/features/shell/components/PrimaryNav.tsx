@@ -12,7 +12,8 @@ import { usePathname } from 'next/navigation';
 
 import { cn } from '@/shared/lib/cn';
 
-import { shortcutLabel } from '../lib/shortcuts';
+import { useShortcutPlatform } from '../hooks/useShortcutPlatform';
+import { shortcutHint } from '../lib/shortcuts';
 import type { ShortcutName } from '../lib/shortcuts';
 
 /** One navigation destination. */
@@ -64,14 +65,12 @@ export interface PrimaryNavProps {
  */
 export function PrimaryNav({ iconOnly = false }: PrimaryNavProps) {
   const pathname = usePathname();
+  const platform = useShortcutPlatform();
   return (
     <nav aria-label="Primary" className="flex flex-col gap-0.5 px-2">
       {ENTRIES.map((entry) => {
         const active = pathname.startsWith(entry.activePrefix);
-        const hint =
-          entry.shortcut === null
-            ? entry.label
-            : `${entry.label} (${shortcutLabel(entry.shortcut)})`;
+        const hint = shortcutHint(entry.label, entry.shortcut, platform);
         return (
           <Link
             key={entry.href}

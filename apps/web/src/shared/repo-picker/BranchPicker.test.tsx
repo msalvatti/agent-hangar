@@ -206,3 +206,38 @@ describe('BranchPicker', () => {
     await screen.findByText('main');
   });
 });
+
+/*
+ * Layout containment.
+ *
+ * jsdom lays nothing out, so what can be pinned here is the declaration, not the geometry: whether
+ * the trigger still says it may shrink and may not exceed its container. The two ways an
+ * `inline-flex` button escapes a container are covered by `min-w-0` (as a flex item) and
+ * `max-w-full` (everywhere else, where it is sized shrink-to-fit); with either missing, a long
+ * `owner/repository` renders past the edge of the cell and over whatever is beside it instead of
+ * ellipsising. Confirming the pixels needs a browser, which is the end-to-end suite's job.
+ */
+describe('BranchPicker containment', () => {
+  // The branch trigger shares the grid row with the repository one, so it has to hold its own
+  // column for the same reason: a long branch name may not push into its neighbour.
+  it('declares itself shrinkable and capped to its container', () => {
+    render(
+      <BranchPicker
+        repo="acme/api"
+        value="release/2026-08-a-very-long-branch-name"
+        onChange={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole('button', {
+      name: /release\/2026-08-a-very-long-branch-name/,
+    });
+    expect(trigger).toHaveClass('min-w-0');
+    expect(trigger).toHaveClass('max-w-full');
+  });
+
+  // Capping the button only helps if the name inside then ellipsises rather than overflowing it.
+  it('truncates the name inside the cap', () => {
+    render(<BranchPicker repo="acme/api" value="main" onChange={vi.fn()} />);
+    expect(screen.getByText('main')).toHaveClass('truncate');
+  });
+});

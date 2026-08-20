@@ -379,3 +379,35 @@ describe('RepoPicker access', () => {
     expect(screen.getByText(repoListNote(true))).toBeInTheDocument();
   });
 });
+
+/*
+ * Layout containment.
+ *
+ * jsdom lays nothing out, so what can be pinned here is the declaration, not the geometry: whether
+ * the trigger still says it may shrink and may not exceed its container. The two ways an
+ * `inline-flex` button escapes a container are covered by `min-w-0` (as a flex item) and
+ * `max-w-full` (everywhere else, where it is sized shrink-to-fit); with either missing, a long
+ * `owner/repository` renders past the edge of the cell and over whatever is beside it instead of
+ * ellipsising. Confirming the pixels needs a browser, which is the end-to-end suite's job.
+ */
+describe('RepoPicker containment', () => {
+  // A repository name is as long as its owner made it, and the trigger is dropped into containers
+  // of a width it does not control: a wrapping composer row, a two-column dialog grid.
+  it('declares itself shrinkable and capped to its container', () => {
+    render(
+      <RepoPicker
+        value="a-very-long-organisation-name/an-equally-long-repository-name"
+        onChange={vi.fn()}
+      />,
+    );
+    const trigger = screen.getByRole('button', { name: /an-equally-long-repository-name/ });
+    expect(trigger).toHaveClass('min-w-0');
+    expect(trigger).toHaveClass('max-w-full');
+  });
+
+  // Capping the button only helps if the name inside then ellipsises rather than overflowing it.
+  it('truncates the name inside the cap', () => {
+    render(<RepoPicker value="acme/api" onChange={vi.fn()} />);
+    expect(screen.getByText('acme/api')).toHaveClass('truncate');
+  });
+});

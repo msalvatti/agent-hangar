@@ -4,7 +4,8 @@
  * Layer: unit.
  * Goal: create mode starts blank with Save disabled until the form is valid, submitting posts the
  * contract body and closes with `onSaved`; edit mode starts prefilled and patches; a server error
- * shows an `ErrorCard` and keeps the field values; Esc closes without saving.
+ * shows an `ErrorCard` and keeps the field values; Esc closes without saving; and the two-column
+ * repository/branch row bounds a name of any length.
  * Mocks: MSW node server serving `src/mocks/scheduled.ts`.
  */
 import type { JobSummary } from '@agent-hangar/core';
@@ -292,5 +293,24 @@ describe('JobDialog edit mode', () => {
         expect.objectContaining({ id: 'job-dep-audit', name: 'Dependency audit' }),
       );
     });
+  });
+});
+
+describe('JobDialog repository row', () => {
+  /*
+   * The reported case: an `owner/repository` long enough to overrun its half of the two-column
+   * row, which rendered the branch control on top of the repository name instead of ellipsising
+   * it. What bounds it is the trigger's own cap — measured in a browser, a `min-width` on the
+   * grid cell changes nothing, because the cap is also what stops the button from claiming that
+   * width in the first place. jsdom lays nothing out, so this pins the declaration; the geometry
+   * belongs to the end-to-end suite.
+   */
+  it('bounds a long repository name to its own column', () => {
+    const longRepo = 'https://github.com/a-very-long-organisation-name/an-equally-long-repository';
+    render(<JobDialog open job={{ ...job, repoUrl: longRepo }} onOpenChange={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: /an-equally-long-repository/ })).toHaveClass(
+      'max-w-full',
+    );
   });
 });

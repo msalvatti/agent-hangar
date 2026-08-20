@@ -10,7 +10,8 @@ import { Search } from 'lucide-react';
 import { Button } from '@/shared/ui/button';
 import { Separator } from '@/shared/ui/separator';
 
-import { shortcutLabel } from '../lib/shortcuts';
+import { useShortcutPlatform } from '../hooks/useShortcutPlatform';
+import { shortcutHint } from '../lib/shortcuts';
 
 import { ChatList } from './ChatList';
 import { EnvPill } from './EnvPill';
@@ -33,7 +34,8 @@ export interface SidebarBodyProps {
  * @param props - Compact flag, the open chat's id and the search opener.
  */
 export function SidebarBody({ compact, activeId, onOpenSearch }: SidebarBodyProps) {
-  const searchLabel = `Search chats (${shortcutLabel('search')})`;
+  const platform = useShortcutPlatform();
+  const searchLabel = shortcutHint('Search chats', 'search', platform);
   return (
     <div className="flex h-full min-h-0 flex-col gap-2 py-2">
       <div className="flex items-center justify-between gap-1 px-2">

@@ -116,3 +116,35 @@ export function relativeTime(iso: string, now: number): string {
   const days = Math.floor(magnitude / DAY_MS);
   return future ? `in ${String(days)}d` : `${String(days)}d ago`;
 }
+
+/**
+ * How a timestamp is spelled out for a reader: `Aug 20, 2026, 3:35 PM`.
+ *
+ * The locale is fixed rather than taken from the browser, for the same reason the whole file takes
+ * its clock from the caller: the output has to be the same string on every machine that runs the
+ * tests. The product's copy is English throughout, so a fixed `en-US` is not a compromise here.
+ */
+const TIMESTAMP_LOCALE = 'en-US';
+
+/**
+ * Formats an ISO timestamp as a wall-clock time in a given zone.
+ *
+ * The zone is a parameter, not a reading of the ambient one: `Intl` resolves the *running*
+ * machine's zone, which on a server is not the reader's, so a caller that wants the reader's zone
+ * has to obtain it in the browser and hand it in.
+ *
+ * @param iso - ISO-8601 timestamp.
+ * @param timeZone - IANA zone name to express the instant in.
+ * @returns The formatted timestamp, or `null` when `iso` is not a timestamp at all.
+ */
+export function formatTimestamp(iso: string, timeZone: string): string | null {
+  const epochMs = Date.parse(iso);
+  if (Number.isNaN(epochMs)) {
+    return null;
+  }
+  return new Intl.DateTimeFormat(TIMESTAMP_LOCALE, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone,
+  }).format(epochMs);
+}
