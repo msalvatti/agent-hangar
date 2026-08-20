@@ -169,6 +169,38 @@ describe('useApiQuery', () => {
     vi.useRealTimers();
   });
 
+  /*
+   * A hidden tab learns nothing from a poll, so the timer fires and does nothing. This is the
+   * branch that keeps a backgrounded window from re-reading health forever; `refetchOnWindowFocus`
+   * is what brings it back up to date the moment somebody looks at it again.
+   */
+  it('skips the interval refetch while the tab is hidden', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(true);
+    try {
+      const loader = vi.fn(() => Promise.resolve('v'));
+      const { result } = renderHook(() =>
+        useApiQuery(['f-hidden'], loader, { refetchIntervalMs: 1_000 }),
+      );
+      await waitFor(() => {
+        expect(result.current.status).toBe('success');
+      });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(3_000);
+      });
+      expect(loader).toHaveBeenCalledTimes(1);
+
+      hidden.mockReturnValue(false);
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+      expect(loader).toHaveBeenCalledTimes(2);
+    } finally {
+      hidden.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
   // refetchOnWindowFocus re-runs the loader when the window fires a focus event.
   it('refetches on window focus when enabled', async () => {
     const loader = vi.fn(() => Promise.resolve('v'));

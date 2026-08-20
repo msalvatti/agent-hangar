@@ -201,6 +201,7 @@ describe('apiFetch', () => {
           redis: { ok: true },
           docker: { ok: true },
           image: { ok: true },
+          worker: { ok: true },
         },
       }),
     );

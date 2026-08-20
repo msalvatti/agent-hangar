@@ -20,6 +20,7 @@ function healthBody(ok: boolean): string {
       redis: { ok },
       docker: { ok },
       image: { ok },
+      worker: { ok },
     },
   });
 }

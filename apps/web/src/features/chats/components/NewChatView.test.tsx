@@ -136,6 +136,21 @@ describe('NewChatView', () => {
     expect(screen.queryByLabelText('Prompt')).not.toBeInTheDocument();
   });
 
+  /*
+   * Infrastructure that is down locks the composer instead of replacing it: the draft is still
+   * worth keeping while the command in the notice runs in another window. The notice names the
+   * worker, not Docker, because a silent worker is what leaves the Docker readings unknown.
+   */
+  it('locks the composer and names the dependency while infrastructure is down', async () => {
+    setScenario('infra-down');
+    render(<NewChatView />);
+    expect(await screen.findByText(/Redis is not available, so a turn cannot run\./)).toBeVisible();
+    await waitFor(() => {
+      expect(screen.getByLabelText('Prompt')).toBeDisabled();
+    });
+    expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+  });
+
   // A skeleton reserves the composer's space instead of shifting the layout on arrival.
   it('shows a composer skeleton while the settings status loads', () => {
     render(<NewChatView />);

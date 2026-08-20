@@ -7,17 +7,16 @@
  * a create said so; and a failed write never takes the worker down.
  * Mocks: the shared recording Redis double and the fake workspace runner.
  */
-import { FakeClock, FakeWorkspaceRunner } from '@agent-hangar/core/testing';
-import { afterEach, describe, expect, it, vi } from 'vitest';
-
 import {
-  startHeartbeat,
   WORKER_HEARTBEAT_INTERVAL_SEC,
   WORKER_HEARTBEAT_TTL_SEC,
   workerHeartbeatKey,
   workerHeartbeatSchema,
-  writeHeartbeat,
-} from './heartbeat.js';
+} from '@agent-hangar/core';
+import { FakeClock, FakeWorkspaceRunner } from '@agent-hangar/core/testing';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+
+import { startHeartbeat, writeHeartbeat } from './heartbeat.js';
 import type { HeartbeatDeps } from './heartbeat.js';
 import { createImageStatus } from './image-status.js';
 import { createTestContainer, FakeRedisClient } from './testing/index.js';

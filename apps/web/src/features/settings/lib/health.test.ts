@@ -2,8 +2,8 @@
  * Unit tests for `lib/health.ts`.
  *
  * Layer: unit.
- * Goal: maps every check to its label in a stable order, `allOk` mirrors the response's `ok`, and
- * a check's `detail` carries through when present.
+ * Goal: maps every check to its label in the shared display order, `allOk` mirrors the response's
+ * `ok`, and a check's `detail` carries through when present.
  * Mocks: none.
  */
 import type { HealthResponse } from '@agent-hangar/core';
@@ -19,17 +19,22 @@ const healthy: HealthResponse = {
     redis: { ok: true },
     docker: { ok: true },
     image: { ok: true },
+    worker: { ok: true, lastSeenAt: '2026-08-20T10:00:00.000Z' },
   },
 };
 
 describe('summarizeHealth', () => {
-  /** Every check maps to its labelled summary, in a stable Postgres/Redis/Docker/image order. */
+  /**
+   * Every check maps to its labelled summary. The worker sits above Docker and the image because
+   * it is what measures them: a silent worker leaves those two unknown, so it is named first.
+   */
   it('maps every check with its label, in order', () => {
     const summary = summarizeHealth(healthy);
     expect(summary.instance).toBe('default');
     expect(summary.checks.map((check) => [check.id, check.label])).toEqual([
       ['db', 'Postgres'],
       ['redis', 'Redis'],
+      ['worker', 'Worker'],
       ['docker', 'Docker'],
       ['image', 'Workspace image'],
     ]);

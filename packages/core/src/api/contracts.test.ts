@@ -34,6 +34,7 @@ import {
   settingsKeyParam,
   settingsStatus,
   SSE_HEARTBEAT_MS,
+  workerCheck,
 } from './contracts.ts';
 
 const now = '2026-08-19T10:00:00.000Z';
@@ -383,7 +384,7 @@ describe('settings and health schemas', () => {
   });
 
   /**
-   * Health response lists the four probes; a missing probe is rejected.
+   * Health response lists the five probes; a missing probe is rejected.
    */
   it('validates healthResponse', () => {
     const ok = { ok: true };
@@ -393,7 +394,13 @@ describe('settings and health schemas', () => {
         ok: true,
         instance: 'default',
         ports,
-        checks: { db: ok, redis: ok, docker: ok, image: { ok: false, detail: 'missing' } },
+        checks: {
+          db: ok,
+          redis: ok,
+          docker: ok,
+          image: { ok: false, detail: 'missing' },
+          worker: ok,
+        },
       }).success,
     ).toBe(true);
     expect(
@@ -404,6 +411,30 @@ describe('settings and health schemas', () => {
         checks: { db: ok, redis: ok },
       }).success,
     ).toBe(false);
+    expect(
+      healthResponse.safeParse({
+        ok: true,
+        instance: 'default',
+        ports,
+        checks: { db: ok, redis: ok, docker: ok, image: ok },
+      }).success,
+    ).toBe(false);
+  });
+
+  /**
+   * The worker probe carries when the worker last spoke, which is what separates a worker that
+   * never started from one that died a moment ago. The timestamp is optional — a worker that has
+   * not reported has no sighting to give — but it has to be a real instant when it is there, so a
+   * card cannot render whatever text a producer felt like sending.
+   */
+  it('accepts a worker probe with or without a last sighting', () => {
+    expect(workerCheck.safeParse({ ok: false, detail: 'worker has not reported' }).success).toBe(
+      true,
+    );
+    expect(
+      workerCheck.safeParse({ ok: true, lastSeenAt: '2026-08-20T10:00:00.000Z' }).success,
+    ).toBe(true);
+    expect(workerCheck.safeParse({ ok: true, lastSeenAt: 'a moment ago' }).success).toBe(false);
   });
 
   /**
@@ -415,7 +446,7 @@ describe('settings and health schemas', () => {
    */
   it('accepts a report without ports and rejects an incomplete or invalid block', () => {
     const ok = { ok: true };
-    const checks = { db: ok, redis: ok, docker: ok, image: ok };
+    const checks = { db: ok, redis: ok, docker: ok, image: ok, worker: ok };
     expect(healthResponse.safeParse({ ok: true, instance: 'default', checks }).success).toBe(true);
     expect(
       healthResponse.safeParse({

@@ -8,10 +8,9 @@
 import type { ApiResponse } from '@agent-hangar/core';
 import { CircleCheck, CircleX } from 'lucide-react';
 
+import { HEALTH_CHECK_FIX, HEALTH_CHECK_LABELS, HEALTH_CHECK_NAMES } from '@/shared/health';
 import { Button } from '@/shared/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/shared/ui/dialog';
-
-import { HEALTH_CHECK_LABELS, HEALTH_CHECK_NAMES } from '../hooks/useHealth';
 
 /** Props of {@link HealthDialog}. */
 export interface HealthDialogProps {
@@ -41,14 +40,21 @@ export function HealthDialog({ open, onOpenChange, health, onRetry }: HealthDial
             {HEALTH_CHECK_NAMES.map((name) => {
               const check = health.checks[name];
               return (
-                <li key={name} className="flex items-center gap-2 text-sm">
-                  {check.ok ? (
-                    <CircleCheck aria-hidden="true" className="text-success size-4 shrink-0" />
-                  ) : (
-                    <CircleX aria-hidden="true" className="text-destructive size-4 shrink-0" />
+                <li key={name} className="flex flex-col gap-1 text-sm">
+                  <div className="flex items-center gap-2">
+                    {check.ok ? (
+                      <CircleCheck aria-hidden="true" className="text-success size-4 shrink-0" />
+                    ) : (
+                      <CircleX aria-hidden="true" className="text-destructive size-4 shrink-0" />
+                    )}
+                    <span className="flex-1">{HEALTH_CHECK_LABELS[name]}</span>
+                    <span className="text-muted-foreground">{check.ok ? 'ok' : 'failing'}</span>
+                  </div>
+                  {!check.ok && (
+                    <p className="text-muted-foreground pl-6 font-mono text-xs">
+                      {HEALTH_CHECK_FIX[name]}
+                    </p>
                   )}
-                  <span className="flex-1">{HEALTH_CHECK_LABELS[name]}</span>
-                  <span className="text-muted-foreground">{check.ok ? 'ok' : 'failing'}</span>
                 </li>
               );
             })}

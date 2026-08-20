@@ -12,16 +12,16 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { JOB_NAMES } from '@agent-hangar/core';
+import {
+  JOB_NAMES,
+  WORKER_HEARTBEAT_TTL_SEC,
+  workerHeartbeatKey,
+  workerHeartbeatSchema,
+} from '@agent-hangar/core';
 import type { Chat } from '@agent-hangar/core';
 import { assertNoCanary } from '@agent-hangar/core/testing';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 
-import {
-  WORKER_HEARTBEAT_TTL_SEC,
-  workerHeartbeatKey,
-  workerHeartbeatSchema,
-} from '../heartbeat.js';
 import { LABELS } from '../processors/constants.js';
 
 import { describeDocker } from './describe-docker.js';
