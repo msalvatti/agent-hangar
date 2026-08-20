@@ -77,8 +77,9 @@ Contracts in `packages/core` are frozen after W0; changes are additive, one-file
 
 `packages/core` is `composite`, so `tsc -b` reaching it — directly, or through any project that
 references it — **emits**: `typecheck` on that path is a build with the output kept. Not every
-project reference shares that: `apps/web` sets `composite: false` and type-checks with `tsc -p`,
-not `-b`, and `infra/scripts` sets `noEmit: true`, so neither ever writes a `dist`. `packages/core`
+project reference emits: `apps/web` sets `composite: false` and type-checks with `tsc -p`, not
+`-b`, and `infra/scripts` sets `noEmit: true` despite `composite: true`, so neither ever writes a
+`dist`. `packages/core`
 writes relative `.ts` specifiers in its source (so the Next.js dev server resolves the package
 from source) and TypeScript does not rewrite those when it emits declarations, so a post-step
 fixes them up. That post-step is `packages/core`'s `declarations:rewrite` script, and **every**
