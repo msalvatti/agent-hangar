@@ -21,7 +21,7 @@ import type { Workspace, WorkspaceHandle, WorkspaceStatus } from '@agent-hangar/
 
 import { workspaceClaimKey } from '../claims.js';
 
-import { LABELS } from './constants.js';
+import { LABELS, STALLED_RUN_REASON } from './constants.js';
 import { teardownWorkspace } from './teardown-workspace.js';
 import type { ProcessorDeps, ProcessorJob } from './types.js';
 
@@ -71,59 +71,86 @@ const NOTHING: GcResult = { reaped: 0, orphansDestroyed: 0, goneMarked: 0 };
 const RECONCILABLE_STATUSES: readonly WorkspaceStatus[] = ['READY', 'STOPPING'];
 
 /**
- * Closes out the `STOPPING` rows a previous incarnation of this worker left behind.
+ * Reports why a live workspace can only be one a previous incarnation of this worker left behind.
  *
- * A teardown writes `STOPPING` and then destroys the container. A process that dies in between —
- * a crash, or the forced shutdown that abandons jobs past the grace period — leaves a row nothing
- * else in the system will ever reclaim: a teardown refuses it because only a `READY` workspace is
- * free to take, the idle selection refuses it for the same reason, and the reconciliation refuses
- * it because its container is still running, so it is not gone. The row stays live and the
- * container stays up, silently, forever.
+ * `STOPPING` is written by a teardown that has committed to destroying the container and writes its
+ * own next status straight after. `BUSY` on a `JOB` workspace is written by a scheduled run that is
+ * executing, and a run executes only inside a worker process. Neither can be true of a row a worker
+ * finds at boot, because at boot no teardown and no run of this instance exists.
  *
- * What makes this recoverable without a threshold is *when* it runs. Age cannot tell a teardown
- * that died from one that is merely slow — the two rows are identical — but at boot the question
- * does not arise: this process holds no teardowns, and an instance runs one worker, so a
- * `STOPPING` row that exists here belongs to an incarnation that is gone. This is the same point
- * `createShutdown` already names when it says an abandoned job leaves a container the next boot
- * has to reconcile.
+ * A `BUSY` `CHAT` workspace is deliberately not in the set. `recoverStalledWorkspace` owns that
+ * case on the next turn of the chat, and it does something this pass cannot: it appends the SYSTEM
+ * message telling the model the filesystem it remembers writing to is gone. Closing the row out
+ * here would make `findLiveByChat` answer `null` on that turn, so the note would never be written
+ * and the model would go on believing its files persisted.
+ *
+ * @param workspace - A live row.
+ * @returns What to record as its `failureReason`, or `null` when the row may still have an owner.
+ */
+function abandonedReason(workspace: Workspace): string | null {
+  if (workspace.status === 'STOPPING') {
+    return ABANDONED_TEARDOWN_REASON;
+  }
+  return workspace.status === 'BUSY' && workspace.kind === 'JOB' ? STALLED_RUN_REASON : null;
+}
+
+/**
+ * Closes out the live rows a previous incarnation of this worker left behind.
+ *
+ * Every conditional write in the worker moves a row into a status whose owner is the process that
+ * wrote it, so each one needs an answer to "what reclaims this if the process dies immediately
+ * after?". Three of them answer for themselves: a write whose target is `DESTROYED` is terminal, and
+ * its container becomes an orphan that {@link reconcileOrphans} removes. A turn taking a chat
+ * workspace `BUSY` is answered by `recoverStalledWorkspace`, which finds the row through the chat
+ * rather than through the turn. The two that have no such handle are answered here: a teardown's
+ * `STOPPING`, and a scheduled run's `BUSY`, whose only link to its run is an id the run had not yet
+ * written when it died.
+ *
+ * What makes this recoverable without a threshold is *when* it runs. Age cannot tell a process that
+ * died from one that is merely slow — the two rows are identical — but at boot the question does not
+ * arise: this process holds neither, and an instance runs one worker, so a row in one of those
+ * statuses belongs to an incarnation that is gone. This is the same point `createShutdown` already
+ * names when it says an abandoned job leaves a container the next boot has to reconcile.
  *
  * It closes the row out and stops. Destroying the container is left to {@link reconcileOrphans},
- * which is what that pass is for and which will find it the moment the row stops being live —
- * so the recovery needs no Docker connection, and still works on a boot where the daemon is down.
+ * which is what that pass is for and which will find it the moment the row stops being live — so the
+ * recovery needs no Docker connection, and still works on a boot where the daemon is down.
  *
  * @param deps - Repositories, claims and logger.
  * @returns How many rows were closed out.
  */
-export async function recoverAbandonedTeardowns(deps: ProcessorDeps): Promise<number> {
+export async function recoverAbandonedWorkspaces(deps: ProcessorDeps): Promise<number> {
   const live = await deps.repos.workspaces.listLive();
   let recovered = 0;
-  for (const workspace of live.filter((row) => row.status === 'STOPPING')) {
+  for (const workspace of live) {
+    const failureReason = abandonedReason(workspace);
+    if (failureReason === null) {
+      continue;
+    }
     const key = workspaceClaimKey(workspace);
     if (!deps.claims.claim(key)) {
-      // Unreachable from the boot call, where nothing has started yet; the guard is what lets a
-      // teardown of this process be in flight without this ever being the thing that took its row.
+      // Unreachable from the boot call, where nothing has started yet; the guard is what lets work
+      // of this process be in flight without this ever being the thing that took its row.
       deps.logger.info(
         { workspaceId: workspace.id },
-        'teardown is still in flight; its workspace is left alone',
+        'work is still in flight; its workspace is left alone',
       );
       continue;
     }
     try {
       const closed = await deps.repos.workspaces.claimStatus(
         workspace.id,
-        'STOPPING',
+        workspace.status,
         'DESTROYED',
-        {
-          failureReason: ABANDONED_TEARDOWN_REASON,
-        },
+        { failureReason },
       );
       if (closed === null) {
         continue;
       }
       recovered += 1;
       deps.logger.warn(
-        { workspaceId: workspace.id },
-        'workspace closed out: its teardown never came back',
+        { workspaceId: workspace.id, failureReason },
+        'workspace closed out: the work holding it never came back',
       );
     } finally {
       deps.claims.release(key);

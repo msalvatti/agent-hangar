@@ -20,7 +20,7 @@ import type { ContainerDatabase, WorkerContainer, WorkerRedisClient } from './co
 import { startHeartbeat } from './heartbeat.js';
 import type { RunningHeartbeat } from './heartbeat.js';
 import { LABELS, SHUTDOWN_GRACE_MS, WORKER_RELIABILITY } from './processors/constants.js';
-import { createGcProcessor, recoverAbandonedTeardowns } from './processors/gc.js';
+import { createGcProcessor, recoverAbandonedWorkspaces } from './processors/gc.js';
 import { createRunScheduledJobProcessor } from './processors/run-scheduled-job.js';
 import { createRunTurnProcessor } from './processors/run-turn.js';
 import type { ProcessorJob } from './processors/types.js';
@@ -221,7 +221,7 @@ async function prepareBoot<TDatabase extends ContainerDatabase, TRedis extends W
     );
   }
   await reconcileSchedulers(container);
-  const recovered = await recoverAbandonedTeardowns(container);
+  const recovered = await recoverAbandonedWorkspaces(container);
   if (recovered > 0) {
     logger.warn({ recovered }, 'closed out workspaces whose teardown never came back');
   }

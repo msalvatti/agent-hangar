@@ -15,7 +15,7 @@ import type { Workspace } from '@agent-hangar/core';
 import { FakeClock } from '@agent-hangar/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 
-import { chatClaimKey } from '../claims.js';
+import { chatClaimKey, workspaceClaimKey } from '../claims.js';
 import {
   createTestContainer,
   FIXTURE_REPO_URL,
@@ -27,11 +27,12 @@ import {
 } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
+import { STALLED_RUN_REASON } from './constants.js';
 import {
   ABANDONED_TEARDOWN_REASON,
   CONTAINER_MISSING_REASON,
   createGcProcessor,
-  recoverAbandonedTeardowns,
+  recoverAbandonedWorkspaces,
 } from './gc.js';
 import type { GcResult } from './gc.js';
 import type { ProcessorJob } from './types.js';
@@ -46,6 +47,27 @@ async function collect(
 ): Promise<GcResult> {
   const job: ProcessorJob<unknown> = { id: 'gc-1', name, data, attemptsMade: 0 };
   return createGcProcessor(container)(job);
+}
+
+/** Seeds a `JOB` workspace and its container, in the state its run left it. */
+async function seedJobWorkspace(container: TestContainer): Promise<Workspace> {
+  const created = await container.repos.workspaces.create({
+    kind: 'JOB',
+    runnerKind: 'fake',
+    image: 'image',
+    repoUrl: REPO_URL,
+    branch: 'main',
+  });
+  await container.repos.workspaces.setStatus(created.id, 'READY', { runnerRef: 'ref-1' });
+  await container.runner.create({
+    workspaceId: created.id,
+    kind: 'JOB',
+    image: 'image',
+    env: {},
+    limits: { cpus: 1, memoryBytes: 1, pids: 1 },
+    labels: { 'ah.instance': container.config.AH_INSTANCE },
+  });
+  return created;
 }
 
 /** Seeds a chat with a live workspace, optionally backed by a real fake container. */
@@ -555,7 +577,7 @@ describe('createGcProcessor', () => {
   });
 });
 
-describe('recoverAbandonedTeardowns', () => {
+describe('recoverAbandonedWorkspaces', () => {
   /**
    * The state a teardown leaves when its process dies between claiming the row and destroying the
    * container: `STOPPING`, container still up. Nothing in the steady state reclaims it — a
@@ -573,7 +595,7 @@ describe('recoverAbandonedTeardowns', () => {
     });
     await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'STOPPING');
 
-    const recovered = await recoverAbandonedTeardowns(container);
+    const recovered = await recoverAbandonedWorkspaces(container);
     const result = await collect(container, JOB_NAMES.reapIdle);
 
     expect(recovered).toBe(1);
@@ -601,7 +623,7 @@ describe('recoverAbandonedTeardowns', () => {
     await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'STOPPING');
     container.claims.claim(chatClaimKey(workspace.chatId ?? ''));
 
-    const recovered = await recoverAbandonedTeardowns(container);
+    const recovered = await recoverAbandonedWorkspaces(container);
 
     expect(recovered).toBe(0);
     expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('STOPPING');
@@ -625,8 +647,69 @@ describe('recoverAbandonedTeardowns', () => {
       return rows;
     });
 
-    expect(await recoverAbandonedTeardowns(container)).toBe(0);
+    expect(await recoverAbandonedWorkspaces(container)).toBe(0);
     vi.restoreAllMocks();
+  });
+
+  /**
+   * A scheduled run takes its workspace `BUSY` and only then records which workspace it took, so a
+   * process that dies in between leaves a row whose run cannot name it: the run is `PREPARING` with
+   * `workspaceId` still null. Every steady-state pass refuses it — idle selection and a teardown
+   * take only `READY`, reconciliation takes `READY` or `STOPPING`, and the stalled-run recovery
+   * destroys a workspace only when the run recorded one. Boot is the one place that can conclude
+   * nobody owns it, and closing the row out hands the container to the orphan pass.
+   */
+  it('closes out a job workspace whose run died before it could name it', async () => {
+    const container = createTestContainer();
+    const workspace = await seedJobWorkspace(container);
+    await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'BUSY');
+
+    const recovered = await recoverAbandonedWorkspaces(container);
+    const result = await collect(container, JOB_NAMES.reapIdle);
+
+    expect(recovered).toBe(1);
+    expect(await container.repos.workspaces.get(workspace.id)).toMatchObject({
+      status: 'DESTROYED',
+      failureReason: STALLED_RUN_REASON,
+    });
+    expect(result.orphansDestroyed).toBe(1);
+    expect(container.runner.getWorkspace(workspace.id)?.status).toBe('gone');
+  });
+
+  /**
+   * The half a status rule alone would break. A run that is genuinely still executing leaves a row
+   * indistinguishable from one a dead run left, so the recovery decides by whether anything here
+   * owns the workspace rather than by how the row looks.
+   */
+  it('leaves a job workspace whose run is still in flight alone', async () => {
+    const container = createTestContainer();
+    const workspace = await seedJobWorkspace(container);
+    await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'BUSY');
+    container.claims.claim(workspaceClaimKey(workspace));
+
+    const recovered = await recoverAbandonedWorkspaces(container);
+
+    expect(recovered).toBe(0);
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
+    expect(container.runner.getWorkspace(workspace.id)?.status).toBe('running');
+    expect(container.logs.join('')).toContain('still in flight');
+  });
+
+  /**
+   * A chat workspace left `BUSY` is deliberately not this pass's to take: `recoverStalledWorkspace`
+   * owns it on the chat's next turn, and it also writes the SYSTEM note telling the model its
+   * filesystem is gone. Closing the row out here would leave that note unwritten.
+   */
+  it('leaves a chat workspace left busy to the recovery that tells the model', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, {
+      status: 'BUSY',
+      idleMinutes: 0,
+      withContainer: true,
+    });
+
+    expect(await recoverAbandonedWorkspaces(container)).toBe(0);
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
   });
 
   /** Nothing to recover on an ordinary boot: no STOPPING row, no write, no log line. */
@@ -634,6 +717,6 @@ describe('recoverAbandonedTeardowns', () => {
     const container = createTestContainer();
     await seedWorkspace(container, { status: 'READY', idleMinutes: 0 });
 
-    expect(await recoverAbandonedTeardowns(container)).toBe(0);
+    expect(await recoverAbandonedWorkspaces(container)).toBe(0);
   });
 });
