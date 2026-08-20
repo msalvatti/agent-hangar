@@ -766,3 +766,38 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   100 % on the pure modules — which cannot run unless they are discovered. Both edited patterns
   name `e2e/**` only, a path no other lane owns; `src/**` and `app/**` are untouched. Moving
   discovery into a separate project would be a larger edit to the same shared file.
+- 2C.17 ✅ 2026-08-20 — rebased onto the merged repository-URL and scheduled-run-cancel fixes and
+  ran the real stack again. Both walls are gone, and the suite got materially further: **5 passed,
+  5 failed, 10 skipped** where the previous attempt could not get a single turn to start.
+  Passing against the real API, database, Redis, Docker and git server: `smoke`,
+  `settings-missing` (both halves, including `POST /api/chats` → 409 `SECRETS_MISSING`),
+  `settings-save-mask` (credential lifecycle, reload persistence, no plaintext in
+  `GET /api/settings`) and the send-guard test. Confirmed in passing: the chat header now carries
+  `http://host.docker.internal:4107/e2e/sample.git`, so the URL the listing returned survives into
+  the chat row; and `Run now` produced a row with trigger `Manual`, so the manual-trigger path and
+  the `MANUAL` assertion are both exercised.
+  · Where it stops now, identically in all five failures: the turn reaches `FAILED` at prepare with
+  `repository URL must be https://github.com/<owner>/<repo> without credentials`. That check is
+  **inside the container**, not in the API: `packages/agent-runtime/src/prepare.ts`
+  `assertGithubHttpsUrl` hard-codes `ALLOWED_HOST = 'github.com'` and `https:`, and
+  `prepare.ts:266` defaults `urlPolicy` to `github-https`. The seam to relax it exists —
+  `CliOverrides.urlPolicy` (`cli.ts:75`) — but `bin.ts`, the process entry point, calls
+  `runCli(process.argv.slice(2), createNodeIo())` with no overrides and reads no environment, and
+  the worker forwards no allow-list into the container. So `ALLOWED_REPO_HOSTS` is honoured by
+  `packages/core/src/repo-url.ts` on the API side and ignored on the runtime side. This is contract
+  change request (d), unchanged in substance and now located to the line: W1-D/W2-B must let the
+  runtime accept the origins the operator authorised.
+  · Ordering matters for whoever picks these up: the URL policy is the **first** wall and the
+  scripted-provider gap of 2C.16 is behind it — a container that cannot clone never reaches the
+  model, so the script mismatch will only become visible once the URL policy is relaxed. Expect a
+  second round of failures there.
+  · The reset's job half now cancels through `POST /api/runs/:id/cancel` rather than the turn
+  route. The dedicated run route exists as of this rebase, and it is the one that resolves an
+  identifier against the run repository; the turn route answers 404 for a run id, which is what
+  2C.12 recorded as unfixable at the time.
+  · Observed, not changed: the worker logs `destroying an orphan workspace failed` with Docker's
+  `409 removal of container ... is already in progress` after each reset. Two legitimate destroyers
+  race — the per-test reap and the worker's own collection — and neither loses work; the container
+  does go away. Treating that 409 as success belongs in `DockerWorkspaceRunner.#destroyContainer`
+  (`packages/core/src/runner/docker/docker-workspace-runner.ts:565`), which is not this lane's
+  path. The reap stays: a crashed spec is exactly why it exists.

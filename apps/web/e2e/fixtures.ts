@@ -83,23 +83,34 @@ const LIVE_STATUSES: readonly string[] = ['QUEUED', 'PREPARING', 'RUNNING'];
  * while the worker still owns the workspace, and the truncation and container reap that follow
  * pull the ground from under a processor that is still writing.
  *
+ * A turn and a run are cancelled through routes of their own — `POST /api/turns/:id/cancel` and
+ * `POST /api/runs/:id/cancel` — because each resolves its identifier against its own repository
+ * and answers `404` for the other kind. So the caller names the route along with what it is
+ * reading.
+ *
  * The cancel is best-effort: something that settled on its own between the read and the request is
  * exactly the state being aimed at, and the API is entitled to refuse a second cancellation. The
  * wait is what carries the guarantee, and it fails by name.
  *
  * @param api - Client for the running API.
- * @param options - How to read what is still live, what to call it, and how long to allow.
+ * @param options - The cancel route, how to read what is still live, what to call it, and how long
+ *   to allow.
  */
 async function settleLive(
   api: E2eApi,
-  options: { readLive: () => Promise<string[]>; describe: string; timeoutMs: number },
+  options: {
+    cancelPath: (id: string) => string;
+    readLive: () => Promise<string[]>;
+    describe: string;
+    timeoutMs: number;
+  },
 ): Promise<void> {
   const live = await options.readLive();
   if (live.length === 0) {
     return;
   }
   for (const id of live) {
-    await api.raw(`/api/turns/${id}/cancel`, { method: 'POST' });
+    await api.raw(options.cancelPath(id), { method: 'POST' });
   }
   await baseExpect
     .poll(async () => (await options.readLive()).length, {
@@ -122,6 +133,7 @@ async function deleteAllJobsViaApi(api: E2eApi): Promise<void> {
   const { jobs } = await api.get('/api/jobs', listJobsResponse);
   for (const job of jobs) {
     await settleLive(api, {
+      cancelPath: (id) => `/api/runs/${id}/cancel`,
       describe: `a run of job ${job.id}`,
       timeoutMs: JOB_RUN_TIMEOUT_MS,
       readLive: async () => {
@@ -145,6 +157,7 @@ async function deleteAllChatsViaApi(api: E2eApi): Promise<void> {
     const { chats } = await api.get(`/api/chats?status=${status}`, listChatsResponse);
     for (const chat of chats) {
       await settleLive(api, {
+        cancelPath: (id) => `/api/turns/${id}/cancel`,
         describe: `a turn of chat ${chat.id}`,
         timeoutMs: TURN_SETTLE_TIMEOUT_MS,
         readLive: async () => {
