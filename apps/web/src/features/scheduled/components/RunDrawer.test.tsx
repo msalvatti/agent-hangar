@@ -225,6 +225,88 @@ describe('RunDrawer — active run (live stream)', () => {
     expect(await screen.findByText('Nightly tests')).toBeInTheDocument();
   });
 
+  /**
+   * The run the refetch reloaded is still RUNNING (the store was never told otherwise), so the
+   * drawer must resume following it rather than freezing on the last frame it saw before the
+   * expiry: `eventsUrl` is the same string it was before (same run id), so nothing reopens the
+   * connection unless the drawer does so explicitly. A second `EventSource` instance is that
+   * explicit reconnect, and a frame delivered through it proves the drawer is listening again,
+   * not just that a request happened to fire.
+   */
+  it('reconnects and resumes streaming after an expired frame on a still-active run', async () => {
+    const { factory, instances } = createFakeEventSourceFactory();
+    render(
+      <RunDrawer
+        runId="run-nightly-running"
+        job={job}
+        open
+        onOpenChange={vi.fn()}
+        createEventSource={factory}
+      />,
+    );
+    await waitFor(() => {
+      expect(instances.length).toBeGreaterThan(0);
+    });
+    const first = instances[0];
+    if (first === undefined) {
+      throw new Error('expected a fake EventSource instance');
+    }
+    first.open();
+    first.emit('expired', {});
+
+    await waitFor(() => {
+      expect(instances.length).toBeGreaterThan(1);
+    });
+    const second = instances[1];
+    if (second === undefined) {
+      throw new Error('expected the drawer to open a second EventSource after the expiry');
+    }
+    second.open();
+    second.emit(
+      'turn.completed',
+      {
+        type: 'turn.completed',
+        usage: { inputTokens: 1, outputTokens: 1 },
+        steps: 1,
+        finalMessage: 'Resumed after expiry.',
+      },
+      '5',
+    );
+    expect(await screen.findByText('Done')).toBeInTheDocument();
+  });
+
+  /**
+   * The refetch an expiry triggers can also reveal that the run finished (here, by cancellation)
+   * while the stream was dead. Reconciling that persisted state must not reconnect: a finished
+   * run has nothing left to stream, and opening a second connection for it would be pure waste.
+   */
+  it('does not reconnect after an expired frame once the refetched run has finished', async () => {
+    const { factory, instances } = createFakeEventSourceFactory();
+    render(
+      <RunDrawer
+        runId="run-nightly-running"
+        job={job}
+        open
+        onOpenChange={vi.fn()}
+        createEventSource={factory}
+      />,
+    );
+    await waitFor(() => {
+      expect(instances.length).toBeGreaterThan(0);
+    });
+    const first = instances[0];
+    if (first === undefined) {
+      throw new Error('expected a fake EventSource instance');
+    }
+    first.open();
+
+    await fetch('/api/turns/run-nightly-running/cancel', { method: 'POST' });
+    first.emit('expired', {});
+
+    expect(await screen.findByText('Cancelled')).toBeInTheDocument();
+    expect(instances.length).toBe(1);
+  });
+
   /** The Stop button opens a confirmation, and confirming hits the cancel endpoint. */
   it('stops an active run after confirming', async () => {
     const { factory, instances } = createFakeEventSourceFactory();

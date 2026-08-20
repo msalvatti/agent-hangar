@@ -2,12 +2,17 @@
  * Run drawer: transcript (live while active) and raw-output tabs for one run.
  *
  * Layer: component.
+ *
+ * An `expired` frame (the server's replay window lapsed) closes the stream; the drawer recovers
+ * by refetching the persisted run, reseeding the transcript from that fresh snapshot, and — if
+ * the run is still active — explicitly reconnecting, since the events URL is keyed on the run id
+ * alone and does not change just because the same run is still going.
  */
 'use client';
 
 import type { JobSummary } from '@agent-hangar/core';
 import { Copy, Square } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { invalidateQueries } from '@/shared/api/use-api-query';
 import { ErrorCard } from '@/shared/feedback';
@@ -53,13 +58,25 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
   const { stop, copyId } = useRunActions();
   const [stopDialogOpen, setStopDialogOpen] = useState(false);
   const seededRunId = useRef<string | null>(null);
+  // Set once an `expired` frame closes the stream, cleared once the resulting refetch has been
+  // folded back in (or the drawer closes). Distinguishes "waiting on the refetch this expiry
+  // triggered" from any other render that happens to see a fresh `mapped`.
+  const recoveringFromExpiry = useRef(false);
 
   const loadErrorMessage = runQuery.error?.message ?? '';
-  const mapped = runQuery.data === undefined ? null : mapRunDetail(runQuery.data, job);
+  const runDetail = runQuery.data;
+  // Memoized so its identity changes only when the persisted run (or job) actually changes —
+  // never on a re-render triggered by something else, like `stopDialogOpen`. The recovery effect
+  // below relies on that: it reacts to `mapped` changing, and an unmemoized `mapped` would change
+  // on every render, firing for reasons that have nothing to do with a refetch completing.
+  const mapped = useMemo(
+    () => (runDetail === undefined ? null : mapRunDetail(runDetail, job)),
+    [runDetail, job],
+  );
   const wasActiveOnLoad = mapped !== null && isActivePhase(mapped.phase);
   const eventsUrl = wasActiveOnLoad && runId !== null ? `/api/runs/${runId}/events` : null;
 
-  const { state, dispatch } = useTurnEvents({
+  const { state, dispatch, reconnect } = useTurnEvents({
     url: eventsUrl,
     initialItems: mapped?.items ?? [],
     initialPhase: mapped?.phase ?? 'idle',
@@ -73,6 +90,7 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
   useEffect(() => {
     if (!open) {
       seededRunId.current = null;
+      recoveringFromExpiry.current = false;
       return;
     }
     if (mapped !== null && runId !== seededRunId.current) {
@@ -93,10 +111,32 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
 
   const { refetch } = runQuery;
   useEffect(() => {
-    if (state.connection === 'expired') {
+    if (state.connection === 'expired' && !recoveringFromExpiry.current) {
+      recoveringFromExpiry.current = true;
       void refetch();
     }
   }, [state.connection, refetch]);
+
+  // Reconciles the drawer with the record the expiry-triggered refetch above just reloaded.
+  // Fires once that refetch actually lands — `mapped` changing identity is how a memoized value
+  // signals a new persisted snapshot — and only while `recoveringFromExpiry` marks that the
+  // change is the one this recovery is waiting for, not some unrelated refetch.
+  //
+  // Reseeding is necessary but not sufficient: `eventsUrl` is built from the run id, which has
+  // not changed, so it stays the same string and the connection effect never reopens on its own.
+  // `reconnect()` is what actually asks for a new stream, resuming from the cursor the fresh
+  // reducer state now carries — without it the run would sit fully caught up on history but with
+  // no way to receive whatever happens next.
+  useEffect(() => {
+    if (!recoveringFromExpiry.current || mapped === null) {
+      return;
+    }
+    recoveringFromExpiry.current = false;
+    dispatch({ type: 'reset', items: mapped.items, phase: mapped.phase });
+    if (isActivePhase(mapped.phase)) {
+      reconnect();
+    }
+  }, [mapped, dispatch, reconnect]);
 
   const isActiveNow = isActivePhase(displayPhase);
   const lastAssistantText =
