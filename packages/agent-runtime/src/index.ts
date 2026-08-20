@@ -1,7 +1,7 @@
 // Public API of @agent-hangar/agent-runtime: the command dispatcher, the turn machinery and the
 // protocol adapters. `bin.ts` is the process entry point and is deliberately not re-exported.
 export { createNodeIo, EXIT, runCli } from './cli.js';
-export type { CliIo, CliOverrides } from './cli.js';
+export type { CliDeps, CliIo, CliOverrides } from './cli.js';
 export { builtInFakeScript } from './fake-scripts.js';
 export { createGitRunner, GitError, gitOrThrow } from './git.js';
 export type { GitArgs, GitCommandResult, GitRunner, GitRunOptions } from './git.js';
