@@ -95,6 +95,53 @@ describe('rewriteDeclarationSpecifiers', () => {
       ["export * from './runner/index.js';", "export * from './model/index.js';"].join('\n'),
     );
   });
+
+  /**
+   * A string literal type can contain the word "from" followed by a quoted relative ".ts" path
+   * without that path being a module specifier at all — the quoted text is the declared literal
+   * type, not an import clause. Rewriting it would silently alter the public type surface of the
+   * package, which is the opposite of what this transform exists to protect.
+   */
+  it('leaves a ".ts" path inside a string literal type untouched', () => {
+    const source = `export declare const example = "copied from './types.ts'";`;
+    expect(rewriteDeclarationSpecifiers(source)).toBe(source);
+  });
+
+  /**
+   * Declaration emit copies JSDoc comments verbatim from source into `dist`, and this very
+   * package's own doc comments quote specifier syntax as prose (see `findRelativeTsSpecifiers`
+   * below). A comment line is never a real import/export statement, so text inside one must be
+   * left alone even though it matches the same "from '<relative>.ts'" shape.
+   */
+  it('leaves a ".ts" path inside a comment untouched', () => {
+    const source = " * as (for example `from './types.ts'`). An empty array means";
+    expect(rewriteDeclarationSpecifiers(source)).toBe(source);
+  });
+
+  /**
+   * A quoted default value — for example an enum member's literal value — can also contain the
+   * word "from" ahead of a quoted relative ".ts" path. It is assignment-position text, not an
+   * import clause, so it must be left untouched.
+   */
+  it('leaves a ".ts" path inside a default value untouched', () => {
+    const source = `  Legacy = "from './types.ts'",`;
+    expect(rewriteDeclarationSpecifiers(source)).toBe(source);
+  });
+
+  /**
+   * The dynamic `import(...)` keyword is just as capable of appearing inside a string literal
+   * type as `from` is; the fix must not special-case only the `from` shape.
+   */
+  it('leaves an "import(" call-shaped string literal type untouched', () => {
+    const source = `export declare const y: "call import('./types.ts') now";`;
+    expect(rewriteDeclarationSpecifiers(source)).toBe(source);
+  });
+
+  /** A line comment referencing `import('./x.ts')` as prose must not be rewritten either. */
+  it('leaves an "import(" reference inside a line comment untouched', () => {
+    const source = `// see import('./types.ts') for details`;
+    expect(rewriteDeclarationSpecifiers(source)).toBe(source);
+  });
 });
 
 describe('findRelativeTsSpecifiers', () => {
@@ -116,5 +163,31 @@ describe('findRelativeTsSpecifiers', () => {
     const first = findRelativeTsSpecifiers(`export * from './errors.ts';`);
     const second = findRelativeTsSpecifiers(`export * from './errors.ts';`);
     expect(second).toEqual(first);
+  });
+
+  /**
+   * A quoted ".ts" path inside a string literal type is not a module specifier, so it must not
+   * be reported as an offender the build should fail on.
+   */
+  it('does not report a ".ts" path inside a string literal type', () => {
+    expect(
+      findRelativeTsSpecifiers(`export declare const example = "copied from './types.ts'";`),
+    ).toEqual([]);
+  });
+
+  /** A ".ts" path quoted inside a comment is prose, not an offender to report. */
+  it('does not report a ".ts" path inside a comment', () => {
+    expect(
+      findRelativeTsSpecifiers(" * as (for example `from './types.ts'`). An empty array means"),
+    ).toEqual([]);
+  });
+
+  /** A genuine specifier and a look-alike inside a comment are told apart on the same input. */
+  it('reports only the genuine specifier when a look-alike comment is also present', () => {
+    const source = [
+      "import type { A } from './a.ts';",
+      " * see also `from './b.ts'` for context",
+    ].join('\n');
+    expect(findRelativeTsSpecifiers(source)).toEqual([`from './a.ts'`]);
   });
 });
