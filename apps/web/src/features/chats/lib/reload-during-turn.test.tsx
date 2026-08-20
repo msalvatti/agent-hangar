@@ -1,16 +1,16 @@
 /**
- * Reloading a chat while its newest turn is still running.
+ * A live turn whose transcript is rebuilt from the database underneath it.
  *
  * Layer: unit (scenario).
- * Goal: the transcript reads the same after a reload as it did before it. The page rebuilds the
- * turn from what the database holds and then reopens the stream, which replays that same turn from
- * its first event, so every row the seed already carries arrives a second time; each tool call and
- * each push notice must still appear once. Asserted on what is rendered, because the duplication
- * is a row the reader sees, not a value the reducer happened to hold.
- * Mocks: none — the persisted payload and the replayed events are both written out as the API and
+ * Goal: one property, reached from both directions. A row means the same thing whether it came
+ * from the stream or from persistence, so rebuilding the transcript mid-turn neither doubles what
+ * the stream already delivered — a reload replays the turn from its first event — nor discards
+ * what it delivered, which is what a rebuild after the operator presses Stop does. Asserted on
+ * what is rendered, because both failures are rows the reader sees.
+ * Mocks: none — the persisted payload and the streamed events are both written out as the API and
  * the runtime produce them.
  */
-import type { AgentEvent, ChatDetail } from '@agent-hangar/core';
+import type { AgentEvent, ChatDetail, MessageView, ToolCallView } from '@agent-hangar/core';
 import { pushedNoticeText } from '@agent-hangar/core';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
@@ -30,8 +30,78 @@ const SHA = '9f8e7d6c5b4a39281706';
 const RELOADED_AT = Date.parse('2026-08-19T10:02:00.000Z');
 
 /**
- * The payload of a chat whose newest turn is still running, with the rows that turn has already
- * written: one finished tool call, one still running, and the push in between.
+ * The messages that turn has written: the prompt that started it, and the push it reported.
+ *
+ * The prompt names no turn, which is what the schema produces; the push notice does, because the
+ * worker writes it once the turn is already running.
+ *
+ * @returns The chat's messages.
+ */
+function runningTurnMessages(): MessageView[] {
+  return [
+    {
+      id: 'm1',
+      turnId: null,
+      seq: 1,
+      role: 'USER',
+      content: 'Rename the retry helper and push the change.',
+      createdAt: '2026-08-19T10:00:00.000Z',
+    },
+    {
+      id: 'm2',
+      turnId: 'turn-1',
+      seq: 2,
+      role: 'SYSTEM',
+      content: pushedNoticeText(BRANCH, SHA),
+      createdAt: '2026-08-19T10:00:40.000Z',
+    },
+  ];
+}
+
+/**
+ * The two calls the turn has recorded: one finished, one still going.
+ *
+ * @returns The tool-call rows, in `seq` order.
+ */
+function runningTurnCalls(): ToolCallView[] {
+  return [
+    {
+      id: 't1',
+      turnId: 'turn-1',
+      jobRunId: null,
+      callId: 'call-1',
+      seq: 0,
+      toolName: 'list_dir',
+      args: { path: 'src' },
+      resultHead: 'retry.ts\nindex.ts\n',
+      resultBytes: 18,
+      exitCode: null,
+      status: 'SUCCEEDED',
+      startedAt: '2026-08-19T10:00:20.000Z',
+      finishedAt: '2026-08-19T10:00:20.080Z',
+      durationMs: 80,
+    },
+    {
+      id: 't2',
+      turnId: 'turn-1',
+      jobRunId: null,
+      callId: 'call-2',
+      seq: 1,
+      toolName: 'run_shell',
+      args: { command: 'pnpm test' },
+      resultHead: null,
+      resultBytes: null,
+      exitCode: null,
+      status: 'RUNNING',
+      startedAt: '2026-08-19T10:01:00.000Z',
+      finishedAt: null,
+      durationMs: null,
+    },
+  ];
+}
+
+/**
+ * The payload of a chat whose newest turn is still running.
  *
  * @returns The `GET /api/chats/:id` payload.
  */
@@ -50,24 +120,7 @@ function runningTurnChat(): ChatDetail {
       archivedAt: null,
       lastTurnStatus: 'RUNNING',
     },
-    messages: [
-      {
-        id: 'm1',
-        turnId: null,
-        seq: 1,
-        role: 'USER',
-        content: 'Rename the retry helper and push the change.',
-        createdAt: '2026-08-19T10:00:00.000Z',
-      },
-      {
-        id: 'm2',
-        turnId: 'turn-1',
-        seq: 2,
-        role: 'SYSTEM',
-        content: pushedNoticeText(BRANCH, SHA),
-        createdAt: '2026-08-19T10:00:40.000Z',
-      },
-    ],
+    messages: runningTurnMessages(),
     turns: [
       {
         id: 'turn-1',
@@ -81,40 +134,7 @@ function runningTurnChat(): ChatDetail {
         finishedAt: null,
       },
     ],
-    toolCalls: [
-      {
-        id: 't1',
-        turnId: 'turn-1',
-        jobRunId: null,
-        callId: 'call-1',
-        seq: 0,
-        toolName: 'list_dir',
-        args: { path: 'src' },
-        resultHead: 'retry.ts\nindex.ts\n',
-        resultBytes: 18,
-        exitCode: null,
-        status: 'SUCCEEDED',
-        startedAt: '2026-08-19T10:00:20.000Z',
-        finishedAt: '2026-08-19T10:00:20.080Z',
-        durationMs: 80,
-      },
-      {
-        id: 't2',
-        turnId: 'turn-1',
-        jobRunId: null,
-        callId: 'call-2',
-        seq: 1,
-        toolName: 'run_shell',
-        args: { command: 'pnpm test' },
-        resultHead: null,
-        resultBytes: null,
-        exitCode: null,
-        status: 'RUNNING',
-        startedAt: '2026-08-19T10:01:00.000Z',
-        finishedAt: null,
-        durationMs: null,
-      },
-    ],
+    toolCalls: runningTurnCalls(),
     workspace: null,
   };
 }
@@ -266,5 +286,73 @@ describe('reloading a chat mid-turn', () => {
 
     expect(screen.getAllByText(pushedNoticeText(BRANCH, SHA))).toHaveLength(1);
     expect(screen.getAllByText(pushedNoticeText(BRANCH, 'c0ffee1234567890'))).toHaveLength(1);
+  });
+});
+
+describe('rebuilding a chat transcript while its turn is still live', () => {
+  /**
+   * What a Stop does to the page: the request invalidates the chat, the refetch remaps it, and the
+   * reducer is reseeded from persistence while the stream is still open. The row on screen is
+   * replaced by the row the database holds, and both carry the same call, so the command survives
+   * that swap instead of being replaced by an empty one.
+   */
+  it('keeps the running call and its arguments across a reseed', () => {
+    const streamed = replayedTurn().reduce<TranscriptState>(
+      (state, event, index) =>
+        transcriptReducer(state, {
+          type: 'event',
+          event,
+          id: `${String(RELOADED_AT)}-${String(index)}`,
+          now: RELOADED_AT,
+        }),
+      createInitialState(),
+    );
+    expect(streamed.items.filter((item) => item.kind === 'tool')).toHaveLength(2);
+
+    const mapped = mapChatDetail(runningTurnChat());
+    const reseeded = transcriptReducer(streamed, {
+      type: 'reset',
+      items: mapped.items,
+      phase: mapped.phase,
+    });
+
+    render(<Transcript items={reseeded.items} phase={reseeded.phase} />);
+
+    expect(document.querySelectorAll('[data-item-kind="tool"]')).toHaveLength(2);
+    expect(screen.getByText('pnpm test')).toBeInTheDocument();
+  });
+
+  /**
+   * The result that lands after the reseed finds the row the reseed put there, rather than
+   * inventing one beside it. A command killed by a signal reports no exit code, so the row shows
+   * how long it ran and does not print the word in front of a blank.
+   */
+  it('folds the result that arrives after the reseed into that same row', () => {
+    const mapped = mapChatDetail(runningTurnChat());
+    const reseeded = transcriptReducer(createInitialState(), {
+      type: 'reset',
+      items: mapped.items,
+      phase: mapped.phase,
+    });
+    const settled = transcriptReducer(reseeded, {
+      type: 'event',
+      event: {
+        type: 'tool.result',
+        callId: 'call-2',
+        exitCode: null,
+        bytes: 16,
+        durationMs: 17_300,
+        status: 'FAILED',
+      },
+      id: `${String(RELOADED_AT)}-99`,
+      now: RELOADED_AT,
+    });
+
+    render(<Transcript items={settled.items} phase={settled.phase} />);
+
+    expect(document.querySelectorAll('[data-item-kind="tool"]')).toHaveLength(2);
+    expect(screen.getByText('pnpm test')).toBeInTheDocument();
+    expect(screen.getByText('17.3 s')).toBeInTheDocument();
+    expect(screen.queryByText(/exit/)).toBeNull();
   });
 });
