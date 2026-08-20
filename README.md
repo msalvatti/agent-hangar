@@ -22,11 +22,11 @@
 
 <p align="center">
   <a href="#-quick-start">🚀 Quick start</a> ·
-  <a href="#-how-it-works">🏗️ How it works</a> ·
-  <a href="#-configuration">⚙️ Configuration</a> ·
+  <a href="#-how-it-works">🧩 How it works</a> ·
+  <a href="#-configuration">🔧 Configuration</a> ·
   <a href="#-security">🔒 Security</a> ·
   <a href="#-testing">🧪 Testing</a> ·
-  <a href="#-known-gaps">🗺️ Known gaps</a> ·
+  <a href="#-known-gaps">🚧 Known gaps</a> ·
   <a href="docs/spec/README.md">📖 Specification</a>
 </p>
 
@@ -164,7 +164,7 @@ Every checkout is an **instance**: `AH_INSTANCE` and `AH_PORT_BASE` derive the p
 
 ---
 
-## 🏗️ How it works
+## 🧩 How it works
 
 ```mermaid
 flowchart LR
@@ -243,7 +243,7 @@ Further reading: [system overview](docs/spec/01-overview.md) · [data model](doc
 
 ---
 
-## ⚙️ Configuration
+## 🔧 Configuration
 
 Everything is environment-driven and validated with Zod at boot. `.env.example` documents the keys; `pnpm setup` writes a working `.env.local`.
 
@@ -468,7 +468,7 @@ Details in [the testing strategy](docs/spec/06-testing.md).
 
 ---
 
-## 🗺️ Known gaps
+## 🚧 Known gaps
 
 Specific rather than reassuring. Everything below is confirmed against the code, and each item is tracked in [`docs/plan.md`](docs/plan.md), whose identifiers are quoted here.
 
@@ -516,7 +516,7 @@ Specific rather than reassuring. Everything below is confirmed against the code,
 
 ---
 
-## ☁️ Deployment discussion
+## 📦 Deployment discussion
 
 Nothing below is implemented. The local topology already has the seams a cloud deployment needs — a stateless web tier, a worker tier that is the only thing touching the runner, PostgreSQL as the source of truth, Redis as queue and event bus, and a `WorkspaceRunner` interface in front of execution. AWS is used for concreteness; the same shape fits GCP or Azure.
 
