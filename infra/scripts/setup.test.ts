@@ -79,7 +79,10 @@ function baseEnv(f: Fixture, extra: Record<string, string> = {}): Record<string,
 describe('setup.sh first run', () => {
   /**
    * Every shimmed step runs, in order: install, the Docker reachability check, key generation,
-   * compose up, Prisma generate + migrate, then the image inspect/build pair (image missing).
+   * compose up, Prisma generate + migrate, then the image inspect / `pnpm infra:image` pair
+   * (image missing). The build itself is routed through `infra:image` rather than a bare
+   * `docker build`, so the build context is staged the same way regardless of what that script
+   * ends up doing internally.
    */
   it('walks every step in order on a fresh sandbox', () => {
     const f = fixture();
@@ -100,7 +103,7 @@ describe('setup.sh first run', () => {
     const generate = indexOf('db:generate');
     const migrate = indexOf('db:migrate');
     const inspect = indexOf('image inspect');
-    const build = indexOf('docker build');
+    const build = indexOf('pnpm infra:image');
 
     for (const step of [install, info, rand, composeUp, generate, migrate, inspect, build]) {
       expect(step).toBeGreaterThanOrEqual(0);
@@ -150,7 +153,7 @@ describe('setup.sh second run', () => {
     expect(result.status).toBe(0);
     const log = readShimLog(secondLog);
     expect(log.some((line) => line.includes('openssl'))).toBe(false);
-    expect(log.some((line) => line.includes('docker build'))).toBe(false);
+    expect(log.some((line) => line.includes('infra:image'))).toBe(false);
     expect(readFileSync(f.envFile, 'utf8')).toBe(envBefore);
   });
 
@@ -183,7 +186,7 @@ describe('setup.sh second run', () => {
       args: ['--rebuild-image', '--skip-doctor'],
       env: baseEnv(f),
     });
-    expect(readShimLog(f.log).some((line) => line.includes('docker build'))).toBe(true);
+    expect(readShimLog(f.log).some((line) => line.includes('infra:image'))).toBe(true);
   });
 });
 

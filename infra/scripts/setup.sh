@@ -108,7 +108,10 @@ pnpm --filter @agent-hangar/core db:migrate
 
 log "7/7 Workspace image ($WORKSPACE_IMAGE)"
 if [ $rebuild_image -eq 1 ] || ! docker image inspect "$WORKSPACE_IMAGE" >/dev/null 2>&1; then
-  docker build -t "$WORKSPACE_IMAGE" infra/workspace
+  # Routed through the `infra:image` script rather than a bare `docker build`: it stages the
+  # agent-runtime bundle into the build context before invoking Docker, a step a bare `docker
+  # build` here would skip, breaking on a fresh clone that has no `runtime/` directory yet.
+  pnpm infra:image
 else
   echo "workspace image present ($WORKSPACE_IMAGE); use --rebuild-image to force a rebuild"
 fi

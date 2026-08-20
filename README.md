@@ -91,7 +91,7 @@ It is idempotent — run it as often as you like.
 | 3   | Create the master key            | `~/.agent-hangar/master.key`, 32 random bytes, `chmod 600`, only if missing                                                                                    |
 | 4   | Boot infrastructure              | `docker compose up -d --wait` — PostgreSQL 18 and Redis 8, with healthchecks                                                                                   |
 | 5   | Migrate                          | `prisma migrate deploy` + `prisma generate`                                                                                                                    |
-| 6   | Build the workspace image        | `docker build -t agent-hangar/workspace:dev infra/workspace`                                                                                                   |
+| 6   | Build the workspace image        | `pnpm infra:image`, never a bare `docker build` — the build context is staged first                                                                            |
 | 7   | `pnpm doctor`                    | verifies all of the above and prints what to fix                                                                                                               |
 
 ### When something is off, run the doctor
