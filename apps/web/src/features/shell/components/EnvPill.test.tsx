@@ -88,4 +88,15 @@ describe('EnvPill', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
     expect(await screen.findByText('Postgres')).toBeInTheDocument();
   });
+
+  /*
+   * The other button in the sidebar that never asked for a pointer cursor. Tailwind's preflight
+   * gives `<button>` the default arrow, so spec 10 §10 is only met if something declares it; the
+   * shared button primitive now does.
+   */
+  it('offers the re-check with a pointer cursor', async () => {
+    render(<EnvPill />);
+    await userEvent.click(screen.getByRole('button', { name: /Environment status/ }));
+    expect(await screen.findByRole('button', { name: 'Retry' })).toHaveClass('cursor-pointer');
+  });
 });

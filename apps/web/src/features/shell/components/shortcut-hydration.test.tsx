@@ -66,7 +66,9 @@ function asBrowser<T>(userAgent: string, body: () => T): T {
  * @returns The element to render.
  */
 function sidebar(): ReactElement {
-  return <SidebarBody compact={false} activeId={null} onOpenSearch={vi.fn()} />;
+  return (
+    <SidebarBody compact={false} activeId={null} onOpenSearch={vi.fn()} onToggleWidth={vi.fn()} />
+  );
 }
 
 describe('sidebar shortcut hints', () => {

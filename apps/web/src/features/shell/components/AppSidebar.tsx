@@ -3,10 +3,15 @@
  *
  * Layer: feature (screen).
  *
- * The sidebar takes three shapes: the 260 px column (≥ 1024 px), a 56 px icon rail (768–1023 px)
- * and an overlay drawer (< 768 px). The drawer's trigger is mounted here rather than handed to
- * `PageHeader`'s `navTrigger` slot: pages belong to other features, and importing `features/shell`
- * from them is banned, so the shell owns both the drawer and the button that opens it.
+ * The sidebar takes three shapes: the 260 px column, a 56 px icon rail and an overlay drawer.
+ * Under 768 px the drawer is the only one that fits, so the viewport decides alone. At or above
+ * 768 px the viewport only supplies the default — the column from 1024 px, the rail below it —
+ * and a stored choice overrides it in either direction, because a screen that cannot be widened
+ * would otherwise leave no way out of the rail.
+ *
+ * The drawer is mounted here rather than handed to `PageHeader`'s `navTrigger` slot: pages belong
+ * to other features, and importing `features/shell` from them is banned, so the shell owns both
+ * the drawer and the button that opens it.
  */
 'use client';
 
@@ -14,19 +19,19 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useCallback, useState } from 'react';
 
 import { SidebarSlot } from '@/shared/shell/SidebarSlot';
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/shared/ui/sheet';
 
 import { useKeyboardShortcuts } from '../hooks/useKeyboardShortcuts';
 import { useMediaQuery } from '../hooks/useMediaQuery';
+import { railShape, useSidebarWidth } from '../hooks/useSidebarWidth';
 
 import { ChatSearch } from './ChatSearch';
-import { MobileNavTrigger } from './MobileNavTrigger';
 import { SidebarBody } from './SidebarBody';
+import { SidebarDrawer } from './SidebarDrawer';
 
-/** Viewport at or above which the full 260 px column is shown. */
+/** Viewport at or above which the full 260 px column is the default shape. */
 const FULL_QUERY = '(min-width: 1024px)';
 
-/** Viewport at or above which at least the icon rail is shown. */
+/** Viewport at or above which the sidebar is docked at all, rather than living in the drawer. */
 const RAIL_QUERY = '(min-width: 768px)';
 
 /**
@@ -41,20 +46,18 @@ function activeChatId(pathname: string): string | null {
 }
 
 /**
- * Renders the sidebar in the shape the viewport calls for and wires ⌘K / ⌘N / ⌘,.
+ * Renders the sidebar in the shape the viewport and the stored choice call for, and wires ⌘K / ⌘N
+ * / ⌘,.
  */
 export function AppSidebar() {
   const router = useRouter();
   const pathname = usePathname();
   const [searchOpen, setSearchOpen] = useState(false);
-  // The drawer records the path it was opened on and is only open while the app is still there.
-  // The layout persists across routes, so an open drawer would otherwise survive the navigation it
-  // triggered and cover the page it just opened.
-  const [drawer, setDrawer] = useState<{ open: boolean; at: string }>({ open: false, at: '' });
-  const drawerOpen = drawer.open && drawer.at === pathname;
   // Desktop is the design target (spec 10 §9), so the pre-hydration shape is the full column.
   const isFull = useMediaQuery(FULL_QUERY, true);
-  const isRail = useMediaQuery(RAIL_QUERY, true);
+  const isDocked = useMediaQuery(RAIL_QUERY, true);
+  const { width, setWidth } = useSidebarWidth();
+  const compact = railShape(width, isFull);
 
   const onSearch = useCallback(() => {
     setSearchOpen(true);
@@ -65,53 +68,31 @@ export function AppSidebar() {
   const onSettings = useCallback(() => {
     router.push('/settings');
   }, [router]);
+  const onToggleWidth = useCallback(() => {
+    setWidth(compact ? 'column' : 'rail');
+  }, [compact, setWidth]);
   useKeyboardShortcuts({ onSearch, onNewChat, onSettings });
 
   const activeId = activeChatId(pathname);
   const search = <ChatSearch open={searchOpen} onOpenChange={setSearchOpen} />;
 
-  if (isFull) {
+  if (isDocked) {
     return (
-      <SidebarSlot>
-        <SidebarBody compact={false} activeId={activeId} onOpenSearch={onSearch} />
+      <SidebarSlot compact={compact}>
+        <SidebarBody
+          compact={compact}
+          activeId={activeId}
+          onOpenSearch={onSearch}
+          onToggleWidth={onToggleWidth}
+        />
         {search}
       </SidebarSlot>
     );
   }
 
-  if (isRail) {
-    return (
-      <aside
-        aria-label="Sidebar"
-        data-testid="sidebar-rail"
-        className="bg-sidebar text-sidebar-foreground flex h-dvh w-14 flex-col border-r"
-      >
-        <SidebarBody compact activeId={activeId} onOpenSearch={onSearch} />
-        {search}
-      </aside>
-    );
-  }
-
   return (
     <>
-      <MobileNavTrigger
-        onOpen={() => {
-          setDrawer({ open: true, at: pathname });
-        }}
-      />
-      <Sheet
-        open={drawerOpen}
-        onOpenChange={(open) => {
-          setDrawer({ open, at: pathname });
-        }}
-      >
-        <SheetContent side="left" className="bg-sidebar w-65 p-0">
-          <SheetHeader className="sr-only">
-            <SheetTitle>Sidebar</SheetTitle>
-          </SheetHeader>
-          <SidebarBody compact={false} activeId={activeId} onOpenSearch={onSearch} headerInset />
-        </SheetContent>
-      </Sheet>
+      <SidebarDrawer activeId={activeId} onOpenSearch={onSearch} />
       {search}
     </>
   );
