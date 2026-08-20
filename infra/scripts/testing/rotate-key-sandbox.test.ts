@@ -183,37 +183,37 @@ describe('reservePortBase', () => {
   });
 
   /**
-   * The reclaim is a rename-then-inspect, not a stat-then-remove, precisely so a second claimant
-   * reading the same marker cannot delete a fresh claim the first claimant just made in the gap.
-   * Simulated here: the marker still standing at the moment of the rename is somebody else's
-   * reclaim already in flight, so this attempt's rename loses that race — `ENOENT` — and must fold
-   * quietly into "not mine to take" rather than crash or, worse, misreport the base as free.
+   * The reclaim is serialized by a sibling `.reclaim` lock, claimed with the same atomic `mkdir`
+   * test-and-set the base itself uses, precisely so a second claimant can never be mid-inspection
+   * of the same marker at the same time as the first. Simulated here: the lock is already held
+   * (standing in for a concurrent reclaimer's own `mkdirSync(lock)` having won it first), so this
+   * attempt must defer rather than act on a marker it has no exclusive claim to inspect.
    */
-  it('does not treat a marker somebody else already reclaimed as an error', () => {
+  it('leaves a marker alone while another reclaim already holds its lock', () => {
     const only = TEST_FLOOR + 15 * STRIDE;
-    const marker = plantMarker(only);
-    const raced = new Error('already reclaimed');
-    (raced as NodeJS.ErrnoException).code = 'ENOENT';
-    vi.spyOn(fsPort, 'renameSync').mockImplementationOnce(() => {
-      throw raced;
-    });
+    const marker = plantMarker(only, ABANDONED_MS);
+    mkdirSync(`${marker}.reclaim`);
+    planted.push(`${marker}.reclaim`);
 
     expect(() => reservePortBase(only, STRIDE)).toThrow(/No free port base/u);
     expect(existsSync(marker)).toBe(true);
   });
 
   /**
-   * Only a race loss (`ENOENT`) is swallowed by the reclaim. Any other reason the rename failed —
-   * here a permission error — is a broken machine, not a concurrent claimant, and burying it would
-   * hide a real fault behind "somebody else has this base".
+   * Only a race loss (`EEXIST`) on the lock is swallowed by the reclaim. Any other reason the
+   * lock's own `mkdir` failed — here a permission error — is a broken machine, not a concurrent
+   * claimant, and burying it would hide a real fault behind "somebody else has this base".
    */
-  it('propagates a rename failure that is not a race loss', () => {
+  it('propagates a lock failure that is not a race loss', () => {
     const only = TEST_FLOOR + 18 * STRIDE;
     plantMarker(only);
     const broken = new Error('permission denied');
     (broken as NodeJS.ErrnoException).code = 'EACCES';
-    vi.spyOn(fsPort, 'renameSync').mockImplementationOnce(() => {
-      throw broken;
+    vi.spyOn(fsPort, 'mkdirSync').mockImplementation((path, options) => {
+      if (String(path).endsWith('.reclaim')) {
+        throw broken;
+      }
+      return mkdirSync(path, options);
     });
 
     expect(() => reservePortBase(only, STRIDE)).toThrow(/permission denied/u);
