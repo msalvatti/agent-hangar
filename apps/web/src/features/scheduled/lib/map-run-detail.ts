@@ -68,6 +68,22 @@ function toToolItem(call: ToolCallView): TranscriptItem {
 const OVERLAP_ERROR = 'previous run still running';
 
 /**
+ * Converts a run's recorded error into the row that reports it.
+ *
+ * A run the scheduler skipped because the previous one was still going is not a failure — nothing
+ * ran, and nothing is wrong — so it reads as a notice instead of an error.
+ *
+ * @param error - The run's error, already redacted.
+ * @returns The item that reports it.
+ */
+function toErrorItem(error: string): TranscriptItem {
+  if (error === OVERLAP_ERROR) {
+    return { kind: 'notice', id: 'run-error', tone: 'warning', text: `Skipped: ${OVERLAP_ERROR}` };
+  }
+  return { kind: 'error', id: 'run-error', code: 'RUN_FAILED', message: error };
+}
+
+/**
  * Folds a run's persisted history (prompt, tool calls, output, error) into the shared transcript
  * model, in field-name and status-vocabulary order defined by the contract.
  *
@@ -102,21 +118,7 @@ export function mapRunDetail(detail: RunDetail, job?: JobSummary): MappedRun {
   }
 
   if (detail.run.error !== null) {
-    if (detail.run.error === OVERLAP_ERROR) {
-      items.push({
-        kind: 'notice',
-        id: 'run-error',
-        tone: 'warning',
-        text: `Skipped: ${OVERLAP_ERROR}`,
-      });
-    } else {
-      items.push({
-        kind: 'error',
-        id: 'run-error',
-        code: 'RUN_FAILED',
-        message: detail.run.error,
-      });
-    }
+    items.push(toErrorItem(detail.run.error));
   }
 
   return {

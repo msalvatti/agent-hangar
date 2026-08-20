@@ -253,6 +253,34 @@ async function ensureWorkspace(
 }
 
 /**
+ * Records a push: as the hints a later turn restores from, and as a line of the transcript.
+ *
+ * The hints carry only the newest push, and the transcript has to show every one of them where it
+ * happened. A push is also the one thing a turn does that outlives its workspace — the commit it
+ * names is in the remote repository long after the container is gone — so it earns a row.
+ *
+ * @param deps - Repositories.
+ * @param context - The turn being run.
+ * @param event - The push, already redacted.
+ */
+async function recordPush(
+  deps: ProcessorDeps,
+  context: TurnContext,
+  event: Extract<AgentEvent, { type: 'git.pushed' }>,
+): Promise<void> {
+  await deps.repos.chats.updateRestoreHints(context.chat.id, {
+    workBranch: event.branch,
+    lastPushedSha: event.sha,
+  });
+  await deps.repos.messages.append(
+    context.chat.id,
+    'SYSTEM',
+    pushedNoticeText(event.branch, event.sha),
+    context.turnId,
+  );
+}
+
+/**
  * Builds the persistence half of the event stream.
  *
  * Every event it receives has already been redacted and published, so this function is purely
@@ -288,20 +316,7 @@ function makeTurnSink(
           await recorder.finish(event);
           break;
         case 'git.pushed':
-          await deps.repos.chats.updateRestoreHints(context.chat.id, {
-            workBranch: event.branch,
-            lastPushedSha: event.sha,
-          });
-          // The hints above carry only the newest push, and the transcript has to show every one
-          // of them where it happened. A push is also the one thing in a turn that outlives the
-          // workspace: the commit it names is in the remote repository long after the container
-          // is gone, so it is worth a row of its own.
-          await deps.repos.messages.append(
-            context.chat.id,
-            'SYSTEM',
-            pushedNoticeText(event.branch, event.sha),
-            context.turnId,
-          );
+          await recordPush(deps, context, event);
           break;
         case 'turn.completed':
           await completeTurn(deps, context, recorder, event);

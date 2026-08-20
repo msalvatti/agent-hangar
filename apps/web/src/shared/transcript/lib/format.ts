@@ -68,6 +68,9 @@ export function formatBytes(bytes: number): string {
   return `${(value / MEGABYTE).toFixed(1)} MB`;
 }
 
+/** Shared encoder: one transcript measures every row it renders, and the encoder is stateless. */
+const UTF8_ENCODER = new TextEncoder();
+
 /**
  * Measures text in the unit the runtime caps tool output in.
  *
@@ -78,7 +81,7 @@ export function formatBytes(bytes: number): string {
  * @returns Its length in UTF-8 bytes.
  */
 export function utf8ByteLength(text: string): number {
-  return new TextEncoder().encode(text).length;
+  return UTF8_ENCODER.encode(text).length;
 }
 
 /**
