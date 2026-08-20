@@ -448,6 +448,7 @@ export const routes = {
   chatRestore: '/api/chats/:id/restore',
   chatEvents: '/api/chats/:id/events',
   turnCancel: '/api/turns/:id/cancel',
+  turnRetry: '/api/turns/:id/retry',
   jobs: '/api/jobs',
   job: '/api/jobs/:id',
   jobRun: '/api/jobs/:id/run',
@@ -565,6 +566,15 @@ export const apiOperations = {
     response: chatSummary,
   }),
   cancelTurn: op({ method: 'POST', path: routes.turnCancel, response: okResponse }),
+  /**
+   * Re-dispatches a turn that failed, against the prompt already attached to it.
+   *
+   * It carries no body on purpose. A retry is not a new message: the prompt the turn ran on is
+   * already persisted and already numbered in the chat's `seq` order, so an operation that
+   * accepted one could only ever restate it — and a client that restated it slightly differently
+   * would silently run something the transcript does not show.
+   */
+  retryTurn: op({ method: 'POST', path: routes.turnRetry, response: okResponse }),
   listJobs: op({ method: 'GET', path: routes.jobs, response: listJobsResponse }),
   getJob: op({ method: 'GET', path: routes.job, response: jobSummary }),
   createJob: op({
