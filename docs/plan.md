@@ -298,12 +298,13 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | | |
 |---|---|
 | Default branch | `main`; check its latest run with `gh run list --branch main --limit 1` rather than trusting a status recorded here, which ages the moment anything merges |
-| Lanes merged | **9 of 17** — the foundation lane plus eight of the nine first-wave lanes |
-| Lanes in review | **3** — the scheduled and settings screens, the web API, and the worker processors |
-| Lanes not started | **5** — end-to-end authoring, wiring and stabilisation, documentation, and both mutation-testing lanes |
-| Tasks merged | **51 of 94** |
-| Tasks written but not yet merged | **18** on the three open lane branches, so 69 of 94 exist as code |
-| Routed findings still open | **20**, in §14 below, each naming one lane |
+| Lanes merged | **10 of 17** — the foundation lane and **all nine first-wave lanes**; the first wave is complete |
+| Lanes in review | **2** — the web API and the worker processors |
+| Lanes in progress | **1** — end-to-end authoring, started the moment its gate cleared |
+| Lanes not started | **4** — wiring and stabilisation, documentation, and both mutation-testing lanes |
+| Tasks merged | **57 of 94** |
+| Tasks written but not yet merged | **12** on the two open lane branches, so 69 of 94 exist as code |
+| Routed findings still open | **23**, in §14 below, each naming one lane |
 | Orchestrator fixes | **13 merged, 1 open** — defects found while shepherding, listed under the lane table |
 
 Three tables in this section describe the same build and are updated together, because one of them
@@ -312,13 +313,13 @@ table beneath it, and the task-progress table at the end. The lane index in `doc
 mirrors the first of them and moves with it.
 
 The task counts come from the per-lane task indexes in `docs/tasks/`. A lane's tasks only count as
-merged once its pull request lands, so the gap between 51 and 69 is exactly the three lanes in
+merged once its pull request lands, so the gap between 57 and 69 is exactly the two lanes still in
 review.
 
-**What unblocks what.** The end-to-end lane is gated on the scheduled and settings lane, which is
-the only thing standing between the first wave and its completion. The third wave needs every
-second-wave lane merged, and the mutation lanes need the third. So the critical path runs through
-the three pull requests currently in review, in no particular order among themselves.
+**What unblocks what.** The first wave is done, so the end-to-end lane's gate has cleared and it is
+running. The third wave needs both remaining second-wave lanes merged, and the mutation lanes need
+the third. So the critical path now runs through the two pull requests in review, and the
+end-to-end lane proceeds alongside them rather than behind them.
 
 | Lane | Status | Branch / PR | Coverage | Notes |
 |---|---|---|---|---|
@@ -330,11 +331,11 @@ the three pull requests currently in review, in no particular order among themse
 | W1-E | 🟩 merged | PR #8 | core 100 (all four metrics) | status stamps are transactional; `ScheduledJob.prompt` and `Chat.title` redacted on write |
 | W1-F | 🟩 merged | PR #12 | core 100 (all four metrics) | BullMQ 6 API read from the installed types |
 | W1-G | 🟩 merged | PR #19 | web 100 (all four metrics) | chats list, composer and streaming detail; Lighthouse accessibility 100 on both routes |
-| W1-H | 🟨 PR open | PR #24 | web 100 (all four metrics) | 27 placeholder files removed and the screens adapted to the real modules; Lighthouse accessibility 100 on all three routes |
+| W1-H | 🟩 merged | PR #24 | web 100 (all four metrics) | 27 placeholder files removed and the screens adapted to the real modules; Lighthouse accessibility 100 on all three routes |
 | W1-I | 🟩 merged | PR #18 | scripts 100 (all four metrics) | run, doctor, archive, prune and the Conductor wiring; the two-instance walkthrough was executed against real Docker, not simulated |
 | W2-A | 🟨 PR open | PR #21 | web 100 · core 100 (all four metrics) | 19 routes and both SSE streams; found and fixed a path traversal in the forge slug pattern that would have sent the authorisation header to an unnamed path |
 | W2-B 🐳 | 🟨 PR open | PR #22 | worker 100 (all four metrics) | three consumers, cancel channel, scheduler reconcile and graceful shutdown; Docker suite ran green six consecutive times with no leftover containers |
-| W2-C | ⬜ | — | — | gate is W1-G and W1-H merged; W1-G is merged and W1-H is in review as PR #24, so this starts as soon as that lands |
+| W2-C | 🟦 running | `feat/w2c-e2e` | — | gate cleared: both interface lanes merged. Authors the Playwright harness and six specs in mock mode so the wiring lane only has to run and stabilise them |
 | W3-A 🐳 | ⬜ | — | — | success criteria S1–S6, S8 |
 | W3-B | ⬜ | — | — | |
 | W4-A | ⬜ | — | — | may slip — documented |
@@ -375,7 +376,7 @@ number here is only as current as the last close-out that lane wrote.
 | W1-E | 5 | — | 5 |
 | W1-F | 5 | — | 5 |
 | W1-G | 7 | — | 7 |
-| W1-H | 0 | 6 | 6 |
+| W1-H | 6 | — | 6 |
 | W1-I | 6 | — | 6 |
 | W2-A | 0 | 6 | 6 |
 | W2-B | 0 | 6 | 6 |
@@ -384,7 +385,7 @@ number here is only as current as the last close-out that lane wrote.
 | W3-B | 0 | — | 5 |
 | W4-A | 0 | — | 4 |
 | W4-B | 0 | — | 4 |
-| **Total** | **51** | **18** | **94** |
+| **Total** | **57** | **12** | **94** |
 
 ## 13. Estimated complexity
 
@@ -427,6 +428,9 @@ stating the residual risk in plain terms.
 | R18 | `tsc -b && <rewrite>` short-circuits, so a failing typecheck emits a partial output and skips the rewrite. Worse, a **successful** typecheck also emits without rewriting when it is the root `tsc -b` rather than the package build, which then fails that package's own guard test on the very next test run — a failure nobody introduced. Accepted as unlikely when the chain was written; observed independently twice within the hour, once from a tree with no generated database client and once from an ordinary typecheck-then-test sequence. The working order is typecheck, then build the shared package, then tests. | Preserving the compiler's exit code while always rewriting needs exit-code handling in four manifests. The cheaper answers are making the prerequisite explicit so the compile does not fail that way, and making the gate order not matter. | W3-A |
 | R19 | `postMessage` bumps the chat's ordering timestamp after the turn has been dispatched, and that last write is unguarded. Its failure answers 500 for a turn the worker already holds, and a caller who retries meets its own turn reported as already in progress. | Pre-existing and unchanged by the work that surfaced it — the bump was already the last unguarded statement. Neither available fix is better than the gap: reusing the compensation helper misuses an undo for a best-effort write, and an inline catch duplicates it and adds a second place that swallows. The limit is named in the module header instead, which is the standard this file is held to. | W3-A |
 | R20 | The ownership map gives a lane its source directory, but a package manifest's scripts block now has two authors: the lane, and repository-wide infrastructure work that must chain a build step from every script reaching the shared package. Nothing states who wins, so a rebase resolved mechanically can drop one side without complaining — the collision was found only because a lane stopped and read it. | The map needs a rule for shared manifests, not a fix to either change. Measured today: of the branches in flight exactly one is affected, so the rule is cheap to write now and expensive later. | W3-B |
+| R21 | Deleting a scheduled job is not serialised with editing it. After the scheduler is removed, a concurrent edit can rewrite the row and recreate the scheduler; the delete then removes the row, leaving a scheduler firing on its cron for a job that no longer exists. | Bounded in two ways, both measured rather than assumed. A delivery naming a missing job is failed with an explicit reason and a terminal event, so the orphan produces reporting failures and not corruption. And the worker's scheduler reconciliation removes schedulers with no matching enabled job — but only at worker startup, so the orphan fires on its cron until the next restart. Closing it properly needs the conditional or versioned write the persistence port does not offer. | W3-A |
+| R22 | Deleting a chat has the same check-then-write shape: its live-turn check precedes the delete, so a concurrent message can claim a turn the cascade then removes. Found by the lane while fixing the sibling race in the archive path, and deliberately not folded into that round. | Not corrupting — the chat and everything under it are gone either way, and the losing request fails with an error and logs the release it could not perform. It shares R21's root cause and should be fixed with it rather than separately. | W3-A |
+| R23 | The turn processor refines its stalled-workspace recovery on the delivery attempt count. That field never moves for a job rescued from a dead worker: the library's stalled-recovery script increments a separate stalled counter and never touches the attempt count, and nothing here configures retry attempts. The refinement is therefore dead code. | Not a defect today — the recovery's other arm, a workspace left busy, is what actually catches an abandoned turn, so the behaviour is right for the wrong reason. It becomes one the moment someone relies on the attempt count or removes the other arm. Found while fixing the same mistake in the sibling processor, where it *was* load-bearing and would have shipped a guard that silently preserved the defect it was written to fix. | W3-A |
 | R11 | The presence check that greps route files for `assertSameOrigin` reports every route as covered **by construction**, because the guard lives in the handler behind a thin wiring module. It cannot fail. | Replaced by `apps/web/app/api/same-origin-policy.test.ts`, which calls every state-changing export from a foreign origin and names the offending route when the guard is removed. The grep must be retired from the lane prompts so it is not reintroduced. | W3-B |
 
 Approved 2026-08-19. Per-lane task files with self-contained agent prompts live in [docs/tasks/](tasks/README.md).

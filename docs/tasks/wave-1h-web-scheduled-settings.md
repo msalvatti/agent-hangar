@@ -3,14 +3,14 @@
 | | |
 |---|---|
 | **Lane** | W1-H (one of nine parallel Wave 1 lanes; cap 5 concurrent) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 Merged |
 | **Progress** | 6/6 tasks |
 | **Branch** | `feat/w1h-web-scheduled-settings` · PR #24 |
 | **Owned paths** | `apps/web/src/features/scheduled/**` · `apps/web/src/features/settings/**` · `apps/web/src/mocks/scheduled.ts` (+ test) · `apps/web/src/mocks/settings.ts` (+ test) · `apps/web/app/(app)/scheduled/page.tsx` · `apps/web/app/(app)/scheduled/[id]/page.tsx` · `apps/web/app/(app)/settings/page.tsx` · `apps/web/vitest.config.ts` (`coverage.include` lines only) · one additive line in `apps/web/src/mocks/handlers.ts` (the marked W1-H append line) |
 | **Depends on** | W0 merged to `main`; soft dependency on W1-G's shared modules (`@/shared/transcript`, `@/shared/repo-picker`, `@/shared/feedback`, `@/shared/shell/PageHeader`, `@/shared/api/use-api-query`, `@/mocks/*`) — stubbed locally until W1-G merges, swapped at the final rebase (plan §6 coordination note) |
 | **Unblocks** | W2-C (E2E authoring needs the selectors); W3-A wiring |
 | **Source** | [docs/plan.md §6 W1-H](../plan.md) · spec [10 §4.3–§4.4, §5–§9](../spec/10-ui-design.md) · [03 §4](../spec/03-interfaces.md) · [04 (c)(d)](../spec/04-flows.md) · [06 §2](../spec/06-testing.md) |
-| **Last updated** | 2026-08-19 (PR open) |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 
