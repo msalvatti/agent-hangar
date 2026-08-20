@@ -42,8 +42,17 @@ export default defineConfig({
             './src/mocks/vitest.ts',
             './src/shared/repo-picker/testing/setup.ts',
           ],
-          include: ['src/**/*.test.{ts,tsx}', 'app/**/*.test.{ts,tsx}'],
-          exclude: ['src/**/*.integration.test.{ts,tsx}', 'e2e/**', 'node_modules/**', '.next/**'],
+          include: [
+            'src/**/*.test.{ts,tsx}',
+            'app/**/*.test.{ts,tsx}',
+            'e2e/**/*.test.ts',
+          ],
+          exclude: [
+            'src/**/*.integration.test.{ts,tsx}',
+            'e2e/**/*.spec.ts',
+            'node_modules/**',
+            '.next/**',
+          ],
           maxWorkers: 3,
         },
       },
@@ -75,6 +84,12 @@ export default defineConfig({
         'src/shared/shell/PageHeader.tsx',
         'app/api/**',
         'src/server/**',
+        // End-to-end harness, pure modules only. `gitserver.ts`, `docker.ts`, `db.ts`,
+        // `process.ts`, `prepare-stack.ts`, `stack.ts`, `stack-state.ts`, the page objects and
+        // the Playwright hooks spawn processes, open sockets or drive a browser; they are
+        // exercised by the end-to-end run itself, not by this suite.
+        'e2e/support/{api,constants,env,github-stub,health,mode,selectors}.ts',
+        'e2e/fake-provider/script.ts',
       ],
       exclude: [
         '**/*.test.{ts,tsx}',

@@ -1,0 +1,205 @@
+/**
+ * Everything the end-to-end suite needs to address its own stack, derived from a handful of
+ * environment variables and the project's instance rules.
+ *
+ * Layer: test support (pure).
+ *
+ * The harness never reads `.env.local`. Ports, database name, compose project and container
+ * prefix all come from `resolveInstance` applied to the `test` instance, so a run cannot collide
+ * with the stack a developer has up for everyday work, and two checkouts can run the suite at the
+ * same time by moving `E2E_PORT_BASE`.
+ */
+import { dirname, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { resolveInstance } from '@agent-hangar/core';
+
+import { DEFAULT_PORT_BASE, PORT_OFFSETS, TEST_INSTANCE } from './constants';
+import type { E2eMode } from './mode';
+import { readMode } from './mode';
+
+/** Environment shape {@link resolveE2eEnv} reads. */
+export type E2eProcessEnv = Readonly<Partial<Record<string, string>>>;
+
+/** Host the git server is dialled by from inside a workspace container, unless overridden. */
+export const DEFAULT_GITSERVER_HOST = 'host.docker.internal';
+
+/** Workspace image the worker starts containers from, unless overridden. */
+export const DEFAULT_WORKSPACE_IMAGE = 'agent-hangar/workspace:dev';
+
+/** Loopback address the harness itself dials; never the workspace-facing host. */
+export const LOOPBACK = '127.0.0.1';
+
+/** Compose Postgres credentials — a loopback-only test service, not a secret. */
+const POSTGRES_CREDENTIALS = 'ah:ah';
+
+/** Everything resolved for one end-to-end run. */
+export interface E2eEnv {
+  /** Whether the full stack is running behind the UI. */
+  mode: E2eMode;
+  /** Instance slug: database name, compose project and container prefix all derive from it. */
+  instance: string;
+  /** Base of the ten-port block. */
+  portBase: number;
+  /** Port the Next server listens on. */
+  webPort: number;
+  /** Base URL Playwright navigates and calls the API against. */
+  baseURL: string;
+  /** Postgres connection string of the test database. */
+  databaseUrl: string;
+  /** Redis connection string of the test instance. */
+  redisUrl: string;
+  /** Host port the local git server is published on. */
+  gitServerPort: number;
+  /** Host a workspace container reaches the git server by. */
+  gitServerHost: string;
+  /** Host port the GitHub REST stub listens on. */
+  githubStubPort: number;
+  /** Base URL of the GitHub REST stub, as the web server should call it. */
+  githubApiBaseUrl: string;
+  /** Clone URL of the seed repository, as a workspace container must dial it. */
+  repoUrl: string;
+  /** Hosts the API may accept a repository URL for. */
+  allowedRepoHosts: readonly string[];
+  /** Absolute path of the fake provider's script file. */
+  fakeScriptPath: string;
+  /** Absolute path of the master key file written for this run. */
+  masterKeyPath: string;
+  /** Directory holding files a run generates (key, stub state); git-ignored. */
+  tmpDir: string;
+  /** Image the worker starts workspace containers from. */
+  workspaceImage: string;
+  /** Name of the compose project the stack runs under. */
+  composeProjectName: string;
+  /** Prefix of every workspace container of this instance. */
+  workspaceNamePrefix: string;
+  /** Database name of the test instance. */
+  postgresDb: string;
+  /** Host port Postgres is published on. */
+  postgresPort: number;
+  /** Host port Redis is published on. */
+  redisPort: number;
+}
+
+/**
+ * Directories the harness addresses, derived from this file's own location.
+ *
+ * `dirname(fileURLToPath(import.meta.url))` rather than `new URL(path, import.meta.url)`: the
+ * bundler treats the latter as an asset reference and rewrites it at build time, which silently
+ * produces the wrong path when these modules are loaded by the unit-test runner.
+ */
+const SUPPORT_DIR = dirname(fileURLToPath(import.meta.url));
+
+/** Absolute path of the `e2e` directory. */
+const E2E_DIR = resolve(SUPPORT_DIR, '..');
+
+/** Absolute path of the web workspace. */
+export function webRoot(): string {
+  return resolve(E2E_DIR, '..');
+}
+
+/** Absolute path of the repository root. */
+export function repoRoot(): string {
+  return resolve(webRoot(), '..', '..');
+}
+
+/** Resolves a path inside the `e2e` directory to an absolute one. */
+function e2ePath(relative: string): string {
+  return resolve(E2E_DIR, relative);
+}
+
+function readPortBase(env: E2eProcessEnv): number {
+  const raw = env.E2E_PORT_BASE;
+  if (raw === undefined || raw.trim().length === 0) {
+    return DEFAULT_PORT_BASE;
+  }
+  const value = Number(raw);
+  if (!Number.isInteger(value)) {
+    throw new Error(`E2E_PORT_BASE must be an integer, got "${raw}"`);
+  }
+  return value;
+}
+
+function readOverride(env: E2eProcessEnv, key: string, fallback: string): string {
+  const raw = env[key];
+  return raw === undefined || raw.trim().length === 0 ? fallback : raw.trim();
+}
+
+/**
+ * Resolves every address, path and flag of one end-to-end run.
+ *
+ * @param processEnv - Environment to read (defaults to `process.env`).
+ * @returns The resolved environment.
+ * @throws Error when `E2E_MODE` or `E2E_PORT_BASE` hold something unusable.
+ */
+export function resolveE2eEnv(processEnv: E2eProcessEnv = process.env): E2eEnv {
+  const mode = readMode(processEnv);
+  const instance = readOverride(processEnv, 'E2E_INSTANCE', TEST_INSTANCE);
+  const portBase = readPortBase(processEnv);
+  const derived = resolveInstance({
+    env: { AH_INSTANCE: instance, AH_PORT_BASE: String(portBase) },
+  });
+  const gitServerHost = readOverride(processEnv, 'E2E_GITSERVER_HOST', DEFAULT_GITSERVER_HOST);
+  const gitServerPort = derived.portBase + PORT_OFFSETS.gitserver;
+  const githubStubPort = derived.portBase + PORT_OFFSETS.githubStub;
+  const tmpDir = e2ePath('.tmp');
+  return {
+    mode,
+    instance: derived.instance,
+    portBase: derived.portBase,
+    webPort: derived.webPort,
+    baseURL: `http://${LOOPBACK}:${String(derived.webPort)}`,
+    databaseUrl: `postgresql://${POSTGRES_CREDENTIALS}@${LOOPBACK}:${String(derived.postgresPort)}/${derived.postgresDb}`,
+    redisUrl: `redis://${LOOPBACK}:${String(derived.redisPort)}`,
+    gitServerPort,
+    gitServerHost,
+    githubStubPort,
+    githubApiBaseUrl: `http://${LOOPBACK}:${String(githubStubPort)}`,
+    repoUrl: `http://${gitServerHost}:${String(gitServerPort)}/sample.git`,
+    allowedRepoHosts: ['github.com', gitServerHost],
+    fakeScriptPath: e2ePath('fake-provider/script.json'),
+    masterKeyPath: `${tmpDir}/master.key`,
+    tmpDir,
+    workspaceImage: readOverride(processEnv, 'WORKSPACE_IMAGE', DEFAULT_WORKSPACE_IMAGE),
+    composeProjectName: derived.composeProjectName,
+    workspaceNamePrefix: derived.workspaceNamePrefix,
+    postgresDb: derived.postgresDb,
+    postgresPort: derived.postgresPort,
+    redisPort: derived.redisPort,
+  };
+}
+
+/**
+ * The environment block handed to the web and worker processes Playwright manages.
+ *
+ * Two keys are not in the shared configuration schema yet — `ALLOWED_REPO_HOSTS` and
+ * `GITHUB_API_BASE_URL` — and one, `FAKE_PROVIDER_SCRIPT_PATH`, is the contract the fake provider
+ * must load its script through. They are passed regardless: an unknown key is inert until the API
+ * lane adds it, and passing it now is what makes that addition the only change needed.
+ *
+ * @param env - The resolved environment.
+ * @returns Variables to export for the managed servers.
+ */
+export function serverEnv(env: E2eEnv): Record<string, string> {
+  return {
+    AH_INSTANCE: env.instance,
+    AH_PORT_BASE: String(env.portBase),
+    WEB_PORT: String(env.webPort),
+    POSTGRES_PORT: String(env.postgresPort),
+    REDIS_PORT: String(env.redisPort),
+    POSTGRES_DB: env.postgresDb,
+    DATABASE_URL: env.databaseUrl,
+    REDIS_URL: env.redisUrl,
+    COMPOSE_PROJECT_NAME: env.composeProjectName,
+    WORKSPACE_NAME_PREFIX: env.workspaceNamePrefix,
+    WORKSPACE_IMAGE: env.workspaceImage,
+    MASTER_KEY_PATH: env.masterKeyPath,
+    AGENT_MODEL_PROVIDER: 'fake',
+    FAKE_PROVIDER_SCRIPT_PATH: env.fakeScriptPath,
+    ALLOWED_REPO_HOSTS: env.allowedRepoHosts.join(','),
+    GITHUB_API_BASE_URL: env.githubApiBaseUrl,
+    LOG_LEVEL: 'info',
+    NEXT_PUBLIC_API_MOCK: env.mode === 'mock' ? '1' : '0',
+    WORKSPACE_IDLE_TTL_MIN: '30',
+  };
+}
