@@ -52,7 +52,7 @@ describe('run.sh --print-only', () => {
       env: { HOME: dir, AH_ENV_FILE: join(dir, '.env.local'), AH_SHIM_LOG: log },
     });
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('Agent Hangar · instance=default · http://localhost:3000');
+    expect(result.stdout).toContain('Agent Hangar · instance=default · http://127.0.0.1:3000');
     expect(result.stdout).toContain('worker');
     expect(result.stdout).toContain('3000');
   });
@@ -76,7 +76,7 @@ describe('run.sh --print-only', () => {
         AH_PORT_BASE: '3100',
       },
     });
-    expect(result.stdout).toContain('instance=feat-x · http://localhost:3100');
+    expect(result.stdout).toContain('instance=feat-x · http://127.0.0.1:3100');
     expect(result.stdout).toContain('3100');
   });
 
@@ -125,7 +125,7 @@ describe('run.sh --print-only', () => {
       },
     });
     expect(result.status).toBe(0);
-    expect(result.stdout).toContain('instance=lane-b · http://localhost:3200');
+    expect(result.stdout).toContain('instance=lane-b · http://127.0.0.1:3200');
     // `printf '%q '` escapes the spaces inside each concurrently argument.
     expect(result.stdout).toContain(String.raw`--filter\ web\ start\ --port\ 3200`);
     expect(result.stdout).toContain(String.raw`--filter\ worker\ start`);

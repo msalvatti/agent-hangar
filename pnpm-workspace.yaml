@@ -2,6 +2,26 @@ packages:
   - 'apps/*'
   - 'packages/*'
 
+# pnpm's own settings live here rather than in a .npmrc. pnpm 11 still reads npm-domain keys such
+# as `registry` from an .npmrc, but it reads its own settings from this file only, and the same
+# keys in an .npmrc are ignored without a word: `engine-strict=true` stood in this repository's
+# .npmrc while `pnpm config get engine-strict` answered `undefined` and an install against an
+# out-of-range `engines.node` printed `[WARN] Unsupported engine` and completed. The Node version
+# the README promises was therefore unenforced, and a contributor on the wrong major got a
+# successful install followed by a failure somewhere unrelated.
+#
+# `engineStrict` turns that warning into ERR_PNPM_UNSUPPORTED_ENGINE, which stops the install and
+# names both the range `engines.node` asks for and the version that is running. It covers every
+# install path, because `pnpm setup` installs through `pnpm install --frozen-lockfile`.
+#
+# `autoInstallPeers` and `shamefullyHoist` were in the same .npmrc and were ignored the same way;
+# both are restated here at the values that were intended. They match pnpm 11's defaults, so
+# nothing about the installed tree changes — what changes is that a shift in those defaults cannot
+# move this project without the change being visible in this file.
+engineStrict: true
+autoInstallPeers: true
+shamefullyHoist: false
+
 # Dependencies whose install scripts are allowed to run (pnpm 11 blocks the rest).
 # Only the ones that need their postinstall to work are allowed; the others are optional
 # native accelerators (msgpackr-extract, cpu-features, ssh2) or informational (msw, protobufjs).

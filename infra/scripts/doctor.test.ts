@@ -27,7 +27,7 @@ import {
   sandbox,
   scriptPath,
 } from './testing/doctor-sandbox.js';
-import { spawnScript, writeExtraShim, writeGnuStatShim } from './testing/shims.js';
+import { createShimDir, spawnScript, writeExtraShim, writeGnuStatShim } from './testing/shims.js';
 
 afterEach(() => {
   releaseSandboxes();
@@ -110,6 +110,70 @@ describe('doctor.sh — all green', () => {
 });
 
 describe('doctor.sh — required failures', () => {
+  /**
+   * The root manifest asks for `"node": ">=24 <25"` and pnpm refuses to install outside that
+   * range, so the diagnostic has to refuse the same set. A major below the floor is the case the
+   * lower-bound check always covered.
+   */
+  it('reports a Node below the supported major with the required range', async () => {
+    const box = await sandbox();
+    const shimDir = createShimDir({
+      log: box.log,
+      docker: greenDocker(),
+      pnpm: greenPnpm(),
+      nodeVersion: 'v22.23.2',
+    });
+    const helper = helperShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
+    });
+    expect(result.status).toBe(1);
+    const rows = JSON.parse(result.stdout) as {
+      check: string;
+      status: string;
+      detail: string;
+      fix: string;
+    }[];
+    const node = rows.find((row) => row.check === 'Node');
+    expect(node?.status).toBe('✗');
+    expect(node?.detail).toBe('v22.23.2');
+    expect(node?.fix).toContain('>=24 <25');
+  });
+
+  /**
+   * The case a lower bound alone got wrong: a major *above* the range satisfies `>= 24` but not
+   * `engines.node`, so `pnpm install` now stops on it. A green Node row there would send a reader
+   * looking for the problem everywhere except the version they are running.
+   */
+  it('reports a Node above the supported major with the required range', async () => {
+    const box = await sandbox();
+    const shimDir = createShimDir({
+      log: box.log,
+      docker: greenDocker(),
+      pnpm: greenPnpm(),
+      nodeVersion: 'v25.0.0',
+    });
+    const helper = helperShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
+    });
+    expect(result.status).toBe(1);
+    const rows = JSON.parse(result.stdout) as {
+      check: string;
+      status: string;
+      detail: string;
+      fix: string;
+    }[];
+    const node = rows.find((row) => row.check === 'Node');
+    expect(node?.status).toBe('✗');
+    expect(node?.detail).toBe('v25.0.0');
+    expect(node?.fix).toContain('>=24 <25');
+  });
+
   /**
    * Docker unreachable: the socket row is ✗ with the R2 fix, the image row is skipped, exit 1.
    */
@@ -352,8 +416,9 @@ describe('doctor.sh — optional rows never fail the exit code', () => {
     const secrets = rows.find((row) => row.check === 'Secrets');
     expect(secrets?.status).toBe('⚠');
     expect(secrets?.detail).toBe('GitHub PAT: set (…ab12) · OpenAI key: unset');
-    expect(secrets?.fix).toContain('/settings');
-    expect(secrets?.fix).toContain(String(box.portBase));
+    expect(secrets?.fix).toBe(
+      `Open http://127.0.0.1:${String(box.portBase)}/settings and save the missing key`,
+    );
     const openai = rows.find((row) => row.check === 'OpenAI model');
     expect(openai).toEqual({
       check: 'OpenAI model',

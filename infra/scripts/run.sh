@@ -61,7 +61,12 @@ if [ $print_only -eq 0 ] && [ -f "$MASTER_KEY_PATH.lock" ]; then
   fi
 fi
 
-echo "Agent Hangar · instance=$AH_INSTANCE · http://localhost:$WEB_PORT"
+# 127.0.0.1, not localhost: `next dev`/`next start` are given `-H 127.0.0.1`, so the listener is
+# IPv4 loopback only. `localhost` resolves to ::1 first on macOS and nothing answers there, which
+# leaves the printed URL working only for clients that retry the second address — the same reason
+# .env.example spells the database and Redis hosts numerically. Printing the address that is
+# actually bound depends on no fallback at all.
+echo "Agent Hangar · instance=$AH_INSTANCE · http://127.0.0.1:$WEB_PORT"
 
 if [ $production -eq 0 ]; then
   export NODE_OPTIONS="${NODE_OPTIONS:-} --conditions=development"
