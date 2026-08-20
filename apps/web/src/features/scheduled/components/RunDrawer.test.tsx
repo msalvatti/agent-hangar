@@ -300,7 +300,7 @@ describe('RunDrawer — active run (live stream)', () => {
     }
     first.open();
 
-    await fetch('/api/turns/run-nightly-running/cancel', { method: 'POST' });
+    await fetch('/api/runs/run-nightly-running/cancel', { method: 'POST' });
     first.emit('expired', {});
 
     expect(await screen.findByText('Cancelled')).toBeInTheDocument();

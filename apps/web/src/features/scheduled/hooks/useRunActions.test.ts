@@ -92,7 +92,7 @@ describe('stop', () => {
   /** A failed cancel is toasted without throwing. */
   it('toasts an error without throwing', async () => {
     server.use(
-      http.post('/api/turns/:id/cancel', () =>
+      http.post('/api/runs/:id/cancel', () =>
         HttpResponse.json({ error: { code: 'SERVER_ERROR', message: 'boom' } }, { status: 500 }),
       ),
     );

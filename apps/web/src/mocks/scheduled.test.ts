@@ -224,27 +224,68 @@ describe('GET /api/runs/:id', () => {
   });
 });
 
-describe('POST /api/turns/:id/cancel', () => {
-  /** Cancelling an active run marks it CANCELLED. */
+describe('POST /api/runs/:id/cancel', () => {
+  /**
+   * Cancelling an active run marks it CANCELLED and answers 202: the real API has to pass the
+   * request to the worker holding the container, and this store stands in for that worker.
+   */
   it('cancels a running run', async () => {
-    const result = await apiFetch('cancelTurn', { params: { id: 'run-nightly-running' } });
+    const result = await apiFetch('cancelRun', { params: { id: 'run-nightly-running' } });
     expect(result).toEqual({ ok: true });
     const detail = await apiFetch('getRun', { params: { id: 'run-nightly-running' } });
     expect(detail.run.status).toBe('CANCELLED');
   });
 
-  /** Cancelling a terminal run is a no-op that still answers ok. */
-  it('is a no-op for a terminal run', async () => {
-    const result = await apiFetch('cancelTurn', { params: { id: 'run-nightly-success' } });
-    expect(result).toEqual({ ok: true });
+  /**
+   * A run that has already finished is a 409, not a success. The real handler refuses it with
+   * `RUN_NOT_CANCELLABLE`, and a mock that answered `ok` would let the UI be written against a
+   * response the server never sends.
+   */
+  it('refuses a terminal run', async () => {
+    await expect(
+      apiFetch('cancelRun', { params: { id: 'run-nightly-success' } }),
+    ).rejects.toMatchObject({ status: 409, code: 'RUN_NOT_CANCELLABLE' });
     const detail = await apiFetch('getRun', { params: { id: 'run-nightly-success' } });
     expect(detail.run.status).toBe('SUCCEEDED');
   });
 
   /** An unknown run id answers 404. */
   it('answers 404 for an unknown run', async () => {
-    await expect(apiFetch('cancelTurn', { params: { id: 'missing' } })).rejects.toMatchObject({
+    await expect(apiFetch('cancelRun', { params: { id: 'missing' } })).rejects.toMatchObject({
       status: 404,
     });
+  });
+
+  /**
+   * The rule the whole mock stack has to keep: an identifier is accepted only by the route whose
+   * repository owns it. A `Turn.id` sent to the run route is a 404 here because it is a 404 on the
+   * real server, where the parameter is resolved through the job-run repository. This mock once
+   * answered `ok` to a run id on the *turn* route, and the shipped Stop button called that route
+   * with a run id for exactly as long as the mock agreed with it.
+   */
+  it('refuses a chat turn id', async () => {
+    const chats = await apiFetch('listChats');
+    const chatId = chats.chats[0]?.id ?? '';
+    const chat = await apiFetch('getChat', { params: { id: chatId } });
+    const turnId = chat.turns[0]?.id ?? '';
+    expect(turnId).not.toBe('');
+
+    await expect(apiFetch('cancelRun', { params: { id: turnId } })).rejects.toMatchObject({
+      status: 404,
+    });
+  });
+});
+
+describe('POST /api/turns/:id/cancel', () => {
+  /**
+   * The mirror of the rule above: a `JobRun.id` is not a turn id, and the turn route answers 404
+   * for one rather than cancelling something else.
+   */
+  it('refuses a job-run id', async () => {
+    await expect(
+      apiFetch('cancelTurn', { params: { id: 'run-nightly-running' } }),
+    ).rejects.toMatchObject({ status: 404 });
+    const detail = await apiFetch('getRun', { params: { id: 'run-nightly-running' } });
+    expect(detail.run.status).toBe('RUNNING');
   });
 });

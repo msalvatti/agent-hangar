@@ -180,6 +180,19 @@ describe('no-content operations', () => {
   });
 
   /**
+   * Stopping a scheduled run is its own operation on its own path. The two cancels are separate
+   * because their ids come from separate tables: the handler behind each resolves its parameter
+   * through one repository, so an operation that sent a `JobRun.id` to the turn path could only
+   * ever be answered with a 404.
+   */
+  it('gives the run cancel its own route, distinct from the turn cancel', () => {
+    expect(apiOperations.cancelRun.method).toBe('POST');
+    expect(apiOperations.cancelRun.path).toBe(routes.runCancel);
+    expect(apiOperations.cancelRun.path).not.toBe(apiOperations.cancelTurn.path);
+    expect(apiOperations.cancelRun.response.safeParse({ ok: true }).success).toBe(true);
+  });
+
+  /**
    * Reading one scheduled job is its own operation: the edit form loads a single row, and
    * without it a client would have to list every job to render one.
    */

@@ -17,9 +17,11 @@ import { settingsStatusHandlers } from './settings-status';
 /**
  * Every mock handler, in the order MSW matches them.
  *
- * `scheduledHandlers` comes before `chatHandlers` because both answer `POST /api/turns/:id/cancel`
- * — the route takes a turn id or a job-run id. The scheduled handler returns nothing for an id it
- * does not know, so an unmatched id falls through to the chat handler behind it.
+ * No two arrays answer the same path, so the order is presentation rather than routing: each
+ * handler owns its own route and answers every request that reaches it, including the not-found
+ * case. Cancelling is the one that used to be shared — a chat turn and a job run are stopped
+ * through separate routes precisely because their ids come from separate tables — so nothing here
+ * relies on one array declining a request for another to pick it up.
  */
 export const handlers = [
   ...repoHandlers,

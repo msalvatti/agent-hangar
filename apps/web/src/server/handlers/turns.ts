@@ -4,10 +4,11 @@
  * Layer: service (server).
  *
  * Cancelling has two shapes, and which one applies depends on whether the worker has picked the
- * turn up. A job still waiting in the queue is removed and the turn is closed here, which is exact
- * and immediate. A turn already executing lives in a container the worker owns, so the web process
- * only publishes the request on the command channel and answers `202`; the worker signals the
- * process group and persists the terminal status.
+ * turn up (`./cancel.ts` holds the half of that decision both cancel routes share). A job still
+ * waiting in the queue is removed and the turn is closed here, which is exact and immediate. A turn
+ * already executing lives in a container the worker owns, so the web process only publishes the
+ * request on the command channel and answers `202`; the worker signals the process group and
+ * persists the terminal status.
  *
  * The first shape spans Redis and Postgres, which cannot enlist in one transaction, so the two
  * writes are kept in agreement by compensation: the job is removed, the terminal status is written,
@@ -23,23 +24,21 @@
  * job behind it, the request still fails with the error that explains it, and the log line
  * `compensate` writes, naming the turn, is the only record; cancelling that turn again answers
  * `202` and publishes a command no worker is listening for, so it takes an operator to close it.
+ *
+ * This route answers for chat turns only. Its parameter is resolved through the turn repository,
+ * so a `JobRun.id` is a 404 here rather than a cancellation of the wrong kind of work; stopping a
+ * scheduled run is `handlers/runs.ts`'s `cancelRun`.
  */
 import { enqueueRunTurn, okResponse, turnCommand, turnCommandChannel } from '@agent-hangar/core';
-import type { Turn } from '@agent-hangar/core';
 
 import type { ServerContainer } from '../container';
 import { ConflictError, ResourceNotFoundError } from '../errors';
 import { jsonResponse, withErrorHandling } from '../http';
 import { assertSameOrigin } from '../same-origin';
 
+import { CANCEL_REQUESTED_STATUS, removeQueuedJob } from './cancel';
 import { compensate } from './compensate';
 import { NO_USAGE } from './guards';
-
-/** Status the cancel request is accepted with when the worker still has to act on it. */
-export const CANCEL_REQUESTED_STATUS = 202;
-
-/** BullMQ states in which a job has not started and can still be removed. */
-const REMOVABLE_STATES: readonly string[] = ['waiting', 'delayed', 'prioritized'];
 
 /** Statuses a turn can no longer leave. */
 const TERMINAL_STATUSES: readonly string[] = ['SUCCEEDED', 'FAILED', 'CANCELLED'];
@@ -47,38 +46,6 @@ const TERMINAL_STATUSES: readonly string[] = ['SUCCEEDED', 'FAILED', 'CANCELLED'
 /** Path parameters of the cancel route. */
 export interface TurnParams {
   id: string;
-}
-
-/**
- * Removes the queued job of a turn, when it is still removable.
- *
- * The state is read and then acted on, and nothing holds the queue still in between: BullMQ can
- * hand the job to a worker after the check, and it refuses to remove a job a worker has locked.
- * That refusal is the running case rather than a failure — the same situation the caller already
- * handles for a job that was active when it was checked — so the state is read again to tell the
- * two apart. A removal that fails while the job is still removable is a failure of the store and
- * is reported as one.
- *
- * @param container - The server container.
- * @param turn - The turn being cancelled.
- * @returns `true` when the job was removed before it started.
- * @throws Error When the queue refuses the removal for any reason other than the job having
- *   started.
- */
-async function removeQueuedJob(container: ServerContainer, turn: Turn): Promise<boolean> {
-  const job = await container.queues.chatTurns.getJob(turn.id);
-  if (job === undefined || !REMOVABLE_STATES.includes(await job.getState())) {
-    return false;
-  }
-  try {
-    await job.remove();
-  } catch (error) {
-    if (REMOVABLE_STATES.includes(await job.getState())) {
-      throw error;
-    }
-    return false;
-  }
-  return true;
 }
 
 /**
@@ -105,7 +72,7 @@ export function cancelTurn(
     if (TERMINAL_STATUSES.includes(turn.status)) {
       throw new ConflictError('TURN_NOT_CANCELLABLE', 'This turn has already finished');
     }
-    if (turn.status === 'QUEUED' && (await removeQueuedJob(container, turn))) {
+    if (turn.status === 'QUEUED' && (await removeQueuedJob(container.queues.chatTurns, turn.id))) {
       try {
         await container.repos.turns.finish(turn.id, 'CANCELLED', NO_USAGE);
       } catch (error) {

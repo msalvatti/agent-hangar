@@ -424,6 +424,7 @@ export const routes = {
   jobRuns: '/api/jobs/:id/runs',
   run: '/api/runs/:id',
   runEvents: '/api/runs/:id/events',
+  runCancel: '/api/runs/:id/cancel',
   settings: '/api/settings',
   settingsKey: '/api/settings/:key',
   health: '/api/health',
@@ -552,6 +553,7 @@ export const apiOperations = {
   triggerRun: op({ method: 'POST', path: routes.jobRun, response: triggerRunResponse }),
   listRuns: op({ method: 'GET', path: routes.jobRuns, response: listRunsResponse }),
   getRun: op({ method: 'GET', path: routes.run, response: runDetail }),
+  cancelRun: op({ method: 'POST', path: routes.runCancel, response: okResponse }),
   getSettings: op({ method: 'GET', path: routes.settings, response: settingsStatus }),
   putSecret: op({
     method: 'PUT',

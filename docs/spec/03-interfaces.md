@@ -249,13 +249,14 @@ All JSON; Zod-validated; errors `{ error: { code, message } }`.
 | `PATCH /api/chats/:id` | `{ title }` → rename (title is editable inline in the chat header) |
 | `POST /api/chats/:id/messages` | `{ prompt }` → new Turn, enqueues |
 | `POST /api/chats/:id/archive` · `/restore` | Status change; archive destroys live workspace; restore creates on next message (or immediately if `?warm=1`) |
-| `POST /api/turns/:id/cancel` | Signal INT via worker (through a Redis command channel) |
+| `POST /api/turns/:id/cancel` | Stop a chat turn: remove the queued job, or signal INT via worker (through a Redis command channel) |
 | `DELETE /api/chats/:id` | Cascade delete |
 | `GET /api/chats/:id/events` | **SSE** — live `AgentEvent`s for the chat; supports `Last-Event-ID` |
 | `GET /api/jobs` · `POST /api/jobs` · `PATCH /api/jobs/:id` · `DELETE /api/jobs/:id` | CRUD; upserts/removes the BullMQ Job Scheduler |
 | `POST /api/jobs/:id/run` | Manual trigger → JobRun |
 | `GET /api/jobs/:id/runs` · `GET /api/runs/:id` | Run history and detail (output, tool calls) |
 | `GET /api/runs/:id/events` | **SSE** for a running job run |
+| `POST /api/runs/:id/cancel` | Stop a job run; same two shapes as the turn cancel, addressed by `JobRun.id` |
 | `GET /api/settings` | `{ githubPat: { set, last4 }, openaiKey: { set, last4 }, model }` |
 | `PUT /api/settings/:key` · `DELETE /api/settings/:key` | Save (encrypts) / remove |
 | `GET /api/health` | DB, Redis, Docker reachability, image present |

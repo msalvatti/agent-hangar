@@ -25,7 +25,7 @@ afterEach(() => {
 
 /** Posts a cancel request for a run, mirroring what `useRunActions`'s `stop` sends. */
 async function cancelRun(runId: string): Promise<void> {
-  await fetch(`/api/turns/${runId}/cancel`, { method: 'POST' });
+  await fetch(`/api/runs/${runId}/cancel`, { method: 'POST' });
 }
 
 /** Parses raw SSE text into its `id`/`event` pairs, ignoring heartbeat comments. */
