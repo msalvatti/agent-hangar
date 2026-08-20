@@ -55,8 +55,14 @@ function listSourceFiles(dir: string): string[] {
   return files;
 }
 
-/** Matches a relative `import`/`export … from` specifier or a dynamic `import()` call. */
-const RELATIVE_SPECIFIER_PATTERN = /(?:from\s+|import\()\s*['"](\.\.?\/[^'"]+)['"]/g;
+/**
+ * Matches every syntactic form that can carry a relative specifier: an `import`/`export … from`
+ * clause, a dynamic `import()` call, and a side-effect `import './x'` with no binding. The last
+ * form has no `from`, so a pattern anchored on that keyword alone would let it through — and it
+ * resolves exactly like the others, so a `.js` extension there breaks the build just the same.
+ */
+const RELATIVE_SPECIFIER_PATTERN =
+  /(?:\bfrom\s+|\bimport\s*\(\s*|\bimport\s+(?=['"]))['"](\.\.?\/[^'"]+)['"]/g;
 
 describe('relative specifiers of @agent-hangar/core resolve without extension substitution', () => {
   /**
@@ -81,6 +87,11 @@ describe('relative specifiers of @agent-hangar/core resolve without extension su
   it('never points a relative specifier at a .js file that does not exist', () => {
     const offenders: string[] = [];
     for (const file of listSourceFiles(coreSrcDir)) {
+      // This file is the one place where `.js` specifiers appear on purpose: the cases below feed
+      // deliberate samples to the pattern. Scanning it would report its own test data as offences.
+      if (file === fileURLToPath(import.meta.url)) {
+        continue;
+      }
       const content = readFileSync(file, 'utf8');
       for (const match of content.matchAll(RELATIVE_SPECIFIER_PATTERN)) {
         const specifier = match[1] ?? '';
@@ -118,5 +129,24 @@ describe('relative specifiers of @agent-hangar/core resolve without extension su
     for (const barrel of folderBarrels) {
       expect(indexContent).toContain(`from '${barrel}'`);
     }
+  });
+
+  /**
+   * The scan above is only as good as the pattern that feeds it: a specifier form the pattern
+   * cannot see is a specifier the scan silently approves. A side-effect `import './x'` carries no
+   * `from` keyword, so a pattern anchored on `from` alone reports a clean tree while the offending
+   * import is still there. Each form is asserted individually so a future narrowing of the pattern
+   * names the form it dropped instead of failing as one opaque case.
+   */
+  it.each([
+    ['a named import clause', `import { thing } from './x.js';`],
+    ['a namespace import clause', `import * as thing from './x.js';`],
+    ['a type-only import clause', `import type { Thing } from './x.js';`],
+    ['a re-export clause', `export * from './x.js';`],
+    ['a dynamic import call', `await import('./x.js');`],
+    ['a side-effect import with no binding', `import './x.js';`],
+  ])('detects a relative specifier in %s', (_form, source) => {
+    const found = [...source.matchAll(RELATIVE_SPECIFIER_PATTERN)].map((match) => match[1]);
+    expect(found).toEqual(['./x.js']);
   });
 });
