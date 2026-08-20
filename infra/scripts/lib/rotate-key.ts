@@ -13,8 +13,11 @@
  * Two phases, so a failure never leaves a secret unreadable. Phase 1 is read-only: every set
  * secret is revealed into memory; any secret that cannot be opened aborts before a single byte is
  * written. Phase 2 writes each revealed value under the new key; if a write fails partway through,
- * every secret currently sealed under the new key is written back under the OLD key
- * (compensation), so the current master key stays fully authoritative for every row.
+ * every secret that MAY be sealed under the new key is written back under the OLD key
+ * (compensation), so the current master key stays fully authoritative for every row. "May" is the
+ * operative word: a write is counted as attempted from the moment it is issued, because a rejected
+ * `set` can still have committed on the server, and compensation that trusted the acknowledgement
+ * would skip exactly the row that was lost.
  *
  * Which key phase 1 may open a row with is the caller's decision, because it depends on where an
  * interrupted rotation stopped — see {@link RotationMode}. `strict` is a rotation starting from a
@@ -51,7 +54,7 @@ export const EXIT_ABORTED = 2;
 /** Exit code when a partial rotation was fully rolled back onto the current key. */
 export const EXIT_ROLLED_BACK = 3;
 
-/** Exit code when rollback failed and the store is split across the old and the new key. */
+/** Exit code when rollback failed and the store may be split across the old and the new key. */
 export const EXIT_COMPENSATION_INCOMPLETE = 4;
 
 /**
@@ -81,8 +84,11 @@ export interface RotateSecretsResult {
    */
   exitCode: 0 | typeof EXIT_ABORTED | typeof EXIT_ROLLED_BACK | typeof EXIT_COMPENSATION_INCOMPLETE;
   /**
-   * Secrets left sealed under the new key by a failed rollback, in storage order. Empty on every
-   * other outcome; non-empty only together with {@link EXIT_COMPENSATION_INCOMPLETE}.
+   * Secrets that may still be sealed under the new key after a failed rollback, in storage order.
+   * Empty on every other outcome; non-empty only together with
+   * {@link EXIT_COMPENSATION_INCOMPLETE}. A key is listed when its write back to the old key
+   * failed, whether or not the new-key write that preceded it was ever acknowledged — the caller
+   * must keep both key files on the strength of "may".
    */
   strandedKeys: SecretKey[];
 }
@@ -123,7 +129,7 @@ interface OpenedSecret {
 interface RevealedStore {
   /** Every stored secret's plaintext, in storage order. */
   plaintexts: Map<SecretKey, string>;
-  /** The subset already sealed under the new key, with their plaintext. */
+  /** The subset already sealed under the new key by an earlier run, with their plaintext. */
   sealedUnderNewKey: Map<SecretKey, string>;
 }
 
@@ -164,11 +170,14 @@ async function currentKeyVersion(repository: SecretRepository): Promise<number> 
 }
 
 /**
- * Writes every secret currently sealed under the new key back under the old one.
+ * Writes every secret that may be sealed under the new key back under the old one.
+ *
+ * Rewriting a row that never left the old key is a no-op in substance — same plaintext, same key,
+ * a fresh nonce — which is why the attempted set is the right one to compensate over.
  *
  * @param service - Service bound to the current (old) master key.
- * @param sealedUnderNewKey - Secrets sealed under the new key, with their plaintext.
- * @returns The keys that could not be written back and are still sealed under the new key.
+ * @param sealedUnderNewKey - Secrets that may be sealed under the new key, with their plaintext.
+ * @returns The keys that could not be written back and may still be sealed under the new key.
  */
 async function compensate(
   service: SecretsService,
@@ -277,14 +286,21 @@ export async function rotateSecrets(deps: RotateSecretsDeps): Promise<RotateSecr
   try {
     try {
       for (const [key, plaintext] of plaintexts) {
-        await services.replacement.set(key, plaintext);
+        // Recorded BEFORE the write is awaited, never after. A `set` can commit in Postgres and
+        // still reject here — the connection can drop after the server applied it and before the
+        // acknowledgement arrives — and a row recorded only on success would then be skipped by
+        // compensation, reported as a clean rollback, and left sealed under a key the caller is
+        // about to delete. The asymmetry decides it: recording a write that never committed costs
+        // one redundant rewrite under the key that already opens the row, while omitting one that
+        // did commit costs the credential.
         sealedUnderNewKey.set(key, plaintext);
+        await services.replacement.set(key, plaintext);
       }
     } catch {
       const strandedKeys = await compensate(services.current, sealedUnderNewKey);
       if (strandedKeys.length > 0) {
         deps.log(
-          `rollback incomplete: ${strandedKeys.join(', ')} still sealed under the NEW key — keep both key files`,
+          `rollback incomplete: ${strandedKeys.join(', ')} may still be sealed under the NEW key — keep both key files`,
         );
         return {
           rotated: 0,
@@ -293,7 +309,7 @@ export async function rotateSecrets(deps: RotateSecretsDeps): Promise<RotateSecr
           strandedKeys,
         };
       }
-      deps.log(`rolled back ${sealedUnderNewKey.size} secret(s)`);
+      deps.log(`restored ${sealedUnderNewKey.size} secret(s) to the current master key`);
       return { rotated: 0, keyVersion: version, exitCode: EXIT_ROLLED_BACK, strandedKeys: [] };
     }
 

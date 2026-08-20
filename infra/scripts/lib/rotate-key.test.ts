@@ -267,8 +267,10 @@ describe('rotateSecrets', () => {
   });
 
   /**
-   * A write failure partway through rolls the already-rotated secret back to the old key: exit 3,
-   * the first secret is revealable again under the old key, and the log names the rollback count.
+   * A write failure partway through rolls back to the old key: exit 3, the first secret is
+   * revealable again under the old key, and the log names how many rows were written back. The
+   * count is two, not one — the secret whose write threw is compensated as well, because a
+   * rejected `set` may still have committed on the server.
    */
   it('rolls back an already-rotated secret when a later write fails', async () => {
     const repository = createInMemoryRepositories().secrets;
@@ -308,7 +310,7 @@ describe('rotateSecrets', () => {
       exitCode: EXIT_ROLLED_BACK,
       strandedKeys: [],
     });
-    expect(logs.some((line) => line.includes('rolled back 1'))).toBe(true);
+    expect(logs.some((line) => line.includes('restored 2 secret(s)'))).toBe(true);
 
     const oldService = realService(repository, oldKey, 1);
     expect(await oldService.reveal('GITHUB_PAT')).toBe(GITHUB_CANARY);
@@ -319,10 +321,63 @@ describe('rotateSecrets', () => {
   });
 
   /**
-   * The rollback can itself fail — the database can drop while it runs. The store is then split
+   * The failure mode a rollback must not be fooled by: the write reaches Postgres and commits, and
+   * only then does the connection drop, so `set` rejects for a row that IS now sealed under the
+   * new key. Counting a row as written only once its acknowledgement arrives would skip exactly
+   * that row in compensation, report a clean rollback over a store that is not whole, and let the
+   * caller delete the one key file that still opens it.
+   */
+  it('rolls back a write that committed on the server and then rejected', async () => {
+    const repository = createInMemoryRepositories().secrets;
+    const oldKey = randomBytes(KEY_BYTES);
+    const newKey = randomBytes(KEY_BYTES);
+    await seedBoth(repository, oldKey, 1);
+
+    const logs: string[] = [];
+    const result = await rotateSecrets(
+      baseDeps(repository, oldKey, newKey, {
+        createService: (key, keyVersion) => {
+          const real = realService(repository, key, keyVersion);
+          if (Buffer.compare(Buffer.from(key), newKey) !== 0) {
+            return real;
+          }
+          return {
+            ...real,
+            set: async (secretKey: SecretKey, plaintext: string) => {
+              // Applied, then the acknowledgement is lost — the row is under the new key even
+              // though the caller sees a rejection.
+              await real.set(secretKey, plaintext);
+              throw new Error('connection reset after commit');
+            },
+          };
+        },
+        log: (line) => logs.push(line),
+      }),
+    );
+
+    expect(result).toEqual({
+      rotated: 0,
+      keyVersion: 1,
+      exitCode: EXIT_ROLLED_BACK,
+      strandedKeys: [],
+    });
+
+    // The crux: the committed row is readable with the CURRENT key again, so deleting the new key
+    // file — which the caller does on this exit code — destroys nothing.
+    const reader = realService(repository, oldKey, 1);
+    expect(await reader.reveal('GITHUB_PAT')).toBe(GITHUB_CANARY);
+    expect(await reader.reveal('OPENAI_API_KEY')).toBe(OPENAI_CANARY);
+    for (const line of logs) {
+      assertNoCanary(line);
+    }
+  });
+
+  /**
+   * The rollback can itself fail — the database can drop while it runs. The store may then be split
    * across the two keys, which is not the advertised clean abort, so the outcome is reported as
-   * its own exit code together with the secrets left under the new key. The caller relies on that
-   * to keep the new key file instead of deleting it and destroying those credentials.
+   * its own exit code together with every secret that may be left under the new key. The caller
+   * relies on that to keep the new key file instead of deleting it and destroying those
+   * credentials. The row whose new-key write threw is listed as well: it may have committed.
    */
   it('reports the split store when the rollback itself fails', async () => {
     const repository = createInMemoryRepositories().secrets;
@@ -363,7 +418,7 @@ describe('rotateSecrets', () => {
       rotated: 0,
       keyVersion: 1,
       exitCode: EXIT_COMPENSATION_INCOMPLETE,
-      strandedKeys: ['GITHUB_PAT'],
+      strandedKeys: ['GITHUB_PAT', 'OPENAI_API_KEY'],
     });
     expect(logs.some((line) => line.includes('rollback incomplete'))).toBe(true);
     expect(logs.some((line) => line.includes('keep both key files'))).toBe(true);
@@ -514,7 +569,7 @@ describe('rotateSecrets in salvage mode', () => {
       exitCode: EXIT_ROLLED_BACK,
       strandedKeys: [],
     });
-    expect(logs.some((line) => line.includes('rolled back 1'))).toBe(true);
+    expect(logs.some((line) => line.includes('restored 1 secret(s)'))).toBe(true);
 
     // The store is wholly under the current key again, which is what lets the caller delete the
     // new key file: the row this run never wrote is readable with the old key as well.
