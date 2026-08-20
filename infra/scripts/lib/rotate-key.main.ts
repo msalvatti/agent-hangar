@@ -15,7 +15,10 @@ import { PrismaSecretRepository } from '../../../packages/core/src/persistence/r
 import { StaticMasterKey } from '../../../packages/core/src/secrets/master-key.js';
 import { createSecretsService } from '../../../packages/core/src/secrets/secrets-service.js';
 
+import { parseFlags } from './cli-args.js';
 import { rotateSecrets } from './rotate-key.js';
+
+parseFlags(process.argv.slice(2), { allowed: [] });
 
 // Read through this indirection (a method call, not a bare `readFileSync(...)`) so the security
 // linter's non-literal-path check — which pattern-matches the imported identifier by name — does

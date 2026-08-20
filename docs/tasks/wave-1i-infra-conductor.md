@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W1-I (parallel with W1-A … W1-H; no Docker-integration tests — scripts are tested with PATH shims) |
-| **Status** | 🟦 running |
-| **Progress** | 5/6 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 6/6 tasks |
 | **Branch** | `feat/w1i-infra-conductor` |
 | **Owned paths** | `infra/scripts/{setup,run,archive,doctor,rotate-key,ws,db-prune}.sh`, `infra/scripts/lib/**` (node helpers), `infra/scripts/*.test.ts`, `.conductor/settings.toml`, `infra/docker-compose.yml`, `.env.example`, root `package.json` **scripts block only**, root `vitest.config.ts` (`scripts` project lines only). `infra/scripts/env.sh` is W0 output with no other Wave 1 owner — additive edits allowed (see rules). |
 | **Depends on** | W0 merged to `main` (Tasks 1I.3 and 1I.4 additionally need W1-A, W1-C, W1-E merged — this lane runs in the second Wave 1 batch, see plan §13) |
@@ -48,7 +48,7 @@ Everything is keyed by instance (`AH_INSTANCE` / `AH_PORT_BASE`, with `CONDUCTOR
 | 1I.3 | `doctor.sh` + node helpers (secrets status, OpenAI model check) with snapshot tests | ✅ | P0 | L | 1I.1, W1-A + W1-C + W1-E merged |
 | 1I.4 | `rotate-key.sh` + `lib/rotate-key.ts` (re-encrypt with `keyVersion + 1`, atomic key swap, backup) | ✅ | P1 | M | 1I.3 |
 | 1I.5 | `.conductor/settings.toml`, two-instance manual checklist, README "Working with Conductor" draft (appendix) | ✅ | P0 | S | 1I.1, 1I.2 |
-| 1I.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 1I.1–1I.5 |
+| 1I.6 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 1I.1–1I.5 |
 
 ---
 
@@ -504,17 +504,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-1i-infra-condu
 
 ## Task 1I.6 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 1I.1–1I.5
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 1I.1–1I.5
 
 **Description.** Run every gate, bring the code review to zero findings, update the plan dashboard and the tasks index, and open the PR. This PR is merged first in its batch, so keep it conflict-free with `main` (rebase before opening).
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` — exit 0
-- [ ] `pnpm vitest run --project scripts --coverage` — green, 100/100/100/100 on `infra/scripts/lib/**` (minus `*.main.ts`) and `infra/scripts/testing/**`; `pnpm test` green
-- [ ] Manual: `pnpm setup` twice (idempotent), `pnpm doctor` exit 0, `pnpm dev` serves the URL it prints, `AH_INSTANCE=feat-x AH_PORT_BASE=3100 bash infra/scripts/archive.sh --dry-run` lists the right project
-- [ ] `/bymax-quality:code-review` → zero open findings (or justified in PR body)
-- [ ] `docs/plan.md` §12 row W1-I → 🟨 with branch/PR; `docs/tasks/README.md` row updated
-- [ ] PR opened; structured result returned
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` — exit 0
+- [x] `pnpm vitest run --project scripts --coverage` — green, 100/100/100/100 on `infra/scripts/lib/**` (minus `*.main.ts`) and `infra/scripts/testing/**`; `pnpm test` green (one pre-existing, out-of-scope failure — see PR body's Contract change requests)
+- [x] Manual: `pnpm setup` twice (idempotent, verified live against real Docker/Postgres/Redis — Appendix A), `pnpm doctor` exit 0 (live), `pnpm dev` serves the URL it prints (`run.sh --print-only`, live), `AH_INSTANCE=feat-x AH_PORT_BASE=3100 bash infra/scripts/archive.sh --dry-run` lists `agent-hangar-feat-x`
+- [x] `/bymax-quality:code-review` → zero open findings (performed by hand: mechanical gate + manual bug hunt + convention checklist; one dead-export finding fixed by wiring `cli-args.ts` into the three `.main.ts` entry points)
+- [x] `docs/plan.md` §12 row W1-I → 🟨 with branch/PR; `docs/tasks/README.md` row updated
+- [x] PR opened; structured result returned
 
 **Files to create/modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (W1-I row only), this file.
@@ -663,3 +663,4 @@ _Target: README §7 "Working with Conductor". Final prose, ready to paste verbat
 - 1I.3 ✅ 2026-08-19 — doctor.sh 10-row diagnostic table (table + --json) backed by secrets-status.ts and openai-check.ts node helpers; env.sh gains explicit POSTGRES_PORT/REDIS_PORT override precedence for TCP-reachability tests; 100% coverage on infra/scripts/lib/** and testing/**.
 - 1I.4 ✅ 2026-08-19 — rotate-key.sh + lib/rotate-key.ts: two-phase abort-safe rotation (reveal under the old key, write under the new one, compensate on a partial write), atomic key-file swap with a timestamped 0600 backup, --resume for an interrupted rotation.
 - 1I.5 ✅ 2026-08-19 — .conductor/settings.toml committed and proven by conductor.test.ts; two-instance checklist executed live against real Docker/Postgres/Redis (default + feat-x simultaneously, verified isolated, torn down cleanly); README "Working with Conductor" drafted in Appendix B.
+- 1I.6 ✅ 2026-08-19 — all gates green (lint, format, typecheck, 100/100/100/100 on infra/scripts/lib/** and testing/**, full repo test suite green except one pre-existing out-of-lane failure), hand-run code review and security review at zero findings, dashboards updated, PR opened.

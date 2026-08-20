@@ -165,6 +165,22 @@ format_secret_detail() {
   esac
 }
 
+# Fills row_status/row_detail/row_fix and secrets_openai_set from a successful helper run.
+check_secrets_ok() {
+  local github openai
+  github=$(printf '%s\n' "$HELPER_OUTPUT" | sed -n 's/^GITHUB_PAT=//p')
+  openai=$(printf '%s\n' "$HELPER_OUTPUT" | sed -n 's/^OPENAI_API_KEY=//p')
+  row_detail="GitHub PAT: $(format_secret_detail "$github") · OpenAI key: $(format_secret_detail "$openai")"
+  if [ "${github%%:*}" = "set" ] && [ "${openai%%:*}" = "set" ]; then
+    row_status="✓"; row_fix=""
+  else
+    row_status="⚠"; row_fix="Open http://localhost:$WEB_PORT/settings and save the missing key"
+  fi
+  if [ "${openai%%:*}" = "set" ]; then
+    secrets_openai_set=1
+  fi
+}
+
 check_secrets() {
   if [ "$postgres_ok" != "1" ] || [ "$master_key_ok" != "1" ]; then
     row_status="–"; row_detail="master key or database unavailable"; row_fix=""
@@ -172,29 +188,10 @@ check_secrets() {
   fi
   run_helper secrets-status.main.ts
   case "$HELPER_RC" in
-    0)
-      local github openai
-      github=$(printf '%s\n' "$HELPER_OUTPUT" | sed -n 's/^GITHUB_PAT=//p')
-      openai=$(printf '%s\n' "$HELPER_OUTPUT" | sed -n 's/^OPENAI_API_KEY=//p')
-      row_detail="GitHub PAT: $(format_secret_detail "$github") · OpenAI key: $(format_secret_detail "$openai")"
-      if [ "${github%%:*}" = "set" ] && [ "${openai%%:*}" = "set" ]; then
-        row_status="✓"; row_fix=""
-      else
-        row_status="⚠"; row_fix="Open http://localhost:$WEB_PORT/settings and save the missing key"
-      fi
-      if [ "${openai%%:*}" = "set" ]; then
-        secrets_openai_set=1
-      fi
-      ;;
-    3)
-      row_status="–"; row_detail="db-unreachable"; row_fix=""
-      ;;
-    4)
-      row_status="–"; row_detail="master-key-missing"; row_fix=""
-      ;;
-    *)
-      row_status="–"; row_detail="helper error ($HELPER_RC)"; row_fix=""
-      ;;
+    0) check_secrets_ok ;;
+    3) row_status="–"; row_detail="db-unreachable"; row_fix="" ;;
+    4) row_status="–"; row_detail="master-key-missing"; row_fix="" ;;
+    *) row_status="–"; row_detail="helper error ($HELPER_RC)"; row_fix="" ;;
   esac
 }
 

@@ -10,9 +10,11 @@ import {
 } from '../../../packages/core/src/persistence/client.js';
 import { PrismaSecretRepository } from '../../../packages/core/src/persistence/repositories/secret.repository.js';
 
+import { parseFlags } from './cli-args.js';
 import { createFileBackedSecretsService } from './file-backed-secrets-service.js';
 import { secretsStatus } from './secrets-status.js';
 
+parseFlags(process.argv.slice(2), { allowed: [] });
 const result = await secretsStatus({
   env: process.env,
   loadConfig,
