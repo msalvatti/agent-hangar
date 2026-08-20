@@ -31,7 +31,7 @@ import { jsonResponse, noContent, parseJsonBody, withErrorHandling } from '../ht
 import { allowedRepoHosts, assertRepoUrlAllowed } from '../repo-url';
 import { assertSameOrigin } from '../same-origin';
 
-import { requireSecrets } from './guards';
+import { NO_USAGE, requireSecrets } from './guards';
 import { toJobSummary } from './mappers';
 
 /** Status the manual-run route answers with; the worker has yet to pick the run up. */
@@ -295,7 +295,7 @@ export function triggerRun(
     } catch (error) {
       await container.repos.jobRuns.finish(run.id, {
         status: 'FAILED',
-        usage: { inputTokens: 0, outputTokens: 0, stepCount: 0 },
+        usage: NO_USAGE,
         error: 'Could not enqueue the run',
       });
       throw error;

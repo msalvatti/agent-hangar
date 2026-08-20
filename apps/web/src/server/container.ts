@@ -135,17 +135,25 @@ function buildMessaging(
 }
 
 /**
- * Builds a container, using every injected collaborator and constructing only the rest.
+ * Resolves the secrets service and the GitHub client built over it.
  *
- * @param deps - Collaborators to use instead of the real ones.
- * @returns A container. No connection is opened until the first query, command or job.
+ * The GitHub client is the one web-side consumer of `reveal`, so it is constructed from the same
+ * secrets service the settings routes write through — never from a second one.
+ *
+ * @param deps - Injected collaborators.
+ * @param config - Loaded configuration.
+ * @param redactor - Redactor the GitHub client scrubs responses with.
+ * @param logger - Logger the GitHub client reports failures to.
+ * @param repos - Repositories, for the secret envelope store.
+ * @returns The secrets service and the GitHub client.
  */
-export function createServerContainer(deps: Partial<ServerContainerDeps> = {}): ServerContainer {
-  const config = deps.config ?? loadConfig();
-  const redactor = deps.redactor ?? createRedactor();
-  const logger = deps.logger ?? createLogger({ level: config.LOG_LEVEL, redactor, name: 'web' });
-  const { prisma, repos } = buildPersistence(deps, config, redactor);
-  const { redis, queues } = buildMessaging(deps, config);
+function buildCredentials(
+  deps: Partial<ServerContainerDeps>,
+  config: AppConfig,
+  redactor: Redactor,
+  logger: Logger,
+  repos: Repositories,
+): { secrets: SecretsService; github: GithubClient } {
   const secrets =
     deps.secrets ??
     createSecretsService({
@@ -161,6 +169,22 @@ export function createServerContainer(deps: Partial<ServerContainerDeps> = {}): 
       baseUrl: config.GITHUB_API_BASE_URL,
       fetch: globalThis.fetch.bind(globalThis),
     });
+  return { secrets, github };
+}
+
+/**
+ * Builds a container, using every injected collaborator and constructing only the rest.
+ *
+ * @param deps - Collaborators to use instead of the real ones.
+ * @returns A container. No connection is opened until the first query, command or job.
+ */
+export function createServerContainer(deps: Partial<ServerContainerDeps> = {}): ServerContainer {
+  const config = deps.config ?? loadConfig();
+  const redactor = deps.redactor ?? createRedactor();
+  const logger = deps.logger ?? createLogger({ level: config.LOG_LEVEL, redactor, name: 'web' });
+  const { prisma, repos } = buildPersistence(deps, config, redactor);
+  const { redis, queues } = buildMessaging(deps, config);
+  const { secrets, github } = buildCredentials(deps, config, redactor, logger, repos);
 
   let disposed = false;
   return {

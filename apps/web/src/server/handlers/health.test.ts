@@ -168,7 +168,7 @@ describe('getHealth', () => {
     vi.useFakeTimers();
     try {
       const harness = createTestContainer({ now: NOW });
-      harness.doubles.prisma.queryHangs = true;
+      harness.doubles.prisma.shouldHang = true;
       const pending = getHealth(harness.container);
       await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS);
       const body = healthResponse.parse(await (await pending).json());

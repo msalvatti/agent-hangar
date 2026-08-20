@@ -12,6 +12,7 @@ import { putSecretResponse, settingsStatus } from '@agent-hangar/core';
 import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import { foreignRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
 
@@ -186,15 +187,7 @@ describe('putSetting', () => {
    */
   it('rejects a cross-origin write without touching the store', async () => {
     const { container, doubles } = harness({ secretsSet: false });
-    const request = new Request('http://127.0.0.1:3000/api/settings/GITHUB_PAT', {
-      method: 'PUT',
-      headers: {
-        host: '127.0.0.1:3000',
-        origin: 'http://evil.example',
-        'content-type': 'text/plain',
-      },
-      body: JSON.stringify({ value: GITHUB_CANARY }),
-    });
+    const request = foreignRequest('/api/settings/GITHUB_PAT', 'PUT', { value: GITHUB_CANARY });
     const response = await putSetting(container, request, { key: 'GITHUB_PAT' });
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({ error: { code: 'FORBIDDEN_ORIGIN' } });
@@ -227,10 +220,7 @@ describe('deleteSetting', () => {
     const unknown = await deleteSetting(container, write('NOPE', 'DELETE'), { key: 'NOPE' });
     expect(unknown.status).toBe(404);
 
-    const foreign = new Request('http://127.0.0.1:3000/api/settings/GITHUB_PAT', {
-      method: 'DELETE',
-      headers: { host: '127.0.0.1:3000', origin: 'http://evil.example' },
-    });
+    const foreign = foreignRequest('/api/settings/GITHUB_PAT', 'DELETE', {});
     expect((await deleteSetting(container, foreign, { key: 'GITHUB_PAT' })).status).toBe(403);
   });
 });

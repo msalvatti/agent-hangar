@@ -16,6 +16,7 @@ import {
 } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
+import { foreignRequest, writeRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
 
@@ -41,26 +42,6 @@ const JOB_BODY = {
 };
 
 /**
- * Builds a same-origin state-changing request.
- *
- * @param path - Path below the API root.
- * @param method - HTTP method.
- * @param body - JSON body, when the route takes one.
- * @returns The request.
- */
-function write(path: string, method: string, body?: unknown): Request {
-  return new Request(`http://127.0.0.1:3000${path}`, {
-    method,
-    headers: {
-      host: '127.0.0.1:3000',
-      origin: 'http://127.0.0.1:3000',
-      'content-type': 'application/json',
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-}
-
-/**
  * Creates a job through the route.
  *
  * @param harness - The test container.
@@ -73,7 +54,7 @@ async function seedJob(
 ): Promise<ReturnType<typeof jobSummary.parse>> {
   const response = await createJob(
     harness.container,
-    write('/api/jobs', 'POST', { ...JOB_BODY, ...body }),
+    writeRequest('/api/jobs', 'POST', { ...JOB_BODY, ...body }),
   );
   expect(response.status).toBe(201);
   return jobSummary.parse(await response.json());
@@ -118,14 +99,14 @@ describe('createJob', () => {
     const harness = createTestContainer({ now: NOW });
     const badCron = await createJob(
       harness.container,
-      write('/api/jobs', 'POST', { ...JOB_BODY, cron: '61 * * * *' }),
+      writeRequest('/api/jobs', 'POST', { ...JOB_BODY, cron: '61 * * * *' }),
     );
     expect(badCron.status).toBe(400);
     expect(await badCron.json()).toMatchObject({ error: { code: 'INVALID_CRON' } });
 
     const badZone = await createJob(
       harness.container,
-      write('/api/jobs', 'POST', { ...JOB_BODY, timezone: 'Mars/Olympus' }),
+      writeRequest('/api/jobs', 'POST', { ...JOB_BODY, timezone: 'Mars/Olympus' }),
     );
     expect(badZone.status).toBe(400);
     expect(await harness.doubles.repos.scheduledJobs.list()).toHaveLength(0);
@@ -139,19 +120,11 @@ describe('createJob', () => {
     const harness = createTestContainer({ now: NOW });
     const badRepo = await createJob(
       harness.container,
-      write('/api/jobs', 'POST', { ...JOB_BODY, repoUrl: 'https://github.com/a/b/c' }),
+      writeRequest('/api/jobs', 'POST', { ...JOB_BODY, repoUrl: 'https://github.com/a/b/c' }),
     );
     expect(badRepo.status).toBe(400);
 
-    const foreign = new Request('http://127.0.0.1:3000/api/jobs', {
-      method: 'POST',
-      headers: {
-        host: '127.0.0.1:3000',
-        origin: 'http://evil.example',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(JOB_BODY),
-    });
+    const foreign = foreignRequest('/api/jobs', 'POST', JOB_BODY);
     expect((await createJob(harness.container, foreign)).status).toBe(403);
     expect(await harness.doubles.repos.scheduledJobs.list()).toHaveLength(0);
   });
@@ -164,7 +137,10 @@ describe('createJob', () => {
     const harness = createTestContainer({ now: NOW });
     const queue = harness.doubles.queues.scheduledJobs;
     vi.spyOn(queue, 'upsertJobScheduler').mockRejectedValue(new Error('redis unreachable'));
-    const response = await createJob(harness.container, write('/api/jobs', 'POST', JOB_BODY));
+    const response = await createJob(
+      harness.container,
+      writeRequest('/api/jobs', 'POST', JOB_BODY),
+    );
     expect(response.status).toBe(500);
     expect(await harness.doubles.repos.scheduledJobs.list()).toHaveLength(0);
   });
@@ -196,9 +172,11 @@ describe('listJobs and getJob', () => {
   it('reads one job and reports an unknown id as missing', async () => {
     const harness = createTestContainer({ now: NOW });
     const job = await seedJob(harness);
-    const found = await getJob(harness.container, write('/api/jobs', 'GET'), { id: job.id });
+    const found = await getJob(harness.container, writeRequest('/api/jobs', 'GET'), { id: job.id });
     expect(jobSummary.parse(await found.json()).id).toBe(job.id);
-    const missing = await getJob(harness.container, write('/api/jobs', 'GET'), { id: 'nope' });
+    const missing = await getJob(harness.container, writeRequest('/api/jobs', 'GET'), {
+      id: 'nope',
+    });
     expect(missing.status).toBe(404);
   });
 });
@@ -213,7 +191,7 @@ describe('updateJob', () => {
     const job = await seedJob(harness);
     const response = await updateJob(
       harness.container,
-      write(`/api/jobs/${job.id}`, 'PATCH', { cron: '30 4 * * *' }),
+      writeRequest(`/api/jobs/${job.id}`, 'PATCH', { cron: '30 4 * * *' }),
       { id: job.id },
     );
     const updated = jobSummary.parse(await response.json());
@@ -233,7 +211,7 @@ describe('updateJob', () => {
     const job = await seedJob(harness);
     const response = await updateJob(
       harness.container,
-      write(`/api/jobs/${job.id}`, 'PATCH', { name: 'Renamed' }),
+      writeRequest(`/api/jobs/${job.id}`, 'PATCH', { name: 'Renamed' }),
       { id: job.id },
     );
     const updated = jobSummary.parse(await response.json());
@@ -254,7 +232,7 @@ describe('updateJob', () => {
       await (
         await updateJob(
           harness.container,
-          write(`/api/jobs/${job.id}`, 'PATCH', { enabled: false }),
+          writeRequest(`/api/jobs/${job.id}`, 'PATCH', { enabled: false }),
           {
             id: job.id,
           },
@@ -264,9 +242,13 @@ describe('updateJob', () => {
     expect(disabled.nextRunAt).toBeNull();
     expect(harness.doubles.queues.scheduledJobs.schedulers.size).toBe(0);
 
-    await updateJob(harness.container, write(`/api/jobs/${job.id}`, 'PATCH', { enabled: true }), {
-      id: job.id,
-    });
+    await updateJob(
+      harness.container,
+      writeRequest(`/api/jobs/${job.id}`, 'PATCH', { enabled: true }),
+      {
+        id: job.id,
+      },
+    );
     expect(harness.doubles.queues.scheduledJobs.schedulers.has(job.id)).toBe(true);
   });
 
@@ -279,13 +261,17 @@ describe('updateJob', () => {
     const job = await seedJob(harness);
     const bad = await updateJob(
       harness.container,
-      write(`/api/jobs/${job.id}`, 'PATCH', { cron: 'not a cron' }),
+      writeRequest(`/api/jobs/${job.id}`, 'PATCH', { cron: 'not a cron' }),
       { id: job.id },
     );
     expect(bad.status).toBe(400);
-    const missing = await updateJob(harness.container, write('/api/jobs/nope', 'PATCH', {}), {
-      id: 'nope',
-    });
+    const missing = await updateJob(
+      harness.container,
+      writeRequest('/api/jobs/nope', 'PATCH', {}),
+      {
+        id: 'nope',
+      },
+    );
     expect(missing.status).toBe(404);
   });
 
@@ -298,7 +284,7 @@ describe('updateJob', () => {
     const job = await seedJob(harness);
     const response = await updateJob(
       harness.container,
-      write(`/api/jobs/${job.id}`, 'PATCH', { repoUrl: 'https://evil.example/a/b' }),
+      writeRequest(`/api/jobs/${job.id}`, 'PATCH', { repoUrl: 'https://evil.example/a/b' }),
       { id: job.id },
     );
     expect(response.status).toBe(400);
@@ -319,7 +305,7 @@ describe('deleteJob', () => {
       model: 'gpt-test',
       scheduledFor: NOW,
     });
-    const response = await deleteJob(harness.container, write('/api/jobs', 'DELETE'), {
+    const response = await deleteJob(harness.container, writeRequest('/api/jobs', 'DELETE'), {
       id: job.id,
     });
     expect(response.status).toBe(204);
@@ -334,7 +320,7 @@ describe('deleteJob', () => {
    */
   it('reports an unknown job as missing', async () => {
     const harness = createTestContainer({ now: NOW });
-    const response = await deleteJob(harness.container, write('/api/jobs', 'DELETE'), {
+    const response = await deleteJob(harness.container, writeRequest('/api/jobs', 'DELETE'), {
       id: 'nope',
     });
     expect(response.status).toBe(404);
@@ -349,7 +335,7 @@ describe('triggerRun', () => {
   it('creates the run row and enqueues it with the run id', async () => {
     const harness = createTestContainer({ now: NOW });
     const job = await seedJob(harness);
-    const response = await triggerRun(harness.container, write('/api/jobs/x/run', 'POST'), {
+    const response = await triggerRun(harness.container, writeRequest('/api/jobs/x/run', 'POST'), {
       id: job.id,
     });
     expect(response.status).toBe(202);
@@ -372,13 +358,13 @@ describe('triggerRun', () => {
     const harness = createTestContainer({ now: NOW });
     const job = await seedJob(harness);
     await harness.doubles.secrets.remove('GITHUB_PAT');
-    const noSecrets = await triggerRun(harness.container, write('/api/jobs/x/run', 'POST'), {
+    const noSecrets = await triggerRun(harness.container, writeRequest('/api/jobs/x/run', 'POST'), {
       id: job.id,
     });
     expect(noSecrets.status).toBe(409);
     expect(await noSecrets.json()).toMatchObject({ error: { code: 'SECRETS_MISSING' } });
 
-    const missing = await triggerRun(harness.container, write('/api/jobs/x/run', 'POST'), {
+    const missing = await triggerRun(harness.container, writeRequest('/api/jobs/x/run', 'POST'), {
       id: 'nope',
     });
     expect(missing.status).toBe(404);
@@ -392,7 +378,7 @@ describe('triggerRun', () => {
     const harness = createTestContainer({ now: NOW });
     const job = await seedJob(harness);
     harness.doubles.queues.scheduledJobs.addFailure = new Error('redis unreachable');
-    const response = await triggerRun(harness.container, write('/api/jobs/x/run', 'POST'), {
+    const response = await triggerRun(harness.container, writeRequest('/api/jobs/x/run', 'POST'), {
       id: job.id,
     });
     expect(response.status).toBe(500);

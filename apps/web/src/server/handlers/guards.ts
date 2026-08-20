@@ -1,5 +1,5 @@
 /**
- * Preconditions every route that starts agent work has to check.
+ * Preconditions and shared facts for the routes that start or stop agent work.
  *
  * Layer: service (server).
  *
@@ -7,10 +7,18 @@
  * ready for it. That distinction is what lets the UI point at Settings or at the running turn
  * instead of at the form the user just filled in.
  */
-import type { SecretKey } from '@agent-hangar/core';
+import type { SecretKey, UsageTotals } from '@agent-hangar/core';
 
 import type { ServerContainer } from '../container';
 import { ConflictError } from '../errors';
+
+/**
+ * Usage recorded for a turn or run that is closed without ever having executed.
+ *
+ * Cancelling a queued turn and failing an enqueue both end work that consumed no tokens and took
+ * no steps, and the repositories require the totals either way.
+ */
+export const NO_USAGE: UsageTotals = { inputTokens: 0, outputTokens: 0, stepCount: 0 };
 
 /** Turn and run statuses that mean work is already under way. */
 export const LIVE_STATUSES: readonly string[] = ['QUEUED', 'PREPARING', 'RUNNING'];

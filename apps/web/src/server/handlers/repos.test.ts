@@ -11,6 +11,7 @@ import { listBranchesResponse, listReposResponse } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ApiHttpError, GithubApiError } from '../errors';
+import { readRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 
 import { listBranches, listRepos, REPOS_CACHE_CONTROL } from './repos';
@@ -26,16 +27,6 @@ const REPO = {
   description: null,
 };
 
-/**
- * Builds a read request.
- *
- * @param path - Path below the API root, query included.
- * @returns The request.
- */
-function read(path: string): Request {
-  return new Request(`http://127.0.0.1:3000${path}`);
-}
-
 describe('listRepos', () => {
   /**
    * With no query every repository is returned, and the answer satisfies the contract the picker
@@ -44,7 +35,7 @@ describe('listRepos', () => {
   it('lists every repository when no query is given', async () => {
     const { container, doubles } = createTestContainer();
     doubles.github.repos = [REPO, { ...REPO, fullName: 'other/thing' }];
-    const response = await listRepos(container, read('/api/repos'));
+    const response = await listRepos(container, readRequest('/api/repos'));
     expect(listReposResponse.parse(await response.json()).repos).toHaveLength(2);
   });
 
@@ -55,7 +46,7 @@ describe('listRepos', () => {
   it('filters by the query and marks the response private', async () => {
     const { container, doubles } = createTestContainer();
     doubles.github.repos = [REPO, { ...REPO, fullName: 'other/thing' }];
-    const response = await listRepos(container, read('/api/repos?query=widg'));
+    const response = await listRepos(container, readRequest('/api/repos?query=widg'));
     expect(response.headers.get('cache-control')).toBe(REPOS_CACHE_CONTROL);
     expect(listReposResponse.parse(await response.json()).repos).toHaveLength(1);
   });
@@ -66,7 +57,7 @@ describe('listRepos', () => {
   it('reports a missing token as a conflict', async () => {
     const { container, doubles } = createTestContainer();
     doubles.github.failure = new ApiHttpError(409, 'SECRETS_MISSING', 'not configured');
-    const response = await listRepos(container, read('/api/repos'));
+    const response = await listRepos(container, readRequest('/api/repos'));
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: { code: 'SECRETS_MISSING' } });
   });
@@ -78,12 +69,12 @@ describe('listRepos', () => {
   it('separates a rejected token from an upstream failure', async () => {
     const { container, doubles } = createTestContainer();
     doubles.github.failure = new GithubApiError(401, 'Bad credentials');
-    const auth = await listRepos(container, read('/api/repos'));
+    const auth = await listRepos(container, readRequest('/api/repos'));
     expect(auth.status).toBe(401);
     expect(await auth.json()).toMatchObject({ error: { code: 'GITHUB_AUTH' } });
 
     doubles.github.failure = new GithubApiError(503, 'upstream text');
-    const upstream = await listRepos(container, read('/api/repos'));
+    const upstream = await listRepos(container, readRequest('/api/repos'));
     expect(upstream.status).toBe(502);
     expect(await upstream.text()).not.toContain('upstream text');
   });
@@ -93,7 +84,7 @@ describe('listRepos', () => {
    */
   it('rejects an over-long query', async () => {
     const { container } = createTestContainer();
-    const response = await listRepos(container, read(`/api/repos?query=${'x'.repeat(300)}`));
+    const response = await listRepos(container, readRequest(`/api/repos?query=${'x'.repeat(300)}`));
     expect(response.status).toBe(400);
   });
 });
@@ -106,7 +97,10 @@ describe('listBranches', () => {
   it('lists the branches of a repository', async () => {
     const { container, doubles } = createTestContainer();
     doubles.github.branches = [{ name: 'main', sha: 'a'.repeat(40), protected: true }];
-    const response = await listBranches(container, read('/api/repos/branches?repo=acme/widgets'));
+    const response = await listBranches(
+      container,
+      readRequest('/api/repos/branches?repo=acme/widgets'),
+    );
     const body = listBranchesResponse.parse(await response.json());
     expect(body.branches).toEqual([{ name: 'main', sha: 'a'.repeat(40), protected: true }]);
   });
@@ -117,7 +111,7 @@ describe('listBranches', () => {
    */
   it('requires the repo parameter', async () => {
     const { container } = createTestContainer();
-    const response = await listBranches(container, read('/api/repos/branches'));
+    const response = await listBranches(container, readRequest('/api/repos/branches'));
     expect(response.status).toBe(400);
     expect(await response.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
   });

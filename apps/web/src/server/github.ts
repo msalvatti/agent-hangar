@@ -58,8 +58,32 @@ export const GITHUB_PAGE_SIZE = 100;
 /** How much of a failed response body is inspected before it is discarded. */
 const ERROR_BODY_SAMPLE = 200;
 
-/** `owner/name`, the only shape the branches endpoint accepts. */
-const REPO_SLUG_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+/** Characters a repository owner or name may contain. */
+const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9_.-]+$/;
+
+/** A segment made only of dots, which `URL` resolves away rather than treating as a name. */
+const DOT_SEGMENT_PATTERN = /^\.+$/;
+
+/**
+ * Whether a value is the `owner/name` slug the branches endpoint accepts.
+ *
+ * The dot check is the load-bearing half. The slug is interpolated into a URL path, and `URL`
+ * resolves `.` and `..` before the request goes out, so `../..` — which is two perfectly ordinary
+ * segments as far as the character class is concerned — would climb out of `/repos/` and send the
+ * request, `Authorization` header and all, to a path the caller never named.
+ *
+ * @param repo - Value received from the client.
+ * @returns `true` when it names exactly one owner and one repository.
+ */
+function isRepoSlug(repo: string): boolean {
+  const segments = repo.split('/');
+  return (
+    segments.length === 2 &&
+    segments.every(
+      (segment) => REPO_SEGMENT_PATTERN.test(segment) && !DOT_SEGMENT_PATTERN.test(segment),
+    )
+  );
+}
 
 /** Shape of the repository fields this client reads. */
 interface GithubRepo {
@@ -105,7 +129,7 @@ export function createGithubClient(deps: GithubClientDeps): GithubClient {
     },
 
     async listBranches(repo: string): Promise<BranchSummary[]> {
-      if (!REPO_SLUG_PATTERN.test(repo)) {
+      if (!isRepoSlug(repo)) {
         throw new ValidationError('Repository must be given as "owner/name"');
       }
       const path = `/repos/${repo}/branches?per_page=${String(GITHUB_PAGE_SIZE)}`;

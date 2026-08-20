@@ -162,7 +162,7 @@ describe('FakeQueue', () => {
     const job = await queue.add('run-scheduled-job', {});
     expect(job.id).toBe('generated-run-scheduled-job');
     expect(await job.getState()).toBe('waiting');
-    queue.jobsVisible = false;
+    queue.canFindJobs = false;
     expect(await queue.getJob(job.id)).toBeUndefined();
   });
 
@@ -298,7 +298,7 @@ describe('StubGithubClient and FakeDatabase', () => {
    */
   it('can hang instead of answering', async () => {
     const database = new FakeDatabase();
-    database.queryHangs = true;
+    database.shouldHang = true;
     const outcome = await Promise.race([
       database.$queryRaw().then(() => 'settled'),
       new Promise((resolve) =>

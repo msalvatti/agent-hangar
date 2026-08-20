@@ -94,61 +94,104 @@ export function formatSseFrame(frame: SseFrame): string {
  * @returns A `200 text/event-stream` response.
  */
 export function createSseResponse(options: SseSourceOptions): Response {
-  const encoder = new TextEncoder();
-  const connection = options.redis.duplicate();
-  let closed = false;
-  let heartbeat: NodeJS.Timeout | undefined;
-
-  /**
-   * Releases the heartbeat and the duplicated connection, once.
-   *
-   * @returns `true` when this call was the one that released them.
-   */
-  const release = (): boolean => {
-    if (closed) {
-      return false;
-    }
-    closed = true;
-    clearInterval(heartbeat);
-    connection.disconnect();
-    return true;
-  };
-
+  const lifecycle = createLifecycle(options.redis.duplicate());
   const stream = new ReadableStream<Uint8Array>({
     start(controller): void {
-      const write = (text: string): void => {
-        // Enqueuing after the body closed throws, and the only writer left at that point is the
-        // pump, whose catch already treats a failure after the close as the ordinary end.
-        controller.enqueue(encoder.encode(text));
-      };
-      const stop = (): void => {
-        if (release()) {
-          controller.close();
-        }
-      };
-      if (options.signal.aborted) {
-        // The client gave up while the handler was still resolving which stream to read. The abort
-        // event has already fired, so a listener would never see it.
-        stop();
-        return;
-      }
-      // `once: true` unregisters the listener when it fires, and the signal lives exactly as long
-      // as the request, so a listener that never fires is collected with it. `stop` is idempotent,
-      // which is what makes a late abort a no-op rather than a second close.
-      options.signal.addEventListener('abort', stop, { once: true });
-      heartbeat = setInterval(() => {
-        write(SSE_HEARTBEAT_FRAME);
-      }, options.heartbeatMs);
-      void pump(options, connection, write, () => closed, stop);
+      startStream(options, lifecycle, controller);
     },
     cancel(): void {
       // The consumer went away without aborting the request, which is what `reader.cancel()` looks
       // like. The body is already closing, so only the held resources have to go.
-      release();
+      lifecycle.release();
     },
   });
-
   return new Response(stream, { status: 200, headers: SSE_HEADERS });
+}
+
+/** The resources one stream holds, and the single place that gives them back. */
+interface StreamLifecycle {
+  /** The duplicated connection the pump reads on. */
+  connection: RedisCommands;
+  /** Whether the stream has been released. */
+  isClosed: () => boolean;
+  /** Registers the heartbeat timer so `release` can clear it. */
+  setHeartbeat: (timer: NodeJS.Timeout) => void;
+  /** Releases the timer and the connection, once. Returns `true` for the call that did it. */
+  release: () => boolean;
+}
+
+/**
+ * Tracks the resources of one stream so every exit path gives back the same set.
+ *
+ * @param connection - The duplicated connection this stream owns.
+ * @returns The lifecycle handle.
+ */
+function createLifecycle(connection: RedisCommands): StreamLifecycle {
+  let closed = false;
+  let heartbeat: NodeJS.Timeout | undefined;
+  return {
+    connection,
+    isClosed: () => closed,
+    setHeartbeat: (timer: NodeJS.Timeout) => {
+      heartbeat = timer;
+    },
+    release: (): boolean => {
+      if (closed) {
+        return false;
+      }
+      closed = true;
+      clearInterval(heartbeat);
+      connection.disconnect();
+      return true;
+    },
+  };
+}
+
+/**
+ * Starts the heartbeat and the pump behind one stream controller.
+ *
+ * @param options - The stream options.
+ * @param lifecycle - The resources this stream holds.
+ * @param controller - Controller of the response body.
+ */
+function startStream(
+  options: SseSourceOptions,
+  lifecycle: StreamLifecycle,
+  controller: ReadableStreamDefaultController<Uint8Array>,
+): void {
+  const encoder = new TextEncoder();
+  const write = (text: string): void => {
+    // Enqueuing after the body closed throws, and the only writer left at that point is the pump,
+    // whose catch already treats a failure after the close as the ordinary end.
+    controller.enqueue(encoder.encode(text));
+  };
+  const stop = (): void => {
+    if (lifecycle.release()) {
+      controller.close();
+    }
+  };
+  if (options.signal.aborted) {
+    // The client gave up while the handler was still resolving which stream to read. The abort
+    // event has already fired, so a listener would never see it.
+    stop();
+    return;
+  }
+  // `once: true` unregisters the listener when it fires, and the signal lives exactly as long as
+  // the request, so a listener that never fires is collected with it. `stop` is idempotent, which
+  // is what makes a late abort a no-op rather than a second close.
+  options.signal.addEventListener('abort', stop, { once: true });
+  lifecycle.setHeartbeat(
+    setInterval(() => {
+      write(SSE_HEARTBEAT_FRAME);
+    }, options.heartbeatMs),
+  );
+  void pump({
+    options,
+    connection: lifecycle.connection,
+    write,
+    isClosed: lifecycle.isClosed,
+    stop,
+  });
 }
 
 /**
@@ -171,76 +214,126 @@ function emit(entry: StreamEntry, write: (text: string) => void): boolean {
   return SSE_TERMINAL_EVENTS.includes(event.type);
 }
 
+/** What the replay and tail steps share. */
+interface PumpContext {
+  options: SseSourceOptions;
+  connection: RedisCommands;
+  write: (text: string) => void;
+  isClosed: () => boolean;
+  stop: () => void;
+}
+
+/**
+ * Reports an expired replay cache, when that is what the stream key's absence means.
+ *
+ * A missing key while the work is still running means the worker has not written anything yet, so
+ * the stream waits. A missing key after it finished means the cache expired and nothing more will
+ * ever arrive, so the client is told to refetch the persisted transcript instead.
+ *
+ * @param context - The pump context.
+ * @param cursor - Current cursor, echoed on the frame.
+ * @returns `true` when the stream was closed as expired.
+ */
+async function reportExpiry(context: PumpContext, cursor: string): Promise<boolean> {
+  const { options, connection } = context;
+  if ((await connection.exists(options.streamKey)) !== 0 || !(await options.isFinished())) {
+    return false;
+  }
+  context.write(formatSseFrame({ id: cursor, event: SSE_EXPIRED_EVENT, data: '{}' }));
+  context.stop();
+  return true;
+}
+
+/**
+ * Emits a batch of entries, stopping at the first terminal one.
+ *
+ * @param context - The pump context.
+ * @param entries - Entries to emit, oldest first.
+ * @param cursor - Cursor before the batch.
+ * @returns The cursor after the batch, and whether the stream ended.
+ */
+function emitBatch(
+  context: PumpContext,
+  entries: readonly StreamEntry[],
+  cursor: string,
+): { cursor: string; ended: boolean } {
+  let position = cursor;
+  for (const entry of entries) {
+    position = entry[0];
+    if (emit(entry, context.write)) {
+      context.stop();
+      return { cursor: position, ended: true };
+    }
+  }
+  return { cursor: position, ended: false };
+}
+
+/**
+ * Tails the stream until it ends, the client leaves, or the work finishes.
+ *
+ * @param context - The pump context.
+ * @param from - Cursor to tail from.
+ */
+async function tail(context: PumpContext, from: string): Promise<void> {
+  const { options, connection } = context;
+  let cursor = from;
+  while (!context.isClosed()) {
+    const reply = await connection.xread(
+      'BLOCK',
+      options.blockMs,
+      'STREAMS',
+      options.streamKey,
+      cursor,
+    );
+    if (reply === null) {
+      // Belt and braces: the work finished without a terminal event ever being written, which a
+      // crashed worker produces. Everything up to the cursor was delivered, so the stream ends.
+      if (cursor !== SSE_STREAM_START && (await options.isFinished())) {
+        context.stop();
+        return;
+      }
+      continue;
+    }
+    for (const [, entries] of reply) {
+      const batch = emitBatch(context, entries, cursor);
+      cursor = batch.cursor;
+      if (batch.ended) {
+        return;
+      }
+    }
+  }
+}
+
 /**
  * Replays what the client missed, then tails the stream until it ends.
  *
- * @param options - The stream options.
- * @param connection - The duplicated connection this pump owns.
- * @param write - Sink for the frames.
- * @param isClosed - Whether the stream has already been closed.
- * @param stop - Closes the stream and releases the connection.
+ * @param context - Options, the duplicated connection, the frame sink and the lifecycle hooks.
  */
-async function pump(
-  options: SseSourceOptions,
-  connection: RedisCommands,
-  write: (text: string) => void,
-  isClosed: () => boolean,
-  stop: () => void,
-): Promise<void> {
+async function pump(context: PumpContext): Promise<void> {
+  const { options } = context;
   try {
     let cursor = options.lastEventId ?? SSE_STREAM_START;
-    if ((await connection.exists(options.streamKey)) === 0 && (await options.isFinished())) {
-      // The replay cache expired and the work is over, so there is nothing left to stream. The
-      // client refetches the persisted transcript instead of waiting for frames that never come.
-      write(formatSseFrame({ id: cursor, event: SSE_EXPIRED_EVENT, data: '{}' }));
-      stop();
+    if (await reportExpiry(context, cursor)) {
       return;
     }
     if (options.lastEventId !== undefined) {
-      for (const entry of await connection.xrange(options.streamKey, `(${cursor}`, '+')) {
-        cursor = entry[0];
-        if (emit(entry, write)) {
-          stop();
-          return;
-        }
+      const replayed = await context.connection.xrange(options.streamKey, `(${cursor}`, '+');
+      const batch = emitBatch(context, replayed, cursor);
+      cursor = batch.cursor;
+      if (batch.ended) {
+        return;
       }
     }
-    while (!isClosed()) {
-      const reply = await connection.xread(
-        'BLOCK',
-        options.blockMs,
-        'STREAMS',
-        options.streamKey,
-        cursor,
-      );
-      if (reply === null) {
-        // Belt and braces: the work finished without a terminal event ever being written, which a
-        // crashed worker produces. Everything up to the cursor was delivered, so the stream ends.
-        if (cursor !== SSE_STREAM_START && (await options.isFinished())) {
-          stop();
-          return;
-        }
-        continue;
-      }
-      for (const [, entries] of reply) {
-        for (const entry of entries) {
-          cursor = entry[0];
-          if (emit(entry, write)) {
-            stop();
-            return;
-          }
-        }
-      }
-    }
+    await tail(context, cursor);
   } catch (error) {
     // A command rejecting because the connection was dropped is the ordinary way this loop ends,
     // so only a failure that arrives while the stream is still open is worth reporting.
-    if (!isClosed()) {
+    if (!context.isClosed()) {
       options.logger.warn(
         { failure: failureName(error), key: options.streamKey },
         'event stream failed',
       );
-      stop();
+      context.stop();
     }
   }
 }

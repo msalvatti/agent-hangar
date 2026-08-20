@@ -17,6 +17,8 @@ import { ConflictError, ResourceNotFoundError } from '../errors';
 import { jsonResponse, withErrorHandling } from '../http';
 import { assertSameOrigin } from '../same-origin';
 
+import { NO_USAGE } from './guards';
+
 /** Status the cancel request is accepted with when the worker still has to act on it. */
 export const CANCEL_REQUESTED_STATUS = 202;
 
@@ -70,11 +72,7 @@ export function cancelTurn(
       throw new ConflictError('TURN_NOT_CANCELLABLE', 'This turn has already finished');
     }
     if (turn.status === 'QUEUED' && (await removeQueuedJob(container, turn))) {
-      await container.repos.turns.finish(turn.id, 'CANCELLED', {
-        inputTokens: 0,
-        outputTokens: 0,
-        stepCount: 0,
-      });
+      await container.repos.turns.finish(turn.id, 'CANCELLED', NO_USAGE);
       return jsonResponse(okResponse, { ok: true });
     }
     await container.redis.publish(

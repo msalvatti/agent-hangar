@@ -37,7 +37,7 @@ import {
 import { allowedRepoHosts, assertRepoUrlAllowed } from '../repo-url';
 import { assertSameOrigin } from '../same-origin';
 
-import { requireNoLiveTurn, requireSecrets } from './guards';
+import { NO_USAGE, requireNoLiveTurn, requireSecrets } from './guards';
 import { lastTurnStatus, toChatDetail, toChatSummary } from './mappers';
 
 /** Longest title derived from a prompt; the rest of the prompt is the first message. */
@@ -95,12 +95,7 @@ async function queueTurn(container: ServerContainer, chatId: string): Promise<Tu
   try {
     await enqueueRunTurn(container.queues.chatTurns, { turnId: turn.id });
   } catch (error) {
-    await container.repos.turns.finish(
-      turn.id,
-      'FAILED',
-      { inputTokens: 0, outputTokens: 0, stepCount: 0 },
-      'Could not enqueue the turn',
-    );
+    await container.repos.turns.finish(turn.id, 'FAILED', NO_USAGE, 'Could not enqueue the turn');
     throw error;
   }
   return turn;

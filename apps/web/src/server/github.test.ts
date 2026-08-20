@@ -185,7 +185,22 @@ describe('listBranches', () => {
   it('rejects anything that is not owner/name', async () => {
     const { deps, fetchSpy } = harness(() => jsonResponse([]));
     const client = createGithubClient(deps);
-    for (const slug of ['acme', 'acme/widgets/extra', '../../user', 'acme/widgets?x=1']) {
+    for (const slug of ['acme', 'acme/widgets/extra', '../../user', 'acme/widgets?x=1', 'a b/c']) {
+      await expect(client.listBranches(slug)).rejects.toThrow(ValidationError);
+    }
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Regression: a segment made only of dots passes any character-class check — `..` is as ordinary
+   * as `acme` to `[A-Za-z0-9_.-]+` — but `URL` resolves it before the request goes out, so
+   * `../..` would climb out of `/repos/` and send the request, `Authorization` header included, to
+   * a path the caller never named.
+   */
+  it('rejects a slug whose segments resolve out of the repository path', async () => {
+    const { deps, fetchSpy } = harness(() => jsonResponse([]));
+    const client = createGithubClient(deps);
+    for (const slug of ['../..', './.', '../x', 'a/..', '.../..']) {
       await expect(client.listBranches(slug)).rejects.toThrow(ValidationError);
     }
     expect(fetchSpy).not.toHaveBeenCalled();

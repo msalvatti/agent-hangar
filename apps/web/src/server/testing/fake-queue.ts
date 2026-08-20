@@ -94,7 +94,7 @@ export class FakeQueue {
   jobState: FakeJobState = 'waiting';
 
   /** Whether `getJob` finds jobs at all; `false` models a job BullMQ has already released. */
-  jobsVisible = true;
+  canFindJobs = true;
 
   /**
    * @param name - Queue name.
@@ -128,7 +128,7 @@ export class FakeQueue {
    * @returns The job, or `undefined` when it is gone or the queue hides its jobs.
    */
   getJob(id: string): Promise<FakeJob | undefined> {
-    return Promise.resolve(this.jobsVisible ? this.jobs.get(id) : undefined);
+    return Promise.resolve(this.canFindJobs ? this.jobs.get(id) : undefined);
   }
 
   /**

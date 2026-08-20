@@ -19,6 +19,7 @@ import {
 } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
+import { foreignRequest, readRequest, writeRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
 
@@ -44,37 +45,6 @@ const REPO_URL = 'https://github.com/acme/widgets';
 const CREATE_BODY = { repoUrl: REPO_URL, baseBranch: 'main', prompt: 'Fix the failing tests' };
 
 /**
- * Builds a same-origin state-changing request.
- *
- * @param path - Path below the API root.
- * @param method - HTTP method.
- * @param body - JSON body, when the route takes one.
- * @returns The request.
- */
-function write(path: string, method: string, body?: unknown): Request {
-  const url = `http://127.0.0.1:3000${path}`;
-  return new Request(url, {
-    method,
-    headers: {
-      host: '127.0.0.1:3000',
-      origin: 'http://127.0.0.1:3000',
-      'content-type': 'application/json',
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-}
-
-/**
- * Builds a read request.
- *
- * @param path - Path below the API root, query included.
- * @returns The request.
- */
-function read(path: string): Request {
-  return new Request(`http://127.0.0.1:3000${path}`);
-}
-
-/**
  * Creates a chat through the route, so the rows are exactly what the API writes.
  *
  * @param harness - The test container.
@@ -87,7 +57,7 @@ async function seedChat(
 ): Promise<{ chatId: string; turnId: string }> {
   const response = await createChat(
     harness.container,
-    write('/api/chats', 'POST', {
+    writeRequest('/api/chats', 'POST', {
       ...CREATE_BODY,
       ...body,
     }),
@@ -142,7 +112,10 @@ describe('createChat', () => {
    */
   it('rejects an invalid body and an unparseable one', async () => {
     const { container, doubles } = createTestContainer();
-    const invalid = await createChat(container, write('/api/chats', 'POST', { repoUrl: REPO_URL }));
+    const invalid = await createChat(
+      container,
+      writeRequest('/api/chats', 'POST', { repoUrl: REPO_URL }),
+    );
     expect(invalid.status).toBe(400);
     expect(await invalid.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
 
@@ -165,7 +138,7 @@ describe('createChat', () => {
     });
     const response = await createChat(
       container,
-      write('/api/chats', 'POST', { ...CREATE_BODY, repoUrl: 'https://github.com/a/b/c' }),
+      writeRequest('/api/chats', 'POST', { ...CREATE_BODY, repoUrl: 'https://github.com/a/b/c' }),
     );
     expect(response.status).toBe(400);
     expect(await doubles.repos.chats.list()).toHaveLength(0);
@@ -177,7 +150,7 @@ describe('createChat', () => {
    */
   it('refuses to create anything while a credential is missing', async () => {
     const { container, doubles } = createTestContainer({ secretsSet: false });
-    const response = await createChat(container, write('/api/chats', 'POST', CREATE_BODY));
+    const response = await createChat(container, writeRequest('/api/chats', 'POST', CREATE_BODY));
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: { code: 'SECRETS_MISSING' } });
     expect(await doubles.repos.chats.list()).toHaveLength(0);
@@ -190,7 +163,10 @@ describe('createChat', () => {
   it('fails the turn when the queue rejects the job', async () => {
     const harness = createTestContainer();
     harness.doubles.queues.chatTurns.addFailure = new Error('redis unreachable');
-    const response = await createChat(harness.container, write('/api/chats', 'POST', CREATE_BODY));
+    const response = await createChat(
+      harness.container,
+      writeRequest('/api/chats', 'POST', CREATE_BODY),
+    );
     expect(response.status).toBe(500);
     const [chat] = await harness.doubles.repos.chats.list();
     const turns = await harness.doubles.repos.turns.listByChat(chat!.id);
@@ -203,16 +179,7 @@ describe('createChat', () => {
    */
   it('rejects a cross-origin create', async () => {
     const { container, doubles } = createTestContainer();
-    const request = new Request('http://127.0.0.1:3000/api/chats', {
-      method: 'POST',
-      headers: {
-        host: '127.0.0.1:3000',
-        origin: 'http://evil.example',
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify(CREATE_BODY),
-    });
-    const response = await createChat(container, request);
+    const response = await createChat(container, foreignRequest('/api/chats', 'POST', CREATE_BODY));
     expect(response.status).toBe(403);
     expect(await doubles.repos.chats.list()).toHaveLength(0);
   });
@@ -232,20 +199,20 @@ describe('listChats', () => {
       outputTokens: 0,
       stepCount: 0,
     });
-    const archived = await archiveChat(harness.container, write('/api/chats', 'POST'), {
+    const archived = await archiveChat(harness.container, writeRequest('/api/chats', 'POST'), {
       id: second.chatId,
     });
     expect(archived.status).toBe(200);
 
     const all = listChatsResponse.parse(
-      await (await listChats(harness.container, read('/api/chats'))).json(),
+      await (await listChats(harness.container, readRequest('/api/chats'))).json(),
     );
     expect(all.chats).toHaveLength(2);
     expect(all.chats.map((chat) => chat.id)).toContain(first.chatId);
     expect(all.chats.find((chat) => chat.id === first.chatId)?.lastTurnStatus).toBe('QUEUED');
 
     const active = listChatsResponse.parse(
-      await (await listChats(harness.container, read('/api/chats?status=ACTIVE'))).json(),
+      await (await listChats(harness.container, readRequest('/api/chats?status=ACTIVE'))).json(),
     );
     expect(active.chats.map((chat) => chat.id)).toEqual([first.chatId]);
   });
@@ -262,7 +229,7 @@ describe('listChats', () => {
       baseBranch: 'main',
     });
     const body = listChatsResponse.parse(
-      await (await listChats(harness.container, read('/api/chats'))).json(),
+      await (await listChats(harness.container, readRequest('/api/chats'))).json(),
     );
     expect(body.chats[0]?.lastTurnStatus).toBeNull();
   });
@@ -273,7 +240,7 @@ describe('listChats', () => {
    */
   it('rejects an unknown status filter', async () => {
     const { container } = createTestContainer();
-    const response = await listChats(container, read('/api/chats?status=ALL'));
+    const response = await listChats(container, readRequest('/api/chats?status=ALL'));
     expect(response.status).toBe(400);
   });
 });
@@ -287,7 +254,9 @@ describe('getChat', () => {
     const harness = createTestContainer();
     const { chatId, turnId } = await seedChat(harness);
     const detail = chatDetail.parse(
-      await (await getChat(harness.container, read(`/api/chats/${chatId}`), { id: chatId })).json(),
+      await (
+        await getChat(harness.container, readRequest(`/api/chats/${chatId}`), { id: chatId })
+      ).json(),
     );
     expect(detail.chat.id).toBe(chatId);
     expect(detail.messages.map((message) => message.seq)).toEqual([1]);
@@ -322,7 +291,9 @@ describe('getChat', () => {
       });
     }
     const detail = chatDetail.parse(
-      await (await getChat(harness.container, read(`/api/chats/${chatId}`), { id: chatId })).json(),
+      await (
+        await getChat(harness.container, readRequest(`/api/chats/${chatId}`), { id: chatId })
+      ).json(),
     );
     expect(detail.toolCalls.map((call) => call.seq)).toEqual([1, 2]);
     expect(detail.workspace?.id).toBe(workspace.id);
@@ -333,7 +304,7 @@ describe('getChat', () => {
    */
   it('reports an unknown chat as missing', async () => {
     const { container } = createTestContainer();
-    const response = await getChat(container, read('/api/chats/nope'), { id: 'nope' });
+    const response = await getChat(container, readRequest('/api/chats/nope'), { id: 'nope' });
     expect(response.status).toBe(404);
     expect(await response.json()).toMatchObject({ error: { code: 'NOT_FOUND' } });
   });
@@ -349,7 +320,7 @@ describe('renameChat', () => {
     const { chatId } = await seedChat(harness);
     const response = await renameChat(
       harness.container,
-      write(`/api/chats/${chatId}`, 'PATCH', { title: '  Renamed  ' }),
+      writeRequest(`/api/chats/${chatId}`, 'PATCH', { title: '  Renamed  ' }),
       { id: chatId },
     );
     expect(chatSummary.parse(await response.json()).title).toBe('Renamed');
@@ -363,13 +334,13 @@ describe('renameChat', () => {
     const { chatId } = await seedChat(harness);
     const empty = await renameChat(
       harness.container,
-      write(`/api/chats/${chatId}`, 'PATCH', { title: '   ' }),
+      writeRequest(`/api/chats/${chatId}`, 'PATCH', { title: '   ' }),
       { id: chatId },
     );
     expect(empty.status).toBe(400);
     const missing = await renameChat(
       harness.container,
-      write('/api/chats/nope', 'PATCH', { title: 'x' }),
+      writeRequest('/api/chats/nope', 'PATCH', { title: 'x' }),
       { id: 'nope' },
     );
     expect(missing.status).toBe(404);
@@ -392,7 +363,7 @@ describe('postMessage', () => {
 
     const response = await postMessage(
       harness.container,
-      write(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'And now the docs' }),
+      writeRequest(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'And now the docs' }),
       { id: chatId },
     );
     expect(response.status).toBe(201);
@@ -415,10 +386,10 @@ describe('postMessage', () => {
       outputTokens: 0,
       stepCount: 0,
     });
-    await archiveChat(harness.container, write('/api/chats', 'POST'), { id: chatId });
+    await archiveChat(harness.container, writeRequest('/api/chats', 'POST'), { id: chatId });
     const response = await postMessage(
       harness.container,
-      write(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'hello' }),
+      writeRequest(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'hello' }),
       { id: chatId },
     );
     expect(response.status).toBe(409);
@@ -434,7 +405,7 @@ describe('postMessage', () => {
     const { chatId } = await seedChat(harness);
     const response = await postMessage(
       harness.container,
-      write(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'hello' }),
+      writeRequest(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'hello' }),
       { id: chatId },
     );
     expect(response.status).toBe(409);
@@ -455,7 +426,7 @@ describe('postMessage', () => {
     await harness.doubles.secrets.remove('OPENAI_API_KEY');
     const response = await postMessage(
       harness.container,
-      write(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'hello' }),
+      writeRequest(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'hello' }),
       { id: chatId },
     );
     expect(response.status).toBe(409);
@@ -469,7 +440,7 @@ describe('postMessage', () => {
     const { container } = createTestContainer();
     const response = await postMessage(
       container,
-      write('/api/chats/nope/messages', 'POST', { prompt: 'hi' }),
+      writeRequest('/api/chats/nope/messages', 'POST', { prompt: 'hi' }),
       { id: 'nope' },
     );
     expect(response.status).toBe(404);
@@ -489,7 +460,7 @@ describe('archiveChat and restoreChat', () => {
       outputTokens: 0,
       stepCount: 0,
     });
-    const response = await archiveChat(harness.container, write('/api/chats', 'POST'), {
+    const response = await archiveChat(harness.container, writeRequest('/api/chats', 'POST'), {
       id: chatId,
     });
     const summary = chatSummary.parse(await response.json());
@@ -511,7 +482,9 @@ describe('archiveChat and restoreChat', () => {
   it('refuses to archive twice or while a turn is live', async () => {
     const harness = createTestContainer();
     const { chatId, turnId } = await seedChat(harness);
-    const busy = await archiveChat(harness.container, write('/api/chats', 'POST'), { id: chatId });
+    const busy = await archiveChat(harness.container, writeRequest('/api/chats', 'POST'), {
+      id: chatId,
+    });
     expect(busy.status).toBe(409);
     expect(await busy.json()).toMatchObject({ error: { code: 'TURN_IN_PROGRESS' } });
 
@@ -520,8 +493,10 @@ describe('archiveChat and restoreChat', () => {
       outputTokens: 0,
       stepCount: 0,
     });
-    await archiveChat(harness.container, write('/api/chats', 'POST'), { id: chatId });
-    const again = await archiveChat(harness.container, write('/api/chats', 'POST'), { id: chatId });
+    await archiveChat(harness.container, writeRequest('/api/chats', 'POST'), { id: chatId });
+    const again = await archiveChat(harness.container, writeRequest('/api/chats', 'POST'), {
+      id: chatId,
+    });
     expect(again.status).toBe(409);
     expect(await again.json()).toMatchObject({ error: { code: 'ILLEGAL_TRANSITION' } });
   });
@@ -538,11 +513,11 @@ describe('archiveChat and restoreChat', () => {
       outputTokens: 0,
       stepCount: 0,
     });
-    await archiveChat(harness.container, write('/api/chats', 'POST'), { id: chatId });
+    await archiveChat(harness.container, writeRequest('/api/chats', 'POST'), { id: chatId });
 
     const response = await restoreChat(
       harness.container,
-      write(`/api/chats/${chatId}/restore?warm=1`, 'POST'),
+      writeRequest(`/api/chats/${chatId}/restore?warm=1`, 'POST'),
       { id: chatId },
     );
     expect(chatSummary.parse(await response.json()).status).toBe('ACTIVE');
@@ -558,17 +533,17 @@ describe('archiveChat and restoreChat', () => {
   it('refuses to restore an active or unknown chat and rejects a bad query', async () => {
     const harness = createTestContainer();
     const { chatId } = await seedChat(harness);
-    const active = await restoreChat(harness.container, write('/api/chats', 'POST'), {
+    const active = await restoreChat(harness.container, writeRequest('/api/chats', 'POST'), {
       id: chatId,
     });
     expect(active.status).toBe(409);
-    const missing = await restoreChat(harness.container, write('/api/chats', 'POST'), {
+    const missing = await restoreChat(harness.container, writeRequest('/api/chats', 'POST'), {
       id: 'nope',
     });
     expect(missing.status).toBe(404);
     const bad = await restoreChat(
       harness.container,
-      write(`/api/chats/${chatId}/restore?warm=maybe`, 'POST'),
+      writeRequest(`/api/chats/${chatId}/restore?warm=maybe`, 'POST'),
       { id: chatId },
     );
     expect(bad.status).toBe(400);
@@ -588,7 +563,7 @@ describe('deleteChat', () => {
       outputTokens: 0,
       stepCount: 0,
     });
-    const response = await deleteChat(harness.container, write('/api/chats', 'DELETE'), {
+    const response = await deleteChat(harness.container, writeRequest('/api/chats', 'DELETE'), {
       id: chatId,
     });
     expect(response.status).toBe(204);
@@ -618,7 +593,7 @@ describe('deleteChat', () => {
       repoUrl: REPO_URL,
       branch: 'main',
     });
-    await deleteChat(harness.container, write('/api/chats', 'DELETE'), { id: chatId });
+    await deleteChat(harness.container, writeRequest('/api/chats', 'DELETE'), { id: chatId });
     expect(harness.doubles.queues.workspaceGc.added).toHaveLength(1);
   });
 
@@ -628,9 +603,11 @@ describe('deleteChat', () => {
   it('refuses to delete while a turn is live, and reports an unknown chat', async () => {
     const harness = createTestContainer();
     const { chatId } = await seedChat(harness);
-    const busy = await deleteChat(harness.container, write('/api/chats', 'DELETE'), { id: chatId });
+    const busy = await deleteChat(harness.container, writeRequest('/api/chats', 'DELETE'), {
+      id: chatId,
+    });
     expect(busy.status).toBe(409);
-    const missing = await deleteChat(harness.container, write('/api/chats', 'DELETE'), {
+    const missing = await deleteChat(harness.container, writeRequest('/api/chats', 'DELETE'), {
       id: 'nope',
     });
     expect(missing.status).toBe(404);

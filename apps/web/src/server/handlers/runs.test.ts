@@ -11,6 +11,7 @@ import { listRunsResponse, runDetail } from '@agent-hangar/core';
 import type { JobRun } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
+import { readRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
 
@@ -20,16 +21,6 @@ vi.mock('bullmq', () => import('../testing/fake-queue'));
 
 /** Instant every container in this file starts from. */
 const NOW = new Date('2026-08-19T10:00:00.000Z');
-
-/**
- * Builds a read request.
- *
- * @param path - Path below the API root.
- * @returns The request.
- */
-function read(path: string): Request {
-  return new Request(`http://127.0.0.1:3000${path}`);
-}
 
 /**
  * Seeds a job with a number of runs.
@@ -73,7 +64,7 @@ describe('listRuns', () => {
   it('lists the runs of a job, newest first', async () => {
     const harness = createTestContainer({ now: NOW });
     const { jobId, runs } = await seedRuns(harness, 3);
-    const response = await listRuns(harness.container, read(`/api/jobs/${jobId}/runs`), {
+    const response = await listRuns(harness.container, readRequest(`/api/jobs/${jobId}/runs`), {
       id: jobId,
     });
     const body = listRunsResponse.parse(await response.json());
@@ -87,7 +78,7 @@ describe('listRuns', () => {
   it('caps the history at one page', async () => {
     const harness = createTestContainer({ now: NOW });
     const { jobId } = await seedRuns(harness, RUNS_PAGE_SIZE + 5);
-    const response = await listRuns(harness.container, read(`/api/jobs/${jobId}/runs`), {
+    const response = await listRuns(harness.container, readRequest(`/api/jobs/${jobId}/runs`), {
       id: jobId,
     });
     expect(listRunsResponse.parse(await response.json()).runs).toHaveLength(RUNS_PAGE_SIZE);
@@ -99,7 +90,9 @@ describe('listRuns', () => {
    */
   it('reports an unknown job as missing', async () => {
     const harness = createTestContainer({ now: NOW });
-    const response = await listRuns(harness.container, read('/api/jobs/nope/runs'), { id: 'nope' });
+    const response = await listRuns(harness.container, readRequest('/api/jobs/nope/runs'), {
+      id: 'nope',
+    });
     expect(response.status).toBe(404);
   });
 });
@@ -134,7 +127,9 @@ describe('getRun', () => {
       output: 'All issues triaged',
     });
 
-    const response = await getRun(harness.container, read(`/api/runs/${run.id}`), { id: run.id });
+    const response = await getRun(harness.container, readRequest(`/api/runs/${run.id}`), {
+      id: run.id,
+    });
     const detail = runDetail.parse(await response.json());
     expect(detail.run).toMatchObject({ id: run.id, status: 'SUCCEEDED' });
     expect(detail.output).toBe('All issues triaged');
@@ -146,7 +141,7 @@ describe('getRun', () => {
    */
   it('reports an unknown run as missing', async () => {
     const harness = createTestContainer({ now: NOW });
-    const response = await getRun(harness.container, read('/api/runs/nope'), { id: 'nope' });
+    const response = await getRun(harness.container, readRequest('/api/runs/nope'), { id: 'nope' });
     expect(response.status).toBe(404);
   });
 });

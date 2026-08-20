@@ -11,6 +11,7 @@
 import { okResponse, turnCommand, turnCommandChannel } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
+import { foreignRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
 
@@ -112,7 +113,7 @@ describe('cancelTurn', () => {
   it('falls back to the command channel when the job is gone', async () => {
     const harness = createTestContainer();
     const turnId = await seedTurn(harness);
-    harness.doubles.queues.chatTurns.jobsVisible = false;
+    harness.doubles.queues.chatTurns.canFindJobs = false;
 
     const response = await cancelTurn(harness.container, cancelRequest(turnId), { id: turnId });
     expect(response.status).toBe(202);
@@ -152,10 +153,7 @@ describe('cancelTurn', () => {
   it('rejects a cross-origin cancel', async () => {
     const harness = createTestContainer();
     const turnId = await seedTurn(harness);
-    const request = new Request(`http://127.0.0.1:3000/api/turns/${turnId}/cancel`, {
-      method: 'POST',
-      headers: { host: '127.0.0.1:3000', origin: 'http://evil.example' },
-    });
+    const request = foreignRequest(`/api/turns/${turnId}/cancel`, 'POST', {});
     const response = await cancelTurn(harness.container, request, { id: turnId });
     expect(response.status).toBe(403);
     expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({ status: 'QUEUED' });

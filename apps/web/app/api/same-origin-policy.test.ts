@@ -22,6 +22,7 @@ import { fileURLToPath } from 'node:url';
 
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { foreignRequest } from '@/server/testing/requests';
 import { createTestContainer } from '@/server/testing/test-container';
 import type { TestContainer } from '@/server/testing/test-container';
 
@@ -87,28 +88,6 @@ function discoverRoutes(directory = ''): DiscoveredRoute[] {
   return found;
 }
 
-/**
- * Builds a cross-origin write, shaped the way a hostile page would send one.
- *
- * @param path - Concrete request path.
- * @param method - HTTP method.
- * @returns The request.
- */
-function crossOrigin(path: string, method: string): Request {
-  return new Request(`http://127.0.0.1:3000${path}`, {
-    method,
-    headers: {
-      host: '127.0.0.1:3000',
-      origin: 'http://evil.example',
-      // `text/plain` is what a `no-cors` fetch may declare without triggering a preflight, and
-      // `request.json()` parses the body anyway.
-      'content-type': 'text/plain',
-      'sec-fetch-site': 'cross-site',
-    },
-    body: JSON.stringify({ value: 'x'.repeat(40), title: 'x', prompt: 'x' }),
-  });
-}
-
 /** Every route module on disk, with its dynamic segments filled in. */
 const routes = discoverRoutes();
 
@@ -137,9 +116,12 @@ describe('same-origin policy', () => {
           continue;
         }
         const invoke = handler as (request: Request, context: unknown) => Promise<Response>;
-        const response = await invoke(crossOrigin(route.path, method), {
-          params: Promise.resolve(route.params),
+        const request = foreignRequest(route.path, method, {
+          value: 'x'.repeat(40),
+          title: 'x',
+          prompt: 'x',
         });
+        const response = await invoke(request, { params: Promise.resolve(route.params) });
         expect(response.status, `${method} ${route.path}`).toBe(403);
         expect(await response.json()).toMatchObject({ error: { code: 'FORBIDDEN_ORIGIN' } });
         checked.push(`${method} ${route.path}`);

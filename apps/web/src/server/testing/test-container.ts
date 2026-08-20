@@ -12,7 +12,13 @@
  * `vi.mock('bullmq', () => import('@/server/testing/fake-queue'))`.
  */
 import { createLogger, createRedactor, loadConfig, QUEUE_NAMES } from '@agent-hangar/core';
-import type { AppConfig, DatabaseClient, Repositories, SecretKey } from '@agent-hangar/core';
+import type {
+  ApplicationQueues,
+  DatabaseClient,
+  Redactor,
+  Repositories,
+  SecretKey,
+} from '@agent-hangar/core';
 import {
   createInMemoryRepositories,
   FakeClock,
@@ -20,6 +26,7 @@ import {
   OPENAI_CANARY,
 } from '@agent-hangar/core/testing';
 import { Queue } from 'bullmq';
+import type { Logger } from 'pino';
 
 import type { ServerContainer, ServerContainerDeps } from '../container';
 import type { BranchSummary, GithubClient, RepoSummary } from '../github';
@@ -92,7 +99,7 @@ export class FakeDatabase implements DatabaseClient {
   queryFailure: Error | null = null;
 
   /** Set to make the health probe never settle, so the probe timeout is exercised. */
-  queryHangs = false;
+  shouldHang = false;
 
   /**
    * @returns An empty row set, which is what the probe query yields once mapped.
@@ -102,7 +109,7 @@ export class FakeDatabase implements DatabaseClient {
     if (this.queryFailure !== null) {
       throw this.queryFailure;
     }
-    if (this.queryHangs) {
+    if (this.shouldHang) {
       await new Promise(() => {
         // Never settles on purpose: the caller's timeout is what ends the wait.
       });
@@ -163,38 +170,17 @@ export function createTestContainer(options: TestContainerOptions = {}): TestCon
   const redis = new FakeRedis();
   const prisma = new FakeDatabase();
   const github = new StubGithubClient();
-  const seed: Partial<Record<SecretKey, string>> =
-    options.secretsSet === false
-      ? {}
-      : { GITHUB_PAT: GITHUB_CANARY, OPENAI_API_KEY: OPENAI_CANARY };
-  const secrets = new FakeSecretsService(seed, clock.now());
-
-  const lines: string[] = [];
+  const secrets = new FakeSecretsService(seedSecrets(options.secretsSet), clock.now());
   const redactor = createRedactor();
-  const logger = createLogger({
-    level: 'info',
-    redactor,
-    destination: {
-      write(line: string): void {
-        lines.push(line);
-      },
-    },
-  });
-
-  const config: AppConfig = loadConfig(TEST_ENV);
-  const queues = {
-    chatTurns: new Queue(QUEUE_NAMES.chatTurns, { connection: {} }),
-    scheduledJobs: new Queue(QUEUE_NAMES.scheduledJobs, { connection: {} }),
-    workspaceGc: new Queue(QUEUE_NAMES.workspaceGc, { connection: {} }),
-  };
+  const { logger, output } = createCapturingLogger(redactor);
 
   const container: ServerContainer = {
-    config,
+    config: loadConfig(TEST_ENV),
     logger,
     prisma,
     repos,
     redis,
-    queues,
+    queues: createFakeQueues(),
     secrets,
     redactor,
     github,
@@ -221,7 +207,54 @@ export function createTestContainer(options: TestContainerOptions = {}): TestCon
         scheduledJobs: fakeQueue(QUEUE_NAMES.scheduledJobs),
         workspaceGc: fakeQueue(QUEUE_NAMES.workspaceGc),
       },
-      logOutput: () => lines.join(''),
+      logOutput: output,
     },
+  };
+}
+
+/**
+ * Chooses which credentials the container starts with.
+ *
+ * @param secretsSet - `false` for the "not configured yet" state; anything else seeds both.
+ * @returns The values to seed the secrets service with.
+ */
+function seedSecrets(secretsSet: boolean | undefined): Partial<Record<SecretKey, string>> {
+  return secretsSet === false ? {} : { GITHUB_PAT: GITHUB_CANARY, OPENAI_API_KEY: OPENAI_CANARY };
+}
+
+/**
+ * Builds a redacting logger whose output the test can read back.
+ *
+ * @param redactor - Redactor the logger applies, the real one from core.
+ * @returns The logger and a reader of everything it wrote.
+ */
+function createCapturingLogger(redactor: Redactor): { logger: Logger; output: () => string } {
+  const lines: string[] = [];
+  const logger = createLogger({
+    level: 'info',
+    redactor,
+    destination: {
+      write(line: string): void {
+        lines.push(line);
+      },
+    },
+  });
+  return { logger, output: () => lines.join('') };
+}
+
+/**
+ * Builds the three application queues.
+ *
+ * Constructed through BullMQ's own `Queue`, which the module double replaces, so the core
+ * producers stay under test. The connection is an empty options object rather than a client: the
+ * double ignores it, and BullMQ's own type accepts one.
+ *
+ * @returns The queues, keyed as the application expects them.
+ */
+function createFakeQueues(): ApplicationQueues {
+  return {
+    chatTurns: new Queue(QUEUE_NAMES.chatTurns, { connection: {} }),
+    scheduledJobs: new Queue(QUEUE_NAMES.scheduledJobs, { connection: {} }),
+    workspaceGc: new Queue(QUEUE_NAMES.workspaceGc, { connection: {} }),
   };
 }
