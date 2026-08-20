@@ -30,7 +30,7 @@ import {
 } from '@/shared/ui/command';
 import { Skeleton } from '@/shared/ui/skeleton';
 
-import { REPO_LIST_SCOPE_NOTE, repoReadiness } from './readiness';
+import { repoListNote, repoReadiness } from './readiness';
 import { getRecentRepos, pushRecentRepo } from './recent';
 import { useRepos } from './useRepos';
 
@@ -65,7 +65,7 @@ function RepoRow({
   selected: boolean;
   onSelect: () => void;
 }) {
-  const readiness = repoReadiness({ access: repo.access });
+  const readiness = repoReadiness({ canPush: repo.canPush, archived: repo.archived });
   return (
     <CommandItem value={repo.fullName} onSelect={onSelect}>
       <span className="flex-1 truncate">{repo.fullName}</span>
@@ -209,9 +209,10 @@ export function RepoPicker({
           </CommandList>
           {status === 'success' && (
             // Shown whether or not the list is empty. "Where is my repository?" is asked just as
-            // often about a list of forty as about a list of none, and the answer is the same one.
+            // often about a list of forty as about a list of none. Which answer is true depends on
+            // whether the listing reached the end of the account, which only the server knows.
             <p className="text-muted-foreground border-border border-t px-3 py-2 text-xs">
-              {REPO_LIST_SCOPE_NOTE}
+              {repoListNote(data?.truncated === true)}
             </p>
           )}
         </Command>

@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { server } from '@/mocks/server';
 
-import { REPO_LIST_SCOPE_NOTE } from './readiness';
+import { repoListNote } from './readiness';
 import { pushRecentRepo } from './recent';
 import { RepoPicker } from './RepoPicker';
 
@@ -20,20 +20,20 @@ afterEach(() => {
 });
 
 /**
- * Builds one repository, writable unless told otherwise.
+ * Builds one repository, carrying only the facts it is given.
  *
  * @param fullName - The repository's `owner/name`.
- * @param access - What the token may do with it; omitted means the forge did not say.
+ * @param facts - Whichever of `canPush`/`archived` the forge stated; omitted means it said nothing.
  * @returns The repository, shaped exactly like the contract.
  */
-function repo(fullName: string, access?: RepoSummary['access']): RepoSummary {
+function repo(fullName: string, facts: Partial<RepoSummary> = {}): RepoSummary {
   return {
     fullName,
     url: `https://github.com/${fullName}`,
     defaultBranch: 'main',
     private: false,
     description: null,
-    ...(access === undefined ? {} : { access }),
+    ...facts,
   };
 }
 
@@ -41,9 +41,10 @@ function repo(fullName: string, access?: RepoSummary['access']): RepoSummary {
  * Answers `GET /api/repos` with exactly these repositories, whatever the query.
  *
  * @param repos - The listing to serve.
+ * @param truncated - Whether the listing stopped at the client's page limit.
  */
-function serveRepos(repos: RepoSummary[]): void {
-  server.use(http.get('/api/repos', () => HttpResponse.json({ repos })));
+function serveRepos(repos: RepoSummary[], truncated = false): void {
+  server.use(http.get('/api/repos', () => HttpResponse.json({ repos, truncated })));
 }
 
 /**
@@ -310,7 +311,7 @@ describe('RepoPicker access', () => {
 
     expect(await screen.findByText('No repositories to show.')).toBeInTheDocument();
     expect(screen.queryByText('No repositories match.')).toBeNull();
-    expect(screen.getByText(REPO_LIST_SCOPE_NOTE)).toBeInTheDocument();
+    expect(screen.getByText(repoListNote(false))).toBeInTheDocument();
   });
 
   /**
@@ -327,7 +328,7 @@ describe('RepoPicker access', () => {
     await waitFor(() => {
       expect(screen.getByText('No repositories match.')).toBeInTheDocument();
     });
-    expect(screen.getByText(REPO_LIST_SCOPE_NOTE)).toBeInTheDocument();
+    expect(screen.getByText(repoListNote(false))).toBeInTheDocument();
   });
 
   /**
@@ -340,6 +341,41 @@ describe('RepoPicker access', () => {
     await user.click(screen.getByRole('button', { name: /Choose repository/i }));
     await screen.findByText('acme/api');
 
-    expect(screen.getByText(REPO_LIST_SCOPE_NOTE)).toBeInTheDocument();
+    expect(screen.getByText(repoListNote(false))).toBeInTheDocument();
+  });
+
+  /**
+   * The note claims the list is everything the token can reach, and the client only reads a fixed
+   * number of pages — so above that limit the claim is false and the advice actively misdirects,
+   * sending somebody to widen a token that was never the problem. A truncated listing swaps the
+   * sentence for one that says the search itself is incomplete.
+   */
+  it('stops blaming the token when the listing was truncated', async () => {
+    serveRepos([repo('acme/api')], true);
+    const user = userEvent.setup();
+    render(<RepoPicker value={null} onChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+    await screen.findByText('acme/api');
+
+    expect(screen.getByText(repoListNote(true))).toBeInTheDocument();
+    expect(screen.queryByText(repoListNote(false))).toBeNull();
+  });
+
+  /**
+   * The case the truncation flag exists for: the search runs over what was read, so a repository
+   * past the page limit is reported as no match. Without the flag the empty state would tell the
+   * user to change a token setting that would not bring it back.
+   */
+  it('explains a truncated search that matched nothing', async () => {
+    serveRepos([], true);
+    const user = userEvent.setup();
+    render(<RepoPicker value={null} onChange={vi.fn()} />);
+    await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+    await user.type(screen.getByLabelText('Search repositories'), 'older-repo');
+
+    await waitFor(() => {
+      expect(screen.getByText('No repositories match.')).toBeInTheDocument();
+    });
+    expect(screen.getByText(repoListNote(true))).toBeInTheDocument();
   });
 });

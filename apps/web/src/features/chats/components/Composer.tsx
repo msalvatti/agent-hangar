@@ -100,13 +100,13 @@ const PLACEHOLDER: Record<ComposerMode, string> = {
  *
  * Each names the specific thing rather than the form as a whole. "Complete the form" would leave
  * somebody who has chosen a repository and cannot get a branch exactly as stuck as no message at
- * all — and that is the case people actually hit, because a repository with no commits has no
- * branch for the picker to default to.
+ * all — and that is the case people actually hit, because a repository with no branch has none for
+ * the picker to default to.
  */
 const SUBMIT_HINT = {
   repo: 'Choose a repository to start this chat from.',
   branch:
-    'Choose a branch to start from. A repository with no commits has no branches yet, so it cannot be used until it has a first commit.',
+    'Choose a branch to start from. A repository with no branches has none to choose, and cannot be used until a branch is pushed to it.',
   prompt: 'Write a prompt to send.',
 } as const;
 

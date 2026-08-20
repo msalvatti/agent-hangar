@@ -271,8 +271,13 @@ describe('StubGithubClient and FakeDatabase', () => {
       },
     ];
     github.branches = [{ name: 'main', sha: 'a', protected: false }];
-    expect(await github.listRepos('WIDG')).toHaveLength(1);
-    expect(await github.listRepos('none')).toHaveLength(0);
+    expect((await github.listRepos('WIDG')).repos).toHaveLength(1);
+    expect((await github.listRepos('none')).repos).toHaveLength(0);
+    // The double reports truncation the same way the real client does, so a handler test can
+    // script the case the picker's note depends on.
+    expect((await github.listRepos('')).truncated).toBe(false);
+    github.truncated = true;
+    expect((await github.listRepos('')).truncated).toBe(true);
     expect(await github.listBranches()).toHaveLength(1);
     github.failure = new Error('boom');
     await expect(github.listRepos('')).rejects.toThrow('boom');

@@ -206,12 +206,16 @@ describe('Composer disabled reason', () => {
   });
 
   /**
-   * The branch sentence carries the part nothing else on screen says: a repository with no commits
-   * has no branch to pick, so the picker will never fill itself in.
+   * The branch sentence carries the part nothing else on screen says: a repository with no branches
+   * has none to pick, so the picker will never fill itself in. It says "no branches" rather than
+   * "no commits" because an empty branch listing is all that was observed — a repository whose
+   * commits are reachable only through tags has commits and still cannot be used here.
    */
-  it('explains that a repository with no commits has no branch', () => {
+  it('explains that a repository with no branches has none to choose', () => {
     renderNew({ branch: null });
-    expect(screen.getByRole('status')).toHaveTextContent(/no commits/i);
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent(/no branches/i);
+    expect(status).not.toHaveTextContent(/commits/i);
   });
 
   /**

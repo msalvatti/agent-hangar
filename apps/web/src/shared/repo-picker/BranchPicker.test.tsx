@@ -148,20 +148,23 @@ describe('BranchPicker', () => {
   });
 
   /**
-   * An existing repository with no branches has no commits — GitHub creates the first ref on the
-   * first push — and that is a dead end nothing else on screen explains: the branch stays unset,
-   * so Send never enables. "No branches found." on its own reads as a glitch, so the empty state
-   * says what is actually true and what the user would have to do about it.
+   * A repository with no branches is a dead end nothing else on screen explains: the branch stays
+   * unset, so Send never enables. "No branches found." on its own reads as a glitch, so the empty
+   * state says what follows from it and what the user would have to do about it.
+   *
+   * The wording stays with what was observed. An empty branch listing proves there is no branch;
+   * it does not prove there is no commit, because a repository whose commits are reachable only
+   * through tags has both — so the message asks for a branch, not for a first commit.
    */
-  it('says why a repository with no commits has no branches', async () => {
+  it('says what follows from a repository having no branches', async () => {
     server.use(http.get('/api/repos/branches', () => HttpResponse.json({ branches: [] })));
     const user = userEvent.setup();
     render(<BranchPicker repo="acme/api" value={null} onChange={vi.fn()} />);
     await user.click(screen.getByRole('button', { name: /Choose branch/i }));
 
-    const explanation = await screen.findByText(/no commits/i);
-    expect(explanation).toBeInTheDocument();
-    expect(explanation.textContent).toContain('first commit');
+    const explanation = await screen.findByText(/no branches to work from/i);
+    expect(explanation.textContent).toContain('Push a branch');
+    expect(explanation.textContent).not.toMatch(/commit/i);
   });
 
   // The loading skeleton shows while the initial fetch is still in flight.

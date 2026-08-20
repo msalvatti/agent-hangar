@@ -101,6 +101,25 @@ describe('listRepos', () => {
   });
 
   /**
+   * Whether the client reached the end of the account travels to the picker rather than stopping
+   * at the server log. The picker's note claims the list is everything the token can reach, and a
+   * listing that stopped at the page limit makes that claim false — and worse, sends the user to
+   * change a token setting that would not bring the missing repository back.
+   */
+  it.each([
+    ['a completed listing', false],
+    ['a listing that stopped at the page limit', true],
+  ])('forwards truncation to the picker for %s', async (_label, truncated) => {
+    const { container, doubles } = createTestContainer();
+    doubles.github.repos = [REPO];
+    doubles.github.truncated = truncated;
+
+    const response = await listRepos(container, readRequest('/api/repos'));
+
+    expect(listReposResponse.parse(await response.json()).truncated).toBe(truncated);
+  });
+
+  /**
    * The query narrows the list, and the response is cached privately for a short while: the picker
    * refetches as the user types, and a user's repository list must never sit in a shared cache.
    */

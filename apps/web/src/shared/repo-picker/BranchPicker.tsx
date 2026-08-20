@@ -139,12 +139,12 @@ export function BranchPicker({
               </div>
             )}
             {status === 'success' && branches.length === 0 && (
-              // An existing repository with no branches has no commits — GitHub creates the first
-              // ref on the first push, and `default_branch` reports the configured name whether or
-              // not that ref exists, so the empty listing is the only proof. Saying so here is the
-              // whole fix: the send button stays disabled, which is correct, because cloning uses
-              // `git clone --branch <name>` and a repository with no refs cannot satisfy it.
-              // Enabling the button would move the failure into the container instead of fixing it.
+              // An empty branch listing is the only proof that there is nothing to clone:
+              // `default_branch` reports the configured name whether or not that ref exists, so it
+              // cannot be read as evidence. Saying so here is the whole fix — the send button stays
+              // disabled, which is correct, because cloning uses `git clone --branch <name>` and a
+              // repository with no branch cannot satisfy it. Enabling the button would move the
+              // failure into the container instead of fixing it.
               <CommandEmpty className="space-y-2 px-4">
                 <p>No branches found.</p>
                 <p className="text-muted-foreground text-xs">

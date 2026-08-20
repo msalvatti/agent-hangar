@@ -49,8 +49,24 @@ export interface RepoSummary {
   defaultBranch: string;
   private: boolean;
   description: string | null;
-  /** What the token may do here, or absent when the upstream did not report it. */
-  access?: { canPush: boolean; archived: boolean };
+  /** Whether the token may push here, or absent when the upstream did not report it. */
+  canPush?: boolean;
+  /** Whether the forge has archived it, or absent when the upstream did not report it. */
+  archived?: boolean;
+}
+
+/** One page of repositories, and whether the walk that produced it reached the end. */
+export interface RepoListing {
+  repos: RepoSummary[];
+  /**
+   * `true` when the walk stopped at {@link GITHUB_MAX_PAGES} with pages still on offer.
+   *
+   * The picker filters the listing it is given, so a truncated listing does not merely show fewer
+   * repositories — it answers searches wrongly, reporting no match for a repository that exists
+   * and is simply older than the limit. That is worth telling the user, and it is not something
+   * they could deduce.
+   */
+  truncated: boolean;
 }
 
 /** One branch of a repository. */
@@ -63,7 +79,7 @@ export interface BranchSummary {
 /** Reads repositories and branches from the configured GitHub API. */
 export interface GithubClient {
   /** Repositories the token can reach, filtered by a case-insensitive substring of `full_name`. */
-  listRepos(query: string): Promise<RepoSummary[]>;
+  listRepos(query: string): Promise<RepoListing>;
   /** Branches of `owner/name`. */
   listBranches(repo: string): Promise<BranchSummary[]>;
 }
@@ -150,23 +166,29 @@ const githubRepoPage = z.array(
 type GithubRepo = z.infer<typeof githubRepoPage>[number];
 
 /**
- * Reads what the token may do with one repository out of the upstream's answer.
+ * Reads what the upstream stated about one repository, and only what it stated.
  *
- * An upstream that does not say whether the token may push is reported as saying nothing —
- * `undefined` — and never as saying "yes". The picker renders that silence as no claim at all, so
- * the one thing this must never do is invent a permissive default: a fabricated `canPush: true`
- * would put a "the agent can push here" reading on a repository nobody has vouched for, which is
- * the exact failure this field exists to prevent.
+ * The two facts are forwarded independently because they go missing independently. Bundling them
+ * into one answer loses information in both directions: a forge reporting `archived` but not
+ * `permissions` would have its archived flag discarded, and one reporting `permissions` but not
+ * `archived` would have an unstated `archived: false` invented for it — which reports an archived
+ * repository as ready to push to, the exact failure these fields exist to prevent.
  *
- * `archived` is the one field with a default, because GitHub documents `false` as its default and
- * a forge with no notion of archiving has nothing else to mean.
+ * Neither is defaulted, for the same reason. A missing `push` must not read as "may push", and a
+ * missing `archived` must not read as "not archived"; both silences are reported as silence and
+ * the reader decides what to make of them.
  *
  * @param repo - One parsed repository from the listing.
- * @returns The access, or `undefined` when the upstream reported no push permission either way.
+ * @returns Whichever of the two facts the upstream stated, each omitted when it did not.
  */
-function toAccess(repo: GithubRepo): RepoSummary['access'] {
+function statedFacts(repo: GithubRepo): Pick<RepoSummary, 'canPush' | 'archived'> {
   const canPush = repo.permissions?.push;
-  return canPush === undefined ? undefined : { canPush, archived: repo.archived ?? false };
+  // Spread rather than assigned: under `exactOptionalPropertyTypes` an explicit `undefined` is a
+  // different type from an absent key, and absent is what "the upstream did not say" means here.
+  return {
+    ...(canPush === undefined ? {} : { canPush }),
+    ...(repo.archived === undefined ? {} : { archived: repo.archived }),
+  };
 }
 
 /** The branch fields this client reads, as GitHub reports them. */
@@ -186,30 +208,30 @@ const githubBranchPage = z.array(
  */
 export function createGithubClient(deps: GithubClientDeps): GithubClient {
   return {
-    async listRepos(query: string): Promise<RepoSummary[]> {
+    async listRepos(query: string): Promise<RepoListing> {
       const search = new URLSearchParams({
         per_page: String(GITHUB_PAGE_SIZE),
         sort: 'updated',
         affiliation: 'owner,collaborator,organization_member',
       });
-      const repos = await listPages(deps, `/user/repos?${search.toString()}`, githubRepoPage);
+      const page = await listPages(deps, `/user/repos?${search.toString()}`, githubRepoPage);
       const needle = query.trim().toLowerCase();
-      return repos
-        .filter((repo) => repo.full_name.toLowerCase().includes(needle))
-        .map((repo) => {
-          const access = toAccess(repo);
-          return {
+      return {
+        // The filter runs over what was read, which is why truncation travels with the result: a
+        // repository past the page limit is missing from every search, not only from the unfiltered
+        // list, and no caller could work that out from an empty array.
+        repos: page.items
+          .filter((repo) => repo.full_name.toLowerCase().includes(needle))
+          .map((repo) => ({
             fullName: repo.full_name,
             url: repo.html_url,
             defaultBranch: repo.default_branch,
             private: repo.private,
             description: repo.description,
-            // Spread rather than assigned: under `exactOptionalPropertyTypes` an explicit
-            // `access: undefined` is a different type from an absent one, and absent is what
-            // "the upstream did not say" means here.
-            ...(access === undefined ? {} : { access }),
-          };
-        });
+            ...statedFacts(repo),
+          })),
+        truncated: page.truncated,
+      };
     },
 
     async listBranches(repo: string): Promise<BranchSummary[]> {
@@ -217,8 +239,11 @@ export function createGithubClient(deps: GithubClientDeps): GithubClient {
         throw new ValidationError('Repository must be given as "owner/name"');
       }
       const path = `/repos/${repo}/branches?per_page=${String(GITHUB_PAGE_SIZE)}`;
-      const branches = await listPages(deps, path, githubBranchPage);
-      return branches.map((branch) => ({
+      // Truncation is deliberately not surfaced here. It would mean a repository with more than a
+      // thousand branches, and the branch picker has no claim about its own completeness to
+      // correct — unlike the repository listing, whose note says what decides its contents.
+      const { items } = await listPages(deps, path, githubBranchPage);
+      return items.map((branch) => ({
         name: branch.name,
         sha: branch.commit.sha,
         protected: branch.protected,
@@ -237,7 +262,7 @@ export function createGithubClient(deps: GithubClientDeps): GithubClient {
  * @param deps - Client collaborators.
  * @param path - Path below the configured base URL, query included.
  * @param schema - Contract one page of results must satisfy.
- * @returns Every item of every page that was read, in order.
+ * @returns Every item of every page that was read, in order, and whether the walk stopped early.
  * @throws ApiHttpError 409 `SECRETS_MISSING` when no token is stored.
  * @throws GithubApiError When GitHub answers with a non-2xx status, an unreadable body or a body
  *   that does not match the schema.
@@ -246,7 +271,7 @@ async function listPages<T>(
   deps: GithubClientDeps,
   path: string,
   schema: ZodType<T[]>,
-): Promise<T[]> {
+): Promise<{ items: T[]; truncated: boolean }> {
   const revealed = await deps.secrets.reveal('GITHUB_PAT');
   if (revealed === null) {
     throw new ApiHttpError(409, 'SECRETS_MISSING', 'GitHub token is not configured');
@@ -255,10 +280,17 @@ async function listPages<T>(
   const items: T[] = [];
   let next: string | null = `${deps.baseUrl}${path}`;
   let pages = 0;
+  // Whether the last page read offered a further one. That, rather than `next`, is what says the
+  // listing is incomplete: a walk also stops when the offered link points off the configured API,
+  // and a listing cut short by this client's own refusal is every bit as partial as one cut short
+  // by the page limit.
+  let offeredMore = false;
   while (next !== null && pages < GITHUB_MAX_PAGES) {
     const response = await request(deps, next, revealed);
     items.push(...(await decode(response, schema)));
-    next = nextPageUrl(deps.baseUrl, response.headers.get('link'));
+    const page = nextPageUrl(deps.baseUrl, response.headers.get('link'));
+    next = page.url;
+    offeredMore = page.offered;
     pages += 1;
   }
   if (next !== null) {
@@ -267,7 +299,7 @@ async function listPages<T>(
     // recognise; the path carries no credential, only the endpoint and its page size.
     deps.logger.warn({ path, pages }, 'github listing stopped at the page limit');
   }
-  return items;
+  return { items, truncated: offeredMore };
 }
 
 /**
@@ -324,6 +356,19 @@ async function decode<T>(response: Response, schema: ZodType<T[]>): Promise<T[]>
 /** Matches the `<url>; rel="next"` element of a `Link` header. */
 const NEXT_LINK_PATTERN = /<([^>]+)>\s*;\s*rel="next"/;
 
+/** What a `Link` header offered, and what this client is willing to do about it. */
+interface NextPage {
+  /** The URL to read next, or `null` when there is none this client will follow. */
+  url: string | null;
+  /**
+   * Whether the upstream offered a further page at all, followed or not.
+   *
+   * Kept apart from {@link NextPage.url} so a refused link is not mistaken for the end of the
+   * account: the two produce the same `url` and mean opposite things about completeness.
+   */
+  offered: boolean;
+}
+
 /**
  * Reads the next page's URL out of a `Link` header.
  *
@@ -334,12 +379,12 @@ const NEXT_LINK_PATTERN = /<([^>]+)>\s*;\s*rel="next"/;
  *
  * @param baseUrl - The configured API base URL.
  * @param header - Value of the `Link` header, or `null` when there was none.
- * @returns The next page's URL, or `null` when there is no further page to read.
+ * @returns The next page to read, and whether one was offered at all.
  */
-function nextPageUrl(baseUrl: string, header: string | null): string | null {
+function nextPageUrl(baseUrl: string, header: string | null): NextPage {
   const candidate = (header === null ? null : NEXT_LINK_PATTERN.exec(header))?.[1];
   if (candidate === undefined) {
-    return null;
+    return { url: null, offered: false };
   }
-  return candidate.startsWith(`${baseUrl}/`) ? candidate : null;
+  return { url: candidate.startsWith(`${baseUrl}/`) ? candidate : null, offered: true };
 }
