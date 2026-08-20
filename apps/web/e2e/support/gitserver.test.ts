@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { canReuseContainer } from './gitserver';
+import { canReuseContainer, gitServerImage } from './gitserver';
 
 /** Image id this run built. */
 const BUILT = 'sha256:1111111111111111111111111111111111111111111111111111111111111111';
@@ -35,5 +35,21 @@ describe('canReuseContainer', () => {
   /** Nothing running is nothing to reuse. */
   it('refuses when no container is running', () => {
     expect(canReuseContainer(undefined, BUILT)).toBe(false);
+  });
+});
+
+describe('gitServerImage', () => {
+  /**
+   * The tag is a machine-global name, so it carries the instance: two checkouts building one tag
+   * race, and the later build moves it under the earlier run, which then clones from the other
+   * checkout's fixture despite having its own ports and containers.
+   */
+  it('names the image after the instance', () => {
+    expect(gitServerImage('test-4200')).toBe('agent-hangar/gitserver:test-4200');
+  });
+
+  /** The default instance reproduces the tag this was before it carried one. */
+  it('keeps the original tag for the default instance', () => {
+    expect(gitServerImage('test')).toBe('agent-hangar/gitserver:test');
   });
 });

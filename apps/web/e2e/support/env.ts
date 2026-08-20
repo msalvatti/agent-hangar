@@ -27,6 +27,45 @@ export const DEFAULT_GITSERVER_HOST = 'host.docker.internal';
 /** Workspace image the worker starts containers from, unless overridden. */
 export const DEFAULT_WORKSPACE_IMAGE = 'agent-hangar/workspace:dev';
 
+/**
+ * Image the worker starts workspace containers from.
+ *
+ * The default tag is a machine-global name and this harness does not build it — `pnpm infra:image`
+ * does. So moving the port block isolates the ports, the database and the containers but not the
+ * image: a second checkout rebuilding that tag changes what the first one's containers execute,
+ * mid-run, and the run then measures a combination that was never released together. Measured
+ * once, which is why a run that has moved its port block must name its own image rather than
+ * inherit the shared one.
+ *
+ * Only a real run is affected. A mock run starts no container, so the image it would have used is
+ * not a fact about it.
+ *
+ * @param options - The mode, the port block, the derived instance and any explicit override.
+ * @returns The image tag to run workspace containers from.
+ * @throws Error naming the command that builds a private tag, when a real run on a moved port block
+ *   has not named one.
+ */
+export function resolveWorkspaceImage(options: {
+  mode: E2eMode;
+  portBase: number;
+  instance: string;
+  override: string | undefined;
+}): string {
+  if (options.override !== undefined) {
+    return options.override;
+  }
+  if (options.mode === 'real' && options.portBase !== DEFAULT_PORT_BASE) {
+    throw new Error(
+      `A real run on port base ${String(options.portBase)} must name its own workspace image: ` +
+        `the default "${DEFAULT_WORKSPACE_IMAGE}" is shared by every checkout on this machine, ` +
+        `and another one rebuilding it would change what these containers execute mid-run. ` +
+        `Build and use a private tag: WORKSPACE_IMAGE=agent-hangar/workspace:${options.instance} ` +
+        `pnpm infra:image`,
+    );
+  }
+  return DEFAULT_WORKSPACE_IMAGE;
+}
+
 /** Compose Postgres credentials — a loopback-only test service, not a secret. */
 const POSTGRES_CREDENTIALS = 'ah:ah';
 
@@ -179,12 +218,20 @@ function readOverride(env: E2eProcessEnv, key: string, fallback: string): string
   return raw === undefined || raw.trim().length === 0 ? fallback : raw.trim();
 }
 
+/** An override that may legitimately be absent, so the caller decides what absence means. */
+function readOptionalOverride(env: E2eProcessEnv, key: string): string | undefined {
+  const raw = env[key];
+  return raw === undefined || raw.trim().length === 0 ? undefined : raw.trim();
+}
+
 /**
  * Resolves every address, path and flag of one end-to-end run.
  *
  * @param processEnv - Environment to read (defaults to `process.env`).
  * @returns The resolved environment.
- * @throws Error when `E2E_MODE` or `E2E_PORT_BASE` hold something unusable.
+ * @throws Error when `E2E_MODE` or `E2E_PORT_BASE` hold something unusable, when
+ *   `E2E_GITSERVER_HOST` names every interface, or when a real run on a moved port block has not
+ *   named its own workspace image.
  */
 export function resolveE2eEnv(processEnv: E2eProcessEnv = process.env): E2eEnv {
   const mode = readMode(processEnv);
@@ -215,7 +262,12 @@ export function resolveE2eEnv(processEnv: E2eProcessEnv = process.env): E2eEnv {
     fakeScriptPath: e2ePath('fake-provider/script.json'),
     masterKeyPath: `${tmpDir}/master.key`,
     tmpDir,
-    workspaceImage: readOverride(processEnv, 'WORKSPACE_IMAGE', DEFAULT_WORKSPACE_IMAGE),
+    workspaceImage: resolveWorkspaceImage({
+      mode,
+      portBase: derived.portBase,
+      instance: derived.instance,
+      override: readOptionalOverride(processEnv, 'WORKSPACE_IMAGE'),
+    }),
     composeProjectName: derived.composeProjectName,
     workspaceNamePrefix: derived.workspaceNamePrefix,
     postgresDb: derived.postgresDb,

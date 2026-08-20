@@ -887,3 +887,19 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   remedy — disabling the job first, or moving the cron outside the window — changes what the spec
   exercises and interacts with the `MANUAL` trigger filter that closed an earlier finding on these
   same assertions. It belongs with that triage rather than ahead of it.
+- 2C.21 ✅ 2026-08-20 — the reviewer reached the same conclusion as the contaminated measurement,
+  from the code rather than from a run, and named both halves of it. Neither image tag is reached
+  by the instance, so moving the port block isolates ports, database, compose project and
+  containers while leaving the two things a container actually executes shared with every other
+  checkout on the machine.
+  · The git server's tag now carries the instance, which it already had to hand. The default
+  instance reproduces the tag it was before, so nothing changes for a single checkout, and a moved
+  port block gets its own. This mattered more after the previous entry: building the image every
+  run fixed staleness but made two checkouts race the same tag on every run rather than only when
+  it was absent.
+  · The workspace image is not this harness's to build — `pnpm infra:image` builds it — so naming
+  it after the instance would only produce a tag nothing creates. A real run on a moved port block
+  is refused instead, with the command that builds a private tag in the message. The default port
+  block is unaffected, and a mock run is too: it starts no container, so the image it would have
+  used is not a fact about it. This is the workaround from the last two measurements turned into a
+  rule, so the next reading cannot quietly be taken against a tag another lane owns.

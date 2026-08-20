@@ -14,8 +14,21 @@
  */
 import { exec, succeeds, waitUntil } from './process';
 
-/** Image tag built from `infra/test/gitserver`. */
-export const GITSERVER_IMAGE = 'agent-hangar/gitserver:test';
+/**
+ * Image tag of one instance's git server, built from `infra/test/gitserver`.
+ *
+ * Named after the instance, not fixed, because the tag is a machine-global name: two checkouts
+ * building the same one race, and the later build moves it under the earlier run — which then
+ * clones from the other checkout's fixture despite having its own ports, database and containers.
+ * The instance is already unique for a non-default port block, and the default instance reproduces
+ * the tag this used to be.
+ *
+ * @param instance - Instance slug from the resolved environment.
+ * @returns The tag to build and run.
+ */
+export function gitServerImage(instance: string): string {
+  return `agent-hangar/gitserver:${instance}`;
+}
 
 /** Port the server listens on inside its container. */
 const CONTAINER_PORT = 8080;
@@ -145,7 +158,7 @@ async function isHealthy(address: string, port: number): Promise<boolean> {
  * @throws Error when the container never answers `/healthz`.
  */
 export async function startGitServer(options: StartGitServerOptions): Promise<GitServerHandle> {
-  const image = options.image ?? GITSERVER_IMAGE;
+  const image = options.image ?? gitServerImage(options.instance);
   const containerName = gitServerContainerName(options.instance);
   await exec('docker', ['build', '-t', image, 'infra/test/gitserver'], { cwd: options.repoRoot });
   const built = await imageId(image);

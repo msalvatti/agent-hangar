@@ -13,6 +13,7 @@ import {
   instanceForPortBase,
   repoRoot,
   resolveE2eEnv,
+  resolveWorkspaceImage,
   serverEnv,
   webRoot,
 } from './env';
@@ -122,7 +123,11 @@ describe('instanceForPortBase', () => {
    * whole underscore-delimited word, so a derived name has to keep that property.
    */
   it('keeps a name the destructive helpers accept', () => {
-    const { postgresDb } = resolveE2eEnv({ E2E_MODE: 'real', E2E_PORT_BASE: '4100' });
+    const { postgresDb } = resolveE2eEnv({
+      E2E_MODE: 'real',
+      E2E_PORT_BASE: '4100',
+      WORKSPACE_IMAGE: 'agent-hangar/workspace:test-4100',
+    });
     expect(postgresDb).toBe('agent_hangar_test_4100');
     expect(postgresDb.replace('agent_hangar_', '').split('_')).toContain('test');
   });
@@ -133,7 +138,11 @@ describe('instanceForPortBase', () => {
    */
   it('isolates every named resource when only the port base moves', () => {
     const one = resolveE2eEnv({ E2E_MODE: 'real' });
-    const other = resolveE2eEnv({ E2E_MODE: 'real', E2E_PORT_BASE: '4100' });
+    const other = resolveE2eEnv({
+      E2E_MODE: 'real',
+      E2E_PORT_BASE: '4100',
+      WORKSPACE_IMAGE: 'agent-hangar/workspace:test-4100',
+    });
     expect(other.instance).not.toBe(one.instance);
     expect(other.postgresDb).not.toBe(one.postgresDb);
     expect(other.composeProjectName).not.toBe(one.composeProjectName);
@@ -226,5 +235,57 @@ describe('prompts', () => {
   it('keeps every prompt distinct', () => {
     const prompts = Object.values(PROMPTS);
     expect(new Set(prompts).size).toBe(prompts.length);
+  });
+});
+
+describe('resolveWorkspaceImage', () => {
+  /** An explicit tag is what the caller asked for, whatever the port block. */
+  it('uses an explicit image whenever one is named', () => {
+    const image = resolveWorkspaceImage({
+      mode: 'real',
+      portBase: 4200,
+      instance: 'test-4200',
+      override: 'agent-hangar/workspace:w2c',
+    });
+    expect(image).toBe('agent-hangar/workspace:w2c');
+  });
+
+  /** The default port block is the single-checkout case, where the shared tag is nobody else's. */
+  it('falls back to the shared image on the default port block', () => {
+    const image = resolveWorkspaceImage({
+      mode: 'real',
+      portBase: DEFAULT_PORT_BASE,
+      instance: TEST_INSTANCE,
+      override: undefined,
+    });
+    expect(image).toBe(DEFAULT_WORKSPACE_IMAGE);
+  });
+
+  /**
+   * Moving the port block isolates ports, database and containers but not the image tag, which no
+   * instance name reaches: another checkout rebuilding it changes what these containers execute
+   * mid-run. The refusal names the command that builds a private tag rather than failing later
+   * with a measurement nobody can trust.
+   */
+  it('refuses a real run on a moved port block that named no image', () => {
+    expect(() =>
+      resolveWorkspaceImage({
+        mode: 'real',
+        portBase: 4200,
+        instance: 'test-4200',
+        override: undefined,
+      }),
+    ).toThrow(/WORKSPACE_IMAGE=agent-hangar\/workspace:test-4200 pnpm infra:image/);
+  });
+
+  /** A mock run starts no container, so the image it would have used is not a fact about it. */
+  it('allows a mock run on a moved port block without an image', () => {
+    const image = resolveWorkspaceImage({
+      mode: 'mock',
+      portBase: 4200,
+      instance: 'test-4200',
+      override: undefined,
+    });
+    expect(image).toBe(DEFAULT_WORKSPACE_IMAGE);
   });
 });
