@@ -3,7 +3,9 @@
  *
  * Layer: unit.
  * Goal: the endpoint serves the scripted frames as `text/event-stream`, replays only the frames
- * after `from`, and settles a still-active run to the outcome its script ends on.
+ * after `from`, and settles a still-active run to the outcome its script ends on only once the
+ * terminal frame is actually delivered — not the moment the stream is opened — so a cancel
+ * requested while the script is still playing back wins over the script's own ending.
  * Mocks: MSW node server serving `src/mocks/scheduled.ts`.
  *
  * Runs under the suite's default jsdom environment rather than a plain Node one: the mock
@@ -11,7 +13,7 @@
  * provides `location`.
  */
 import type { RunDetail } from '@agent-hangar/core';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { setScenario } from '@/mocks/scenario';
 
@@ -20,6 +22,11 @@ import { resetScheduledStore } from './scheduled';
 afterEach(() => {
   resetScheduledStore();
 });
+
+/** Posts a cancel request for a run, mirroring what `useRunActions`'s `stop` sends. */
+async function cancelRun(runId: string): Promise<void> {
+  await fetch(`/api/turns/${runId}/cancel`, { method: 'POST' });
+}
 
 /** Parses raw SSE text into its `id`/`event` pairs, ignoring heartbeat comments. */
 function parseFrames(body: string): { id: string; event: string }[] {
@@ -74,9 +81,27 @@ describe('GET /api/runs/:id/events', () => {
     expect(replayed.length).toBe(full.length - 3);
   });
 
-  /** Requesting an active run's stream settles it, so the detail matches what was streamed. */
-  it('settles an active run to SUCCEEDED with its final message', async () => {
+  /**
+   * Opening an active run's stream must not settle it on the spot: the script still has to play
+   * out with its own delays, and a Stop click in that window has to find an active run to
+   * cancel. Settling here immediately (rather than when the terminal frame is actually
+   * delivered) is exactly the bug that made cancellation a no-op.
+   */
+  it('does not settle the run before its terminal frame is actually delivered', async () => {
     await fetch('/api/runs/run-nightly-running/events');
+    const detail = await fetchRun('run-nightly-running');
+    expect(detail.run.status).toBe('RUNNING');
+  });
+
+  /**
+   * Requesting an active run's stream settles it once the script actually reaches its terminal
+   * frame, so the detail eventually matches what was streamed.
+   */
+  it('settles an active run to SUCCEEDED with its final message once the script finishes', async () => {
+    vi.useFakeTimers();
+    await fetch('/api/runs/run-nightly-running/events');
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
     const detail = await fetchRun('run-nightly-running');
     expect(detail.run.status).toBe('SUCCEEDED');
     expect(detail.output).not.toBeNull();
@@ -93,12 +118,33 @@ describe('GET /api/runs/:id/events', () => {
     expect(detail.run.status).toBe('RUNNING');
   });
 
-  /** Under the failing-turn scenario the same request settles the run to FAILED with its error. */
-  it('settles an active run to FAILED under the failing-turn scenario', async () => {
+  /**
+   * Under the failing-turn scenario the same request settles the run to FAILED with its error,
+   * once the script's terminal frame is actually delivered.
+   */
+  it('settles an active run to FAILED under the failing-turn scenario once the script finishes', async () => {
     setScenario('failing-turn');
+    vi.useFakeTimers();
     await fetch('/api/runs/run-nightly-running/events');
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
     const detail = await fetchRun('run-nightly-running');
     expect(detail.run.status).toBe('FAILED');
     expect(detail.run.error).toBe('OpenAI rejected the API key (401)');
+  });
+
+  /**
+   * A cancel requested while the script is still streaming must win over the script's own
+   * ending: the run stays CANCELLED once its terminal frame is later delivered, instead of being
+   * overwritten back to SUCCEEDED. This is the guarantee the run drawer's Stop button depends on.
+   */
+  it('keeps a run CANCELLED once its terminal frame is later delivered', async () => {
+    vi.useFakeTimers();
+    await fetch('/api/runs/run-nightly-running/events');
+    await cancelRun('run-nightly-running');
+    await vi.runAllTimersAsync();
+    vi.useRealTimers();
+    const detail = await fetchRun('run-nightly-running');
+    expect(detail.run.status).toBe('CANCELLED');
   });
 });

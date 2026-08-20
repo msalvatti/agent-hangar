@@ -311,30 +311,33 @@ interface StreamOutcome {
   error: string | null;
 }
 
+/** A run whose stream is still worth threading live — the drawer connects and offers Stop. */
+function isActiveRunStatus(status: JobRunStatus): boolean {
+  return status === 'RUNNING' || status === 'QUEUED' || status === 'PREPARING';
+}
+
 /**
- * Reads the outcome a scripted stream ends on.
+ * Reads the outcome one scripted frame carries, if any.
  *
- * The frames carry `unknown` payloads, so each is parsed with the protocol schema rather than
+ * The frame's payload is `unknown`, so it is parsed with the protocol schema rather than
  * asserted: a frame that is not an agent event — the `expired` marker, for one — carries no
- * outcome and is skipped.
+ * outcome.
  *
- * @param frames - The turn's scripted frames.
- * @returns The terminal outcome, or `null` when the script never reaches one.
+ * @param data - The frame's `data` field.
+ * @returns The outcome the frame ends the turn on, or `null` for any other frame.
  */
-function streamOutcome(frames: readonly SseScriptFrame[]): StreamOutcome | null {
-  let outcome: StreamOutcome | null = null;
-  for (const frame of frames) {
-    const parsed = agentEventSchema.safeParse(frame.data);
-    if (!parsed.success) {
-      continue;
-    }
-    if (parsed.data.type === 'turn.completed') {
-      outcome = { status: 'SUCCEEDED', finalMessage: parsed.data.finalMessage, error: null };
-    } else if (parsed.data.type === 'turn.failed') {
-      outcome = { status: 'FAILED', finalMessage: null, error: parsed.data.error.message };
-    }
+function outcomeFromFrame(data: unknown): StreamOutcome | null {
+  const parsed = agentEventSchema.safeParse(data);
+  if (!parsed.success) {
+    return null;
   }
-  return outcome;
+  if (parsed.data.type === 'turn.completed') {
+    return { status: 'SUCCEEDED', finalMessage: parsed.data.finalMessage, error: null };
+  }
+  if (parsed.data.type === 'turn.failed') {
+    return { status: 'FAILED', finalMessage: null, error: parsed.data.error.message };
+  }
+  return null;
 }
 
 /**
@@ -353,6 +356,29 @@ function settleRun(run: MockRun, outcome: StreamOutcome): MockRun {
     finishedAt: nowIso(),
     output: outcome.finalMessage,
   };
+}
+
+/**
+ * Settles a run to its scripted outcome at the moment the terminal frame is actually delivered,
+ * not the moment its stream is requested. A cancel that lands while the script is still playing
+ * back must win: this only applies the outcome if the run is still active when the frame fires,
+ * so a run already moved to `CANCELLED` by `POST /api/turns/:id/cancel` stays cancelled instead
+ * of being overwritten back to the script's `SUCCEEDED`/`FAILED` ending.
+ *
+ * @param runId - The run whose stream emitted the frame.
+ * @param frame - The frame `createSseResponse` just enqueued.
+ */
+function settleOnTerminalFrame(runId: string, frame: SseScriptFrame): void {
+  const outcome = outcomeFromFrame(frame.data);
+  if (outcome === null) {
+    return;
+  }
+  const current = findRun(runId);
+  if (current === undefined || !isActiveRunStatus(current.status)) {
+    return;
+  }
+  const settled = settleRun(current, outcome);
+  runs = runs.map((candidate) => (candidate.id === runId ? settled : candidate));
 }
 
 /** Mock handlers for `/api/jobs`, `/api/jobs/:id`, `/api/jobs/:id/run(s)` and `/api/runs/:id(/events)`. */
@@ -488,19 +514,25 @@ export const scheduledHandlers = [
     const url = new URL(request.url);
     const from = url.searchParams.get('from') ?? undefined;
     // A run that had already finished replays instantly: its frames are history, not progress.
-    const wasActive =
-      run.status === 'RUNNING' || run.status === 'QUEUED' || run.status === 'PREPARING';
+    const wasActive = isActiveRunStatus(run.status);
     const frames = scriptedTurnFrames({
       turnId: run.id,
       scenario: getScenario(),
       baseMs: Date.parse(run.queuedAt),
     }).map((frame) => (wasActive ? frame : { ...frame, delayMs: 0 }));
-    const outcome = wasActive ? streamOutcome(frames) : null;
-    if (outcome !== null) {
-      const settled = settleRun(run, outcome);
-      runs = runs.map((candidate) => (candidate.id === run.id ? settled : candidate));
-    }
-    return createSseResponse(frames, from === undefined ? {} : { from });
+    const runId = run.id;
+    return createSseResponse(frames, {
+      ...(from === undefined ? {} : { from }),
+      // Only a still-active run needs settling as its script plays out; a replay of an
+      // already-terminal run has nothing left to settle.
+      ...(wasActive
+        ? {
+            onFrame: (frame: SseScriptFrame) => {
+              settleOnTerminalFrame(runId, frame);
+            },
+          }
+        : {}),
+    });
   }),
 
   // `POST /api/turns/:id/cancel` is a shared route: the id is a `Turn.id` or a `JobRun.id`. This
@@ -511,7 +543,7 @@ export const scheduledHandlers = [
     if (run === undefined) {
       return undefined;
     }
-    if (run.status === 'RUNNING' || run.status === 'PREPARING' || run.status === 'QUEUED') {
+    if (isActiveRunStatus(run.status)) {
       const cancelled: MockRun = { ...run, status: 'CANCELLED', finishedAt: nowIso() };
       runs = runs.map((candidate) => (candidate.id === run.id ? cancelled : candidate));
     }
