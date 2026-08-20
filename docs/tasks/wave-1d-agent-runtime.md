@@ -10,7 +10,7 @@
 | **Depends on** | W0 merged to `main` |
 | **Unblocks** | W2-B 🐳 (worker processors) · coordination with W1-B (Dockerfile `COPY` lines applied by the orchestrator when merging the later of W1-B / W1-D) |
 | **Source** | [docs/plan.md §6 W1-D](../plan.md) · spec [03 §3](../spec/03-interfaces.md) [04 (a)](../spec/04-flows.md) [06 §2](../spec/06-testing.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 

@@ -10,7 +10,7 @@
 | **Depends on** | W0 merged to `main` |
 | **Unblocks** | W2-A (cron validation + `nextRunAt` + scheduler upsert in `/api/jobs`, `describeCron` for the UI preview), W2-B (ensure-workspace decision, state machine, restore/turn-request builder, queue/worker factories, reconcile on boot) |
 | **Source** | [docs/plan.md §6 W1-F](../plan.md) · spec [02 §4](../spec/02-data-model.md) · [03 §5](../spec/03-interfaces.md) · [04 (b)(c)](../spec/04-flows.md) · [06 §2–3](../spec/06-testing.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 

@@ -10,7 +10,7 @@
 | **Depends on** | W0 merged to `main` (Tasks 1I.3 and 1I.4 additionally need W1-A, W1-C, W1-E merged — this lane runs in the second Wave 1 batch, see plan §13) |
 | **Unblocks** | nothing hard; **merges FIRST in its batch** (root `package.json` scripts block) |
 | **Source** | [docs/plan.md §6 W1-I](../plan.md) · spec [05](../spec/05-local-dev.md) (all) [01 §8 R2](../spec/01-overview.md) [06 §3](../spec/06-testing.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 

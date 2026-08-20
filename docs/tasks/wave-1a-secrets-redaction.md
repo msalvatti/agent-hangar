@@ -10,7 +10,7 @@
 | **Depends on** | W0 merged to `main` |
 | **Unblocks** | W2-A (settings routes, status-only secrets), W2-B (worker reveal + inject + redact) |
 | **Source** | [docs/plan.md §6 W1-A](../plan.md) · spec [03 §6](../spec/03-interfaces.md) · [04 (d)](../spec/04-flows.md) · [06 §2](../spec/06-testing.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 

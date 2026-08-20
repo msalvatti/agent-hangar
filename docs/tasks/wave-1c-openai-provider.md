@@ -10,7 +10,7 @@
 | **Depends on** | W0 merged to `main` |
 | **Unblocks** | W2-B (worker builds the provider via the registry; agent-runtime W1-D consumes the same provider through core) |
 | **Source** | [docs/plan.md §6 W1-C](../plan.md) · spec [03 §2](../spec/03-interfaces.md) · [06 §2](../spec/06-testing.md) (model/openai) · [06 §7](../spec/06-testing.md) (recorded fixtures) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 

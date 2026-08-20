@@ -10,7 +10,7 @@
 | **Depends on** | W0 merged to `main` |
 | **Unblocks** | W2-A (web API routes), W2-B (worker processors) |
 | **Source** | [docs/plan.md §6 W1-E](../plan.md) · spec [02](../spec/02-data-model.md) [03 §6](../spec/03-interfaces.md) [06 §3](../spec/06-testing.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 

@@ -10,7 +10,7 @@
 | **Depends on** | W0 merged to `main` |
 | **Unblocks** | W2-C (E2E authoring needs the selectors); W1-H's final rebase (imports `@/shared/transcript`, `@/shared/repo-picker`, `@/shared/feedback`, `@/shared/shell/PageHeader`, `@/shared/api/use-api-query`, `@/mocks/*`); W3-A wiring |
 | **Source** | [docs/plan.md §6 W1-G](../plan.md) · spec [10](../spec/10-ui-design.md) (all) · [03 §3–§4](../spec/03-interfaces.md) · [04 (a)(b)](../spec/04-flows.md) · [06 §2](../spec/06-testing.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 

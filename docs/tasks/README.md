@@ -24,6 +24,6 @@ Every task inside a lane file carries a self-contained English agent prompt: an 
 | 4 | W4-A | [wave-4a-stryker-core.md](wave-4a-stryker-core.md) | `packages/core` tests + stryker config | W3-A | 🟥 |
 | 4 | W4-B | [wave-4b-stryker-runtime.md](wave-4b-stryker-runtime.md) | `packages/agent-runtime` tests + stryker config | W3-A | 🟥 |
 
-Legend: 📋 ToDo · 🟦 running · 🟨 PR open · 🟩 merged · 🟥 blocked.
+Legend: 📋 ToDo · 🟦 running · 🟨 PR open · 🟩 merged · 🟥 blocked / held.
 
 Scheduling reminders (from [docs/plan.md §3](../plan.md)): ≤ 5 concurrent subagents; ≤ 1 🐳 lane at a time; each subagent in its own worktree with `AH_INSTANCE=<lane>`; no dependency additions inside lanes; contracts frozen after W0 (additive change PRs only).

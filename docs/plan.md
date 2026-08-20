@@ -235,8 +235,8 @@ Deliberately last: the code is stable, so mutants are meaningful, and if time ru
 
 | Lane | Owned | Config | Gate |
 |---|---|---|---|
-| W4-A | 🟥 held | — | — | **Held by the operator, not by a dependency.** Mutation testing on `packages/core` starts only after the whole system has been merged, run end to end, and exercised by hand — and only when the operator says so. Do not start it on the strength of its dependency graph alone |
-| W4-B | 🟥 held | — | — | **Held by the operator, not by a dependency.** Mutation testing on `packages/agent-runtime` starts only after the whole system has been merged, run end to end, and exercised by hand — and only when the operator says so. Do not start it on the strength of its dependency graph alone |
+| W4-A | 🟥 held | — | **Held by the operator, not by a dependency.** Mutation testing on `packages/core` starts only after the whole system has been merged, run end to end, and exercised by hand — and only when the operator says so. Do not start it on the strength of its dependency graph alone |
+| W4-B | 🟥 held | — | **Held by the operator, not by a dependency.** Mutation testing on `packages/agent-runtime` starts only after the whole system has been merged, run end to end, and exercised by hand — and only when the operator says so. Do not start it on the strength of its dependency graph alone |
 
 Rules: kill survivors by **strengthening tests** (or simplifying code to the value that serves); no `// Stryker disable` without a one-line reason; equivalent mutants documented in the PR. When both lanes pass, a third tiny PR adds the `mutation` CI job (PR-scoped incremental, nightly full) and the README badge/section.
 
@@ -337,8 +337,8 @@ wiring. So there is work available now that nothing is blocking.
 | W2-C | 🟨 PR open | PR #32 | web 100 (all four metrics) | Playwright harness, a local git server and the six critical-flow specs; real mode boots against the real API, database and git server, and two specs already pass end to end there |
 | W3-A 🐳 | ⬜ | — | — | success criteria S1–S6, S8 |
 | W3-B | ⬜ | — | — | |
-| W4-A | ⬜ | — | — | may slip — documented |
-| W4-B | ⬜ | — | — | may slip — documented |
+| W4-A | 🟥 held | — | — | held by the operator, not a dependency; may slip — documented |
+| W4-B | 🟥 held | — | — | held by the operator, not a dependency; may slip — documented |
 
 **Orchestrator fixes alongside the lanes** (not lanes of the plan; each fixes a defect found while shepherding, and the Status column says whether that fix has landed):
 
@@ -364,7 +364,7 @@ wiring. So there is work available now that nothing is blocking.
 | #33 | 🟨 PR open | The scripts suite failed under load from two independent causes: no timeout for its process trees, and workers colliding over the same port bases |
 | #34 | 🟨 PR open | The configuration offered a configurable forge while two validators refused everything but one hard-coded host, so end-to-end real mode could not start |
 
-Legend: ⬜ not started · 🟦 running (branch) · 🟨 PR open · 🟩 merged · 🟥 blocked.
+Legend: ⬜ not started · 🟦 running (branch) · 🟨 PR open · 🟩 merged · 🟥 blocked / held.
 
 **Task progress per lane.** *Merged* counts tasks whose lane has landed on `main`; *on its branch*
 counts tasks a lane has finished but not yet merged. Taken from each lane's own task index, so a
