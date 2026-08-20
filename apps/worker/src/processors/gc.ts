@@ -254,7 +254,10 @@ async function reapIdle(deps: ProcessorDeps): Promise<GcResult> {
  * what protects the running turn, and the claim taken here only saves this worker the work. A
  * container removed mid-exec fails a turn the user is watching, and the archive loses nothing by
  * waiting: the chat takes no further turn, so the workspace falls idle and the collector reaps it
- * on a later pass.
+ * on a later pass. The same holds for the two live statuses nobody can hand over either: a
+ * workspace still being created finishes and then falls idle, and one left `STOPPING` by a
+ * teardown that died is reclaimed by the reconciliation above once its container is gone. Neither
+ * is forced here, because forcing it is what would destroy a filesystem somebody is using.
  *
  * @param deps - Runner, repositories, claims and logger.
  * @param chatId - The archived chat.
