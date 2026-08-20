@@ -228,9 +228,17 @@ export function resolveE2eEnv(processEnv: E2eProcessEnv = process.env): E2eEnv {
  * The environment block handed to the web and worker processes Playwright manages.
  *
  * Two keys are not in the shared configuration schema yet — `ALLOWED_REPO_HOSTS` and
- * `GITHUB_API_BASE_URL` — and one, `FAKE_PROVIDER_SCRIPT_PATH`, is the contract the fake provider
- * must load its script through. They are passed regardless: an unknown key is inert until the
- * schema declares it, and passing it now is what makes declaring it the only change needed.
+ * `GITHUB_API_BASE_URL`. They are passed regardless: an unknown key is inert until the schema
+ * declares it, and passing it now is what makes declaring it the only change needed.
+ *
+ * `FAKE_PROVIDER_SCRIPT_PATH` is a third, and it is not merely undeclared: nothing reads it. The
+ * fake provider runs inside the workspace container, which receives only the fixed environment
+ * block the worker builds, and it takes its script from `AGENT_FAKE_SCRIPT_JSON` — a different
+ * name carrying the script itself rather than a path, and a path on this side would not resolve
+ * inside the container anyway. Until the worker forwards the script, a real run plays the
+ * built-in one, whose prompts and answers are not the ones the specs are written against. The key
+ * stays as the statement of what the suite needs from the worker, and the specs it blocks are
+ * left failing rather than rewritten around the built-in script.
  *
  * @param env - The resolved environment.
  * @returns Variables to export for the managed servers.

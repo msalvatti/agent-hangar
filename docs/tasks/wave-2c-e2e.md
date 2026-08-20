@@ -729,3 +729,40 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   `/workspace`, `--cap-drop ALL`, `no-new-privileges`, tmpfs `/tmp`, bridge, init, `GIT_ASKPASS`
   set). The clone is fine; the URL was wrong. The credential-helper wall is therefore still ahead,
   behind this one.
+- 2C.16 ✅ 2026-08-20 — triaged the reviewer's remaining threads against the tree rather than
+  against the earlier rounds. Nineteen of twenty-two describe code that no longer exists; GitHub
+  still lists them because its anchors follow live lines. Two were real.
+  · Fixed: `stopWorker` gave up on an orphan whose leader had already gone. The recorded id is the
+  package runner's, and the package runner exits while the worker it supervises drains, so both
+  `ps` fields come back empty while the group is still consuming the queues — and the pre-step then
+  started a second worker beside it. The decision is now a group question, not a leader question:
+  with the leader present its identity still decides, and with the leader gone a surviving group
+  under that id is ours, because no operating system reissues a process id while a process group
+  carries it. `ownsRecordedGroup` carries that decision with its own tests; without the
+  leader-gone branch the "accepts a group that outlived its recorded leader" test fails.
+  · Recorded, not worked around: **`FAKE_PROVIDER_SCRIPT_PATH` reaches nothing.** The suite passes
+  it to the web server and the worker, but the fake provider runs inside the workspace container,
+  which receives only the fixed block `provision-workspace.ts` builds (`GITHUB_TOKEN`,
+  `OPENAI_API_KEY`, `GIT_ASKPASS`, `OPENAI_MODEL`, `AGENT_MODEL_PROVIDER`, optional
+  `OPENAI_BASE_URL`) — and `packages/agent-runtime/src/provider.ts` reads `AGENT_FAKE_SCRIPT_JSON`,
+  a different name carrying the script itself rather than a path, which a host path would not
+  resolve to inside the container anyway. So a real run plays `builtInFakeScript()`, whose keys are
+  `list files and create NOTES.md`, `show NOTES.md`, `print date`, `run a long command` and
+  `default`. Measured against what the specs ask for: `cancel-turn` sends `sleep for sixty seconds`
+  and `settings-save-mask` sends `write the token to a file` — neither is a key, so both fall to
+  `default`, which answers `Done.` and calls no tool; and the three prompts that do match answer
+  different text (`I listed the repository and created NOTES.md.` against the expected
+  `NOTES.md with the file list`, `Here is NOTES.md, as requested.` against `Here is NOTES.md.`,
+  `I printed the current date.` against `printed above`). Four real-flow specs therefore cannot
+  pass until the script is forwarded. Contract change request, unchanged in substance from the one
+  filed at 2C.6 but now with the exact gap named: W2-B forwards the script into the container
+  (reading `FAKE_PROVIDER_SCRIPT_PATH` on the worker and passing its contents as
+  `AGENT_FAKE_SCRIPT_JSON`, or W1-D teaches the runtime to read a mounted path). The harness keeps
+  passing the key and keeps the script and its placeholder substitution, both covered, so the
+  wiring is a one-place change.
+  · Argued, not changed: the reviewer objects to `apps/web/vitest.config.ts` gaining
+  `e2e/**/*.test.ts` in the `unit` project's `include`. The append-only rule covers
+  `coverage.include`, and the acceptance criteria for this lane require harness unit tests at
+  100 % on the pure modules — which cannot run unless they are discovered. Both edited patterns
+  name `e2e/**` only, a path no other lane owns; `src/**` and `app/**` are untouched. Moving
+  discovery into a separate project would be a larger edit to the same shared file.

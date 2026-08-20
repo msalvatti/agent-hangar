@@ -71,19 +71,52 @@ export function isWorkerCommandLine(commandLine: string): boolean {
  * that belongs to somebody else.
  *
  * @param handle - The worker this run started.
- * @param commandLine - `ps -o command=` output for the handle's id, or `undefined` when gone.
- * @param startedAt - `ps -o lstart=` output for the same id, or `undefined` when gone.
+ * @param commandLine - `ps -o command=` output for the handle's id.
+ * @param startedAt - `ps -o lstart=` output for the same id.
  * @returns `true` only when both agree with the handle.
  */
 export function isSameWorker(
   handle: WorkerHandle,
-  commandLine: string | undefined,
-  startedAt: string | undefined,
+  commandLine: string,
+  startedAt: string,
 ): boolean {
-  if (commandLine === undefined || startedAt === undefined) {
-    return false;
-  }
   return isWorkerCommandLine(commandLine) && startedAt.trim() === handle.startedAt.trim();
+}
+
+/** What `ps` reports about a recorded process id, when something still holds it. */
+export interface LeaderFacts {
+  /** `ps -o command=` output. */
+  commandLine: string;
+  /** `ps -o lstart=` output. */
+  startedAt: string;
+}
+
+/**
+ * Whether the recorded process group is still this run's, and may therefore be signalled.
+ *
+ * The recorded id is the package runner's, and the package runner exits while the worker it
+ * supervises is still draining — so the leader having gone says nothing about the group. Reading
+ * only the leader therefore has two answers to give, not one.
+ *
+ * While the leader is there, identity comes from what `ps` reports about it. Once it is gone, its
+ * id can still name a live group only if that group is ours: an operating system does not hand a
+ * process id out again while a process group carrying that id has members, so a surviving group
+ * under the recorded id is the tree this run left behind. Reporting it stopped is what would put a
+ * second worker on the queues the first is still consuming.
+ *
+ * @param handle - The worker this run started.
+ * @param leader - What `ps` reports for its id, or `undefined` when nothing holds that id.
+ * @param groupAlive - Whether any process of the recorded group still exists.
+ * @returns `true` when the group belongs to this run.
+ */
+export function ownsRecordedGroup(
+  handle: WorkerHandle,
+  leader: LeaderFacts | undefined,
+  groupAlive: boolean,
+): boolean {
+  return leader === undefined
+    ? groupAlive
+    : isSameWorker(handle, leader.commandLine, leader.startedAt);
 }
 
 /**
@@ -189,7 +222,8 @@ export async function startWorker(env: E2eEnv): Promise<WorkerHandle> {
  * The wait is the point: the worker shuts down gracefully, and starting a replacement while the
  * old one is still draining would put two workers on the same queues — the very thing stopping it
  * is meant to prevent. A group that will not leave within the budget is killed outright, and one
- * that survives even that is reported rather than assumed gone.
+ * that survives even that is reported rather than assumed gone. A group whose leader has already
+ * gone is stopped too, for the reason {@link ownsRecordedGroup} gives.
  *
  * @param handle - Handle returned by {@link startWorker}.
  * @param timeoutMs - How long to wait for a graceful exit, and again after the kill.
@@ -201,7 +235,12 @@ export async function stopWorker(handle: WorkerHandle, timeoutMs = STOP_TIMEOUT_
     readProcessField(handle.pid, 'command='),
     readProcessField(handle.pid, 'lstart='),
   ]);
-  if (!isSameWorker(handle, commandLine, startedAt)) {
+  // Either field missing means the leader is not there to be identified — including the case where
+  // it exits between the two reads, which would otherwise leave a half-read leader looking like a
+  // mismatch and its live group untouched.
+  const leader =
+    commandLine === undefined || startedAt === undefined ? undefined : { commandLine, startedAt };
+  if (!ownsRecordedGroup(handle, leader, groupExists(handle.pid))) {
     return;
   }
   signalGroup(handle.pid, 'SIGTERM');

@@ -4,14 +4,16 @@
  *
  * Layer: test support (pure).
  *
- * The script is data rather than code because the provider runs inside the worker process, which
- * the suite does not import: the worker is pointed at this file through
- * `FAKE_PROVIDER_SCRIPT_PATH` and parses it into the `ProviderScript` shape the fake provider
- * already takes.
+ * The script is data rather than code because the provider that plays it runs inside the workspace
+ * container, which the suite does not import. Nothing loads it there yet: the container receives
+ * only the fixed environment block the worker builds, and the provider takes its script from
+ * `AGENT_FAKE_SCRIPT_JSON`, which carries the script itself rather than a path. So what this
+ * module gives today is the shape the script must have and the substitution its one placeholder
+ * needs, both pinned by tests, and the file is inert until the worker forwards it.
  *
  * No credential-shaped literal is written into the file. The one step whose arguments must carry
  * a credential — so the suite can prove the worker redacts it before persisting — writes the
- * placeholder below instead, and the loader substitutes the canary at run time.
+ * placeholder below instead, for the canary to be substituted at the point the script is loaded.
  */
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';

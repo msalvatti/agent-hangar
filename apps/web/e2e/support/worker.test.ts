@@ -10,10 +10,13 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { isSameWorker, isWorkerCommandLine } from './worker';
+import { isSameWorker, isWorkerCommandLine, ownsRecordedGroup } from './worker';
 import type { WorkerHandle } from './worker';
 
 const HANDLE: WorkerHandle = { pid: 4321, startedAt: 'Thu Aug 20 06:39:22 2026' };
+
+/** What `ps` reports for the worker this run started. */
+const OWN_LEADER = { commandLine: 'pnpm --filter worker dev', startedAt: HANDLE.startedAt };
 
 describe('isWorkerCommandLine', () => {
   /** The invocation the harness spawns must be recognised, however the shell reports its prefix. */
@@ -63,11 +66,37 @@ describe('isSameWorker', () => {
   it('refuses an unrelated program holding a reused id', () => {
     expect(isSameWorker(HANDLE, '/usr/bin/vim notes.txt', HANDLE.startedAt)).toBe(false);
   });
+});
 
-  /** Nothing has that id any more, so there is nothing to signal. */
-  it('refuses a process that has gone', () => {
-    expect(isSameWorker(HANDLE, undefined, undefined)).toBe(false);
-    expect(isSameWorker(HANDLE, 'pnpm --filter worker dev', undefined)).toBe(false);
-    expect(isSameWorker(HANDLE, undefined, HANDLE.startedAt)).toBe(false);
+describe('ownsRecordedGroup', () => {
+  /** The leader is still there and is ours, so the group it leads is ours to stop. */
+  it('accepts the group of a leader that identifies as this run', () => {
+    expect(ownsRecordedGroup(HANDLE, OWN_LEADER, true)).toBe(true);
+  });
+
+  /**
+   * The leader is there but belongs to somebody else, so a live group under that id is theirs.
+   * Signalling it would reach a tree this run never started.
+   */
+  it('refuses a live group whose leader belongs to another run', () => {
+    const other = {
+      commandLine: 'pnpm --filter worker dev',
+      startedAt: 'Wed Aug 19 15:43:45 2026',
+    };
+    expect(ownsRecordedGroup(HANDLE, other, true)).toBe(false);
+  });
+
+  /**
+   * The package runner exits while the worker it supervises drains, so a group can outlive the id
+   * that was recorded for it. Treating that as stopped is what would start a second worker on the
+   * queues the first is still consuming — the whole reason the previous one is stopped at all.
+   */
+  it('accepts a group that outlived its recorded leader', () => {
+    expect(ownsRecordedGroup(HANDLE, undefined, true)).toBe(true);
+  });
+
+  /** Leader gone and group empty: the run really did end, and there is nothing to signal. */
+  it('refuses a group that is gone along with its leader', () => {
+    expect(ownsRecordedGroup(HANDLE, undefined, false)).toBe(false);
   });
 });
