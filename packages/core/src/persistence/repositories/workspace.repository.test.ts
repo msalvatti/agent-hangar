@@ -10,8 +10,9 @@
  * from the row on the error path, and falls back to the workspace id when the row is gone;
  * `listIdle`/`listLive`/`findLiveByChat` build the expected queries; `claimStatus` carries the
  * expected status in the `WHERE` of both its guarded `readyAt` stamp and its status update,
- * writes exactly the columns `setStatus` writes, answers `null` when no row matched and
- * translates a live-workspace conflict the same way.
+ * writes exactly the columns `setStatus` writes, answers `null` when no row matched, translates a
+ * live-workspace conflict the same way, and refuses a move the lifecycle forbids before it reaches
+ * the database at all.
  * Mocks: a Prisma client double exposing only `workspace.*` — no database.
  */
 import { describe, expect, it, vi } from 'vitest';
@@ -426,7 +427,7 @@ describe('PrismaWorkspaceRepository', () => {
     const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
     let caught: unknown;
     try {
-      await repo.claimStatus('ws-1', 'FAILED', 'READY');
+      await repo.claimStatus('ws-1', 'CREATING', 'READY');
     } catch (error) {
       caught = error;
     }

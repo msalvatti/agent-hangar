@@ -14,6 +14,7 @@ import type {
   WorkspaceRepository,
   WorkspaceStatusUpdate,
 } from '../../persistence/ports.ts';
+import { assertWorkspaceTransition } from '../../workspace/lifecycle.ts';
 import { LIVE_WORKSPACE_STATUSES } from '../../workspace/types.ts';
 import type { WorkspaceStatus } from '../../workspace/types.ts';
 
@@ -96,6 +97,7 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
     to: WorkspaceStatus,
     update: WorkspaceStatusUpdate = {},
   ): Promise<Workspace | null> {
+    assertWorkspaceTransition(from, to, id);
     if (this.store.workspaces.get(id)?.status !== from) {
       return null;
     }

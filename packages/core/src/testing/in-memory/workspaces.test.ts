@@ -2,17 +2,18 @@
  * Unit tests for the conditional workspace write of `InMemoryWorkspaceRepository`.
  *
  * Layer: unit.
- * Goal: the contract `claimStatus` promises a caller — one of two callers that read the same status
- * moves the row and the other is told `null`; a winning claim writes exactly what the unconditional
- * write of that status writes; a row that is gone is a lost race rather than an error; and the
- * "one live workspace per chat" invariant binds a claim as it binds `setStatus`. It lives beside the
+ * Goal: what this double adds on top of the shared `claimStatus` contract, which it is also held to
+ * just above — a winning claim writes exactly what the unconditional write of that status writes;
+ * a row that is gone is a lost race rather than an error; and the
+ * lifecycle refusal arrives before the invariant a revival would otherwise reach. It lives beside the
  * double rather than with the other seven, because a conditional write is deterministic here in a
  * way it can never be against a database: "the row moved" is expressed by moving it.
  * Mocks: FakeClock.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { LiveWorkspaceExistsError } from '../../errors.ts';
+import { IllegalTransitionError } from '../../errors.ts';
+import { describeWorkspaceClaimContract } from '../../persistence/testing/workspace-claim-contract.ts';
 import { FakeClock } from '../fake-clock.ts';
 import { createInMemoryRepositories } from '../in-memory-repositories.ts';
 import type { InMemoryRepositories } from '../in-memory-repositories.ts';
@@ -43,6 +44,18 @@ async function seedChat(): Promise<{ id: string }> {
     baseBranch: 'main',
   });
 }
+
+describeWorkspaceClaimContract('InMemoryWorkspaceRepository', {
+  repository: () => repos.workspaces,
+  seed: async (status) => {
+    const workspace = await repos.workspaces.create(input);
+    if (status === 'CREATING') {
+      return workspace;
+    }
+    await repos.workspaces.setStatus(workspace.id, 'READY');
+    return status === 'READY' ? workspace : repos.workspaces.setStatus(workspace.id, status);
+  },
+});
 
 describe('InMemoryWorkspaceRepository.claimStatus', () => {
   /**
@@ -98,17 +111,23 @@ describe('InMemoryWorkspaceRepository.claimStatus', () => {
   });
 
   /**
-   * The invariant binds a conditional write too: a claim that would put a second live workspace
-   * on one chat is refused rather than granted, exactly as `setStatus` is.
+   * This once asserted that the "one live workspace per chat" invariant refuses a claim reviving a
+   * dead row beside a live sibling. Refusing lifecycle-illegal moves made that unreachable and
+   * replaced it with something stronger: no dead status has a live successor, so a claim can no
+   * longer *reach* the invariant, and the refusal arrives before the row or its siblings are
+   * consulted at all. What is pinned here is that earlier refusal; `setStatus`, which can still be
+   * asked to revive a row, keeps the invariant test of its own.
    */
-  it('claimStatus is refused when the move would make a second live workspace of one chat', async () => {
+  it('claimStatus cannot reach the live-workspace invariant, because reviving a row is refused first', async () => {
     const chat = await seedChat();
     const first = await repos.workspaces.create({ ...input, chatId: chat.id });
     await repos.workspaces.setStatus(first.id, 'FAILED', { failureReason: 'boom' });
-    await repos.workspaces.create({ ...input, chatId: chat.id });
+    const sibling = await repos.workspaces.create({ ...input, chatId: chat.id });
 
     await expect(repos.workspaces.claimStatus(first.id, 'FAILED', 'READY')).rejects.toThrow(
-      LiveWorkspaceExistsError,
+      IllegalTransitionError,
     );
+    expect((await repos.workspaces.get(first.id))?.status).toBe('FAILED');
+    expect((await repos.workspaces.findLiveByChat(chat.id))?.id).toBe(sibling.id);
   });
 });

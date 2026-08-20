@@ -13,12 +13,15 @@
  * intentionally does not touch `lastActiveAt` — only `markActive` does — matching
  * `InMemoryWorkspaceRepository`, which every later lane's tests run against.
  *
- * `claimStatus` writes the same columns as `setStatus` from the same builder, and differs only in
- * carrying the expected status in its `WHERE`. That predicate is the arbitration: two callers that
+ * `claimStatus` writes the same columns as `setStatus` from the same builder, and differs in two
+ * ways: it carries the expected status in its `WHERE`, and it refuses a move the lifecycle does not
+ * allow — a self-transition above all, which would match on every attempt and so report every
+ * caller a winner. That predicate is the arbitration: two callers that
  * read the same row race in Postgres rather than in a process, so a claim held across processes
  * means what a claim held in one process means.
  */
 import type { Redactor } from '../../secrets/types.ts';
+import { assertWorkspaceTransition } from '../../workspace/lifecycle.ts';
 import { LIVE_WORKSPACE_STATUSES } from '../../workspace/types.ts';
 import type { WorkspaceStatus } from '../../workspace/types.ts';
 import type { Workspace } from '../entities.ts';
@@ -146,6 +149,7 @@ export class PrismaWorkspaceRepository implements WorkspaceRepository {
     to: WorkspaceStatus,
     update: WorkspaceStatusUpdate = {},
   ): Promise<Workspace | null> {
+    assertWorkspaceTransition(from, to, id);
     const where = { id, status: toPrismaWorkspaceStatus(from) };
     try {
       const row = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {

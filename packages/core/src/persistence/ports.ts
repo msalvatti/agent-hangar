@@ -178,12 +178,21 @@ export interface WorkspaceRepository {
    * Stamps the same timestamps as {@link setStatus} and applies the same optional fields, so a
    * caller that switches from one to the other changes only what happens when it loses.
    *
+   * The move must be one the workspace lifecycle allows, which rules out `from === to`: a row that
+   * never leaves its status has not been moved by anybody, so every concurrent caller would be told
+   * it won and the guarantee above would be false. That is refused rather than answered `null`,
+   * because it is a caller naming an impossible move rather than a caller losing a race — the two
+   * deserve different answers. `setStatus` makes no such promise and enforces no such rule; this
+   * method does, because arbitration is the whole of what it offers.
+   *
    * @param id - Workspace to move.
    * @param from - Status the caller read; the write applies only while the row still holds it.
-   * @param to - Status to write.
+   * @param to - Status to write; must be a successor of `from`.
    * @param update - Same optional columns {@link setStatus} accepts.
    * @returns The row this call produced, or `null` when it no longer held `from` — because
    *   another writer moved it, or because it does not exist.
+   * @throws IllegalTransitionError When the workspace lifecycle does not allow `from` to `to`,
+   *   self-transitions included.
    */
   claimStatus(
     id: string,

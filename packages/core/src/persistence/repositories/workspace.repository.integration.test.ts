@@ -9,7 +9,8 @@
  * result sets; a canary in `failureReason` is redacted before the write; a `setStatus` refused by
  * the partial index names the owning chat and rolls its `readyAt` stamp back. And the one property
  * only a real database can show: `claimStatus` is a single conditional UPDATE, so two callers that
- * issue it together cannot both win.
+ * issue it together cannot both win. The shared `claimStatus` contract runs against this
+ * implementation too, so the arbitration rules are pinned here and on the double from one source.
  * Mocks: none — a real compose Postgres.
  */
 import { beforeEach, expect, it } from 'vitest';
@@ -25,6 +26,7 @@ import {
   sqlTemplate,
   truncateAll,
 } from '../testing/db.ts';
+import { describeWorkspaceClaimContract } from '../testing/workspace-claim-contract.ts';
 
 import { LiveWorkspaceExistsError, NotFoundError } from './errors.ts';
 import { PrismaWorkspaceRepository } from './workspace.repository.ts';
@@ -215,5 +217,25 @@ describeDb('PrismaWorkspaceRepository', () => {
     const repo = new PrismaWorkspaceRepository(client, testRedactor);
     expect(await repo.get('missing')).toBeNull();
     await expect(repo.setStatus('missing', 'READY')).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describeDb('PrismaWorkspaceRepository', () => {
+  beforeEach(async () => {
+    client = connectTestDb();
+    await truncateAll(client);
+  });
+
+  describeWorkspaceClaimContract('PrismaWorkspaceRepository', {
+    repository: () => new PrismaWorkspaceRepository(client, testRedactor),
+    seed: async (status) => {
+      const repo = new PrismaWorkspaceRepository(client, testRedactor);
+      const workspace = await repo.create({ ...baseInput, chatId: await seedChat(client) });
+      if (status === 'CREATING') {
+        return workspace;
+      }
+      await repo.setStatus(workspace.id, 'READY');
+      return status === 'READY' ? workspace : repo.setStatus(workspace.id, status);
+    },
   });
 });
