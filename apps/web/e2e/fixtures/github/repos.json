@@ -1,0 +1,26 @@
+[
+  {
+    "id": 1001,
+    "name": "sample",
+    "full_name": "e2e/sample",
+    "private": false,
+    "html_url": "https://example.invalid/e2e/sample",
+    "clone_url": "https://example.invalid/e2e/sample.git",
+    "default_branch": "main",
+    "description": "Seed repository served by the local git server.",
+    "pushed_at": "2026-01-01T00:00:00Z",
+    "owner": { "login": "e2e" }
+  },
+  {
+    "id": 1002,
+    "name": "other",
+    "full_name": "e2e/other",
+    "private": true,
+    "html_url": "https://example.invalid/e2e/other",
+    "clone_url": "https://example.invalid/e2e/other.git",
+    "default_branch": "main",
+    "description": null,
+    "pushed_at": "2026-01-02T00:00:00Z",
+    "owner": { "login": "e2e" }
+  }
+]

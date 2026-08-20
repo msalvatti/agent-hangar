@@ -42,8 +42,13 @@ export default defineConfig({
             './src/mocks/vitest.ts',
             './src/shared/repo-picker/testing/setup.ts',
           ],
-          include: ['src/**/*.test.{ts,tsx}', 'app/**/*.test.{ts,tsx}'],
-          exclude: ['src/**/*.integration.test.{ts,tsx}', 'e2e/**', 'node_modules/**', '.next/**'],
+          include: ['src/**/*.test.{ts,tsx}', 'app/**/*.test.{ts,tsx}', 'e2e/**/*.test.ts'],
+          exclude: [
+            'src/**/*.integration.test.{ts,tsx}',
+            'e2e/**/*.spec.ts',
+            'node_modules/**',
+            '.next/**',
+          ],
           maxWorkers: 3,
         },
       },
@@ -75,6 +80,17 @@ export default defineConfig({
         'src/shared/shell/PageHeader.tsx',
         'app/api/**',
         'src/server/**',
+        // End-to-end harness, the modules a unit test can decide. `gitserver.ts`, `docker.ts`,
+        // `db.ts`, `process.ts`, `worker.ts`, `heartbeat.ts`, `prepare-stack.ts`, `stack.ts`,
+        // `stack-state.ts`, the page objects and the Playwright hooks spawn processes, signal
+        // them, open sockets or drive a browser, so the end-to-end run is what exercises them.
+        // Where one of those modules holds a decision worth pinning it carries its own unit test
+        // without the whole module being measured: `worker.ts`'s command-line matcher, which
+        // decides whether a recorded process id may be signalled, and `master-key.ts`, which is
+        // measured here because what it settles — the permissions a key file ends up with — is a
+        // property of the real file system rather than of a value it could be handed.
+        'e2e/support/{api,constants,env,github-stub,health,master-key,mode,selectors}.ts',
+        'e2e/fake-provider/script.ts',
       ],
       exclude: [
         '**/*.test.{ts,tsx}',

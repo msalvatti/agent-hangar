@@ -63,15 +63,15 @@ Infrastructure decisions taken here (state them in the PR description):
 
 ## Task 2C.1 — Local git server image + seed repo + GitHub API stub
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** —
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** —
 
 **Description.** Build the smallest git-over-HTTP server image that the workspace container can clone from and push to, with a deterministic seed repository; and an in-process stub of the GitHub REST endpoints the repo picker uses, returning URLs that point at that server.
 
 **Acceptance criteria**
-- [ ] `infra/test/gitserver/Dockerfile` builds `agent-hangar/gitserver:test` (< 1 min, no npm deps); `server.mjs` (Node stdlib only) proxies `GET /<repo>.git/info/refs?service=…`, `POST /<repo>.git/git-upload-pack`, `POST /<repo>.git/git-receive-pack` to `git http-backend` with `GIT_PROJECT_ROOT=/repos`, `GIT_HTTP_EXPORT_ALL=1`, receive-pack enabled; `GET /healthz` → 200
-- [ ] `seed.sh` creates `/repos/sample.git` (bare, default branch `main`, commits: `README.md`, `src/index.js`, `.gitignore`) idempotently at container start; `docker run --rm -p 3907:8080 agent-hangar/gitserver:test` then `git clone http://127.0.0.1:3907/sample.git` works and a push of a new branch succeeds
-- [ ] `apps/web/e2e/support/github-stub.ts` exports `startGithubStub({ port, repoBaseUrl })` / `stop()` serving `/user/repos`, `/repos/:owner/:repo`, `/repos/:owner/:repo/branches` from fixtures; `401` when `Authorization` header is missing or not `Bearer ghp_…`; unknown path → 404; unit-tested (routing + payload shapes) at 100 %
-- [ ] `apps/web/e2e/support/gitserver.ts` exports `startGitServer({ port, image })`/`stopGitServer()` using `docker run -d --rm -p 0.0.0.0:<port>:8080 --name ah-e2e-gitserver-<instance>`, waits for `/healthz`, idempotent (reuses a running container), and `docker stop` on teardown
+- [x] `infra/test/gitserver/Dockerfile` builds `agent-hangar/gitserver:test` (< 1 min, no npm deps); `server.mjs` (Node stdlib only) proxies `GET /<repo>.git/info/refs?service=…`, `POST /<repo>.git/git-upload-pack`, `POST /<repo>.git/git-receive-pack` to `git http-backend` with `GIT_PROJECT_ROOT=/repos`, `GIT_HTTP_EXPORT_ALL=1`, receive-pack enabled; `GET /healthz` → 200
+- [x] `seed.sh` creates `/repos/sample.git` (bare, default branch `main`, commits: `README.md`, `src/index.js`, `.gitignore`) idempotently at container start; `docker run --rm -p 3907:8080 agent-hangar/gitserver:test` then `git clone http://127.0.0.1:3907/sample.git` works and a push of a new branch succeeds
+- [x] `apps/web/e2e/support/github-stub.ts` exports `startGithubStub({ port, repoBaseUrl })` / `stop()` serving `/user/repos`, `/repos/:owner/:repo`, `/repos/:owner/:repo/branches` from fixtures; `401` when `Authorization` header is missing or not `Bearer ghp_…`; unknown path → 404; unit-tested (routing + payload shapes) at 100 %
+- [x] `apps/web/e2e/support/gitserver.ts` exports `startGitServer({ port, image })`/`stopGitServer()` using `docker run -d --rm -p 0.0.0.0:<port>:8080 --name ah-e2e-gitserver-<instance>`, waits for `/healthz`, idempotent (reuses a running container), and `docker stop` on teardown
 
 **Files to create**
 `infra/test/gitserver/{Dockerfile,server.mjs,seed.sh,.dockerignore,README.md}`, `apps/web/e2e/support/{github-stub,github-stub.test,gitserver}.ts`, `apps/web/e2e/fixtures/github/{repos.json,branches.json}`.
@@ -139,20 +139,22 @@ Completion Protocol (after you finish):
 
 ## Task 2C.2 — Harness: env, Playwright config (`webServer`, modes), fixtures, DB reset, fake-provider script
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 2C.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 2C.1
 
 **Description.** Make the suite bootable in both modes: resolve the test instance env, configure Playwright (`webServer` array for web + worker when `E2E_MANAGED_SERVER=1`, global setup/teardown that brings up compose/migrations/gitserver/stub in real mode), write the `test.extend` fixtures (`resetDb`, `seedSettings`, `api`, `health`, `gitServer`, `mode`) and the fake-provider script file.
 
 **Acceptance criteria**
-- [ ] `apps/web/e2e/support/env.ts` exports `resolveE2eEnv(processEnv)` → `{ mode, instance, portBase, webPort, baseURL, databaseUrl, redisUrl, gitServerPort, gitServerHost, githubStubPort, repoUrl, allowedRepoHosts, fakeScriptPath, masterKeyPath, workspaceImage }` using core `resolveInstance`; unit-tested
-- [ ] `apps/web/playwright.config.ts`: `testDir: 'e2e'`, chromium only, `baseURL`, `timeout 120_000` (real) / `30_000` (mock), `expect.timeout 10_000`, retries 1 in CI, trace `on-first-retry`, video `retain-on-failure`, `globalSetup`/`globalTeardown`, `webServer` = when `E2E_MANAGED_SERVER=1`: mock → one server (`next dev` with `NEXT_PUBLIC_API_MOCK=1`); real → two servers (web `next dev`, worker `tsx watch`) with readiness on `/api/health` and `/api/health?require=worker`
-- [ ] `apps/web/e2e/fixtures.ts` exports `test`, `expect` (`test.extend`) with: `mode`, `env`, `api` (typed request helper with Zod parse of `apiError` on failure), `resetDb` (auto, per test: API-side job cleanup → `truncateAll` → reap `ah-ws-test-*` containers in real mode; no-op in mock), `seedSettings` (PUT canaries via the API; no-op in mock), `health` (poll helper over `/api/health`), `gitServer` (handle from global setup via env)
-- [ ] `apps/web/e2e/fake-provider/script.json` with the scripted steps for the five prompts + `default`, validated by a unit test against the `FakeAgentModelProvider` script type
-- [ ] `pnpm --filter web test:e2e` → `playwright test`; `E2E_MODE=mock E2E_MANAGED_SERVER=1 pnpm --filter web test:e2e --list` lists the spec files (none yet — harness boots and tears down with an empty/placeholder spec `smoke.spec.ts` that loads `/chats/new`)
-- [ ] Harness pure modules 100 % covered by Vitest; `e2e/tsconfig.json` type-checks
+- [x] `apps/web/e2e/support/env.ts` exports `resolveE2eEnv(processEnv)` → `{ mode, instance, portBase, webPort, baseURL, databaseUrl, redisUrl, gitServerPort, gitServerHost, githubStubPort, repoUrl, allowedRepoHosts, fakeScriptPath, masterKeyPath, workspaceImage }` using core `resolveInstance`; unit-tested
+- [x] `apps/web/playwright.config.ts`: `testDir: 'e2e'`, chromium only, `baseURL`, `timeout 120_000` (real) / `30_000` (mock), `expect.timeout 10_000`, retries 1 in CI, trace `on-first-retry`, video `retain-on-failure`, `globalSetup`/`globalTeardown`, `webServer` when `E2E_MANAGED_SERVER=1` — with two departures the implementation forced: mock serves a production build (`next start`), because the mock API cannot boot under the dev server; and the worker is not a `webServer` entry, because it owns no port and an entry pointed at the web server's health route is treated as already running and never starts. The worker starts with the rest of the stack and the global setup waits for its heartbeat
+- [x] `apps/web/e2e/fixtures.ts` exports `test`, `expect` (`test.extend`) with: `mode`, `env`, `api` (typed request helper with Zod parse of `apiError` on failure), `resetDb` (auto, per test: API-side job cleanup → `truncateAll` → reap `ah-ws-test-*` containers in real mode; no-op in mock), `seedSettings` (PUT canaries via the API; no-op in mock), `health` (poll helper over `/api/health`), `gitServer` (handle from global setup via env)
+- [x] `apps/web/e2e/fake-provider/script.json` with the scripted steps for the five prompts + `default`, validated by a unit test against the `FakeAgentModelProvider` script type
+- [x] `pnpm --filter web test:e2e` → `playwright test`; `E2E_MODE=mock E2E_MANAGED_SERVER=1 pnpm --filter web test:e2e --list` lists the spec files (none yet — harness boots and tears down with an empty/placeholder spec `smoke.spec.ts` that loads `/chats/new`)
+- [x] Harness pure modules 100 % covered by Vitest; the end-to-end sources type-check — through
+  `apps/web/tsconfig.json`, whose `include` already covers `e2e/**`, so no `e2e/tsconfig.json` was
+  added: a second project over the same files would compile them twice and check nothing more
 
-**Files to create**
-`apps/web/e2e/{fixtures.ts,global-setup.ts,global-teardown.ts,tsconfig.json}`, `apps/web/e2e/support/{env,env.test,api,api.test,db,docker,constants,mode}.ts`, `apps/web/e2e/fake-provider/{script.json,script.test.ts}`, `apps/web/e2e/smoke.spec.ts`, `apps/web/playwright.config.ts` (rewrite `webServer` section), `apps/web/package.json` (`test:e2e`), `apps/web/vitest.config.ts` (coverage include for pure helpers).
+**Files to create** (`tsconfig.json` was not needed — see the criterion above)
+`apps/web/e2e/{fixtures.ts,global-setup.ts,global-teardown.ts}`, `apps/web/e2e/support/{env,env.test,api,api.test,db,docker,constants,mode}.ts`, `apps/web/e2e/fake-provider/{script.json,script.test.ts}`, `apps/web/e2e/smoke.spec.ts`, `apps/web/playwright.config.ts` (rewrite `webServer` section), `apps/web/package.json` (`test:e2e`), `apps/web/vitest.config.ts` (coverage include for pure helpers).
 
 **Agent prompt**
 
@@ -250,15 +252,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md; app
 
 ## Task 2C.3 — Page objects + selector contract validated against the MSW UI
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 2C.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 2C.2
 
 **Description.** Write page objects for the sidebar, composer, chat header/transcript, scheduled page/dialog/run drawer, and settings page. Verify every selector against the running MSW-mocked UI, preferring accessible roles/names; produce the exact list of `data-testid`s the specs need, and record a contractChangeRequest for any that W1-G/W1-H do not expose.
 
 **Acceptance criteria**
-- [ ] `apps/web/e2e/pages/{sidebar,composer,chat,scheduled,settings}.ts` export classes with `readonly` locators and action methods, each locator resolving in mock mode (proved by `pages.smoke.spec.ts` that visits each page and asserts visibility/enabled state of every locator that exists in the default MSW state)
-- [ ] `apps/web/e2e/support/selectors.ts` exports the `TEST_IDS` constant table (below) and is the only place test ids are spelled; page objects use `getByRole`/`getByLabel` when the UI exposes a stable name, `getByTestId(TEST_IDS.x)` otherwise
-- [ ] `apps/web/e2e/SELECTORS.md` is NOT created — instead the PR description lists (a) ids found in the UI, (b) ids missing with the component file where W1-G/W1-H should add them (contractChangeRequest), (c) role/name selectors used instead
-- [ ] `pnpm --filter web test:e2e e2e/pages.smoke.spec.ts` green in mock mode
+- [x] `apps/web/e2e/pages/{sidebar,composer,chat,scheduled,settings}.ts` export classes with `readonly` locators and action methods, each locator resolving in mock mode (proved by `pages.smoke.spec.ts` that visits each page and asserts visibility/enabled state of every locator that exists in the default MSW state)
+- [x] `apps/web/e2e/support/selectors.ts` exports the `TEST_IDS` constant table (below) and is the only place test ids are spelled; page objects use `getByRole`/`getByLabel` when the UI exposes a stable name, `getByTestId(TEST_IDS.x)` otherwise
+- [x] `apps/web/e2e/SELECTORS.md` is NOT created — instead the PR description lists (a) ids found in the UI, (b) ids missing with the component file where W1-G/W1-H should add them (contractChangeRequest), (c) role/name selectors used instead
+- [x] `pnpm --filter web test:e2e e2e/pages.smoke.spec.ts` green in mock mode
 
 **Files to create**
 `apps/web/e2e/pages/{sidebar,composer,chat,scheduled,settings,index}.ts`, `apps/web/e2e/support/selectors.ts`, `apps/web/e2e/pages.smoke.spec.ts`.
@@ -323,15 +325,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md; app
 
 ## Task 2C.4 — Chat specs: `chat-create-run`, `chat-archive-restore`, `cancel-turn`
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 2C.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 2C.3
 
 **Description.** Author the three chat-centric specs of spec 06 §4 with step-by-step assertions, including API-side checks (`/api/chats/:id` turn status, `/api/health` live-workspace counters), written to run fully in `real` mode and up to the first real-stack assertion in `mock` mode.
 
 **Acceptance criteria**
-- [ ] `apps/web/e2e/chat-create-run.spec.ts`: seed settings → New chat → choose `e2e/sample` + `main` → send `PROMPTS.createNotes` → transcript shows the preparing/cloning notice, tool rows `list_dir` then `write_file`, final assistant text "Created NOTES.md…"; status pill Preparing → Running → Done; `GET /api/chats/:id` turn `SUCCEEDED` with two tool calls; `/api/health` `liveWorkspaces.chat === 1`
-- [ ] `apps/web/e2e/chat-archive-restore.spec.ts`: continue from a created+run chat → Archive → chat appears under Archived, banner visible → `/api/health` `liveWorkspaces.chat === 0` within `WORKSPACE_GONE_TIMEOUT_MS` → Restore → system notice visible, history intact (user message, assistant message, tool rows still there) → send `PROMPTS.showNotes` → preparing/cloning notice again → `read_file` tool row → assistant "Here is NOTES.md." → turn SUCCEEDED
-- [ ] `apps/web/e2e/cancel-turn.spec.ts`: seed → chat with `PROMPTS.sleepLong` → wait for the `run_shell` row running → click Stop (confirm) → status Cancelled and `GET /api/chats/:id` turn `CANCELLED` within `CANCEL_TIMEOUT_MS`; `/api/health` `liveWorkspaces.chat === 1` (workspace still READY); composer unlocked
-- [ ] In mock mode all three run through the UI steps up to the first real-stack assertion and then skip with a reason; no `waitForTimeout`; each spec has a top comment mapping steps → spec 06 §4 row
+- [x] `apps/web/e2e/chat-create-run.spec.ts`: seed settings → New chat → choose `e2e/sample` + `main` → send `PROMPTS.createNotes` → transcript shows the preparing/cloning notice, tool rows `list_dir` then `write_file`, final assistant text "Created NOTES.md…"; status pill Preparing → Running → Done; `GET /api/chats/:id` turn `SUCCEEDED` with two tool calls; `/api/health` `liveWorkspaces.chat === 1`
+- [x] `apps/web/e2e/chat-archive-restore.spec.ts`: continue from a created+run chat → Archive → chat appears under Archived, banner visible → `/api/health` `liveWorkspaces.chat === 0` within `WORKSPACE_GONE_TIMEOUT_MS` → Restore → system notice visible, history intact (user message, assistant message, tool rows still there) → send `PROMPTS.showNotes` → preparing/cloning notice again → `read_file` tool row → assistant "Here is NOTES.md." → turn SUCCEEDED
+- [x] `apps/web/e2e/cancel-turn.spec.ts`: seed → chat with `PROMPTS.sleepLong` → wait for the `run_shell` row running → click Stop (confirm) → status Cancelled and `GET /api/chats/:id` turn `CANCELLED` within `CANCEL_TIMEOUT_MS`; `/api/health` `liveWorkspaces.chat === 1` (workspace still READY); composer unlocked
+- [x] In mock mode all three run through the UI steps up to the first real-stack assertion and then skip with a reason; no `waitForTimeout`; each spec has a top comment mapping steps → spec 06 §4 row
 
 **Files to create**
 `apps/web/e2e/{chat-create-run,chat-archive-restore,cancel-turn}.spec.ts`, `apps/web/e2e/support/chat-flows.ts` (shared `createChatAndRun(page, api, prompt)` helper returning `{ chatId, turnId }`).
@@ -413,16 +415,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md; app
 
 ## Task 2C.5 — Scheduled + settings specs, CI `e2e` job body, mock-mode validation run
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 2C.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 2C.3
 
 **Description.** Author `scheduled-job-run`, `settings-save-mask`, `settings-missing`; write the CI `e2e` job body (mock mode now, one-line switch to real for W3-A); run the entire suite in mock mode and produce the matrix of which assertions need the real stack.
 
 **Acceptance criteria**
-- [ ] `apps/web/e2e/scheduled-job-run.spec.ts`: New job (`* * * * *`, `PROMPTS.printDate`, `e2e/sample`/`main`) → row appears with cron + next run → Run now → run row `Succeeded` within `JOB_RUN_TIMEOUT_MS`, output visible in the drawer, `run_shell` tool row present → `/api/health` `liveWorkspaces.job === 0` → cleanup via Delete
-- [ ] `apps/web/e2e/settings-save-mask.spec.ts`: paste canaries → Save → masks `••••••••<last4>` → reload keeps masks → `GET /api/settings` body passes `assertNoCanary` and has `last4` → Replace works → Remove works (AlertDialog) → (real) a chat with `PROMPTS.writeToken` shows `[REDACTED]` in the `write_file` tool row args and `GET /api/chats/:id` tool-call args pass `assertNoCanary`
-- [ ] `apps/web/e2e/settings-missing.spec.ts`: no secrets → `/chats/new` shows the secrets-missing notice with a link to `/settings`, Send absent/disabled; (real) `POST /api/chats` → 409 `SECRETS_MISSING`; `/api/health` `liveWorkspaces.chat === 0`; after saving both keys the composer appears
-- [ ] `.github/workflows/ci.yml` `e2e` job body: services postgres/redis, pnpm setup, `playwright install --with-deps chromium`, env (`AH_INSTANCE=ci`, `E2E_MODE=mock`, `E2E_MANAGED_SERVER=1`, `E2E_GITSERVER_HOST=172.17.0.1`, `AGENT_MODEL_PROVIDER=fake`), `pnpm test:e2e`, upload `apps/web/playwright-report` + `test-results` on failure; a comment marks the `E2E_MODE` line as the W3-A switch
-- [ ] Full mock-mode run green; `docs/tasks/wave-2c-e2e.md` completion log lists the real-stack assertion matrix (spec → guarded assertions)
+- [x] `apps/web/e2e/scheduled-job-run.spec.ts`: New job (`* * * * *`, `PROMPTS.printDate`, `e2e/sample`/`main`) → row appears with cron + next run → Run now → run row `Succeeded` within `JOB_RUN_TIMEOUT_MS`, output visible in the drawer, `run_shell` tool row present → `/api/health` `liveWorkspaces.job === 0` → cleanup via Delete
+- [x] `apps/web/e2e/settings-save-mask.spec.ts`: paste canaries → Save → masks `••••••••<last4>` → reload keeps masks → `GET /api/settings` body passes `assertNoCanary` and has `last4` → Replace works → Remove works (AlertDialog) → (real) a chat with `PROMPTS.writeToken` shows `[REDACTED]` in the `write_file` tool row args and `GET /api/chats/:id` tool-call args pass `assertNoCanary`
+- [x] `apps/web/e2e/settings-missing.spec.ts`: no secrets → `/chats/new` shows the secrets-missing notice with a link to `/settings`, Send absent/disabled; (real) `POST /api/chats` → 409 `SECRETS_MISSING`; `/api/health` `liveWorkspaces.chat === 0`; after saving both keys the composer appears
+- [x] `.github/workflows/ci.yml` `e2e` job body: services postgres/redis, pnpm setup, `playwright install --with-deps chromium`, env (`AH_INSTANCE=ci`, `E2E_MODE=mock`, `E2E_MANAGED_SERVER=1`, `E2E_GITSERVER_HOST=172.17.0.1`, `AGENT_MODEL_PROVIDER=fake`), `pnpm test:e2e`, upload `apps/web/playwright-report` + `test-results` on failure; a comment marks the `E2E_MODE` line as the W3-A switch
+- [x] Full mock-mode run green; `docs/tasks/wave-2c-e2e.md` completion log lists the real-stack assertion matrix (spec → guarded assertions)
 
 **Files to create/modify**
 `apps/web/e2e/{scheduled-job-run,settings-save-mask,settings-missing}.spec.ts`, `.github/workflows/ci.yml` (`e2e` job body only).
@@ -511,15 +513,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md; app
 
 ## Task 2C.6 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 2C.1–2C.5
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 2C.1–2C.5
 
 **Description.** Run the lane gates (lint, format, typecheck, harness unit coverage, full mock-mode E2E run, real-mode boot attempt documented), `/bymax-quality:code-review` to zero findings, update the plan dashboard and tasks index, open the PR with the selector contract and the contract change requests, return the orchestrator payload.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter web test -- --coverage` 100 % on the harness pure modules; `E2E_MODE=mock E2E_MANAGED_SERVER=1 pnpm --filter web test:e2e` green; `docker build infra/test/gitserver` succeeds; real-mode boot attempted and its outcome recorded
-- [ ] `/bymax-quality:code-review` zero open findings
-- [ ] `docs/plan.md` §12 row W2-C → 🟨 with branch/PR; `docs/tasks/README.md` row updated
-- [ ] PR opened; payload `{ pr, branch, headSha, gates, coverage, contractChangeRequests }` returned with the selector requests (W1-G/W1-H), the fake-provider script loading (W1-C/W2-B), `ALLOWED_REPO_HOSTS`/`GITHUB_API_BASE_URL`/`/api/health?require=worker` (W2-A), runtime http clone acceptance (W1-D), and any other
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter web test -- --coverage` 100 % on the harness pure modules; `E2E_MODE=mock E2E_MANAGED_SERVER=1 pnpm --filter web test:e2e` green; `docker build infra/test/gitserver` succeeds; real-mode boot attempted and its outcome recorded
+- [x] `/bymax-quality:code-review` zero open findings
+- [x] `docs/plan.md` §12 row W2-C → 🟨 with branch/PR; `docs/tasks/README.md` row updated
+- [x] PR opened; payload `{ pr, branch, headSha, gates, coverage, contractChangeRequests }` returned with the selector requests (W1-G/W1-H), the fake-provider script loading (W1-C/W2-B), `ALLOWED_REPO_HOSTS`/`GITHUB_API_BASE_URL`/`/api/health?require=worker` (W2-A), runtime http clone acceptance (W1-D), and any other
 
 **Files to modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (lane row only), `docs/tasks/wave-2c-e2e.md` (header, log).
@@ -570,3 +572,367 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 2C.1 ✅ 2026-08-20 — git server image (`agent-hangar/gitserver:test`) with a deterministic seed
+  (`main` at `ff55e2f`, plus `feature/docs`) and the GitHub REST stub; verified by cloning and
+  pushing a branch from a throwaway container against the running image.
+- 2C.2 ✅ 2026-08-20 — harness: `resolveE2eEnv`/`serverEnv`, `prepare-stack`, Playwright config with
+  managed servers per mode, fixtures, the fake-provider script and `smoke.spec.ts`. Mock mode runs
+  against a production build: the mock API cannot boot under `next dev`, where React strict mode
+  invokes its boot effect twice and the second `worker.start()` is rejected.
+- 2C.3 ✅ 2026-08-20 — page objects and the selector contract, every locator validated against the
+  running mock interface by `pages.smoke.spec.ts` (10 tests).
+  · FOUND: `sidebar-slot`, `sidebar-rail`, `header-slot`, `chat-list-skeleton`, `new-chat-scroll`,
+  `composer-skeleton`, `model-skeleton`, `chat-skeleton`, `transcript`, `stream-cursor`,
+  `jobs-skeleton`, `runs-skeleton`, `secret-field-<KEY>`, `secret-mask-<KEY>`, `mock-booting`,
+  `mock-failed`, plus the attributes `data-item-kind` and `data-tool-status`.
+  · MISSING (no id and no stable role/name): `status-pill` (Chat header pill — located today
+  through the polite live region inside it), `chat-list-item` `data-chat-id`, `job-row`
+  `data-job-id`, `run-row` `data-run-id`, `tool-call-row` `data-tool-name`.
+  · ROLE-BASED (no id needed): navigation and its three links, chat search, both chat lists,
+  archived disclosure, environment pill, theme toggle, both pickers and their comboboxes and
+  options, prompt box, Send, Stop, chat menu and its items, archived banner and its Restore,
+  jobs and runs tables, job dialog fields, timezone combobox, row menus, confirm dialogs, run
+  drawer and its tabs, credential Save/Replace/Remove, model line, environment summary.
+- 2C.4 ✅ 2026-08-20 — `chat-create-run`, `chat-archive-restore` and `cancel-turn`, with the shared
+  chat flow helpers. Turn and workspace state is asserted through `GET /api/chats/:id`, because
+  `healthResponse` carries no workspace counters.
+- 2C.5 ✅ 2026-08-20 — `scheduled-job-run`, `settings-save-mask`, `settings-missing`, and the CI
+  `e2e` job body (mock mode; one line switches it to real). Postgres and Redis are published on
+  the ports the instance derives (3901, 3902), which the destructive helpers require.
+  · Real-stack matrix — chat-create-run[turn SUCCEEDED; two tool calls persisted; workspace READY];
+  chat-archive-restore[workspace released; history intact; follow-up turn clones and succeeds];
+  cancel-turn[turn CANCELLED inside the budget; workspace survives]; scheduled-job-run[run
+  SUCCEEDED with output and one `run_shell` call]; settings-save-mask[masks survive a reload;
+  `GET /api/settings` carries no plaintext; tool-call arguments stored redacted];
+  settings-missing[`POST /api/chats` refused 409 SECRETS_MISSING].
+- 2C.6 ✅ 2026-08-20 — gates green; review resolved two findings (the git server published on
+  every interface, and a credential-shaped literal that was not a canary) plus three smaller ones;
+  PR #32 opened.
+
+- 2C.7 ✅ 2026-08-20 — rebased onto the merged HTTP API and re-attempted the real stack, which
+  found five things the mock suite could not. Fixed here: the API client sent no `Origin`, so every
+  write was refused 403 by the same-origin guard; the master key directory was created group- and
+  world-readable, so the secrets module refused it and `PUT /api/settings/:key` answered 500;
+  `seedSettings` used `raw` and swallowed both refusals, leaving the credentials unset and blaming
+  whatever assertion noticed first; the send-disabled test never seeded credentials, so in real
+  mode the screen showed the credentials notice instead of the composer; and the worker was never
+  started at all, because a Playwright `webServer` entry pointed at the web server's own health
+  route is considered already running — the worker now starts with the rest of the stack, and the
+  global setup refuses to begin until it reports through `GET /api/health`.
+  · Real-mode results with those fixes: `settings-save-mask` (credential lifecycle, reload
+  persistence, no plaintext in `GET /api/settings`) and `settings-missing` (composer withheld,
+  notice, recovery) both pass against the real API, database and git server. Remaining blockers, in
+  the order a run meets them: `GITHUB_API_BASE_URL` is `https`-only so the loopback stub cannot be
+  configured; `POST /api/chats` answers 400 rather than 409 because the request schema rejects a
+  repository outside github.com before it checks credentials; and the worker still writes no
+  heartbeat, since `apps/worker/src` is the skeleton.
+- 2C.8 ✅ 2026-08-20 — resolved the automated reviewer's findings on the pull request. Two were real
+  defects: the fixture README told the reader to publish the git server on every interface, and the
+  git-server shim answered a spawn failure twice (`error` then `close`), where the second write
+  throws `ERR_HTTP_HEADERS_SENT` and takes the process down. Three were stale descriptions of mock
+  mode still calling it the dev server, one barrel was missing its header, and one acceptance
+  criterion was ticked for an `e2e/tsconfig.json` that was deliberately never created — the
+  criterion now states what is actually true. The substantive one: three specs guarded earlier than
+  they needed to, so the only mode CI runs never exercised archive, restore, Stop or Run now even
+  though the mock API implements all four. Each guard moved below those steps, and each was proved
+  to run by breaking the control it drives. `chat-create-run` now also observes a non-terminal
+  status pill before Done, so a turn that jumped straight to Done would fail.
+- 2C.9 ✅ 2026-08-20 — the per-test reset could not recover from the state it exists to clear: a
+  spec that died part way through a turn left it live, and `DELETE /api/chats/:id` refuses a chat
+  in that state with `409 TURN_IN_PROGRESS`, so the reset threw and every later test in the run
+  failed for a reason that looked unrelated. It now cancels any live turn and waits for it to
+  settle before deleting, with the wait — not the cancel — carrying the guarantee.
+- 2C.10 ✅ 2026-08-20 — rebased onto the merged worker and re-attempted the real stack. It stops
+  in the same place and for the same reason as before, with one fact the earlier attempt could not
+  show: `GITHUB_API_BASE_URL` being `https`-only stops the **worker** as well as the web server —
+  it loads the same schema and dies at boot with `the worker could not start: Invalid
+  configuration: - GITHUB_API_BASE_URL: Invalid URL`. So that one validator blocks both processes,
+  not just the API, and the readiness gate cannot yet be confirmed against a live heartbeat.
+  · Verified in passing, against a real orphan rather than a synthetic one: a run that aborts at
+  the managed web server never reaches the global teardown, so its worker is left behind. The next
+  run's pre-step found the recorded id, confirmed it was still the worker, stopped its whole group
+  and recorded the replacement — the old process and its child were gone afterwards.
+- 2C.11 ✅ 2026-08-20 — three more reviewer findings, all real, all in the worker lifecycle and all
+  hazards of a shared machine rather than of this checkout. The command line `--filter worker dev`
+  is shared by every concurrent checkout's worker, so it never identified *ours*; a handle now
+  carries the process start time as well, and both must agree before a group is signalled. The
+  wait after signalling polled only the group leader, but the package runner exits while the worker
+  it supervises drains — demonstrated directly: with the leader gone, a leader-only check reports
+  "exited" while the group check still reports it running — so the wait now polls the group, and a
+  group that survives SIGKILL is reported rather than assumed gone. And `E2E_GITSERVER_HOST=0.0.0.0`
+  matched the IPv4 pattern and would have published the anonymously writable git server on every
+  interface, defeating the invariant added two rounds earlier; a wildcard is now refused outright
+  rather than quietly mapped to loopback, since it was asked for explicitly.
+- 2C.12 ✅ 2026-08-20 — the reset's job half had the same hole as its chat half, and a worse one:
+  deleting a chat with a live turn is refused, but deleting a job with a live run is *allowed*, so
+  the run row cascades away while the worker still owns the workspace and the truncation and
+  container reap that follow pull the ground from under a processor still writing. Both halves now
+  go through one settle-then-delete helper.
+  · Found while chasing that: **stopping a scheduled run cannot work against the real API.** The
+  interface cancels a run with `POST /api/turns/:id/cancel` (`scheduled-api.ts` `cancelRun`, used
+  by the job detail screen's Stop control), and that handler resolves its parameter with
+  `repos.turns.get`, a `Turn` lookup — a `JobRun` id is not a `Turn` id, so it answers 404. The
+  mock hides it because its handler accepts either kind of id, which is exactly why only a real
+  run would have shown it.
+- 2C.13 ✅ 2026-08-20 — made the fixture conform to the widened repository-URL rules before they
+  land, since it is correct against the old rules too. The seed repository moved from
+  `/repos/sample.git` to `/repos/e2e/sample.git` and the shim now requires an owner segment: every
+  repository URL in this product has the owner-and-repository shape, and the widening keeps that
+  while dropping only the hostname. The allow-list entry for the git server became a whole origin,
+  `http://<host>:<port>`, because a credential is delivered to a scheme, a host *and* a port, so
+  that triple is what an operator authorises and a bare entry would stand for the default port.
+  · Re-verified against a rebuilt image: clone and anonymous push over `/e2e/sample.git` work, the
+  old flat path answers 404, and `/../etc/passwd.git`, `/../../repos/e2e/sample.git` and
+  `/./sample.git` all answer 404 — the owner pattern admits `.` and `..` as segments, so they are
+  refused explicitly. Seed SHAs are unchanged, so the branch fixtures still match.
+- 2C.14 ✅ 2026-08-20 — four more reviewer findings, all real, all of them assertions or guards that
+  could pass without proving anything. The readiness gate could be satisfied by the *previous*
+  run's heartbeat, whose key outlives its writer by longer than the gate waits, so the key is now
+  cleared before the replacement is spawned and only a fresh heartbeat counts. `scheduled-job-run`
+  asked for a succeeded run when the job is eligible every minute, so the schedule could satisfy it
+  while Run now was broken; it now requires the `MANUAL` trigger. `settings-save-mask` parsed the
+  settings response with the contract schema before checking it for plaintext, and parsing strips
+  whatever the schema does not declare — the untouched text is checked first now, and by name for
+  the replacement value, which is not a registered canary. And `E2E_PORT_BASE` did not isolate
+  anything on its own: the instance stayed `test`, so two runs shared the database, compose
+  project, workspace prefix and git-server container whatever their ports; a non-default port base
+  now takes an instance of its own, keeping `test` as a whole word so the destructive helpers still
+  accept it.
+  · Residual, stated rather than fixed: `chat-create-run` asserts the pill shows a non-terminal
+  phase before Done, which catches a mislabelled phase and a turn that skipped straight to Done,
+  but does not assert Preparing and Running separately. Which of the two is showing when the
+  assertion first looks depends on how long the clone takes, and this lane cannot run the real
+  stack to measure it; asserting the order would be a timing bet, and a flaky spec is worse than a
+  narrower one.
+- 2C.15 ✅ 2026-08-20 — rebased onto the widened validators and ran the real stack. It now boots
+  past the configuration error: compose up, migrations, git server, worker, and the readiness gate
+  passing on a real heartbeat — the gate held as written, on the positive condition rather than a
+  message. `smoke` and the second half of `chat-create-run` ("send stays disabled until a
+  repository, a branch and a prompt are set") now pass against the real API, database and git
+  server; both could only be skipped before.
+  · The fixture conformance was right: the owner-qualified path and the whole-origin allow-list
+  entry are what the merged `repoUrlForHosts` and `ALLOWED_REPO_HOSTS` validators require, and
+  `GITHUB_API_BASE_URL` accepts the loopback stub over http.
+  · Where it stops now is **not** the workspace credential helper, and not the API. The turn
+  reaches `FAILED` during prepare, with `prepare: git clone failed: Cloning into '.'...`, and the
+  chat row records `repoUrl = https://github.com/e2e/sample.git` — the local git server was never
+  addressed. The interface rebuilds the clone URL from the picker's `owner/name` instead of
+  carrying the URL the API returned for that repository:
+  `apps/web/src/features/chats/lib/repo-url.ts` hard-codes `https://github.com` in `toRepoUrl`,
+  and `useCreateChat.ts:54` calls it. `parseRepoUrl` refuses any other origin on the way back, so
+  a chat on another forge would not render its repository chip either. The API side is already
+  correct — `github.ts:156` maps `url: repo.html_url`, which the stub rewrites to the git server —
+  so the discard happens entirely in the client.
+  · Verified rather than inferred: a clone of `http://host.docker.internal:4107/e2e/sample.git`
+  succeeds from the workspace image under the runner's exact constraints (user `agent`, workdir
+  `/workspace`, `--cap-drop ALL`, `no-new-privileges`, tmpfs `/tmp`, bridge, init, `GIT_ASKPASS`
+  set). The clone is fine; the URL was wrong. The credential-helper wall is therefore still ahead,
+  behind this one.
+- 2C.16 ✅ 2026-08-20 — triaged the reviewer's remaining threads against the tree rather than
+  against the earlier rounds. Nineteen of twenty-two describe code that no longer exists; GitHub
+  still lists them because its anchors follow live lines. Two were real.
+  · Fixed: `stopWorker` gave up on an orphan whose leader had already gone. The recorded id is the
+  package runner's, and the package runner exits while the worker it supervises drains, so both
+  `ps` fields come back empty while the group is still consuming the queues — and the pre-step then
+  started a second worker beside it. The decision is now a group question, not a leader question:
+  with the leader present its identity still decides, and with the leader gone a surviving group
+  under that id is ours, because no operating system reissues a process id while a process group
+  carries it. `ownsRecordedGroup` carries that decision with its own tests; without the
+  leader-gone branch the "accepts a group that outlived its recorded leader" test fails.
+  · Recorded, not worked around: **`FAKE_PROVIDER_SCRIPT_PATH` reaches nothing.** The suite passes
+  it to the web server and the worker, but the fake provider runs inside the workspace container,
+  which receives only the fixed block `provision-workspace.ts` builds (`GITHUB_TOKEN`,
+  `OPENAI_API_KEY`, `GIT_ASKPASS`, `OPENAI_MODEL`, `AGENT_MODEL_PROVIDER`, optional
+  `OPENAI_BASE_URL`) — and `packages/agent-runtime/src/provider.ts` reads `AGENT_FAKE_SCRIPT_JSON`,
+  a different name carrying the script itself rather than a path, which a host path would not
+  resolve to inside the container anyway. So a real run plays `builtInFakeScript()`, whose keys are
+  `list files and create NOTES.md`, `show NOTES.md`, `print date`, `run a long command` and
+  `default`. Measured against what the specs ask for: `cancel-turn` sends `sleep for sixty seconds`
+  and `settings-save-mask` sends `write the token to a file` — neither is a key, so both fall to
+  `default`, which answers `Done.` and calls no tool; and the three prompts that do match answer
+  different text (`I listed the repository and created NOTES.md.` against the expected
+  `NOTES.md with the file list`, `Here is NOTES.md, as requested.` against `Here is NOTES.md.`,
+  `I printed the current date.` against `printed above`). Four real-flow specs therefore cannot
+  pass until the script is forwarded. Contract change request, unchanged in substance from the one
+  filed at 2C.6 but now with the exact gap named: W2-B forwards the script into the container
+  (reading `FAKE_PROVIDER_SCRIPT_PATH` on the worker and passing its contents as
+  `AGENT_FAKE_SCRIPT_JSON`, or W1-D teaches the runtime to read a mounted path). The harness keeps
+  passing the key and keeps the script and its placeholder substitution, both covered, so the
+  wiring is a one-place change.
+  · Argued, not changed: the reviewer objects to `apps/web/vitest.config.ts` gaining
+  `e2e/**/*.test.ts` in the `unit` project's `include`. The append-only rule covers
+  `coverage.include`, and the acceptance criteria for this lane require harness unit tests at
+  100 % on the pure modules — which cannot run unless they are discovered. Both edited patterns
+  name `e2e/**` only, a path no other lane owns; `src/**` and `app/**` are untouched. Moving
+  discovery into a separate project would be a larger edit to the same shared file.
+- 2C.17 ✅ 2026-08-20 — rebased onto the merged repository-URL and scheduled-run-cancel fixes and
+  ran the real stack again. Both walls are gone, and the suite got materially further: **5 passed,
+  5 failed, 10 skipped** where the previous attempt could not get a single turn to start.
+  Passing against the real API, database, Redis, Docker and git server: `smoke`,
+  `settings-missing` (both halves, including `POST /api/chats` → 409 `SECRETS_MISSING`),
+  `settings-save-mask` (credential lifecycle, reload persistence, no plaintext in
+  `GET /api/settings`) and the send-guard test. Confirmed in passing: the chat header now carries
+  `http://host.docker.internal:4107/e2e/sample.git`, so the URL the listing returned survives into
+  the chat row; and `Run now` produced a row with trigger `Manual`, so the manual-trigger path and
+  the `MANUAL` assertion are both exercised.
+  · Where it stops now, identically in all five failures: the turn reaches `FAILED` at prepare with
+  `repository URL must be https://github.com/<owner>/<repo> without credentials`. That check is
+  **inside the container**, not in the API: `packages/agent-runtime/src/prepare.ts`
+  `assertGithubHttpsUrl` hard-codes `ALLOWED_HOST = 'github.com'` and `https:`, and
+  `prepare.ts:266` defaults `urlPolicy` to `github-https`. The seam to relax it exists —
+  `CliOverrides.urlPolicy` (`cli.ts:75`) — but `bin.ts`, the process entry point, calls
+  `runCli(process.argv.slice(2), createNodeIo())` with no overrides and reads no environment, and
+  the worker forwards no allow-list into the container. So `ALLOWED_REPO_HOSTS` is honoured by
+  `packages/core/src/repo-url.ts` on the API side and ignored on the runtime side. This is contract
+  change request (d), unchanged in substance and now located to the line: W1-D/W2-B must let the
+  runtime accept the origins the operator authorised.
+  · Ordering matters for whoever picks these up: the URL policy is the **first** wall and the
+  scripted-provider gap of 2C.16 is behind it — a container that cannot clone never reaches the
+  model, so the script mismatch will only become visible once the URL policy is relaxed. Expect a
+  second round of failures there.
+  · The reset's job half now cancels through `POST /api/runs/:id/cancel` rather than the turn
+  route. The dedicated run route exists as of this rebase, and it is the one that resolves an
+  identifier against the run repository; the turn route answers 404 for a run id, which is what
+  2C.12 recorded as unfixable at the time.
+  · Observed, not changed: the worker logs `destroying an orphan workspace failed` with Docker's
+  `409 removal of container ... is already in progress` after each reset. Two legitimate destroyers
+  race — the per-test reap and the worker's own collection — and neither loses work; the container
+  does go away. Treating that 409 as success belongs in `DockerWorkspaceRunner.#destroyContainer`
+  (`packages/core/src/runner/docker/docker-workspace-runner.ts:565`), which is not this lane's
+  path. The reap stays: a crashed spec is exactly why it exists.
+- 2C.18 ✅ 2026-08-20 — rebased onto the merged provider-script forwarding and closed the last
+  reviewer finding that was this lane's to close. The rebase invalidated a verdict: the previous
+  pass reported `FAKE_PROVIDER_SCRIPT_PATH` as an open blocker, and it is now read, validated and
+  forwarded — `apps/worker/src/env.ts` declares it, `container.ts` resolves it at boot through
+  `fakeProviderScriptEnv`, and `provision-workspace.ts` spreads the result into the container as
+  `AGENT_FAKE_SCRIPT_JSON`. Three comment blocks on this side said the opposite and have been
+  rewritten to describe what the system does: the `serverEnv` header, which also still claimed
+  `ALLOWED_REPO_HOSTS` and `GITHUB_API_BASE_URL` were undeclared, and the header of
+  `e2e/fake-provider/script.ts`.
+  · The master key file kept whatever permissions it already had: `writeFileSync` honours its
+  `mode` only on the `O_CREAT` that makes the file, so a `master.key` left behind world-readable
+  stayed that way, exposing the fresh key and making the secrets module refuse it at boot. The
+  write now chmods the file, as it already did the directory. `writeMasterKey` moved out of
+  `prepare-stack.ts` into `support/master-key.ts` to be testable at all — the former runs the whole
+  preparation on import — and the test runs against a real temporary directory rather than an
+  injected file system, because what is being pinned is the behaviour of the operating system's own
+  calls and a double that recorded the mode it was handed would pass in exactly the failing case.
+  · Real mode, measured rather than predicted: the stack boots, the worker reports ready, the
+  repository picker answers from the stub, the chat is created and the turn is queued and started —
+  and the turn fails in 0.6 s inside the workspace container with `config:
+  /opt/agent-runtime/allowed-origin must hold the origin this workspace was created for`. Nothing
+  in this tree writes that file; it is the worker-side half of the origin work, still unmerged. So
+  the URL policy is still the first wall, one step later than 2C.17 found it: the runtime no longer
+  hard-codes `github.com`, it now demands an origin it is not being given.
+  · Noted while measuring, neither of them this lane's to fix. The workspace image tag
+  `agent-hangar/workspace:dev` is machine-global: it was rebuilt by a concurrent lane a minute into
+  a run, so what the containers executed changed underneath the suite. And `state.json`, the
+  master key and the worker log all live at a fixed `e2e/.tmp`, not under the instance — harmless
+  across checkouts, which have their own, but two runs of one checkout on different port bases
+  would still clobber each other.
+- 2C.19 ✅ 2026-08-20 — rebased onto both halves of the origin policy and took the first real
+  measurement that is actually about this tree. The previous one was not: the containers had run a
+  runtime from the machine-global `agent-hangar/workspace:dev` tag, rebuilt by another lane a
+  minute into the run, so it described a worker and a runtime that were never released together.
+  This run built the image from this checkout to a private tag and pointed `WORKSPACE_IMAGE` at it,
+  with the shipped `askpass.sh` checked against the tree by digest before the run started. Nothing
+  touched `:dev`.
+  · **A turn completes.** `SUCCEEDED`, three steps, 30 input and 15 output tokens, 451 ms from
+  queued to finished, workspace left `READY`, both scripted tool calls persisted and the assistant
+  message stored as the script writes it. The clone, the container, the tool loop and the
+  persistence all work end to end; the URL policy wall is gone rather than moved.
+  · The spec still fails, and now for its own reasons. Three assertions describe a turn slow enough
+  to be watched — a non-terminal status pill, a preparation notice, and tool rows in the transcript
+  — and a scripted provider answering from a local git server settles the turn in under half a
+  second, before the browser can observe anything. `mapChatDetail` does render persisted tool
+  calls, so the transcript is not missing the capability; the page simply has no reason to fetch
+  again once the turn it was watching has already ended. Whether the fix belongs in the specs, in
+  the script's timing, or in a refetch on a terminal event is a decision above this lane, and the
+  reviewer thread about the status progression should be read with this measurement rather than
+  without it.
+  · `list_dir` is recorded `FAILED` with no exit code and no output, in 1 ms, while the same call's
+  summary reads `listed .` and the turn as a whole succeeds. The recorder persists the status the
+  runtime sends verbatim, so the verdict comes from inside the container. No unit test covers it and
+  the spec compares only tool names, so nothing but a real run shows it.
+  · The inspection that precedes a signal now distinguishes an answer from a silence.
+  `readProcessField` treated every rejection as "no such process", including a `ps` that never ran,
+  and `ownsRecordedGroup` signals a live group for an absent leader — so a failure to inspect could
+  authorise a signal. `CommandError` carries the exit status, `undefined` when the command never
+  started, and the reader propagates that case instead of reporting absence. Both comments that
+  claimed the old protection are gone; the `@throws` on `stopWorker` was already written for this
+  behaviour and is now true.
+- 2C.20 ✅ 2026-08-20 — rebased onto the build wrapper and the repository-capability work, then
+  measured real mode again on an image built from this checkout and tagged `agent-hangar/workspace:w2c`,
+  with both the shipped `askpass.sh` and the runtime bundle checked against the tree by digest
+  before the run. The shared `:dev` tag was not read or written.
+  · **A critical flow passes end to end.** `scheduled-job-run` is green in real mode: the cron
+  validates in place, the job saves, Run now produces a run the worker executes in a fresh
+  workspace, its output and its `run_shell` tool call come back through the API, and the workspace
+  is gone afterwards. `chat-create-run` still fails on the status-pill assertion for the reason
+  2C.19 recorded — the turn settles before the browser can observe it — and its second test passes.
+  · The reviewer's suppressed observations were triaged rather than left in the collapsed block.
+  Two were real and are fixed here. The git server's image was built only when its tag was absent,
+  so an edit to `server.mjs`, `seed.sh` or the Dockerfile left the old image in place and the suite
+  cloned from the previous checkout's fixture — the same hazard as the shared workspace tag, one
+  layer down. It is rebuilt every run, and a container still running from an earlier build of the
+  tag is replaced rather than reused, since a rebuild moves the tag while a container keeps the
+  image it was created from. And `scheduled-job-run` promised in its own header that a job
+  workspace is disposable without ever checking it; it now polls the instance's workspace
+  containers to zero, which is a poll rather than a read because the run reaches a terminal status
+  before the processor's teardown destroys the container.
+  · The third observation is real and deliberately not acted on here. The job is created on an
+  every-minute schedule, so a scheduled run can start while the spec inspects the manual one, and
+  the spec's closing UI delete does not settle a live run the way the fixture's reset does. Every
+  remedy — disabling the job first, or moving the cron outside the window — changes what the spec
+  exercises and interacts with the `MANUAL` trigger filter that closed an earlier finding on these
+  same assertions. It belongs with that triage rather than ahead of it.
+- 2C.21 ✅ 2026-08-20 — the reviewer reached the same conclusion as the contaminated measurement,
+  from the code rather than from a run, and named both halves of it. Neither image tag is reached
+  by the instance, so moving the port block isolates ports, database, compose project and
+  containers while leaving the two things a container actually executes shared with every other
+  checkout on the machine.
+  · The git server's tag now carries the instance, which it already had to hand. The default
+  instance reproduces the tag it was before, so nothing changes for a single checkout, and a moved
+  port block gets its own. This mattered more after the previous entry: building the image every
+  run fixed staleness but made two checkouts race the same tag on every run rather than only when
+  it was absent.
+  · The workspace image is not this harness's to build — `pnpm infra:image` builds it — so naming
+  it after the instance would only produce a tag nothing creates. A real run on a moved port block
+  is refused instead, with the command that builds a private tag in the message. The default port
+  block is unaffected, and a mock run is too: it starts no container, so the image it would have
+  used is not a fact about it. This is the workaround from the last two measurements turned into a
+  rule, so the next reading cannot quietly be taken against a tag another lane owns.
+- 2C.22 ✅ 2026-08-20 — rebased onto the wired provider and remeasured real mode on an image built
+  from this checkout, tagged `agent-hangar/workspace:w2c`, with the runtime bundle and the shipped
+  `askpass.sh` both checked against the tree by digest. The bundle's digest changed with the
+  provider wiring, which is how the image was confirmed to be this tree's rather than a cached one.
+  · **Seven of the nine critical-flow tests pass in real mode**, from a stack brought up clean:
+  `chat-create-run` (both), `scheduled-job-run`, `settings-save-mask` (both) and `settings-missing`
+  (both). Two fail, and neither is a wall in front of the others.
+  · The wall is gone, and what is behind it is a tool that does not run. In a **chat** workspace
+  `list_dir` is recorded `FAILED` in 1 ms with no exit code and no output, and so is `run_shell`:
+  `sleep 60` returns in 2 ms and the turn reaches `SUCCEEDED` in 408 ms. In a **job** workspace the
+  same `run_shell` executes and its output arrives — which is why `scheduled-job-run` passes. Only
+  `write_file` succeeds on the chat side. The split is reproducible and belongs to the runtime, not
+  to this lane.
+  · That single defect explains both failures. `cancel-turn` cannot find its Stop button because
+  the turn it was written to catch mid-flight is over before the assertion looks — `sleep 60` did
+  not sleep. And the earlier reading where the status pill was already `Done` has the same cause,
+  so the reviewer thread about the status progression should be read against this, not against the
+  clone speed.
+  · `chat-create-run` passes **while its `list_dir` fails**, because the assertion compares tool
+  names and never their status. That is the same shape as the findings this lane has already
+  closed twice: an assertion that holds without proving what it describes. Adding the status to it
+  would turn the spec red against a defect outside this lane, which is a decision for the triage
+  now under way rather than one to take unilaterally.
+  · `chat-archive-restore` fails on a mock-only wording. The spec waits for a notice matching
+  `/restored/i`; the mock writes "This chat was restored…", while the product's normative notice
+  (`RESTORATION_NOTICE_PREFIX`, spec 02 §4) reads "Workspace recreated from history at …" and is
+  written when the next turn recreates the workspace, not when Restore is pressed. Both the wording
+  and the moment differ, so the assertion tracks the double rather than the system. Correcting it
+  needs the mock and the spec to move together, and the mock is not this lane's.
+  · Observed while recovering from an aborted run, and worth a look: a chat left with a `QUEUED`
+  turn whose queue job is gone cannot be cleared by the per-test reset. `settleLive` cancels it and
+  waits, but nothing is processing it to observe the cancellation, so the wait times out and every
+  later test in the run fails on the reset rather than on itself.
