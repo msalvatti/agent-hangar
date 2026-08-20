@@ -125,6 +125,19 @@ export interface WorkspaceRunner {
   /** Human-readable runner id stored on `Workspace.runnerKind` ("docker"). */
   readonly kind: string;
 
+  /**
+   * Reports whether an image is present and could be started, without starting anything.
+   *
+   * Nothing is ever pulled or built implicitly, so "the image is missing" is a state an operator
+   * has to be told about — at boot and on the health card — rather than one a turn discovers by
+   * failing. Answering it needs the runner: only it can reach the host the workspaces run on.
+   *
+   * @param image - Image reference (tag or digest), as it would appear in a {@link WorkspaceSpec}.
+   * @returns `true` when the host has the image; `false` when it does not. Rejects only when the
+   *   host could not be asked, which is a different failure and must not be reported as absence.
+   */
+  imageExists(image: string): Promise<boolean>;
+
   /** Create and start an isolated workspace. Resolves when the container accepts exec. */
   create(spec: WorkspaceSpec, opts?: { signal?: AbortSignal }): Promise<WorkspaceHandle>;
 

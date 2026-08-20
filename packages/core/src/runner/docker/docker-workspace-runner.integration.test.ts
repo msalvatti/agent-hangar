@@ -491,6 +491,17 @@ if (!gate.run) {
   });
 
   /**
+   * The same question asked without starting anything, which is what the boot check and the health
+   * card need: against a real daemon, a built image is present and an invented tag is not. The
+   * fake can only prove the runner's half of that; the 404 the daemon actually returns for an
+   * unknown reference is what makes the answer `false` rather than an error.
+   */
+  it('answers imageExists against the real daemon', async () => {
+    expect(await runner.imageExists(IMAGE)).toBe(true);
+    expect(await runner.imageExists('agent-hangar/does-not-exist:nope')).toBe(false);
+  });
+
+  /**
    * The image's own promises: an unprivileged uid, and the toolchain an agent needs to work in a
    * repository. A missing tool would only surface as a confusing command failure mid-turn.
    */

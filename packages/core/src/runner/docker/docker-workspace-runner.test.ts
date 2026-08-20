@@ -113,6 +113,31 @@ describe('DockerWorkspaceRunner.create', () => {
   });
 
   /**
+   * The boot probe and the health card need the same answer without creating anything, and they
+   * need it before a first workspace has ever run — which is the whole point of asking the daemon
+   * instead of remembering what the last create observed.
+   */
+  it('reports image presence and absence without creating anything', async () => {
+    const { runner, docker } = makeRunner();
+
+    expect(await runner.imageExists(IMAGE)).toBe(true);
+    expect(await runner.imageExists('agent-hangar/workspace:nope')).toBe(false);
+    expect(docker.calls.some((call) => call.startsWith('createContainer'))).toBe(false);
+  });
+
+  /**
+   * A daemon that cannot answer is not the same as an image that is absent: reporting it as
+   * absence would tell an operator to rebuild an image they already have, and hide the outage that
+   * actually needs fixing. It has to travel as the failure it is.
+   */
+  it('raises rather than reporting absence when the image cannot be inspected', async () => {
+    const { runner, docker } = makeRunner();
+    docker.failures.imageInspect = new Error('daemon unreachable');
+
+    await expect(runner.imageExists(IMAGE)).rejects.toThrow(DockerRunnerError);
+  });
+
+  /**
    * A daemon that is unreachable or broken is a different failure from a missing image and must
    * not be reported to the user as "build the image".
    */

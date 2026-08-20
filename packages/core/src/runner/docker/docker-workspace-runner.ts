@@ -138,6 +138,31 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
   }
 
   /**
+   * Asks the daemon whether an image is present, without creating anything.
+   *
+   * Expressed in terms of the check `create` already performs, so the boot probe and the health
+   * card cannot drift from the rule a turn is actually held to: the one that raises
+   * `WorkspaceImageMissing` is the one that answers `false` here. Any other inspection failure is
+   * the daemon being unreachable or broken, which is not absence and is raised rather than
+   * flattened into a `false` that would tell an operator to build an image they already have.
+   *
+   * @param image - Image reference (tag or digest).
+   * @returns `true` when the daemon knows the image.
+   * @throws DockerRunnerError when the image could not be inspected at all.
+   */
+  async imageExists(image: string): Promise<boolean> {
+    try {
+      await this.#assertImageExists(image);
+      return true;
+    } catch (error) {
+      if (error instanceof WorkspaceImageMissing) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  /**
    * Creates, starts and readiness-probes a workspace container.
    *
    * @param spec - Image, environment, limits and labels of the workspace.
