@@ -3,7 +3,14 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { isEditableTarget, isShortcut, SHORTCUTS, shortcutLabel } from './shortcuts';
+import {
+  isEditableTarget,
+  isShortcut,
+  platformFromUserAgent,
+  SHORTCUTS,
+  shortcutHint,
+  shortcutLabel,
+} from './shortcuts';
 
 /**
  * Builds a keyboard event with the given modifiers.
@@ -71,6 +78,24 @@ describe('isEditableTarget', () => {
   });
 });
 
+describe('platformFromUserAgent', () => {
+  // An Apple user agent is the one that gets the glyph spelling.
+  it.each([
+    'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)',
+    'Mozilla/5.0 (iPad; CPU OS 17_0 like Mac OS X)',
+  ])('reads %s as macOS', (userAgent) => {
+    expect(platformFromUserAgent(userAgent)).toBe('mac');
+  });
+
+  // Everything else, including an empty user agent, spells the modifier out.
+  it.each(['Mozilla/5.0 (X11; Linux x86_64)', 'Mozilla/5.0 (Windows NT 10.0)', ''])(
+    'reads %s as another platform',
+    (userAgent) => {
+      expect(platformFromUserAgent(userAgent)).toBe('other');
+    },
+  );
+});
+
 describe('shortcutLabel', () => {
   afterEach(() => {
     vi.restoreAllMocks();
@@ -78,13 +103,41 @@ describe('shortcutLabel', () => {
 
   // On macOS the label is the glyph form the spec shows in tooltips.
   it('uses the command glyph on macOS', () => {
-    vi.spyOn(globalThis.navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh)');
-    expect(shortcutLabel('search')).toBe(SHORTCUTS.search.label);
+    expect(shortcutLabel('search', 'mac')).toBe(SHORTCUTS.search.label);
   });
 
   // Elsewhere the same binding is spelled out with Ctrl.
   it('falls back to Ctrl off macOS', () => {
-    vi.spyOn(globalThis.navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (X11; Linux)');
-    expect(shortcutLabel('newChat')).toBe('Ctrl+N');
+    expect(shortcutLabel('newChat', 'other')).toBe('Ctrl+N');
+  });
+
+  // The label is decided by the argument alone. Reading the platform here is what put a
+  // browser-only fact into server-rendered markup, so the browser being a Mac must not be able to
+  // change an answer asked for another platform.
+  it('ignores the running browser', () => {
+    vi.spyOn(globalThis.navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Macintosh)');
+    expect(shortcutLabel('newChat', 'other')).toBe('Ctrl+N');
+  });
+});
+
+describe('shortcutHint', () => {
+  // Once the platform is known the hint carries the shortcut, per platform.
+  it.each([
+    ['mac', 'Search chats (⌘K)'],
+    ['other', 'Search chats (Ctrl+K)'],
+  ] as const)('appends the %s shortcut', (platform, expected) => {
+    expect(shortcutHint('Search chats', 'search', platform)).toBe(expected);
+  });
+
+  // While the platform is unknown — the server pass, and the hydration that must match it — the
+  // hint claims no shortcut at all rather than guessing a modifier that would be wrong half the
+  // time and would then change under whoever had already read it.
+  it('names no shortcut while the platform is unknown', () => {
+    expect(shortcutHint('Search chats', 'search', null)).toBe('Search chats');
+  });
+
+  // A destination with no binding is just its label, on every platform.
+  it('leaves a shortcut-less control alone', () => {
+    expect(shortcutHint('Scheduled', null, 'mac')).toBe('Scheduled');
   });
 });

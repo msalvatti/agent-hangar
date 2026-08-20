@@ -4,7 +4,8 @@
  * Layer: unit.
  * Goal: create mode starts blank with Save disabled until the form is valid, submitting posts the
  * contract body and closes with `onSaved`; edit mode starts prefilled and patches; a server error
- * shows an `ErrorCard` and keeps the field values; Esc closes without saving.
+ * shows an `ErrorCard` and keeps the field values; Esc closes without saving; and the two-column
+ * repository/branch row bounds a name of any length.
  * Mocks: MSW node server serving `src/mocks/scheduled.ts`.
  */
 import type { JobSummary } from '@agent-hangar/core';
@@ -292,5 +293,62 @@ describe('JobDialog edit mode', () => {
         expect.objectContaining({ id: 'job-dep-audit', name: 'Dependency audit' }),
       );
     });
+  });
+});
+
+describe('JobDialog branch default', () => {
+  /*
+   * What the operator hit: choosing a repository seeded the schedule with `agent/cmt1qscc`, an
+   * agent work branch a chat had published minutes earlier, because the picker took the first
+   * entry of the listing and a forge orders branches its own way. A schedule pinned to a throwaway
+   * branch is worse than one pinned to `main`, because the field is never re-read afterwards.
+   *
+   * The listing is stated rather than seeded: the seeded mocks sort the repository default first,
+   * which is why this survived every test the dialog already had.
+   */
+  it(
+    'seeds a new job with the repository default, not the first branch listed',
+    async () => {
+      server.use(
+        http.get('/api/repos/branches', () =>
+          HttpResponse.json({
+            branches: [
+              { name: 'agent/cmt1qscc', sha: 'aaa1bbb2ccc3', protected: false },
+              { name: 'main', sha: 'ccc3ddd4eee5', protected: true },
+            ],
+          }),
+        ),
+      );
+      const user = userEvent.setup();
+      render(<JobDialog open onOpenChange={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+      await user.click(await screen.findByText('acme/api'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('group', { name: 'Branch' })).toHaveTextContent('main');
+      });
+      expect(screen.getByRole('group', { name: 'Branch' })).not.toHaveTextContent('agent/cmt1qscc');
+    },
+    PALETTE_TEST_TIMEOUT_MS,
+  );
+});
+
+describe('JobDialog repository row', () => {
+  /*
+   * The reported case: an `owner/repository` long enough to overrun its half of the two-column
+   * row, which rendered the branch control on top of the repository name instead of ellipsising
+   * it. What bounds it is the trigger's own cap — measured in a browser, a `min-width` on the
+   * grid cell changes nothing, because the cap is also what stops the button from claiming that
+   * width in the first place. jsdom lays nothing out, so this pins the declaration; the geometry
+   * belongs to the end-to-end suite.
+   */
+  it('bounds a long repository name to its own column', () => {
+    const longRepo = 'https://github.com/a-very-long-organisation-name/an-equally-long-repository';
+    render(<JobDialog open job={{ ...job, repoUrl: longRepo }} onOpenChange={vi.fn()} />);
+
+    expect(screen.getByRole('button', { name: /an-equally-long-repository/ })).toHaveClass(
+      'max-w-full',
+    );
   });
 });

@@ -70,7 +70,16 @@ export function NewChatView({ navTrigger }: NewChatViewProps) {
 
   return (
     <>
-      <PageHeader title="New chat" navTrigger={navTrigger} />
+      <PageHeader
+        title={
+          // Below `md` the shell's own drawer trigger sits over this corner and the page is the
+          // home screen, whose headline already says where the reader is; the words beside a
+          // hamburger only crowd it. `sr-only` rather than `hidden`: the header is still the
+          // page's name, and a reader who cannot see the headline has nothing else to go on.
+          <span className="sr-only md:not-sr-only">New chat</span>
+        }
+        navTrigger={navTrigger}
+      />
       <div
         data-testid="new-chat-scroll"
         className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-10"

@@ -7,7 +7,7 @@
 
 import type { JobSummary } from '@agent-hangar/core';
 import { Loader2 } from 'lucide-react';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 
 import { ErrorCard } from '@/shared/feedback';
 import { BranchPicker, RepoPicker } from '@/shared/repo-picker';
@@ -26,7 +26,8 @@ import { Textarea } from '@/shared/ui/textarea';
 
 import { useJobForm } from '../hooks/useJobForm';
 import { useJobMutations } from '../hooks/useJobMutations';
-import { pickedRepoUrl, repoDisplayName } from '../lib/job-form';
+import { pickedRepoDefault, pickedRepoUrl, repoDisplayName } from '../lib/job-form';
+import type { PickedRepoDefault } from '../lib/job-form';
 
 import { CronField } from './CronField';
 import { FormField } from './FormField';
@@ -51,6 +52,11 @@ export function JobDialog({ open, onOpenChange, job, onSaved }: JobDialogProps) 
   const editingJob = job ?? undefined;
   const { values, setField, errors, touched, touch, isValid, reset } = useJobForm(editingJob);
   const { save, busy, error, clearError } = useJobMutations();
+  // What the listing said about the repository the operator picked. It is remembered with the URL
+  // it describes, not on its own: a default read for one repository must never seed the branch of
+  // another, and pairing them makes a stale pick answer `null` by construction — after a reset, or
+  // after an edited job's own repository is loaded, the URLs no longer agree.
+  const [picked, setPicked] = useState<PickedRepoDefault | null>(null);
 
   useEffect(() => {
     if (open) {
@@ -80,6 +86,7 @@ export function JobDialog({ open, onOpenChange, job, onSaved }: JobDialogProps) 
   // The pickers work in `owner/name`; the form stores the URL the listing reported, so the short
   // form is derived here rather than kept as a second, divergeable field.
   const repoName = repoDisplayName(values.repoUrl);
+  const defaultBranch = picked?.repoUrl === values.repoUrl ? picked.defaultBranch : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -115,6 +122,7 @@ export function JobDialog({ open, onOpenChange, job, onSaved }: JobDialogProps) 
                   onChange={(selected) => {
                     setField('repoUrl', pickedRepoUrl(selected));
                     setField('branch', null);
+                    setPicked(pickedRepoDefault(selected));
                   }}
                 />
               )}
@@ -123,6 +131,7 @@ export function JobDialog({ open, onOpenChange, job, onSaved }: JobDialogProps) 
               {() => (
                 <BranchPicker
                   repo={repoName}
+                  defaultBranch={defaultBranch}
                   value={values.branch}
                   onChange={(value) => {
                     setField('branch', value);

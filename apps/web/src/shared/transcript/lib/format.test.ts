@@ -8,6 +8,7 @@ import {
   formatBytes,
   formatDuration,
   formatElapsed,
+  formatTimestamp,
   formatTokens,
   relativeTime,
   shortSha,
@@ -148,5 +149,32 @@ describe('relativeTime', () => {
   it('formats minutes in the future', () => {
     const iso = new Date(now + 15 * 60_000).toISOString();
     expect(relativeTime(iso, now)).toBe('in 15m');
+  });
+});
+
+describe('formatTimestamp', () => {
+  const iso = '2026-08-20T15:35:17.824Z';
+
+  // The same instant, spelled as the wall clock of whoever is reading it. The zone is given
+  // explicitly, which is what keeps the expectation the same string on every machine.
+  it.each([
+    ['UTC', 'Aug 20, 2026, 3:35 PM'],
+    ['America/Sao_Paulo', 'Aug 20, 2026, 12:35 PM'],
+    ['Asia/Tokyo', 'Aug 21, 2026, 12:35 AM'],
+  ])('formats the instant in %s', (timeZone, expected) => {
+    expect(formatTimestamp(iso, timeZone)).toBe(expected);
+  });
+
+  // Nothing of the machine-readable form survives: showing an operator `2026-08-20T15:35:17.824Z`
+  // is the defect this replaced.
+  it('keeps no trace of the ISO spelling', () => {
+    expect(formatTimestamp(iso, 'UTC')).not.toContain(iso);
+    expect(formatTimestamp(iso, 'UTC')).not.toContain('T15:35');
+  });
+
+  // A string that is not a timestamp has no wall-clock time, and saying so is better than
+  // formatting `Invalid Date` or letting `Intl` throw inside a transcript row.
+  it('reports a value that is not a timestamp', () => {
+    expect(formatTimestamp('not a timestamp', 'UTC')).toBeNull();
   });
 });

@@ -3,8 +3,9 @@
  *
  * Layer: unit.
  * Goal: `emptyJobForm`/`jobToForm` construct the right values, `pickedRepoUrl`/`repoDisplayName`
- * keep the URL and its label in step, `formToRequest` maps to the contract shape, and
- * `validateJobForm` covers every validation rule plus the schema fallback.
+ * keep the URL and its label in step, `pickedRepoDefault` carries the repository's default branch
+ * with the URL it belongs to, `formToRequest` maps to the contract shape, and `validateJobForm`
+ * covers every validation rule plus the schema fallback.
  * Mocks: none.
  */
 import type { JobSummary } from '@agent-hangar/core';
@@ -15,6 +16,7 @@ import {
   formFieldForIssue,
   formToRequest,
   jobToForm,
+  pickedRepoDefault,
   pickedRepoUrl,
   repoDisplayName,
   validateJobForm,
@@ -227,5 +229,29 @@ describe('formFieldForIssue', () => {
   it('falls back to the prompt for a path that names no field', () => {
     expect(formFieldForIssue(['somethingElse'])).toBe('prompt');
     expect(formFieldForIssue([])).toBe('prompt');
+  });
+});
+
+describe('pickedRepoDefault', () => {
+  /*
+   * The branch default is only trustworthy for the repository it was read from, so it is carried
+   * with that repository's URL rather than on its own — the form compares the pair against the
+   * repository it currently holds, and a default left over from an earlier choice cannot match.
+   */
+  it('carries the default branch with the repository URL', () => {
+    expect(
+      pickedRepoDefault({
+        fullName: 'acme/api',
+        url: 'https://github.com/acme/api',
+        defaultBranch: 'main',
+        private: false,
+        description: null,
+      }),
+    ).toEqual({ repoUrl: 'https://github.com/acme/api', defaultBranch: 'main' });
+  });
+
+  /** A cleared choice has no repository, so it has no default either. */
+  it('reports nothing when the choice was cleared', () => {
+    expect(pickedRepoDefault(null)).toBeNull();
   });
 });

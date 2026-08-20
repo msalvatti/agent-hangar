@@ -6,6 +6,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
+import { formatTimestamp } from '../lib/format';
 import type { TranscriptItem } from '../types';
 
 import { Transcript } from './Transcript';
@@ -74,14 +75,17 @@ describe('Transcript', () => {
     expect(screen.getByRole('alert')).toHaveTextContent('boom');
   });
 
-  // A user item's `at` and a notice item's `durationMs`, when present, are passed through.
+  // A user item's `at` and a notice item's `durationMs`, when present, are passed through. The
+  // expected tooltip is the row's own local rendering of that instant rather than the ISO string
+  // it used to show verbatim: the row still has to receive `at`, which is what this pins, but what
+  // it does with it is now a wall-clock time in the reader's zone.
   it('passes through an optional at and durationMs when present', () => {
     const { container } = render(
       <Transcript items={ITEMS_WITH_OPTIONAL_FIELDS} phase="succeeded" />,
     );
     expect(container.querySelector('[data-item-kind="user"]')).toHaveAttribute(
       'title',
-      '2026-01-01T00:00:00.000Z',
+      formatTimestamp('2026-01-01T00:00:00.000Z', Intl.DateTimeFormat().resolvedOptions().timeZone),
     );
     expect(screen.getByText('2.1 s')).toBeInTheDocument();
   });

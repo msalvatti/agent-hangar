@@ -63,7 +63,11 @@ describe('EnvPill', () => {
     // One commit renders the whole list, so the rest is settled once the first probe is there.
     expect(dialog).toHaveTextContent('Workspace image');
     expect(dialog).toHaveTextContent('failing');
-    expect(dialog).toHaveTextContent('Run `pnpm doctor` for details.');
+    // `infra:doctor`, not bare `pnpm doctor`: pnpm has a built-in `doctor` that shadows the
+    // script and reports on the pnpm installation instead, exiting 0 whatever state this
+    // project's environment is in. The dialog may not teach a command that cannot answer it.
+    expect(dialog).toHaveTextContent('Run `pnpm infra:doctor` for details.');
+    expect(dialog).not.toHaveTextContent('Run `pnpm doctor`');
   });
 
   // The dialog re-checks on demand, which is the next action after a failure.

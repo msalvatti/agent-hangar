@@ -1,9 +1,11 @@
 /**
  * Tests for `AppSidebar`: the three responsive shapes and the global shortcuts.
  */
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { assertPresent } from '@/shared/transcript';
 
 import { stubMatchMedia } from '../testing/media-query';
 import type { MatchMediaStub } from '../testing/media-query';
@@ -59,6 +61,34 @@ describe('AppSidebar', () => {
     expect(screen.queryByTestId('sidebar-slot')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
     expect(await screen.findByRole('link', { name: 'Agent Hangar home' })).toBeInTheDocument();
+  });
+
+  /*
+   * The drawer paints its own close button over its top-right corner, which is where the sidebar
+   * header puts the search button. Two hit targets on one spot means the one underneath cannot be
+   * reached at all, so the header row keeps that corner clear. jsdom lays nothing out, so this
+   * pins the reservation; the geometry is what a browser measures.
+   */
+  it('keeps the drawer close button clear of the search button', async () => {
+    media = stubMatchMedia([]);
+    render(<AppSidebar />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+
+    const wordmark = await screen.findByRole('link', { name: 'Agent Hangar home' });
+    const header = assertPresent(wordmark.parentElement, 'the wordmark sits in the header row');
+    expect(within(header).getByRole('button', { name: /^Search chats/ })).toBeInTheDocument();
+    expect(header).toHaveClass('pr-11');
+  });
+
+  // The same header outside the drawer has nothing painted over it, so it keeps the full width.
+  it('does not reserve that room in the full column', async () => {
+    media = stubMatchMedia([FULL, RAIL]);
+    render(<AppSidebar />);
+
+    const wordmark = await screen.findByRole('link', { name: 'Agent Hangar home' });
+    const header = assertPresent(wordmark.parentElement, 'the wordmark sits in the header row');
+    expect(within(header).getByRole('button', { name: /^Search chats/ })).toBeInTheDocument();
+    expect(header).not.toHaveClass('pr-11');
   });
 
   // Dismissing the drawer itself (Escape, the close button, the backdrop) closes it without any

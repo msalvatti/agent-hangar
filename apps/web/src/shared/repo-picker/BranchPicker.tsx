@@ -24,11 +24,21 @@ import {
 import { Skeleton } from '@/shared/ui/skeleton';
 
 import { repoReadiness } from './readiness';
+import { PICKER_TRIGGER_CLASS } from './trigger';
 import { useBranches } from './useBranches';
 
 /** Props of {@link BranchPicker}. */
 export interface BranchPickerProps {
   repo: string | null;
+  /**
+   * The repository's default branch, or `null` when the caller does not know it.
+   *
+   * Required rather than optional so every call site has to answer the question. This is the only
+   * thing that decides the auto-selection, and the listing cannot stand in for it: a forge returns
+   * branches in its own order — GitHub's is alphabetical — so the first entry is whichever name
+   * sorts first, and an agent work branch published minutes earlier sorts ahead of `main`.
+   */
+  defaultBranch: string | null;
   value: string | null;
   onChange: (branch: string) => void;
   disabled?: boolean;
@@ -40,10 +50,11 @@ export interface BranchPickerProps {
  * a repository is chosen; whenever branches are loaded and no branch is chosen, auto-selects the
  * repository's default branch.
  *
- * @param props - Repo, value, change handler, disabled, className.
+ * @param props - Repo, its default branch, value, change handler, disabled, className.
  */
 export function BranchPicker({
   repo,
+  defaultBranch,
   value,
   onChange,
   disabled = false,
@@ -61,18 +72,20 @@ export function BranchPicker({
   // repository has never been defaulted". Choosing the same repository again clears the branch, and
   // that selection has to be defaulted too or the composer stays disabled with no branch to send.
   useEffect(() => {
-    if (repo === null || value !== null) {
+    if (repo === null || value !== null || defaultBranch === null) {
       return;
     }
-    // `noUncheckedIndexedAccess` types this access as possibly `undefined` regardless of a prior
-    // `branches.length` check, so the length check is folded into this one instead of duplicated:
-    // an empty list and a present-but-empty first entry both mean "nothing to auto-select yet".
-    const defaultBranch = branches[0];
-    if (defaultBranch === undefined) {
+    // Only the named default is ever chosen for the user. When the listing does not contain it —
+    // an unknown default, or one the listing was too long to reach — nothing is selected and the
+    // form stays visibly incomplete, which is the honest outcome: falling back to a position in
+    // the listing is what silently pinned schedules to a throwaway agent branch, and a schedule
+    // nobody re-reads afterwards is worse wrong than obviously unset.
+    const named = branches.find((branch) => branch.name === defaultBranch);
+    if (named === undefined) {
       return;
     }
-    onChange(defaultBranch.name);
-  }, [repo, branches, value, onChange]);
+    onChange(named.name);
+  }, [repo, defaultBranch, branches, value, onChange]);
 
   function select(branchName: string): void {
     onChange(branchName);
@@ -91,7 +104,7 @@ export function BranchPicker({
         onClick={() => {
           setOpen(true);
         }}
-        className={cn('min-w-0 justify-between', className)}
+        className={cn(PICKER_TRIGGER_CLASS, className)}
       >
         <span className="flex min-w-0 items-center gap-1.5">
           <GitBranch aria-hidden="true" className="size-4 shrink-0" />

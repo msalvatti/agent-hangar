@@ -43,6 +43,7 @@ export {
   formatBytes,
   formatDuration,
   formatElapsed,
+  formatTimestamp,
   formatTokens,
   relativeTime,
   shortSha,

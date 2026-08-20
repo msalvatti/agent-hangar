@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" width="32" height="32" role="img" aria-label="Agent Hangar">
+  <style>
+    /* The palette tokens of globals.css, inlined because a favicon is rendered outside the
+       document and cannot read its custom properties. Browser chrome has its own light/dark
+       setting, so the square follows prefers-color-scheme the way the interface does; a browser
+       that ignores the query keeps the light pair, which is legible either way. */
+    .plate { fill: #eef0f3 }
+    .mark { stroke: #2f5bea }
+    @media (prefers-color-scheme: dark) {
+      .plate { fill: #1c1f25 }
+      .mark { stroke: #7aa2ff }
+    }
+  </style>
+  <rect class="plate" width="32" height="32" rx="6.67" />
+  <!-- lucide-react 1.32.0, "hexagon" (ISC), the same path LogoMark renders: its 24-unit box scaled
+       to the 26.7-unit inner box LogoMark gives it (40 px inside a 48 px plate) and centred. The
+       stroke is lucide's own default weight rather than LogoMark's 1.75, which at a 16 px tab
+       renders under a pixel wide. -->
+  <g class="mark" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" transform="translate(2.667 2.667) scale(1.1111)">
+    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+  </g>
+</svg>
