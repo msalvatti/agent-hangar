@@ -7,9 +7,14 @@
  * environment and a container that was never told one fails closed; cloning, refreshing and the
  * three work-branch cases each land on the right commit and announce themselves in order; a moved
  * branch warns without failing; and git never sees the credentials.
+ *
+ * The second turn of a chat runs preparation again over the workspace the first turn left behind,
+ * so the suite also drives that: the work branch is checked out where the previous turn left it,
+ * its commits and its uncommitted edits survive, and a remote that holds different commits is
+ * reported rather than merged over them.
  * Mocks: none for git — real repositories on a `file://` remote stand in for GitHub.
  */
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import { ConfigError } from '@agent-hangar/core';
@@ -18,7 +23,7 @@ import { GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { createChildEnv } from './child-env.js';
-import { createGitRunner } from './git.js';
+import { createGitRunner, gitOrThrow } from './git.js';
 import type { GitArgs, GitRunOptions, GitRunner } from './git.js';
 import {
   ALLOWED_ORIGIN_FILE,
@@ -78,6 +83,86 @@ function repoSection(overrides: Partial<TurnRequest['repo']> = {}): TurnRequest[
  */
 function progressMessages(): string[] {
   return events.filter((event) => event.type === 'prepare.progress').map((event) => event.message);
+}
+
+/** Identity for the commits the tests make; the git configuration is empty by design. */
+const COMMITTER = [
+  '-c',
+  'user.name=Agent Hangar Test',
+  '-c',
+  'user.email=test@example.com',
+] as const;
+
+/** Runner for the git commands the tests themselves issue, outside the code under test. */
+const plainGit = createGitRunner();
+
+/**
+ * Runs one git command in a directory, failing the test when it does not succeed.
+ *
+ * @param cwd - Where to run it.
+ * @param args - Subcommand and its arguments.
+ * @returns The trimmed standard output.
+ */
+async function runGit(cwd: string, args: GitArgs): Promise<string> {
+  return gitOrThrow(plainGit, args, { cwd, env: childEnv });
+}
+
+/**
+ * Commits a file in the workspace, as the previous turn's agent would have.
+ *
+ * @param name - Workspace-relative path.
+ * @param content - File contents.
+ * @returns The sha of the new commit.
+ */
+async function commitInWorkspace(name: string, content: string): Promise<string> {
+  await writeFile(path.join(root, name), content, 'utf8');
+  await runGit(root, ['add', '--', name]);
+  await runGit(root, [...COMMITTER, 'commit', '-m', `work on ${name}`]);
+  return runGit(root, ['rev-parse', 'HEAD']);
+}
+
+/**
+ * Adds a commit to a branch of the remote from a clone of its own, as another workspace would.
+ *
+ * @param branch - Branch to advance.
+ * @returns The sha the remote branch now points at.
+ */
+async function commitOnRemote(branch: string): Promise<string> {
+  const dir = await makeTempDir('remote-work');
+  await runGit(dir, ['clone', '--branch', branch, '--', repo.url, '.']);
+  await runGit(dir, [...COMMITTER, 'commit', '--allow-empty', '-m', `remote work on ${branch}`]);
+  await runGit(dir, ['push', 'origin', branch]);
+  const sha = await runGit(dir, ['rev-parse', 'HEAD']);
+  await removeTempDir(dir);
+  return sha;
+}
+
+/**
+ * Replaces the tip of a branch on the remote with an unrelated commit, as a force push does.
+ *
+ * @param branch - Branch to rewrite.
+ * @returns The sha the remote branch now points at.
+ */
+async function rewriteOnRemote(branch: string): Promise<string> {
+  const dir = await makeTempDir('remote-rewrite');
+  await runGit(dir, ['clone', '--branch', branch, '--', repo.url, '.']);
+  await runGit(dir, ['reset', '--hard', 'HEAD~1']);
+  await runGit(dir, [...COMMITTER, 'commit', '--allow-empty', '-m', `rewritten ${branch}`]);
+  await runGit(dir, ['push', '--force', 'origin', branch]);
+  const sha = await runGit(dir, ['rev-parse', 'HEAD']);
+  await removeTempDir(dir);
+  return sha;
+}
+
+/**
+ * Reads the sha a branch of the remote points at.
+ *
+ * @param branch - Branch to look up.
+ * @returns The sha, or an empty string when the remote does not publish the branch.
+ */
+async function remoteTip(branch: string): Promise<string> {
+  const line = await runGit(root, ['ls-remote', '--heads', repo.url, branch]);
+  return line.split('\t')[0] ?? '';
 }
 
 beforeEach(async () => {
@@ -393,6 +478,144 @@ describe('prepare and the expected head', () => {
       deps,
     );
     expect(progressMessages().some((message) => message.startsWith('Warning'))).toBe(false);
+  });
+});
+
+describe('prepare on a second turn of the same chat', () => {
+  beforeEach(async () => {
+    // The first turn: a fresh workspace, cloned, with the work branch created and never pushed.
+    await prepare(repoSection(), { clone: true }, deps);
+    events = [];
+    seenEnvs = [];
+  });
+
+  it('resumes a work branch that exists in the workspace and not on the remote', async () => {
+    // The reported defect: the container and its checkout outlive the turn, so the second
+    // preparation of a chat finds the branch already there while the remote still has nothing.
+    // Creating it again is what failed with "a branch named 'agent/work' already exists".
+    const result = await prepare(repoSection(), { clone: false }, deps);
+    expect(result).toStrictEqual({ headSha: repo.headSha, branch: 'agent/work' });
+    expect(progressMessages()).toStrictEqual([`Resumed agent/work at ${repo.headSha.slice(0, 7)}`]);
+  });
+
+  it('starts from the commit the previous turn made instead of rewinding the branch', async () => {
+    // The whole point of resuming: the second turn builds on the first turn's work, so the
+    // commit it made is the commit preparation reports and the one the branch still names.
+    const committed = await commitInWorkspace('answer.md', 'first turn\n');
+    const result = await prepare(repoSection(), { clone: false }, deps);
+    expect(result.headSha).toBe(committed);
+    expect(committed).not.toBe(repo.headSha);
+    await expect(runGit(root, ['rev-parse', 'refs/heads/agent/work'])).resolves.toBe(committed);
+    await expect(readFile(path.join(root, 'answer.md'), 'utf8')).resolves.toBe('first turn\n');
+  });
+
+  it('leaves a dirty work tree exactly as the previous turn left it', async () => {
+    // A turn ends whenever the model stops, not when the work tree is clean, so the next one
+    // starts on top of uncommitted edits. Preparation switches HEAD and touches nothing else:
+    // it never stashes, resets or checks out over them.
+    const committed = await commitInWorkspace('answer.md', 'first turn\n');
+    await writeFile(path.join(root, 'answer.md'), 'edited, not committed\n', 'utf8');
+    await writeFile(path.join(root, 'scratch.txt'), 'work in progress\n', 'utf8');
+    const result = await prepare(repoSection(), { clone: false }, deps);
+    expect(result.headSha).toBe(committed);
+    await expect(readFile(path.join(root, 'answer.md'), 'utf8')).resolves.toBe(
+      'edited, not committed\n',
+    );
+    await expect(readFile(path.join(root, 'scratch.txt'), 'utf8')).resolves.toBe(
+      'work in progress\n',
+    );
+    await expect(runGit(root, ['status', '--porcelain'])).resolves.toContain('answer.md');
+  });
+});
+
+describe('prepare when the work branch is on the remote', () => {
+  it('takes the remote tip when the workspace does not have the branch yet', async () => {
+    // A workspace rebuilt from the persisted history has no local branch, so the remote is the
+    // only copy of the chat's work and preparation lands exactly on it.
+    const tip = await remoteTip('agent/existing');
+    const result = await prepare(
+      repoSection({ workBranch: 'agent/existing' }),
+      { clone: true },
+      deps,
+    );
+    expect(result).toStrictEqual({ headSha: tip, branch: 'agent/existing' });
+    expect(progressMessages().at(-1)).toBe(`Checked out agent/existing at ${tip.slice(0, 7)}`);
+  });
+
+  describe('and in the workspace as well', () => {
+    beforeEach(async () => {
+      // The first turn of a chat that pushed: the branch now exists on both sides.
+      await prepare(repoSection(), { clone: true }, deps);
+      await commitInWorkspace('answer.md', 'first turn\n');
+      await runGit(root, ['push', 'origin', 'agent/work']);
+      events = [];
+      seenEnvs = [];
+    });
+
+    it('says nothing extra when the two tips agree', async () => {
+      // Nothing happened between the turns; silence is the signal that the branch is in sync.
+      const pushed = await remoteTip('agent/work');
+      const result = await prepare(repoSection(), { clone: false }, deps);
+      expect(result.headSha).toBe(pushed);
+      expect(progressMessages()).toStrictEqual([`Resumed agent/work at ${pushed.slice(0, 7)}`]);
+    });
+
+    it('reports commits the previous turn made and never pushed', async () => {
+      // The common case after a failed push: the local branch is ahead, preparation keeps it
+      // there and names what the remote is missing.
+      const unpushed = await commitInWorkspace('notes.md', 'not pushed\n');
+      const result = await prepare(repoSection(), { clone: false }, deps);
+      expect(result.headSha).toBe(unpushed);
+      expect(progressMessages()).toStrictEqual([
+        `Resumed agent/work at ${unpushed.slice(0, 7)}`,
+        '1 commit on agent/work not yet pushed to origin/agent/work.',
+      ]);
+    });
+
+    it('warns instead of merging when the remote moved ahead', async () => {
+      // Someone else advanced the branch. Merging it here would rewrite a work tree the agent
+      // may have left dirty, so the turn starts where the workspace stands and is told why.
+      const local = await runGit(root, ['rev-parse', 'HEAD']);
+      const moved = await commitOnRemote('agent/work');
+      const result = await prepare(repoSection(), { clone: false }, deps);
+      expect(result.headSha).toBe(local);
+      expect(result.headSha).not.toBe(moved);
+      expect(progressMessages()).toStrictEqual([
+        `Resumed agent/work at ${local.slice(0, 7)}`,
+        'Warning: origin/agent/work is 1 commit ahead of agent/work; preparation did not merge it.',
+      ]);
+    });
+
+    it('warns and keeps the local commits when the two have diverged', async () => {
+      // The state that a reset to the remote tip would destroy: commits exist on both sides and
+      // only the workspace holds its own. Preparation reports the divergence and loses nothing.
+      const first = await commitInWorkspace('notes.md', 'not pushed\n');
+      const second = await commitInWorkspace('more.md', 'also not pushed\n');
+      const moved = await commitOnRemote('agent/work');
+      const result = await prepare(repoSection(), { clone: false }, deps);
+      expect(result.headSha).toBe(second);
+      expect(result.headSha).not.toBe(moved);
+      await expect(runGit(root, ['rev-list', '--count', `${first}..${second}`])).resolves.toBe('1');
+      expect(progressMessages()).toStrictEqual([
+        `Resumed agent/work at ${second.slice(0, 7)}`,
+        'Warning: agent/work and origin/agent/work have diverged (2 commits here, 1 commit on the remote); preparation merged neither into the other.',
+      ]);
+    });
+
+    it('survives a work branch that was rewritten on the remote', async () => {
+      // A force push makes the remote-tracking ref a non-fast-forward update. Refusing it would
+      // fail every later turn of the chat over a ref that only mirrors what the remote says.
+      const local = await runGit(root, ['rev-parse', 'HEAD']);
+      const rewritten = await rewriteOnRemote('agent/work');
+      const result = await prepare(repoSection(), { clone: false }, deps);
+      expect(result.headSha).toBe(local);
+      await expect(runGit(root, ['rev-parse', 'refs/remotes/origin/agent/work'])).resolves.toBe(
+        rewritten,
+      );
+      expect(progressMessages().at(-1)).toBe(
+        'Warning: agent/work and origin/agent/work have diverged (1 commit here, 1 commit on the remote); preparation merged neither into the other.',
+      );
+    });
   });
 });
 

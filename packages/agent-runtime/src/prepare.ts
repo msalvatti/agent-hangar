@@ -26,6 +26,12 @@
  * expressed by the allow-list entry this origin came from; whether a credential may cross that
  * transport is a separate question, answered independently by the helper, which releases nothing
  * over cleartext. A workspace created for an `http` origin therefore clones anonymously.
+ *
+ * Preparation runs before every turn, not only the first, because a chat's workspace outlives the
+ * turn that created it. The second turn therefore finds the repository cloned, the work branch
+ * already there and, usually, commits on it that nothing has pushed yet. Everything below is
+ * written so that running it again over that workspace preserves what the previous turn left:
+ * commits, and the edits it never committed.
  */
 import { mkdir, readFile } from 'node:fs/promises';
 
@@ -34,7 +40,7 @@ import type { AgentEvent, TurnRequest } from '@agent-hangar/core';
 import { z } from 'zod';
 
 import { GitError, gitOrThrow } from './git.js';
-import type { GitRunner } from './git.js';
+import type { GitRunner, GitRunOptions } from './git.js';
 
 /** Characters of a sha shown in a progress message. */
 const SHORT_SHA_LENGTH = 7;
@@ -282,38 +288,240 @@ async function cloneOrFetch(
   await gitOrThrow(deps.git, ['clone', '--branch', repo.baseBranch, '--', repo.url, '.'], options);
 }
 
+/** How far a local branch and its remote counterpart have moved apart. */
+interface BranchDivergence {
+  /** Commits the local branch has that the remote does not. */
+  readonly ahead: number;
+  /** Commits the remote branch has that the local one does not. */
+  readonly behind: number;
+}
+
+/** What putting the work branch in place produced, for the progress messages. */
+interface WorkBranchOutcome {
+  /** One line naming where the checkout landed; the caller appends the commit. */
+  readonly summary: string;
+  /** A second line about commits the two tips do not share, or `null` when they agree. */
+  readonly note: string | null;
+}
+
 /**
- * Puts the work branch in place, whether it exists on the remote or not.
+ * Spells a number of commits.
  *
- * @param repo - Repository section of the turn request.
+ * @param count - How many commits.
+ * @returns The count with the noun agreeing with it.
+ */
+function commits(count: number): string {
+  return count === 1 ? '1 commit' : `${count} commits`;
+}
+
+/**
+ * Reports whether the workspace already holds the branch as a local ref.
+ *
+ * @param branch - Work branch of the turn.
  * @param deps - Preparation dependencies.
  * @param options - Working directory and environment for git.
- * @returns What happened, for the progress message.
+ * @returns `true` when `refs/heads/<branch>` resolves in this workspace.
  */
-async function switchToWorkBranch(
-  repo: TurnRequest['repo'],
+async function hasLocalBranch(
+  branch: string,
   deps: PrepareDeps,
-  options: { cwd: string; env: Record<string, string> },
-): Promise<string> {
-  if (repo.workBranch === repo.baseBranch) {
-    await gitOrThrow(deps.git, ['checkout', repo.baseBranch], options);
-    return `On ${repo.baseBranch}`;
+  options: GitRunOptions,
+): Promise<boolean> {
+  const result = await deps.git.run(
+    ['rev-parse', '--verify', '--quiet', `refs/heads/${branch}`],
+    options,
+  );
+  return result.code === 0;
+}
+
+/**
+ * Reports whether the remote publishes the branch.
+ *
+ * A remote that cannot be reached reads as "not published", which is what this question has always
+ * meant here: it decides where a branch that does not exist yet comes from, and what to say about
+ * one that does, and neither is worth failing a turn over an answer git can be asked for again.
+ *
+ * @param branch - Work branch of the turn.
+ * @param deps - Preparation dependencies.
+ * @param options - Working directory and environment for git.
+ * @returns `true` when the remote has a head of that name.
+ */
+async function hasRemoteBranch(
+  branch: string,
+  deps: PrepareDeps,
+  options: GitRunOptions,
+): Promise<boolean> {
+  const result = await deps.git.run(['ls-remote', '--heads', 'origin', branch], options);
+  return result.stdout.trim() !== '';
+}
+
+/**
+ * Brings the remote-tracking ref of the work branch up to date.
+ *
+ * The refspec is forced because `refs/remotes/origin/<branch>` records what the remote says rather
+ * than work of its own: a branch rewritten upstream would otherwise fail this fetch as a
+ * non-fast-forward and leave preparation unable to finish at all.
+ *
+ * @param branch - Work branch of the turn.
+ * @param deps - Preparation dependencies.
+ * @param options - Working directory and environment for git.
+ */
+async function fetchWorkBranch(
+  branch: string,
+  deps: PrepareDeps,
+  options: GitRunOptions,
+): Promise<void> {
+  await gitOrThrow(
+    deps.git,
+    ['fetch', 'origin', `+${branch}:refs/remotes/origin/${branch}`],
+    options,
+  );
+}
+
+/**
+ * Counts the commits each side of the work branch has that the other does not.
+ *
+ * @param branch - Work branch of the turn, present both locally and as a remote-tracking ref.
+ * @param deps - Preparation dependencies.
+ * @param options - Working directory and environment for git.
+ * @returns How far apart the two tips are.
+ */
+async function measureDivergence(
+  branch: string,
+  deps: PrepareDeps,
+  options: GitRunOptions,
+): Promise<BranchDivergence> {
+  const local = `refs/heads/${branch}`;
+  const remote = `refs/remotes/origin/${branch}`;
+  const ahead = await gitOrThrow(deps.git, ['rev-list', '--count', `${remote}..${local}`], options);
+  const behind = await gitOrThrow(
+    deps.git,
+    ['rev-list', '--count', `${local}..${remote}`],
+    options,
+  );
+  return { ahead: Number(ahead), behind: Number(behind) };
+}
+
+/**
+ * Says what the two tips of the work branch mean for the turn about to run.
+ *
+ * Nothing that produces this note moves a ref, so nothing here can lose a commit. The note exists
+ * because the user has to be told that their branch and the remote hold different work, and the
+ * agent has to know it is not starting from what the remote publishes.
+ *
+ * @param branch - Work branch of the turn.
+ * @param divergence - How far apart the two tips are.
+ * @returns The line to publish, or `null` when the two tips agree.
+ */
+function divergenceNote(branch: string, divergence: BranchDivergence): string | null {
+  if (divergence.ahead > 0 && divergence.behind > 0) {
+    return `Warning: ${branch} and origin/${branch} have diverged (${commits(divergence.ahead)} here, ${commits(divergence.behind)} on the remote); preparation merged neither into the other.`;
   }
-  const remote = await deps.git.run(['ls-remote', '--heads', 'origin', repo.workBranch], options);
-  if (remote.stdout.trim() === '') {
+  if (divergence.behind > 0) {
+    return `Warning: origin/${branch} is ${commits(divergence.behind)} ahead of ${branch}; preparation did not merge it.`;
+  }
+  if (divergence.ahead > 0) {
+    return `${commits(divergence.ahead)} on ${branch} not yet pushed to origin/${branch}.`;
+  }
+  return null;
+}
+
+/**
+ * Creates the work branch: from the remote when it publishes one, from the base branch otherwise.
+ *
+ * `checkout -B` is safe on this path and only on this path — the caller established that no local
+ * branch of that name exists, so there is no ref here for it to reset.
+ *
+ * @param repo - Repository section of the turn request.
+ * @param onRemote - Whether the remote publishes the work branch.
+ * @param deps - Preparation dependencies.
+ * @param options - Working directory and environment for git.
+ * @returns What happened, for the progress messages.
+ */
+async function createWorkBranch(
+  repo: TurnRequest['repo'],
+  onRemote: boolean,
+  deps: PrepareDeps,
+  options: GitRunOptions,
+): Promise<WorkBranchOutcome> {
+  if (!onRemote) {
     await gitOrThrow(deps.git, ['checkout', '-b', repo.workBranch], options);
-    return `Created ${repo.workBranch} from ${repo.baseBranch}`;
+    return { summary: `Created ${repo.workBranch} from ${repo.baseBranch}`, note: null };
   }
   // Fetching into the remote-tracking ref first is what makes `checkout -B` land on the branch's
   // real tip rather than on whatever this workspace last saw.
-  const ref = `refs/remotes/origin/${repo.workBranch}`;
-  await gitOrThrow(deps.git, ['fetch', 'origin', `${repo.workBranch}:${ref}`], options);
+  await fetchWorkBranch(repo.workBranch, deps, options);
   await gitOrThrow(
     deps.git,
     ['checkout', '-B', repo.workBranch, `origin/${repo.workBranch}`],
     options,
   );
-  return `Checked out ${repo.workBranch}`;
+  return { summary: `Checked out ${repo.workBranch}`, note: null };
+}
+
+/**
+ * Lands on the work branch this workspace already has, exactly where the last turn left it.
+ *
+ * A plain `checkout` is the whole point: it moves HEAD and nothing else, so commits the previous
+ * turn made and edits it never committed are both still there when the agent starts.
+ *
+ * @param branch - Work branch of the turn.
+ * @param onRemote - Whether the remote publishes it as well.
+ * @param deps - Preparation dependencies.
+ * @param options - Working directory and environment for git.
+ * @returns What happened, for the progress messages.
+ */
+async function resumeWorkBranch(
+  branch: string,
+  onRemote: boolean,
+  deps: PrepareDeps,
+  options: GitRunOptions,
+): Promise<WorkBranchOutcome> {
+  await gitOrThrow(deps.git, ['checkout', branch], options);
+  const summary = `Resumed ${branch}`;
+  if (!onRemote) {
+    return { summary, note: null };
+  }
+  await fetchWorkBranch(branch, deps, options);
+  return { summary, note: divergenceNote(branch, await measureDivergence(branch, deps, options)) };
+}
+
+/**
+ * Puts the work branch in place, wherever it already exists.
+ *
+ * The branch can be in three states and they are not symmetric. It exists only in this workspace
+ * when an earlier turn created it and nothing has been pushed — the workspace outlives a turn, so
+ * that is the ordinary second turn of a chat. It exists only on the remote when the workspace is
+ * fresh or was rebuilt from the persisted history. It exists in both places once a turn has
+ * pushed, and then the two tips can hold different commits.
+ *
+ * Only the first state may create it. Once the branch is local, preparation checks it out and
+ * moves no ref: `checkout -B` would reset it to whatever it was pointed at and discard commits the
+ * previous turn made, which are exactly the commits this turn is meant to build on. Reconciling a
+ * divergence is reported and left to the agent, which has git and can be told what it is looking
+ * at, rather than performed here — a merge preparation does on its own is a merge nobody asked
+ * for, it fails on a work tree the previous turn left dirty, and refusing outright would strand
+ * every later turn of the chat on the one workspace holding the unpushed commits.
+ *
+ * @param repo - Repository section of the turn request.
+ * @param deps - Preparation dependencies.
+ * @param options - Working directory and environment for git.
+ * @returns What happened, for the progress messages.
+ */
+async function switchToWorkBranch(
+  repo: TurnRequest['repo'],
+  deps: PrepareDeps,
+  options: GitRunOptions,
+): Promise<WorkBranchOutcome> {
+  if (repo.workBranch === repo.baseBranch) {
+    await gitOrThrow(deps.git, ['checkout', repo.baseBranch], options);
+    return { summary: `On ${repo.baseBranch}`, note: null };
+  }
+  const local = await hasLocalBranch(repo.workBranch, deps, options);
+  const onRemote = await hasRemoteBranch(repo.workBranch, deps, options);
+  return local
+    ? resumeWorkBranch(repo.workBranch, onRemote, deps, options)
+    : createWorkBranch(repo, onRemote, deps, options);
 }
 
 /**
@@ -324,9 +532,12 @@ async function switchToWorkBranch(
  */
 async function checkoutWorkBranch(repo: TurnRequest['repo'], deps: PrepareDeps): Promise<void> {
   const options = { cwd: deps.workspaceRoot, env: deps.env };
-  const what = await switchToWorkBranch(repo, deps, options);
+  const outcome = await switchToWorkBranch(repo, deps, options);
   const sha = await gitOrThrow(deps.git, ['rev-parse', 'HEAD'], options);
-  await deps.emit({ type: 'prepare.progress', message: `${what} at ${short(sha)}` });
+  await deps.emit({ type: 'prepare.progress', message: `${outcome.summary} at ${short(sha)}` });
+  if (outcome.note !== null) {
+    await deps.emit({ type: 'prepare.progress', message: outcome.note });
+  }
 }
 
 /**
