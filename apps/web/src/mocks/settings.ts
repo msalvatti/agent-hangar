@@ -3,9 +3,9 @@
  *
  * Layer: mock (handlers).
  *
- * `GET /api/settings` is not owned by this lane (it reads the same {@link store.secrets} and is
- * served by the shared mock foundation); this file only mutates it. Plaintext never touches the
- * store — only `last4` and `updatedAt` are kept, matching spec 04 (d).
+ * `GET /api/settings` lives in `settings-status.ts` and reads the same {@link store.secrets};
+ * this file only mutates it. Plaintext never touches the store — only `last4` and `updatedAt`
+ * are kept, matching spec 04 (d).
  */
 import { putSecretRequest, routes, settingsKeyParam } from '@agent-hangar/core';
 import type { SecretKey } from '@agent-hangar/core';
@@ -13,6 +13,9 @@ import { HttpResponse, http } from 'msw';
 
 import { nowIso, store } from './store';
 import type { MockStore } from './store';
+
+/** Number of trailing characters kept of a saved secret, as the contract's `last4` states. */
+const MASK_LENGTH = 4;
 
 function isSecretKey(value: string): value is SecretKey {
   return settingsKeyParam.safeParse(value).success;
@@ -44,11 +47,9 @@ export const settingsHandlers = [
     if (trimmed.length === 0) {
       return badRequest('Value must not be empty');
     }
-    store.secrets = {
-      ...store.secrets,
-      [key]: { last4: trimmed.slice(-4), updatedAt: nowIso() },
-    };
-    return HttpResponse.json({ set: true, last4: trimmed.slice(-4) });
+    const last4 = trimmed.slice(-MASK_LENGTH);
+    store.secrets = { ...store.secrets, [key]: { last4, updatedAt: nowIso() } };
+    return HttpResponse.json({ set: true, last4 });
   }),
 
   http.delete(routes.settingsKey, ({ params }) => {

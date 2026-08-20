@@ -140,4 +140,15 @@ describe('mapRunDetail', () => {
     expect(finished.startedAt).toBe(Date.parse('2026-08-19T10:00:01.000Z'));
     expect(finished.finishedAt).toBe(Date.parse('2026-08-19T10:00:06.000Z'));
   });
+
+  /**
+   * The contract types a tool call's name as a free string while the transcript renders a known
+   * tool, so a name this build does not recognise falls back to `run_shell` rather than being
+   * asserted into a union it does not belong to.
+   */
+  it('falls back to a known tool for an unrecognised tool name', () => {
+    const mapped = mapRunDetail(detail({}, [{ ...toolCall, toolName: 'quantum_tunnel' }]));
+    const tool = mapped.items.find((item) => item.kind === 'tool');
+    expect(tool?.name).toBe('run_shell');
+  });
 });

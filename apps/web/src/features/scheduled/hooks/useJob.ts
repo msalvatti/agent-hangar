@@ -3,8 +3,8 @@
  *
  * Layer: hook.
  *
- * The contract has no `GET /api/jobs/:id`; deriving from `listJobs` avoids an N+1 route just for
- * the detail page (see the lane's contract-change note).
+ * The API contract has no `GET /api/jobs/:id`; deriving from `listJobs` avoids adding a route
+ * that exists only to serve the detail page.
  */
 'use client';
 

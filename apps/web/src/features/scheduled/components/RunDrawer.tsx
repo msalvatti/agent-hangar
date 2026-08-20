@@ -53,7 +53,7 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
   const runQuery = useRun(open ? runId : null);
   const { stop, copyId } = useRunActions();
   const [stopDialogOpen, setStopDialogOpen] = useState(false);
-  const lastLoadedRunId = useRef<string | null>(null);
+  const seededRunId = useRef<string | null>(null);
 
   const loadErrorMessage = runQuery.error?.message ?? '';
   const mapped = runQuery.data === undefined ? null : mapRunDetail(runQuery.data, job);
@@ -67,12 +67,20 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
     createEventSource,
   });
 
+  // Seeding is keyed on the drawer being open, not only on the run changing: the run query is
+  // disabled while the drawer is closed and the stream is disconnected, so anything that happened
+  // in the meantime lives only in the run detail fetched on reopen. Forgetting the seed on close
+  // is what makes reopening the same run pick that up instead of redisplaying a stale transcript.
   useEffect(() => {
-    if (mapped !== null && runId !== lastLoadedRunId.current) {
-      lastLoadedRunId.current = runId;
+    if (!open) {
+      seededRunId.current = null;
+      return;
+    }
+    if (mapped !== null && runId !== seededRunId.current) {
+      seededRunId.current = runId;
       dispatch({ type: 'reset', items: mapped.items, phase: mapped.phase });
     }
-  }, [mapped, runId, dispatch]);
+  }, [open, mapped, runId, dispatch]);
 
   const liveState = wasActiveOnLoad ? state : createInitialState({ items: mapped?.items ?? [] });
   const displayItems = wasActiveOnLoad ? state.items : (mapped?.items ?? []);

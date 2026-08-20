@@ -95,7 +95,7 @@ export async function getRun(id: string, signal?: AbortSignal): Promise<RunDetai
 }
 
 /**
- * Cancels an active run. `POST /api/turns/:id/cancel` is shared with the chats lane's turns;
+ * Cancels an active run. `POST /api/turns/:id/cancel` is shared with chat turns:
  * `TurnRequest.turnId` is a `Turn.id` or a `JobRun.id`, so the run id works here too.
  *
  * @param runId - Run id.

@@ -3,9 +3,9 @@
  *
  * Layer: component.
  *
- * Spec calls for a `Command` inside a `Popover`; `@/shared/ui` has no `Popover` primitive yet
- * (owned by another lane), so this uses the existing dialog-based `Command` composition instead —
- * same searchable/keyboard-navigable behaviour, a modal trigger rather than an anchored popover.
+ * Spec 10 §4.3 calls for a `Command` inside a `Popover`; `@/shared/ui` has no `Popover`
+ * primitive, so this uses the dialog-based `Command` composition instead — same searchable,
+ * keyboard-navigable behaviour, with a modal trigger rather than an anchored popover.
  */
 'use client';
 

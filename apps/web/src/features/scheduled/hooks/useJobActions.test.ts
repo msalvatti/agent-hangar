@@ -40,13 +40,19 @@ const depAudit: JobSummary = {
 const nightlyTests: JobSummary = { ...depAudit, id: 'job-nightly-tests', name: 'Nightly tests' };
 
 describe('toggleEnabled', () => {
-  /** Sets the optimistic override immediately, then clears it once the mutation succeeds. */
-  it('applies the override immediately and clears it on success', async () => {
+  /**
+   * The override records the job revision it was applied on top of, so `resolveEnabled` can tell
+   * an override that is still covering an in-flight write from one the server has moved past.
+   */
+  it('stamps the override with the revision it was applied to', async () => {
     const { result } = renderHook(() => useJobActions());
     await act(async () => {
       await result.current.toggleEnabled(depAudit, true);
     });
-    expect(result.current.overrides[depAudit.id]).toBe(true);
+    expect(result.current.overrides[depAudit.id]).toEqual({
+      enabled: true,
+      appliedTo: depAudit.updatedAt,
+    });
     expect(result.current.pending[depAudit.id]).toBeUndefined();
   });
 

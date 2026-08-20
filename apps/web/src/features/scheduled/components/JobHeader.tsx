@@ -30,6 +30,8 @@ export interface JobHeaderProps {
   onToggle: (enabled: boolean) => void;
   onRunNow: () => void;
   busy: boolean;
+  /** `true` while an enable/disable request for this job is in flight. */
+  toggling: boolean;
 }
 
 /**
@@ -38,7 +40,15 @@ export interface JobHeaderProps {
  *
  * @param props - The job and its action callbacks.
  */
-export function JobHeader({ job, onEdit, onDelete, onToggle, onRunNow, busy }: JobHeaderProps) {
+export function JobHeader({
+  job,
+  onEdit,
+  onDelete,
+  onToggle,
+  onRunNow,
+  busy,
+  toggling,
+}: JobHeaderProps) {
   return (
     <PageHeader
       title={job.name}
@@ -57,6 +67,7 @@ export function JobHeader({ job, onEdit, onDelete, onToggle, onRunNow, busy }: J
           <Switch
             aria-label={`Enable ${job.name}`}
             checked={job.enabled}
+            disabled={toggling}
             onCheckedChange={onToggle}
           />
           <Button onClick={onRunNow} disabled={busy}>

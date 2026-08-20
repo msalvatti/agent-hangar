@@ -10,7 +10,14 @@
 import type { JobSummary } from '@agent-hangar/core';
 import { describe, expect, it } from 'vitest';
 
-import { emptyJobForm, formToRequest, jobToForm, repoFullName, validateJobForm } from './job-form';
+import {
+  emptyJobForm,
+  formFieldForIssue,
+  formToRequest,
+  jobToForm,
+  repoFullName,
+  validateJobForm,
+} from './job-form';
 import type { JobFormValues } from './job-form';
 
 const job: JobSummary = {
@@ -140,11 +147,13 @@ describe('validateJobForm', () => {
 
   /**
    * A repo string that passes the "non-empty" field check but produces a `repoUrl` the shared
-   * schema rejects (e.g. spaces) falls through to the schema-level error.
+   * schema rejects (e.g. spaces) falls through to the schema-level error — reported under the
+   * repository field, which is the input the user can act on, not under whichever field is last.
    */
-  it('rejects a repo that fails the shared schema after passing field checks', () => {
+  it('reports a schema rejection under the field it belongs to', () => {
     const errors = validateJobForm({ ...validForm(), repo: 'not a valid repo' });
-    expect(errors.prompt).toBeDefined();
+    expect(errors.repo).toBeDefined();
+    expect(errors.prompt).toBeUndefined();
   });
 });
 
@@ -166,5 +175,22 @@ describe('repoFullName', () => {
   /** Clearing the choice clears the field, so validation reports the repository as required. */
   it('maps a cleared choice to null', () => {
     expect(repoFullName(null)).toBeNull();
+  });
+});
+
+describe('formFieldForIssue', () => {
+  /** A request field the form renders under a different name still points at its own input. */
+  it('maps a request field to the form field that renders it', () => {
+    expect(formFieldForIssue(['repoUrl'])).toBe('repo');
+    expect(formFieldForIssue(['cron'])).toBe('cron');
+  });
+
+  /**
+   * A path naming nothing the form renders still has to surface somewhere: it lands on the
+   * prompt rather than being silently dropped, leaving the dialog unsavable with no explanation.
+   */
+  it('falls back to the prompt for a path that names no field', () => {
+    expect(formFieldForIssue(['somethingElse'])).toBe('prompt');
+    expect(formFieldForIssue([])).toBe('prompt');
   });
 });

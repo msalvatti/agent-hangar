@@ -15,7 +15,7 @@ import { PageHeader } from '@/shared/shell/PageHeader';
 import { Button } from '@/shared/ui/button';
 
 import { useJob } from '../hooks/useJob';
-import { useJobActions } from '../hooks/useJobActions';
+import { resolveEnabled, useJobActions } from '../hooks/useJobActions';
 import { useRunActions } from '../hooks/useRunActions';
 import { useRuns } from '../hooks/useRuns';
 
@@ -47,7 +47,7 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
   const [runningNow, setRunningNow] = useState(false);
   const drawerRunId = searchParams.get('run');
 
-  const { toggleEnabled, remove, overrides } = useJobActions();
+  const { toggleEnabled, remove, pending, overrides } = useJobActions();
   const { runNow } = useRunActions();
 
   const runsQuery = useRuns(jobId, { live: true });
@@ -111,11 +111,11 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
         <PageHeader title="Job" />
       ) : (
         <JobHeader
-          // `useJob` refetches on its own `['job', id]` key, which `toggleEnabled`'s optimistic
-          // override (keyed by job id, the same mechanism the jobs list uses) covers before that
-          // request settles.
-          job={{ ...job, enabled: overrides[job.id] ?? job.enabled }}
+          // The optimistic override covers the gap until `useJob`'s own `['job', id]` refetch
+          // settles; it is the same mechanism the jobs list uses.
+          job={{ ...job, enabled: resolveEnabled(job, overrides) }}
           busy={runningNow}
+          toggling={pending[job.id] === true}
           onEdit={() => {
             setEditOpen(true);
           }}

@@ -24,8 +24,35 @@ export interface UseJobActionsResult {
   remove: (job: JobSummary) => Promise<void>;
   /** Whether a mutation is in flight for a given job id. */
   pending: Readonly<Record<string, boolean>>;
-  /** Optimistic `enabled` override per job id, cleared once the list query refetches. */
-  overrides: Readonly<Record<string, boolean>>;
+  /** Optimistic `enabled` overrides, keyed by job id. Read them with {@link resolveEnabled}. */
+  overrides: EnabledOverrides;
+}
+
+/** An optimistic `enabled` value, and the job revision it was applied on top of. */
+export interface EnabledOverride {
+  enabled: boolean;
+  /** The `updatedAt` the job carried when the toggle was clicked. */
+  appliedTo: string;
+}
+
+/** Optimistic `enabled` overrides, keyed by job id. */
+export type EnabledOverrides = Readonly<Record<string, EnabledOverride>>;
+
+/**
+ * Resolves the `enabled` state to render for a job.
+ *
+ * An override only stands in for the value it was applied on top of. Once the job comes back from
+ * the server with a newer revision — from this toggle, or from a save through the job dialog —
+ * that revision is the truth and the override is spent, so a stale optimistic value can never
+ * outlive the write it was covering for.
+ *
+ * @param job - The job as last loaded.
+ * @param overrides - The optimistic overrides currently held.
+ * @returns The `enabled` state to render.
+ */
+export function resolveEnabled(job: JobSummary, overrides: EnabledOverrides): boolean {
+  const override = overrides[job.id];
+  return override?.appliedTo === job.updatedAt ? override.enabled : job.enabled;
 }
 
 function withEntry(
@@ -36,10 +63,7 @@ function withEntry(
   return { ...map, [key]: value };
 }
 
-function withoutEntry(
-  map: Readonly<Record<string, boolean>>,
-  key: string,
-): Record<string, boolean> {
+function withoutEntry<T>(map: Readonly<Record<string, T>>, key: string): Record<string, T> {
   return Object.fromEntries(Object.entries(map).filter(([entryKey]) => entryKey !== key));
 }
 
@@ -50,14 +74,15 @@ function withoutEntry(
  */
 export function useJobActions(): UseJobActionsResult {
   const [pending, setPending] = useState<Record<string, boolean>>({});
-  const [overrides, setOverrides] = useState<Record<string, boolean>>({});
+  const [overrides, setOverrides] = useState<Record<string, EnabledOverride>>({});
 
   const toggleEnabled = useCallback(async (job: JobSummary, enabled: boolean) => {
-    setOverrides((prev) => withEntry(prev, job.id, enabled));
+    setOverrides((prev) => ({ ...prev, [job.id]: { enabled, appliedTo: job.updatedAt } }));
     setPending((prev) => withEntry(prev, job.id, true));
     try {
       await updateJob(job.id, { enabled });
       invalidateQueries(['jobs']);
+      invalidateQueries(['job', job.id]);
     } catch {
       setOverrides((prev) => withoutEntry(prev, job.id));
       toast.error('Could not update job');

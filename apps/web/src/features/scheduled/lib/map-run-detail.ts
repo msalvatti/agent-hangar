@@ -3,13 +3,8 @@
  *
  * Layer: service (adapter).
  */
-import type {
-  JobRunStatus,
-  JobSummary,
-  RunDetail,
-  ToolCallView,
-  ToolName,
-} from '@agent-hangar/core';
+import { toolNameSchema } from '@agent-hangar/core';
+import type { JobRunStatus, JobSummary, RunDetail, ToolCallView } from '@agent-hangar/core';
 
 import type { ToolCallStatus, TranscriptItem, TurnPhase } from '@/shared/transcript';
 
@@ -41,13 +36,24 @@ function toDate(iso: string | null): number | null {
   return iso === null ? null : Date.parse(iso);
 }
 
+/**
+ * Converts one persisted tool-call log into a transcript item.
+ *
+ * The contract types `toolName` as a free string while the transcript renders a known tool, so the
+ * name is parsed rather than asserted; a tool this build does not know falls back to `run_shell`,
+ * whose summary is a plain command line.
+ *
+ * @param call - The persisted log row.
+ * @returns The tool item.
+ */
 function toToolItem(call: ToolCallView): TranscriptItem {
   const shownBytes = call.resultBytes ?? 0;
+  const name = toolNameSchema.safeParse(call.toolName);
   return {
     kind: 'tool',
     id: call.id,
     callId: call.callId,
-    name: call.toolName as ToolName,
+    name: name.success ? name.data : 'run_shell',
     args: call.args,
     seq: call.seq,
     status: TOOL_STATUS_BY_CONTRACT_STATUS[call.status],

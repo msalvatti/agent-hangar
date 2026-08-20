@@ -10,6 +10,33 @@ import { validateCron } from './cron';
 import { listTimezones, systemTimezone } from './timezones';
 
 const GITHUB_REPO_URL_PATTERN = /^https:\/\/github\.com\/([^/]+\/[^/]+?)(?:\.git)?$/;
+
+/**
+ * Form field each request field maps back to, so a schema rejection is shown under the input the
+ * user can act on rather than under whichever field happens to be last.
+ */
+const FIELD_BY_REQUEST_KEY: Readonly<Record<string, keyof JobFormValues>> = {
+  name: 'name',
+  cron: 'cron',
+  timezone: 'timezone',
+  prompt: 'prompt',
+  repoUrl: 'repo',
+  branch: 'branch',
+  enabled: 'enabled',
+};
+
+/**
+ * Resolves the form field a schema issue belongs to.
+ *
+ * A pure, exported function so its fallback — unreachable through {@link validateJobForm}, whose
+ * schema only ever reports the request's own top-level keys — is directly testable.
+ *
+ * @param path - The rejected value's path within the request body.
+ * @returns The form field to attach the message to; the prompt, for a path naming no field.
+ */
+export function formFieldForIssue(path: readonly PropertyKey[]): keyof JobFormValues {
+  return FIELD_BY_REQUEST_KEY[String(path[0])] ?? 'prompt';
+}
 const MAX_NAME_LENGTH = 80;
 const MAX_PROMPT_LENGTH = 4000;
 
@@ -138,7 +165,9 @@ export function validateJobForm(values: JobFormValues): JobFormErrors {
 
   const schemaResult = jobUpsertRequest.safeParse(formToRequest(values));
   if (!schemaResult.success) {
-    errors.prompt = schemaResult.error.message;
+    for (const issue of schemaResult.error.issues) {
+      errors[formFieldForIssue(issue.path)] = issue.message;
+    }
   }
   return errors;
 }

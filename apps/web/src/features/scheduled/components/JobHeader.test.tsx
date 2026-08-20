@@ -40,6 +40,7 @@ describe('JobHeader', () => {
         onToggle={vi.fn()}
         onRunNow={vi.fn()}
         busy={false}
+        toggling={false}
       />,
     );
     expect(screen.getByText('Nightly tests')).toBeInTheDocument();
@@ -61,6 +62,7 @@ describe('JobHeader', () => {
         onToggle={onToggle}
         onRunNow={vi.fn()}
         busy={false}
+        toggling={false}
       />,
     );
     await user.click(screen.getByRole('switch', { name: 'Enable Nightly tests' }));
@@ -80,6 +82,7 @@ describe('JobHeader', () => {
         onToggle={vi.fn()}
         onRunNow={onRunNow}
         busy={false}
+        toggling={false}
       />,
     );
     await user.click(screen.getByRole('button', { name: 'Run now' }));
@@ -96,6 +99,7 @@ describe('JobHeader', () => {
         onToggle={vi.fn()}
         onRunNow={vi.fn()}
         busy
+        toggling={false}
       />,
     );
     expect(screen.getByRole('button', { name: 'Run now' })).toBeDisabled();
@@ -114,6 +118,7 @@ describe('JobHeader', () => {
         onToggle={vi.fn()}
         onRunNow={vi.fn()}
         busy={false}
+        toggling={false}
       />,
     );
     await user.click(screen.getByRole('button', { name: 'Job actions' }));
@@ -123,5 +128,24 @@ describe('JobHeader', () => {
     await user.click(screen.getByRole('button', { name: 'Job actions' }));
     await user.click(await screen.findByText('Delete'));
     expect(onDelete).toHaveBeenCalledTimes(1);
+  });
+
+  /** A toggle already in flight disables the switch, so a second click cannot race the first. */
+  it('disables the enable switch while a toggle is in flight', () => {
+    render(
+      <JobHeader
+        job={job}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onRunNow={vi.fn()}
+        busy={false}
+        toggling
+      />,
+    );
+    expect(screen.getByRole('switch', { name: 'Enable Nightly tests' })).toHaveAttribute(
+      'aria-disabled',
+      'true',
+    );
   });
 });

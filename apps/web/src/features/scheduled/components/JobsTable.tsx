@@ -16,12 +16,15 @@ import {
   TableRow,
 } from '@/shared/ui/table';
 
+import { resolveEnabled } from '../hooks/useJobActions';
+import type { EnabledOverrides } from '../hooks/useJobActions';
+
 import { JobRow } from './JobRow';
 
 /** Props of {@link JobsTable}. */
 export interface JobsTableProps {
   jobs: readonly JobSummary[];
-  overrides: Readonly<Record<string, boolean>>;
+  overrides: EnabledOverrides;
   pending: Readonly<Record<string, boolean>>;
   onToggle: (job: JobSummary, enabled: boolean) => void;
   onEdit: (job: JobSummary) => void;
@@ -76,7 +79,7 @@ export function JobsTable({
             <JobRow
               key={job.id}
               job={job}
-              enabled={overrides[job.id] ?? job.enabled}
+              enabled={resolveEnabled(job, overrides)}
               busy={pending[job.id] === true}
               onToggle={onToggle}
               onEdit={onEdit}
