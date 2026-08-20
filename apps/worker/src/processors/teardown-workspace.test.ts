@@ -4,7 +4,8 @@
  * Layer: unit.
  * Goal: restore hints written only when nothing is unpushed, the normative note text for both
  * reasons, a snapshot failure that does not stop the destroy, a destroy failure recorded rather
- * than thrown, and a job workspace that leaves no message behind.
+ * than thrown, a workspace another writer took while the record was being written, and a job
+ * workspace that leaves no message behind.
  * Mocks: `createTestContainer` plus runner subclasses for the failures the fake cannot produce.
  */
 import type { Workspace, WorkspaceSnapshot } from '@agent-hangar/core';
@@ -262,6 +263,35 @@ describe('teardownWorkspace', () => {
 
     expect(retried).toBe('destroyed');
     expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('DESTROYED');
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Reading the row, snapshotting the container and writing the chat's record all take time, and a
+   * turn can take the workspace while they run. The `STOPPING` write names the status that read
+   * reported, so the teardown that lost stops there: the row still says what the other writer put
+   * in it, and the container that turn is executing in is still standing.
+   */
+  it('stops rather than destroying a workspace another writer took while it recorded', async () => {
+    const container = createTestContainer();
+    const { workspace } = await seedChatWorkspace(container);
+    const append = container.repos.messages.append.bind(container.repos.messages);
+    vi.spyOn(container.repos.messages, 'append').mockImplementation(
+      async (chatId, role, content, turnId) => {
+        await container.repos.workspaces.setStatus(workspace.id, 'BUSY');
+        return append(chatId, role, content, turnId);
+      },
+    );
+
+    const outcome = await teardownWorkspace(container, workspace, {
+      reason: 'idle',
+      idleMinutes: 30,
+    });
+
+    expect(outcome).toBe('skipped');
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
+    expect(container.runner.calls.some((call) => call.method === 'destroy')).toBe(false);
+    expect(container.logs.join('')).toContain('moved on before it could be stopped');
     vi.restoreAllMocks();
   });
 

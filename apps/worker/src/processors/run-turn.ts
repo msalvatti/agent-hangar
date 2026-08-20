@@ -530,7 +530,6 @@ async function runPreparedTurn(
   context: TurnContext,
   watch: CancellationWatch,
 ): Promise<void> {
-  await deps.repos.workspaces.setStatus(context.workspace.id, 'BUSY');
   // The branch the prompt names and the branch the request carries are the same string, derived
   // by the same function the request builder uses. Naming the base branch here instead would tell
   // the agent to push to the branch the next sentence forbids it to push to.
@@ -599,10 +598,33 @@ async function runWatchedTurn(
     return;
   }
 
+  // Taking the workspace is a conditional write, and it is the last thing that happens before the
+  // exec: the collector may have selected this row as idle while the workspace was being prepared,
+  // and a second worker process would not see the in-process claim at all. `READY` is the only
+  // status a turn may take a workspace from — a recovered stall has already been destroyed above,
+  // and a `BUSY` row belongs to a turn that is running — so naming it here is what tells "I took
+  // it" apart from "I overwrote whoever did". It comes after the Stop check because a turn
+  // cancelled before its exec never reaches the release below.
+  const busy = await deps.repos.workspaces.claimStatus(ensured.workspace.id, 'READY', 'BUSY');
+  if (busy === null) {
+    deps.logger.warn(
+      { turnId, workspaceId: ensured.workspace.id },
+      "another writer took this chat's workspace first",
+    );
+    await endUnstartedTurn(
+      deps,
+      turnId,
+      watch,
+      WORKSPACE_CONFLICT_CODE,
+      WORKSPACE_CONFLICT_MESSAGE,
+    );
+    return;
+  }
+
   const context: TurnContext = {
     turnId,
     chat,
-    workspace: ensured.workspace,
+    workspace: busy,
     handle: ensured.handle,
     decision: ensured.decision,
     messages,
@@ -674,9 +696,11 @@ async function runDeliveredTurn(
  * Builds the `run-turn` consumer.
  *
  * A chat's workspace is claimed for the whole turn. Two turns of one chat share a single
- * workspace, and a collection pass may be about to reclaim it; whichever of them holds the claim
- * owns the container until it is done, and the others report a conflict rather than running in a
- * filesystem somebody else is writing to.
+ * workspace, and a collection pass may be about to reclaim it; whichever of them takes the row
+ * `BUSY` owns the container until it is done, and the others report a conflict rather than running
+ * in a filesystem somebody else is writing to. That take is a conditional write, so it decides the
+ * contention wherever the other writer is; the in-process claim above it only spares this worker
+ * the work of preparing a turn it is about to lose.
  *
  * The turn itself is claimed too, and first. Stalled-job recovery can deliver a job a second time
  * while the first delivery is still executing it here, and that copy would otherwise lose the chat

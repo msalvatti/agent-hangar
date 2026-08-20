@@ -95,9 +95,9 @@ async function destroyOrphans(
  *
  * Which statuses qualify is {@link RECONCILABLE_STATUSES}: a pass that closed out an active
  * creation would mark it `DESTROYED` and leave the create to orphan a container or write over a
- * terminal row. The claim is what makes the state that was read the state at the moment of the
- * write, so a row somebody is working on is left for the next pass rather than closed out from a
- * stale listing.
+ * terminal row. The conditional write is what makes the state that was read the state at the
+ * moment of the write, so a row somebody is working on is left for the next pass rather than
+ * closed out from a stale listing.
  *
  * @param deps - Repositories, claims and logger.
  * @param live - The live rows, already read.
@@ -122,10 +122,24 @@ async function closeOutGoneRows(
       continue;
     }
     try {
-      await deps.repos.workspaces.setStatus(workspace.id, 'DESTROYED', {
-        failureReason: CONTAINER_MISSING_REASON,
-      });
-      goneMarked += 1;
+      // The listing this row came from was taken before the runner was asked what it still holds,
+      // so a turn may have taken the workspace since. Closing it out unconditionally would write
+      // `DESTROYED` over a workspace that is executing; naming the status the listing reported
+      // leaves that one alone and closes out only the row that has not moved.
+      const closed = await deps.repos.workspaces.claimStatus(
+        workspace.id,
+        workspace.status,
+        'DESTROYED',
+        { failureReason: CONTAINER_MISSING_REASON },
+      );
+      if (closed === null) {
+        deps.logger.info(
+          { workspaceId: workspace.id, expectedStatus: workspace.status },
+          'workspace moved on since the listing; left for the next pass',
+        );
+      } else {
+        goneMarked += 1;
+      }
     } finally {
       deps.claims.release(key);
     }
@@ -157,10 +171,13 @@ async function reconcileOrphans(
 /**
  * Reclaims one workspace the snapshot found idle, if it is still idle and still free.
  *
- * The selection came from a listing taken earlier in the pass, and a turn can claim a `READY`
- * workspace at any point after it. So the teardown asks twice: the claim proves nothing is running
- * in the container right now, and re-reading the row proves it is still an idle `READY` one rather
- * than a workspace a turn has just used and released.
+ * The selection came from a listing taken earlier in the pass, and a turn can take a `READY`
+ * workspace at any point after it. So the teardown asks three times, and only the last answer is
+ * binding: the in-process claim skips work another consumer of this process is already doing,
+ * re-reading the row proves it is still an idle `READY` one rather than a workspace a turn has
+ * just used and released, and the conditional `STOPPING` write inside the teardown is what
+ * actually decides — it applies only while the row still holds what was read, whichever process
+ * the other writer is in.
  *
  * @param deps - Runner, repositories, claims, clock and logger.
  * @param candidate - The workspace the snapshot selected.

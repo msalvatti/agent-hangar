@@ -16,6 +16,12 @@
  * A failure is reported, not thrown. The collector tears down many workspaces in one pass, and one
  * container the daemon refuses to remove — or one chat record the database refuses to write — must
  * not stop the rest.
+ *
+ * `STOPPING` is written conditionally, from the status the caller's row reported. Everything above
+ * it takes time — an exec into the container, two writes for the chat — and a turn may take the
+ * workspace while it runs, so the write that commits to destroying the container is also the one
+ * that arbitrates: it applies only while the row still holds what was read, and reports a
+ * workspace somebody else took instead of tearing it down underneath them.
  */
 import { archivedNotice, describeClientFailure } from '@agent-hangar/core';
 import type { Workspace, WorkspaceSnapshot } from '@agent-hangar/core';
@@ -26,7 +32,7 @@ import type { ProcessorDeps } from './types.js';
 export type TeardownReason = 'idle' | 'archive';
 
 /** What a teardown produced. */
-export type TeardownOutcome = 'destroyed' | 'failed';
+export type TeardownOutcome = 'destroyed' | 'failed' | 'skipped';
 
 /** Options of {@link teardownWorkspace}. */
 export interface TeardownOptions {
@@ -166,7 +172,8 @@ async function recordBeforeTeardown(
  * @param deps - Runner, repositories and logger.
  * @param workspace - The workspace to destroy.
  * @param options - Why it is going away.
- * @returns Whether the container is gone.
+ * @returns `destroyed` when the container is gone, `failed` when it could not be, and `skipped`
+ *   when another writer moved the workspace out of the status this teardown read.
  */
 export async function teardownWorkspace(
   deps: ProcessorDeps,
@@ -176,7 +183,22 @@ export async function teardownWorkspace(
   if (!(await recordBeforeTeardown(deps, workspace, options))) {
     return 'failed';
   }
-  await deps.repos.workspaces.setStatus(workspace.id, 'STOPPING');
+  // The row was read before the snapshot was taken and before the chat's record was written, and
+  // a turn can take the workspace in that window. Naming the status that read reported is what
+  // turns "somebody else moved it" from an overwrite into an answer: the container that turn is
+  // executing in is left alone, and the workspace falls idle again for a later pass.
+  const stopping = await deps.repos.workspaces.claimStatus(
+    workspace.id,
+    workspace.status,
+    'STOPPING',
+  );
+  if (stopping === null) {
+    deps.logger.info(
+      { workspaceId: workspace.id, expectedStatus: workspace.status },
+      'workspace moved on before it could be stopped; left for a later pass',
+    );
+    return 'skipped';
+  }
   try {
     await deps.runner.destroy({
       workspaceId: workspace.id,

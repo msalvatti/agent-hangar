@@ -416,6 +416,23 @@ describe('PrismaWorkspaceRepository', () => {
     );
   });
 
+  /** A claim refused with the row already gone falls back to the workspace id, like setStatus. */
+  it('claimStatus() falls back to the workspace id when the row has no chat to read', async () => {
+    const { client, workspace } = fakePrisma({
+      updateManyAndReturn: vi.fn(() => Promise.reject(p2002LiveWorkspace())),
+    });
+    workspace.findUnique = vi.fn(() => Promise.resolve(null));
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+    let caught: unknown;
+    try {
+      await repo.claimStatus('ws-1', 'FAILED', 'READY');
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(LiveWorkspaceExistsError);
+    expect((caught as LiveWorkspaceExistsError).chatId).toBe('ws-1');
+  });
+
   /** A null failureReason is passed through unredacted, matching setStatus. */
   it('claimStatus() passes a null failureReason through unchanged', async () => {
     const { client, workspace } = fakePrisma();

@@ -375,6 +375,31 @@ describe('createGcProcessor', () => {
   });
 
   /**
+   * The rows this pass closes out were listed before the runner was asked what it still holds, and
+   * a turn can take one in between. The close-out names the status the listing reported, so the
+   * row a turn took is left holding what that turn wrote instead of being marked `DESTROYED` under
+   * it — which is the arbitration a second worker process needs and an in-process register cannot
+   * give.
+   */
+  it('leaves a row another writer took between the listing and the write', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, { status: 'READY', idleMinutes: 1 });
+    const list = container.runner.list.bind(container.runner);
+    vi.spyOn(container.runner, 'list').mockImplementation(async (labels) => {
+      const handles = await list(labels);
+      await container.repos.workspaces.setStatus(workspace.id, 'BUSY');
+      return handles;
+    });
+
+    const result = await collect(container, JOB_NAMES.reapIdle);
+
+    expect(result.goneMarked).toBe(0);
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
+    expect(container.logs.join('')).toContain('moved on since the listing');
+    vi.restoreAllMocks();
+  });
+
+  /**
    * A row whose container is missing may be a row somebody is working on right now — the create
    * that has not registered its container yet, or a turn between two writes. The collector writes
    * only to rows it can claim, and leaves the rest for the pass after.

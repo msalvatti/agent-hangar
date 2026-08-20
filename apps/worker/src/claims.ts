@@ -4,20 +4,21 @@
  * Layer: utility.
  *
  * Two things write a workspace row's status: the turn that runs inside it and the collector that
- * reclaims it. Both decide from a row they read earlier, and the repository offers no conditional
- * status update that would make the decision and the write one step — so a collector acting on a
- * snapshot can destroy the container a turn claimed a moment later, and two turns of one chat can
- * both take the single workspace their chat is allowed.
+ * reclaims it. Both decide from a row they read earlier, and either can act in between.
  *
- * A claim closes those windows. It is taken and released without an intervening `await`, so at any
- * moment at most one holder is acting on a given workspace, and whoever holds it may re-read the
- * row and trust what it says. Work that cannot take the claim reports a conflict instead of acting
- * on a state it cannot vouch for.
+ * What arbitrates that is not this register. Every write that commits one of them to a workspace —
+ * the turn taking it `BUSY`, the teardown moving it to `STOPPING`, the reconciler closing it out —
+ * is a conditional write naming the status its caller read, so the database decides which one wins
+ * and the loser is told. That holds however many worker processes run.
  *
- * The scope is the process, which is the scope of the concurrency it guards: an instance runs one
- * worker, whose turn consumer and collector are the only writers of these rows. A deployment with
- * a second worker process would need the claim in Postgres or Redis instead, and the honest place
- * to put it would be a conditional update in the workspace repository.
+ * This register is the cheaper half, and it is about work rather than correctness: it is taken and
+ * released without an intervening `await`, so within one process a collector does not snapshot a
+ * container and write a chat's restore note only to find, at the conditional write, that the turn
+ * consumer beside it took the workspace first. Losing a claim therefore means "somebody here is
+ * already on it", never "the row says something other than what I read".
+ *
+ * Turns are the one thing claimed for its own sake rather than as an optimisation: a redelivery
+ * must not join the execution it is a copy of, and no row status distinguishes those two.
  */
 
 /** A workspace a chat's turns share; keyed by the chat, because the chat is what they contend for. */
@@ -32,7 +33,7 @@ const TURN_KEY_PREFIX = 'turn:';
 /** What a claim identifies: a workspace, the chat whose single workspace it is, or a turn. */
 export type ClaimKey = string;
 
-/** Exclusive, non-blocking ownership of workspaces within one worker process. */
+/** Exclusive, non-blocking ownership of workspaces and turn executions within one worker process. */
 export interface WorkspaceClaims {
   /**
    * Takes exclusive ownership of a key.

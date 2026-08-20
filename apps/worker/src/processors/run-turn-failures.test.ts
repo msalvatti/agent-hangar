@@ -3,8 +3,9 @@
  *
  * Layer: unit.
  * Goal: every way a turn can end badly leaves a terminal turn, a usable workspace and a stream the
- * UI can close — and no credential in any of them; plus the one failure worth retrying and the
- * race with another writer of the same chat.
+ * UI can close — and no credential in any of them; plus the one failure worth retrying and the two
+ * races with another writer of the same chat: the create that loses the live-workspace index, and
+ * the workspace taken between this turn's read of it and its conditional `BUSY` write.
  * Mocks: the shared processor fixtures, plus a repository double that always loses the create race.
  */
 import { LiveWorkspaceExistsError } from '@agent-hangar/core';
@@ -535,6 +536,7 @@ describe('createRunTurnProcessor, racing another writer of the same chat', () =>
         return Promise.resolve(lookups <= 2 ? null : existing);
       },
       setStatus: (id, status, update) => base.setStatus(id, status, update),
+      claimStatus: (id, from, to, update) => base.claimStatus(id, from, to, update),
       markActive: (id) => base.markActive(id),
       listIdle: (before) => base.listIdle(before),
       listLive: () => base.listLive(),
@@ -580,5 +582,38 @@ describe('createRunTurnProcessor, racing another writer of the same chat', () =>
     expect(failed?.workspaceId).toBeNull();
     expect(container.runner.calls.some((call) => call.method === 'exec')).toBe(false);
     expect(container.logs.join('')).toContain('another writer created the workspace of this chat');
+  });
+
+  /**
+   * The collector can select a workspace as idle while a turn is still preparing to use it, and a
+   * second worker process sees none of this one's in-process bookkeeping. Taking the workspace is
+   * therefore a conditional write from `READY`, and this test moves the row underneath the turn
+   * exactly where the window is: while the turn is recording which workspace it will run in.
+   *
+   * What is asserted is the outcome, not the call. The row still reads what the other writer put
+   * there rather than `BUSY`, nothing was executed in the container, and the turn is terminal with
+   * the conflict the user can act on.
+   */
+  it('fails the turn rather than executing in a workspace another writer took', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
+    const { turn } = await seedChatWithTurn(container);
+    const setStatus = container.repos.turns.setStatus.bind(container.repos.turns);
+    vi.spyOn(container.repos.turns, 'setStatus').mockImplementation(async (id, status, update) => {
+      const row = await setStatus(id, status, update);
+      if (update?.workspaceId !== undefined && update.workspaceId !== null) {
+        await container.repos.workspaces.setStatus(update.workspaceId, 'STOPPING');
+      }
+      return row;
+    });
+
+    await createRunTurnProcessor(container)(turnJob(turn.id));
+
+    const failed = await container.repos.turns.get(turn.id);
+    expect(failed?.status).toBe('FAILED');
+    expect(failed?.error).toContain(WORKSPACE_CONFLICT_CODE);
+    expect(container.runner.calls.some((call) => call.method === 'exec')).toBe(false);
+    expect([...container.repos.store.workspaces.values()][0]?.status).toBe('STOPPING');
+    expect(container.logs.join('')).toContain("another writer took this chat's workspace first");
+    vi.restoreAllMocks();
   });
 });
