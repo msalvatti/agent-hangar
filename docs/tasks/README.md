@@ -14,10 +14,10 @@ Every task inside a lane file carries a self-contained English agent prompt: an 
 | 1 | W1-E | [wave-1e-persistence.md](wave-1e-persistence.md) | `packages/core/src/persistence/repositories` | W0 | 🟩 |
 | 1 | W1-F | [wave-1f-scheduling-workspace.md](wave-1f-scheduling-workspace.md) | `packages/core/src/{scheduling,workspace,restore,queues}` | W0 | 🟩 |
 | 1 | W1-G | [wave-1g-web-chats.md](wave-1g-web-chats.md) | `apps/web/src/features/{shell,chats}`, `src/shared/transcript`, chat pages, mocks | W0 | 🟦 |
-| 1 | W1-H | [wave-1h-web-scheduled-settings.md](wave-1h-web-scheduled-settings.md) | `apps/web/src/features/{scheduled,settings}`, pages | W0 (rebase after W1-G) | 🟦 |
+| 1 | W1-H | [wave-1h-web-scheduled-settings.md](wave-1h-web-scheduled-settings.md) | `apps/web/src/features/{scheduled,settings}`, pages | W0 (rebase after W1-G) | 🟥 |
 | 1 | W1-I | [wave-1i-infra-conductor.md](wave-1i-infra-conductor.md) | `infra/scripts`, `.conductor`, compose, root scripts | W0 (merge first in batch) | 🟦 |
-| 2 | W2-A | [wave-2a-web-api-sse.md](wave-2a-web-api-sse.md) | `apps/web/app/api`, `apps/web/src/server` | W1-A, W1-E, W1-F | 📋 |
-| 2 | W2-B 🐳 | [wave-2b-worker.md](wave-2b-worker.md) | `apps/worker/src` | W1-A…W1-F | 📋 |
+| 2 | W2-A | [wave-2a-web-api-sse.md](wave-2a-web-api-sse.md) | `apps/web/app/api`, `apps/web/src/server` | W1-A, W1-E, W1-F | 🟦 |
+| 2 | W2-B 🐳 | [wave-2b-worker.md](wave-2b-worker.md) | `apps/worker/src` | W1-A…W1-F | 🟦 |
 | 2 | W2-C | [wave-2c-e2e.md](wave-2c-e2e.md) | `apps/web/e2e`, `infra/test/gitserver` | W1-G, W1-H | 📋 |
 | 3 | W3-A 🐳 | [wave-3a-integration.md](wave-3a-integration.md) | any (single agent) | W2-A, W2-B, W2-C | 📋 |
 | 3 | W3-B | [wave-3b-docs.md](wave-3b-docs.md) | `README.md`, `docs/**` | W2-A, W2-B | 📋 |
