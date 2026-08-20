@@ -10,12 +10,22 @@
  * find quiet, the helper shims standing in for `lib/*.main.ts`, and the two ways of starting the
  * script (awaited, or detached so a second run can meet the first mid-flight).
  *
- * This module is held to the same 100% coverage gate as the rest of `infra/scripts/testing/**`, so
- * it is written without branches a test would have to contrive to reach.
+ * This module is held to the same 100% coverage gate as the rest of `infra/scripts/testing/**`.
+ * Only the port-base allocator branches, and `rotate-key-sandbox.test.ts` drives every one of them
+ * directly; everything else here is written straight through, so a rotation test never has to
+ * contrive a path in the double it is using.
  */
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
-import { chmodSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { createServer } from 'node:net';
 import type { Server } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -32,7 +42,7 @@ import { createShimDir, spawnScript, writeExtraShim } from './shims.js';
  * name. Routing each access through one indirection level is the pattern `shims.ts` uses for the
  * same reason.
  */
-const fsPort = { chmodSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync };
+const fsPort = { chmodSync, mkdirSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync };
 
 /** Absolute path of the script under test. */
 export const scriptPath = fileURLToPath(new URL('../rotate-key.sh', import.meta.url));
@@ -82,39 +92,122 @@ export function listen(port: number): Promise<Server> {
   });
 }
 
-/**
- * Lowest port base handed out, and the width of the block. The range sits below the ephemeral
- * range both Linux (32768+) and macOS (49152+) allocate from, so the OS never hands one of these
- * ports to somebody else — which an OS-assigned port emphatically does not guarantee.
- */
+/** Lowest port base handed out, and the width of the range; see {@link reservePortBase}. */
 const PORT_BASE_FLOOR = 30000;
 const PORT_BASE_SPAN = 1500;
 
 /** Ports consumed per instance (web, Postgres, Redis), so blocks never overlap. */
 const PORT_BASE_STRIDE = 3;
 
+/** Name prefix of the marker directory that holds one base for whoever created it. */
+const CLAIM_PREFIX = 'ah-port-base-';
+
 /**
- * Where this process starts allocating. Seeding from the pid spreads concurrent Vitest workers
- * across the range instead of having them all start at the same base.
+ * Age at which a marker is treated as abandoned rather than held.
+ *
+ * A run killed outright — Ctrl-C on a watch session, a cancelled job — never reaches its teardown,
+ * and without this its markers would hold their bases for good; some twenty such runs would exhaust
+ * the range and turn a convenience into an outage. An hour is far longer than any run of this
+ * project (under half a minute idle, a little over two minutes with four copies racing each other
+ * on a loaded machine), so a marker that old cannot belong to a run still using it.
+ */
+const STALE_CLAIM_MS = 60 * 60 * 1000;
+
+/**
+ * Where this process starts looking. Seeding from the pid means concurrent workers usually claim
+ * on their first try instead of walking past each other's bases; it is a head start, not the thing
+ * that keeps them apart, which is the marker below.
  */
 let nextPortBase = process.pid * PORT_BASE_STRIDE;
+
+/** Marker directories this process created, removed by {@link releaseSandboxes}. */
+const claims: string[] = [];
+
+/**
+ * Reports whether a failed `mkdir` lost the race to create the marker.
+ *
+ * @param error - Value thrown by `mkdirSync`.
+ * @returns `true` when the directory already existed.
+ */
+function isDirectoryExistsError(error: unknown): boolean {
+  return error instanceof Error && (error as NodeJS.ErrnoException).code === 'EEXIST';
+}
+
+/**
+ * Takes one base for this process, or reports it as somebody else's.
+ *
+ * `mkdir` is the test-and-set: it either creates the directory or fails, never both, and it fails
+ * the same way for a sibling worker of this run and for a wholly separate Vitest process, which is
+ * what a pid-seeded counter could not do. A marker old enough to be abandoned is deleted rather
+ * than claimed here, so the sweep that follows can take the base on its second pass instead of
+ * this call having to succeed at a `mkdir` it just raced somebody for.
+ *
+ * @param base - Base to claim.
+ * @returns `true` when this process now owns the base.
+ */
+function claimPortBase(base: number): boolean {
+  const marker = join(tmpdir(), `${CLAIM_PREFIX}${base}`);
+  try {
+    fsPort.mkdirSync(marker);
+  } catch (error) {
+    if (!isDirectoryExistsError(error)) {
+      throw error;
+    }
+    // `throwIfNoEntry: false` rather than a plain stat: the owner may have released the marker in
+    // the instant between the failed `mkdir` and this line, and a run must not die because the
+    // base it was about to skip became free. Missing reads as `0`, which is stale, so the removal
+    // below is the no-op `force` makes it and the next sweep simply takes the base.
+    const heldSince = fsPort.statSync(marker, { throwIfNoEntry: false })?.mtimeMs ?? 0;
+    if (Date.now() - heldSince > STALE_CLAIM_MS) {
+      fsPort.rmSync(marker, { recursive: true, force: true });
+    }
+    return false;
+  }
+  claims.push(marker);
+  return true;
+}
 
 /**
  * Reserves a port base whose web port (`base + 0`) nothing is listening on.
  *
  * The script probes that port to decide whether the instance is running, so every test that is not
- * about that check has to name a base where the probe finds nothing. Bases are handed out from a
- * private range rather than by binding port 0 and releasing it: a released ephemeral port is free
- * only until the OS hands it to the next caller, and with suites running in parallel it did
- * exactly that — a doctor listener landed on a base a rotation test had just released, and the
- * rotation refused to start because its instance looked like it was running.
+ * about that check has to name a base where the probe finds nothing. Two things have to hold, and
+ * they are enforced separately.
  *
- * @returns A base whose ports no other suite in this run can be given.
+ * The range is private rather than OS-assigned: it sits below the ephemeral range both Linux
+ * (32768+) and macOS (49152+) allocate from, so the OS never hands one of these ports to somebody
+ * else. Binding port 0 and releasing it does not survive that — a released ephemeral port is free
+ * only until the OS hands it to the next caller, and with suites running in parallel it did
+ * exactly that.
+ *
+ * Within the range, a base belongs to one claimant at a time, and the marker directory is what
+ * says so. A counter seeded from the pid is not enough: workers spawned back to back get adjacent
+ * pids, so their sequences interleave over the same five hundred slots with the same stride, and
+ * a base one worker had bound to play a running instance was handed to another worker as a base it
+ * expected quiet — the rotation there refused to start and exited 1.
+ *
+ * Two sweeps of the range, because the first may spend a candidate deleting an abandoned marker
+ * rather than taking it.
+ *
+ * @param floor - Lowest base to consider.
+ * @param span - Width of the range in ports; must be a whole number of strides.
+ * @returns A base no other live sandbox on this machine holds.
+ * @throws When every base in the range is held by a run that is still going.
  */
-function reservePortBase(): number {
-  const base = PORT_BASE_FLOOR + (nextPortBase % PORT_BASE_SPAN);
-  nextPortBase += PORT_BASE_STRIDE;
-  return base;
+export function reservePortBase(floor = PORT_BASE_FLOOR, span = PORT_BASE_SPAN): number {
+  const attempts = (span / PORT_BASE_STRIDE) * 2;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const base = floor + (nextPortBase % span);
+    nextPortBase += PORT_BASE_STRIDE;
+    if (claimPortBase(base)) {
+      return base;
+    }
+  }
+  throw new Error(
+    `No free port base in [${floor}, ${floor + span}): every one is held by a live run. ` +
+      `Stop the other test runs, or delete the stale markers with ` +
+      `rm -rf ${join(tmpdir(), `${CLAIM_PREFIX}*`)}`,
+  );
 }
 
 /**
@@ -334,8 +427,11 @@ export function backupPaths(box: Sandbox): string[] {
 }
 
 /**
- * Tears down every sandbox, listener and child a test created. Called from each suite's
- * `afterEach`; the loops are unconditional so the module keeps no branches of its own.
+ * Tears down every sandbox, listener, child and port-base marker a test created. Called from each
+ * suite's `afterEach`; the loops are unconditional, so a teardown never depends on how the test
+ * that preceded it ended. Releasing the markers here is what keeps the range from filling up over
+ * a working day — the age-based reclamation in {@link reservePortBase} covers only the runs that
+ * never get here at all.
  */
 export function releaseSandboxes(): void {
   for (const child of children) {
@@ -350,4 +446,8 @@ export function releaseSandboxes(): void {
     fsPort.rmSync(dir, { recursive: true, force: true });
   }
   dirs.length = 0;
+  for (const marker of claims) {
+    fsPort.rmSync(marker, { recursive: true, force: true });
+  }
+  claims.length = 0;
 }
