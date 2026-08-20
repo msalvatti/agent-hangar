@@ -293,6 +293,27 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 
 ## 12. Status dashboard (orchestrator keeps this current)
 
+**Where the build stands** — read from `gh` and `git` on 2026-08-20, not from memory.
+
+| | |
+|---|---|
+| Default branch | `main` at `5204979`; continuous integration was green on the commit before it and is still running on this one |
+| Lanes merged | **9 of 17** — the foundation lane plus eight of the nine first-wave lanes |
+| Lanes in review | **3** — the scheduled and settings screens, the web API, and the worker processors |
+| Lanes not started | **5** — end-to-end authoring, wiring and stabilisation, documentation, and both mutation-testing lanes |
+| Tasks merged | **51 of 94** |
+| Tasks written but not yet merged | **18** on the three open lane branches, so 69 of 94 exist as code |
+| Routed findings still open | **17**, in §14 below, each naming one lane |
+
+The task counts come from the per-lane task indexes in `docs/tasks/`. A lane's tasks only count as
+merged once its pull request lands, so the gap between 51 and 69 is exactly the three lanes in
+review.
+
+**What unblocks what.** The end-to-end lane is gated on the scheduled and settings lane, which is
+the only thing standing between the first wave and its completion. The third wave needs every
+second-wave lane merged, and the mutation lanes need the third. So the critical path runs through
+the three pull requests currently in review, in no particular order among themselves.
+
 | Lane | Status | Branch / PR | Coverage | Notes |
 |---|---|---|---|---|
 | W0 | 🟩 merged | PR #4 | core 100 / web 100 / worker 100 (all four metrics) | TypeScript pinned `~6.0.3` |
@@ -325,6 +346,31 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | #16 | 🟨 PR open | The workspace image had no agent runtime in it: the bundle was described in a pull request body and never applied |
 
 Legend: ⬜ not started · 🟦 running (branch) · 🟨 PR open · 🟩 merged · 🟥 blocked.
+
+**Task progress per lane.** *Merged* counts tasks whose lane has landed on `main`; *on its branch*
+counts tasks a lane has finished but not yet merged. Taken from each lane's own task index, so a
+number here is only as current as the last close-out that lane wrote.
+
+| Lane | Merged | On its branch | Total |
+|---|---|---|---|
+| W0 | 8 | — | 8 |
+| W1-A | 5 | — | 5 |
+| W1-B | 5 | — | 5 |
+| W1-C | 5 | — | 5 |
+| W1-D | 5 | — | 5 |
+| W1-E | 5 | — | 5 |
+| W1-F | 5 | — | 5 |
+| W1-G | 7 | — | 7 |
+| W1-H | 0 | 6 | 6 |
+| W1-I | 6 | — | 6 |
+| W2-A | 0 | 6 | 6 |
+| W2-B | 0 | 6 | 6 |
+| W2-C | 0 | — | 6 |
+| W3-A | 0 | — | 6 |
+| W3-B | 0 | — | 5 |
+| W4-A | 0 | — | 4 |
+| W4-B | 0 | — | 4 |
+| **Total** | **51** | **18** | **94** |
 
 ## 13. Estimated complexity
 
