@@ -293,6 +293,33 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 
 ## 12. Status dashboard (orchestrator keeps this current)
 
+**Where the build stands** — read from `gh` and `git` on 2026-08-20, not from memory.
+
+| | |
+|---|---|
+| Default branch | `main` at `5204979`; continuous integration was green on the commit before it and is still running on this one |
+| Lanes merged | **9 of 17** — the foundation lane plus eight of the nine first-wave lanes |
+| Lanes in review | **3** — the scheduled and settings screens, the web API, and the worker processors |
+| Lanes not started | **5** — end-to-end authoring, wiring and stabilisation, documentation, and both mutation-testing lanes |
+| Tasks merged | **51 of 94** |
+| Tasks written but not yet merged | **18** on the three open lane branches, so 69 of 94 exist as code |
+| Routed findings still open | **18**, in §14 below, each naming one lane |
+| Orchestrator fixes | **13 merged, 1 open** — defects found while shepherding, listed under the lane table |
+
+Three tables in this section describe the same build and are updated together, because one of them
+being stale is how a reader ends up with the wrong answer: the lane table, the orchestrator-fix
+table beneath it, and the task-progress table at the end. The lane index in `docs/tasks/README.md`
+mirrors the first of them and moves with it.
+
+The task counts come from the per-lane task indexes in `docs/tasks/`. A lane's tasks only count as
+merged once its pull request lands, so the gap between 51 and 69 is exactly the three lanes in
+review.
+
+**What unblocks what.** The end-to-end lane is gated on the scheduled and settings lane, which is
+the only thing standing between the first wave and its completion. The third wave needs every
+second-wave lane merged, and the mutation lanes need the third. So the critical path runs through
+the three pull requests currently in review, in no particular order among themselves.
+
 | Lane | Status | Branch / PR | Coverage | Notes |
 |---|---|---|---|---|
 | W0 | 🟩 merged | PR #4 | core 100 / web 100 / worker 100 (all four metrics) | TypeScript pinned `~6.0.3` |
@@ -317,14 +344,47 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 
 | PR | Status | The defect |
 |---|---|---|
-| #9 | 🟩 merged | The `e2e` job installed a browser to run an empty suite, taking 111–1367 s and gating every merge |
+| #1 · #2 · #3 | 🟩 merged | The launch decisions, the web security defaults and the container grouping were agreed in conversation and existed nowhere a lane could read them |
 | #5 | 🟩 merged | `@agent-hangar/core` was unresolvable from source, so a fresh worktree could not run the worker; repository URLs hardened |
+| #9 | 🟩 merged | The `e2e` job installed a browser to run an empty suite, taking 111–1367 s and gating every merge |
 | #13 | 🟩 merged | A connection failure repeated the driver message and attached the driver error as `cause`, leaking the database password twice over |
 | #14 | 🟩 merged | The destructive-test guard printed the password back when the connection URL had no authority |
 | #15 | 🟩 merged | This dashboard had drifted six merges behind reality |
-| #16 | 🟨 PR open | The workspace image had no agent runtime in it: the bundle was described in a pull request body and never applied |
+| #16 | 🟩 merged | The workspace image had no agent runtime in it: the bundle was described in a pull request body and never applied |
+| #17 | 🟩 merged | Updating this dashboard was treated as an errand to schedule rather than the last step of the merge in front of it |
+| #20 | 🟩 merged | The development server could not resolve the shared package at all: it requests the source condition unconditionally and resolves the NodeNext specifiers literally |
+| #23 | 🟩 merged | Findings that no lane could close had no record outside a conversation |
+| #25 | 🟩 merged | A routed row stated a contract change as though it had landed, and named the wrong remedy for it |
+| #26 | 🟩 merged | `pnpm typecheck` emits without rewriting, so it leaves a `dist` whose declarations name files that do not exist |
+| #27 | 🟩 merged | The dashboard and the task index disagreed about which lanes were ready |
+| #28 | 🟨 PR open | The dashboard listed every lane's state but never what it added up to |
 
 Legend: ⬜ not started · 🟦 running (branch) · 🟨 PR open · 🟩 merged · 🟥 blocked.
+
+**Task progress per lane.** *Merged* counts tasks whose lane has landed on `main`; *on its branch*
+counts tasks a lane has finished but not yet merged. Taken from each lane's own task index, so a
+number here is only as current as the last close-out that lane wrote.
+
+| Lane | Merged | On its branch | Total |
+|---|---|---|---|
+| W0 | 8 | — | 8 |
+| W1-A | 5 | — | 5 |
+| W1-B | 5 | — | 5 |
+| W1-C | 5 | — | 5 |
+| W1-D | 5 | — | 5 |
+| W1-E | 5 | — | 5 |
+| W1-F | 5 | — | 5 |
+| W1-G | 7 | — | 7 |
+| W1-H | 0 | 6 | 6 |
+| W1-I | 6 | — | 6 |
+| W2-A | 0 | 6 | 6 |
+| W2-B | 0 | 6 | 6 |
+| W2-C | 0 | — | 6 |
+| W3-A | 0 | — | 6 |
+| W3-B | 0 | — | 5 |
+| W4-A | 0 | — | 4 |
+| W4-B | 0 | — | 4 |
+| **Total** | **51** | **18** | **94** |
 
 ## 13. Estimated complexity
 
@@ -364,6 +424,7 @@ stating the residual risk in plain terms.
 | R14 | `GITHUB_API_BASE_URL` and `ALLOWED_REPO_HOSTS` promise that another forge can be configured, but the `repoUrl` schema shared by the chat and job requests accepts only `https://github.com/...`. An Enterprise or self-hosted repository therefore appears in the picker and then fails with a 400 the user cannot act on. | Both halves must change together and `repoUrl` is in frozen core. Either the schema consults the configured hosts or the configuration stops offering what the contract refuses — that is a product decision, not a patch. | W3-A |
 | R12 | `packages/core`'s `loadConfig()` still treats the instance-derived ports as defaults, so an explicit `POSTGRES_PORT` in the process environment wins there. `env.sh` is now stricter than the library it mirrors. In practice everything loads from `.env.local`, which `env.sh` writes with derived values, so the two agree today. | Making the identity block non-overridable lives in `packages/core/src/config/schema.ts`, which is frozen and belongs to no open lane. | W3-A |
 | R17 | `pnpm test` is `pnpm -r --if-present test && vitest run --project scripts`. The `&&` means a failure in any workspace stops the run, so the scripts suite never executes — a flake elsewhere silently voids it, and the job reports the earlier failure rather than "these tests did not run". Observed: a timing-dependent web test failed, the scripts suite was never reached, and the tests that mattered to the change under review were never executed. | Restructuring the root test script and how continuous integration reports per-workspace results is repository-wide tooling, not a lane deliverable. | W3-A |
+| R18 | `tsc -b && <rewrite>` short-circuits, so a failing typecheck emits a partial `dist` and skips the rewrite. Accepted as unlikely when the chain was written; observed on the first real attempt after it merged, because a tree without a generated Prisma client fails typecheck and leaves 256 unrewritten declarations behind. The next successful compile repairs it, and the headers say so — but anything reading `dist` in that window sees the broken form, which is how a confusing cascade starts. | Preserving the compiler's exit code while always rewriting needs exit-code handling in four manifests; the cheaper answer may be making the prerequisite explicit so the compile does not fail that way in the first place. | W3-A |
 | R11 | The presence check that greps route files for `assertSameOrigin` reports every route as covered **by construction**, because the guard lives in the handler behind a thin wiring module. It cannot fail. | Replaced by `apps/web/app/api/same-origin-policy.test.ts`, which calls every state-changing export from a foreign origin and names the offending route when the guard is removed. The grep must be retired from the lane prompts so it is not reintroduced. | W3-B |
 
 Approved 2026-08-19. Per-lane task files with self-contained agent prompts live in [docs/tasks/](tasks/README.md).
