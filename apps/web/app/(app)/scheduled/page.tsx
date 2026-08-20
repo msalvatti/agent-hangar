@@ -1,19 +1,15 @@
 /**
- * Scheduled jobs route — placeholder until the scheduled feature lands.
+ * Scheduled jobs route.
  *
  * Layer: screen.
  */
 import type { Metadata } from 'next';
 
-export const metadata: Metadata = { title: 'Scheduled' };
+import { ScheduledView } from '@/features/scheduled';
 
-/** Placeholder page for `/scheduled`. */
+export const metadata: Metadata = { title: 'Scheduled — Agent Hangar' };
+
+/** Renders the scheduled-jobs list screen. */
 export default function ScheduledPage() {
-  return (
-    <section className="px-6 py-10">
-      <h1 className="text-[28px] font-semibold tracking-tight" data-testid="placeholder-scheduled">
-        Scheduled
-      </h1>
-    </section>
-  );
+  return <ScheduledView />;
 }

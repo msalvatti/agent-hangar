@@ -1,28 +1,20 @@
 /**
- * Scheduled job detail route — placeholder until the scheduled feature lands.
+ * Scheduled job detail route.
  *
  * Layer: screen.
  */
 import type { Metadata } from 'next';
 
-export const metadata: Metadata = { title: 'Scheduled job' };
+import { JobDetailView } from '@/features/scheduled';
+
+export const metadata: Metadata = { title: 'Job — Agent Hangar' };
 
 /**
- * Placeholder page for `/scheduled/:id`.
+ * Renders the job detail screen for `/scheduled/:id`.
  *
  * @param props - Route params (`id`).
  */
 export default async function ScheduledJobPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return (
-    <section className="px-6 py-10">
-      <h1
-        className="text-[28px] font-semibold tracking-tight"
-        data-testid="placeholder-scheduled-id"
-      >
-        Scheduled job
-      </h1>
-      <p className="text-muted-foreground mt-2 font-mono text-[13px]">{id}</p>
-    </section>
-  );
+  return <JobDetailView jobId={id} />;
 }

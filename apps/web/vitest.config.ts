@@ -49,6 +49,8 @@ export default defineConfig({
         'src/shared/feedback/**',
         'src/features/chats/**',
         'src/features/shell/**',
+        'src/features/scheduled/**',
+        'src/features/settings/**',
         'src/mocks/**',
         'src/shared/repo-picker/**',
         'src/shared/shell/PageHeader.tsx',
