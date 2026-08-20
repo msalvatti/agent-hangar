@@ -3,7 +3,8 @@
  *
  * Layer: unit.
  * Goal: one transaction carrying the exact `XADD` argument list and the `EXPIRE` that bounds the
- * stream's life, the returned entry id, and a per-command failure surfaced as a rejection.
+ * stream's life, the returned entry id, and every way either command can fail surfaced as a
+ * rejection rather than as a publish that quietly kept no retention.
  * Mocks: the shared recording Redis double, standing in for ioredis' chainable commander.
  */
 import { turnEventsStreamKey } from '@agent-hangar/core';
@@ -45,9 +46,61 @@ describe('createTurnEventPublisher', () => {
    * only the result would treat a lost event as delivered.
    */
   it('rejects when the queued XADD failed', async () => {
-    const redis = new FakeRedisClient({ execReplies: [[new Error('OOM'), null]] });
+    const redis = new FakeRedisClient({
+      execReplies: [
+        [new Error('OOM'), null],
+        [null, 1],
+      ],
+    });
 
     await expect(createTurnEventPublisher(redis).publish('turn-1', event)).rejects.toThrow('OOM');
+  });
+
+  /**
+   * A transaction can succeed on the append and fail on the lifetime. Reporting that as a
+   * successful publish would leave a stream nothing ever expires, which is the retention guarantee
+   * this module exists to keep.
+   */
+  it('rejects when the queued EXPIRE failed', async () => {
+    const redis = new FakeRedisClient({
+      execReplies: [
+        [null, '1700000000000-0'],
+        [new Error('EXPIRE refused'), null],
+      ],
+    });
+
+    await expect(createTurnEventPublisher(redis).publish('turn-1', event)).rejects.toThrow(
+      'EXPIRE refused',
+    );
+  });
+
+  /**
+   * `EXPIRE` answers zero when there was no key to give a lifetime to. The command did not fail,
+   * but the stream is unbounded all the same, so it is not a publish this module reports as done.
+   */
+  it('rejects when EXPIRE set no lifetime', async () => {
+    const redis = new FakeRedisClient({
+      execReplies: [
+        [null, '1700000000000-0'],
+        [null, 0],
+      ],
+    });
+
+    await expect(createTurnEventPublisher(redis).publish('turn-1', event)).rejects.toThrow(
+      /no lifetime/,
+    );
+  });
+
+  /**
+   * Two commands were queued, so a reply carrying one of them says nothing about the other; the
+   * lifetime is unaccounted for and the publish is not reported as successful.
+   */
+  it('rejects when the transaction answered for only one command', async () => {
+    const redis = new FakeRedisClient({ execReplies: [[null, '1700000000000-0']] });
+
+    await expect(createTurnEventPublisher(redis).publish('turn-1', event)).rejects.toThrow(
+      /no reply/,
+    );
   });
 
   /**
@@ -65,7 +118,12 @@ describe('createTurnEventPublisher', () => {
    * A reply that is not a stream id cannot be handed to the browser as `Last-Event-ID`.
    */
   it('rejects when the reply carries no stream id', async () => {
-    const redis = new FakeRedisClient({ execReplies: [[null, null]] });
+    const redis = new FakeRedisClient({
+      execReplies: [
+        [null, null],
+        [null, 1],
+      ],
+    });
 
     await expect(createTurnEventPublisher(redis).publish('turn-1', event)).rejects.toThrow(
       /no stream id/,

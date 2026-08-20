@@ -17,6 +17,7 @@
 import {
   buildRestoreContext,
   buildTurnRequest,
+  defaultWorkBranch,
   ensureWorkspaceDecision,
   isTerminalRunStatus,
   LiveWorkspaceExistsError,
@@ -31,6 +32,8 @@ import type {
   Workspace,
   WorkspaceHandle,
 } from '@agent-hangar/core';
+
+import { chatClaimKey } from '../claims.js';
 
 import {
   NO_USAGE,
@@ -47,12 +50,12 @@ import { executeRuntimeTurn } from './turn-executor.js';
 import type { ExecOutcome, TurnSink, UnreportedOutcome } from './turn-executor.js';
 import type { ProcessorDeps, ProcessorJob } from './types.js';
 
-/** Failure code recorded when another turn of the same chat owns the one live workspace. */
+/** Failure code recorded when something else owns the one live workspace of this chat. */
 export const WORKSPACE_CONFLICT_CODE = 'workspace_conflict';
 
 /** What the user is told when that happens. */
 export const WORKSPACE_CONFLICT_MESSAGE =
-  'Another turn of this chat is already using its workspace; send the message again once it finishes.';
+  'The workspace of this chat is busy with another operation; send the message again in a moment.';
 
 /** Everything one turn carries from preparation into execution. */
 interface TurnContext {
@@ -154,7 +157,12 @@ async function reviewLiveWorkspace(deps: ProcessorDeps, chatId: string): Promise
 }
 
 /**
- * Creates the chat's workspace, resolving the race with a concurrent turn of the same chat.
+ * Creates the chat's workspace, or reports that somebody else got there first.
+ *
+ * The database allows a chat one live workspace, and that partial unique index is the claim: the
+ * create that raises `LiveWorkspaceExistsError` is the one that lost. Adopting the winner's row
+ * would put two turns in one filesystem, each believing it owns it, so the loser reports a
+ * conflict and the user sends the message again once the other turn has finished.
  *
  * @param deps - The processor's collaborators.
  * @param chat - The chat the workspace serves.
@@ -181,14 +189,11 @@ async function createForChat(
     if (!(error instanceof LiveWorkspaceExistsError)) {
       throw error;
     }
-    const live = await deps.repos.workspaces.findLiveByChat(chat.id);
-    if (live === null) {
-      return { ok: false, code: WORKSPACE_CONFLICT_CODE, message: WORKSPACE_CONFLICT_MESSAGE };
-    }
-    // The other turn created the row and is about to run in it. Reusing the container it just
-    // built is what a second message to the same chat does anyway; the chat's turns are answered
-    // one at a time because they share this one workspace.
-    return { ok: true, workspace: live, handle: handleOf(live), decision };
+    deps.logger.warn(
+      { chatId: chat.id },
+      'another writer created the workspace of this chat first',
+    );
+    return { ok: false, code: WORKSPACE_CONFLICT_CODE, message: WORKSPACE_CONFLICT_MESSAGE };
   }
 }
 
@@ -198,18 +203,13 @@ async function createForChat(
  * @param deps - The processor's collaborators.
  * @param chat - The chat.
  * @param messages - Its stored history, used to rebuild a workspace that is gone.
- * @param attemptsMade - How many times BullMQ already delivered this job.
  * @returns The workspace and the decision that produced it, or why the turn cannot start.
- * @throws WorkspaceBusyError When a concurrent attempt is holding the workspace; BullMQ surfaces
- *   it as a failed job rather than the worker guessing what the other attempt is doing.
  */
 async function ensureWorkspace(
   deps: ProcessorDeps,
   chat: Chat,
   messages: readonly Message[],
-  attemptsMade: number,
 ): Promise<EnsureResult> {
-  await recoverStalledWorkspace(deps, chat, attemptsMade);
   const live = await reviewLiveWorkspace(deps, chat.id);
   const decision = ensureWorkspaceDecision({
     liveWorkspace: live === null ? null : { id: live.id, status: live.status },
@@ -413,13 +413,17 @@ async function settleTurn(deps: ProcessorDeps, turnId: string, workspaceId: stri
  */
 async function runPreparedTurn(deps: ProcessorDeps, context: TurnContext): Promise<void> {
   await deps.repos.workspaces.setStatus(context.workspace.id, 'BUSY');
+  // The branch the prompt names and the branch the request carries are the same string, derived
+  // by the same function the request builder uses. Naming the base branch here instead would tell
+  // the agent to push to the branch the next sentence forbids it to push to.
+  const workBranch = context.chat.workBranch ?? defaultWorkBranch(context.chat.id);
   const request = buildTurnRequest({
     turnId: context.turnId,
     model: deps.config.OPENAI_MODEL,
     instructions: buildTurnInstructions({
       repoUrl: context.chat.repoUrl,
       baseBranch: context.chat.baseBranch,
-      workBranch: context.chat.workBranch ?? context.chat.baseBranch,
+      workBranch,
     }),
     chat: context.chat,
     messages: context.messages,
@@ -442,7 +446,57 @@ async function runPreparedTurn(deps: ProcessorDeps, context: TurnContext): Promi
 }
 
 /**
+ * Prepares and runs one turn, with the chat's workspace already claimed.
+ *
+ * The history is read after the stalled recovery, not before: the recovery appends the SYSTEM note
+ * that tells the model its previous filesystem is gone, and a history read ahead of it would hand
+ * the model everything except the one message explaining what happened.
+ *
+ * @param deps - The processor's collaborators.
+ * @param turnId - The turn.
+ * @param chat - The chat it belongs to.
+ * @param attemptsMade - How many times BullMQ already delivered this job.
+ * @throws Error When the Docker daemon is unreachable, so BullMQ can redeliver the job.
+ */
+async function prepareAndRunTurn(
+  deps: ProcessorDeps,
+  turnId: string,
+  chat: Chat,
+  attemptsMade: number,
+): Promise<void> {
+  await deps.repos.turns.setStatus(turnId, 'PREPARING');
+  await recoverStalledWorkspace(deps, chat, attemptsMade);
+
+  const messages = await deps.repos.messages.listByChat(chat.id);
+  const ensured = await ensureWorkspace(deps, chat, messages);
+  if (!ensured.ok) {
+    await failTurn(deps, turnId, ensured.code, ensured.message);
+    return;
+  }
+  await deps.repos.turns.setStatus(turnId, 'PREPARING', { workspaceId: ensured.workspace.id });
+
+  const context: TurnContext = {
+    turnId,
+    chat,
+    workspace: ensured.workspace,
+    handle: ensured.handle,
+    decision: ensured.decision,
+    messages,
+  };
+  try {
+    await runPreparedTurn(deps, context);
+  } finally {
+    await settleTurn(deps, turnId, context.workspace.id);
+  }
+}
+
+/**
  * Builds the `run-turn` consumer.
+ *
+ * A chat's workspace is claimed for the whole turn. Two turns of one chat share a single
+ * workspace, and a collection pass may be about to reclaim it; whichever of them holds the claim
+ * owns the container until it is done, and the others report a conflict rather than running in a
+ * filesystem somebody else is writing to.
  *
  * @param deps - The processor's collaborators.
  * @returns A BullMQ processor for the `chat-turns` queue.
@@ -467,28 +521,15 @@ export function createRunTurnProcessor(
       );
       return;
     }
-    await deps.repos.turns.setStatus(turnId, 'PREPARING');
-
-    const messages = await deps.repos.messages.listByChat(chat.id);
-    const ensured = await ensureWorkspace(deps, chat, messages, job.attemptsMade);
-    if (!ensured.ok) {
-      await failTurn(deps, turnId, ensured.code, ensured.message);
+    const claimKey = chatClaimKey(chat.id);
+    if (!deps.claims.claim(claimKey)) {
+      await failTurn(deps, turnId, WORKSPACE_CONFLICT_CODE, WORKSPACE_CONFLICT_MESSAGE);
       return;
     }
-    await deps.repos.turns.setStatus(turnId, 'PREPARING', { workspaceId: ensured.workspace.id });
-
-    const context: TurnContext = {
-      turnId,
-      chat,
-      workspace: ensured.workspace,
-      handle: ensured.handle,
-      decision: ensured.decision,
-      messages,
-    };
     try {
-      await runPreparedTurn(deps, context);
+      await prepareAndRunTurn(deps, turnId, chat, job.attemptsMade);
     } finally {
-      await settleTurn(deps, turnId, context.workspace.id);
+      deps.claims.release(claimKey);
     }
   };
 }

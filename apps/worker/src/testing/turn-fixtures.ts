@@ -27,7 +27,7 @@ import { createRunTurnProcessor } from '../processors/run-turn.js';
 import type { ProcessorJob } from '../processors/types.js';
 
 import type { FakeSecretsService } from './fake-secrets.js';
-import { stdinOf } from './scripted-runtime.js';
+import { scriptedRuntime, stdinOf } from './scripted-runtime.js';
 import { createTestContainer } from './test-container.js';
 import type { TestContainer } from './test-container.js';
 
@@ -178,6 +178,24 @@ export function happyTurnScript(): AgentEvent[] {
   ];
 }
 
+/**
+ * A runtime that starts a turn and then holds it open until the exec is cancelled.
+ *
+ * What a test built on it gets is a processor parked inside its exec, holding a `BUSY` workspace —
+ * the state a second processor has to be told it cannot join.
+ *
+ * @returns The script.
+ */
+export function heldTurnScript(): ExecScript {
+  return scriptedRuntime(
+    [
+      { type: 'turn.started', turnId: 'ignored', at: '2026-01-01T00:00:00.000Z' },
+      { type: 'prepare.progress', message: 'Cloning…' },
+    ],
+    { holdUntilSignal: { afterEvent: 2 } },
+  );
+}
+
 /** How a processor test wants its container wired. */
 export interface ProcessorSetupOptions {
   /** Script the runner answers the runtime command with. */
@@ -188,6 +206,31 @@ export interface ProcessorSetupOptions {
   secrets?: FakeSecretsService;
   /** Builds the runner from the options the setup resolved. */
   runner?: (options: FakeWorkspaceRunnerOptions) => FakeWorkspaceRunner;
+}
+
+/**
+ * Reports the moment a workspace is marked `BUSY`.
+ *
+ * A processor takes its workspace and starts executing in it, and a test that wants to interleave
+ * a second processor with the first needs a point to interleave at. This is that point: once it
+ * settles, the first processor owns a container and is inside its exec, which is the state every
+ * race over a live workspace starts from.
+ *
+ * @param container - The container whose repositories are observed.
+ * @returns A promise settling when some workspace of this container goes `BUSY`.
+ */
+export function whenWorkspaceIsBusy(container: TestContainer): Promise<void> {
+  const repository = container.repos.workspaces;
+  const setStatus = repository.setStatus.bind(repository);
+  return new Promise<void>((resolve) => {
+    repository.setStatus = async (id, status, update) => {
+      const row = await setStatus(id, status, update);
+      if (status === 'BUSY') {
+        resolve();
+      }
+      return row;
+    };
+  });
 }
 
 /**

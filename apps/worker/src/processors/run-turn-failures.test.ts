@@ -3,8 +3,8 @@
  *
  * Layer: unit.
  * Goal: every way a turn can end badly leaves a terminal turn, a usable workspace and a stream the
- * UI can close — and no credential in any of them; plus the one failure worth retrying and the race
- * with a concurrent turn of the same chat.
+ * UI can close — and no credential in any of them; plus the one failure worth retrying and the
+ * race with another writer of the same chat.
  * Mocks: the shared processor fixtures, plus a repository double that always loses the create race.
  */
 import { LiveWorkspaceExistsError } from '@agent-hangar/core';
@@ -32,6 +32,10 @@ import type { TestContainer } from '../testing/index.js';
 import { createRunTurnProcessor, WORKSPACE_CONFLICT_CODE } from './run-turn.js';
 
 describe('createRunTurnProcessor, failing a turn', () => {
+  /**
+   * Without both credentials there is nothing to inject, so no container is started at all and the
+   * user is told where to configure them.
+   */
   it('fails the turn when a credential is missing', async () => {
     const container = setupProcessorContainer({
       secrets: new FakeSecretsService({ GITHUB_PAT: GITHUB_CANARY }),
@@ -394,22 +398,28 @@ describe('createRunTurnProcessor, failing a turn', () => {
   });
 });
 
-describe('createRunTurnProcessor, racing another turn of the same chat', () => {
+describe('createRunTurnProcessor, racing another writer of the same chat', () => {
   /**
    * Builds a container whose workspace creation always loses the race.
    *
+   * The create branch is reached only when the lookups that precede it found nothing — the
+   * stalled-workspace check and the health review — so the winner's row is hidden from those two
+   * and revealed to any lookup that follows the conflict. A processor that adopts the row it lost
+   * the race for therefore finds one to adopt.
+   *
    * @param container - The container to wrap.
-   * @param existing - What the post-conflict lookup finds.
-   * @returns A container with the conflicting repositories.
+   * @param existing - The row a post-conflict lookup finds.
+   * @returns A container whose `create` reports that the chat already has a live workspace.
    */
-  function withConflict(
-    container: TestContainer,
-    existing: () => Promise<Workspace | null>,
-  ): TestContainer {
+  function withConflict(container: TestContainer, existing: Workspace): TestContainer {
     const base = container.repos.workspaces;
+    let lookups = 0;
     const workspaces: WorkspaceRepository = {
       create: () => Promise.reject(new LiveWorkspaceExistsError('chat')),
-      findLiveByChat: existing,
+      findLiveByChat: () => {
+        lookups += 1;
+        return Promise.resolve(lookups <= 2 ? null : existing);
+      },
       setStatus: (id, status, update) => base.setStatus(id, status, update),
       markActive: (id) => base.markActive(id),
       listIdle: (before) => base.listIdle(before),
@@ -421,10 +431,11 @@ describe('createRunTurnProcessor, racing another turn of the same chat', () => {
   }
 
   /**
-   * The other turn already built the container this chat may have, so this one joins it instead of
-   * failing: the chat's turns share the single workspace the database allows it.
+   * "One live workspace per chat" is a database constraint, and the create it rejects is the claim
+   * this turn lost. Adopting the winner's row would put two turns in one filesystem, each believing
+   * it owns it, so the loser reports a conflict and the user sends the message again.
    */
-  it('joins the workspace the other turn created', async () => {
+  it('fails the turn rather than joining the workspace it lost the race for', async () => {
     const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
     const { chat, turn } = await seedChatWithTurn(container);
     const existing = await container.repos.workspaces.create({
@@ -435,7 +446,9 @@ describe('createRunTurnProcessor, racing another turn of the same chat', () => {
       repoUrl: FIXTURE_REPO_URL,
       branch: 'main',
     });
-    await container.repos.workspaces.setStatus(existing.id, 'READY', { runnerRef: 'ref-1' });
+    const ready = await container.repos.workspaces.setStatus(existing.id, 'READY', {
+      runnerRef: 'ref-1',
+    });
     await container.runner.create({
       workspaceId: existing.id,
       kind: 'CHAT',
@@ -444,35 +457,14 @@ describe('createRunTurnProcessor, racing another turn of the same chat', () => {
       limits: { cpus: 1, memoryBytes: 1, pids: 1 },
       labels: {},
     });
-    // The create branch is reached only when the lookups that precede it found nothing — the
-    // stalled-workspace check and the health review — so the row is hidden from those two and
-    // revealed to the one that follows the conflict.
-    let lookups = 0;
-    const raced = withConflict(container, () => {
-      lookups += 1;
-      return lookups <= 2
-        ? Promise.resolve(null)
-        : container.repos.workspaces.findLiveByChat(chat.id);
-    });
 
-    await createRunTurnProcessor(raced)(turnJob(turn.id));
+    await createRunTurnProcessor(withConflict(container, ready))(turnJob(turn.id));
 
-    const finished = await container.repos.turns.get(turn.id);
-    expect(finished?.workspaceId).toBe(existing.id);
-    expect(finished?.status).toBe('SUCCEEDED');
-  });
-
-  /**
-   * When the conflicting workspace is gone by the time it is looked up, the turn fails with an
-   * explanation instead of creating a second live workspace the database forbids.
-   */
-  it('fails the turn when the conflicting workspace cannot be found', async () => {
-    const container = setupProcessorContainer();
-    const { turn } = await seedChatWithTurn(container);
-    const raced = withConflict(container, () => Promise.resolve(null));
-
-    await createRunTurnProcessor(raced)(turnJob(turn.id));
-
-    expect((await container.repos.turns.get(turn.id))?.error).toContain(WORKSPACE_CONFLICT_CODE);
+    const failed = await container.repos.turns.get(turn.id);
+    expect(failed?.status).toBe('FAILED');
+    expect(failed?.error).toContain(WORKSPACE_CONFLICT_CODE);
+    expect(failed?.workspaceId).toBeNull();
+    expect(container.runner.calls.some((call) => call.method === 'exec')).toBe(false);
+    expect(container.logs.join('')).toContain('another writer created the workspace of this chat');
   });
 });

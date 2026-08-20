@@ -4,7 +4,8 @@
  * Layer: unit.
  * Goal: the two guarantees of spec 04 (c) — one fresh workspace per run, always destroyed in a
  * `finally`, and a tick that overlaps the previous run recorded rather than queued — plus the
- * request the runtime receives, every failure path, and the run times the tick leaves behind.
+ * request the runtime receives, which rows a delivery is entitled to write to, every failure path,
+ * and the run times the tick leaves behind.
  * Mocks: the shared processor fixtures over in-memory repositories and the fake runner.
  */
 import { DEFAULT_JOB_TURN_LIMITS, nextRunAt, OVERLAP_SKIP_REASON } from '@agent-hangar/core';
@@ -23,7 +24,7 @@ import {
 } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
-import { createRunScheduledJobProcessor } from './run-scheduled-job.js';
+import { createRunScheduledJobProcessor, IneligibleRunError } from './run-scheduled-job.js';
 import type { ScheduledDelivery } from './run-scheduled-job.js';
 import type { ProcessorJob } from './types.js';
 
@@ -203,12 +204,42 @@ describe('createRunScheduledJobProcessor', () => {
 
     const runs = await container.repos.jobRuns.listByJob(job.id);
     expect(runs).toHaveLength(2);
-    expect(runs.find((entry) => entry.id !== running.id)).toMatchObject({
-      status: 'FAILED',
-      error: OVERLAP_SKIP_REASON,
-    });
+    const skipped = runs.find((entry) => entry.id !== running.id);
+    expect(skipped?.status).toBe('FAILED');
+    expect(skipped?.error).toContain(OVERLAP_SKIP_REASON);
     expect(container.runner.calls).toHaveLength(0);
     expect((await container.repos.scheduledJobs.get(job.id))?.lastRunAt).toBeNull();
+  });
+
+  /**
+   * A manual run has a browser attached to its stream from the moment the API answered with its
+   * id. Dropping it as overlapping is still an outcome, and a run finished without a terminal
+   * event leaves that page waiting for one nobody is going to send.
+   */
+  it('ends the stream of a manual run it dropped as overlapping', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const running = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'SCHEDULE',
+      model: 'test-model',
+      scheduledFor: container.clock.now(),
+    });
+    await container.repos.jobRuns.setStatus(running.id, 'RUNNING');
+    const manual = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: manual.id }));
+
+    expect(container.publisher.eventsFor(manual.id).at(-1)).toMatchObject({ type: 'turn.failed' });
+    const dropped = await container.repos.jobRuns.get(manual.id);
+    expect(dropped?.status).toBe('FAILED');
+    expect(dropped?.error).toContain(OVERLAP_SKIP_REASON);
+    expect(container.runner.calls).toHaveLength(0);
   });
 
   /**
@@ -231,6 +262,101 @@ describe('createRunScheduledJobProcessor', () => {
     expect(runs).toHaveLength(1);
     expect(runs[0]).toMatchObject({ id: existing.id, status: 'SUCCEEDED' });
     expect(container.publisher.eventsFor(existing.id).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * A delivery may only drive the run it was created for. A row belonging to another job is that
+   * job's historical record, and writing this delivery's outcome, workspace and tool log onto it
+   * would overwrite a run nobody asked to re-run.
+   */
+  it('refuses a delivery naming a run of another job', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const other = await seedJob(container);
+    const foreign = await container.repos.jobRuns.create({
+      jobId: other.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+
+    await expect(run(container, delivery(job.id, 'MANUAL', { runId: foreign.id }))).rejects.toThrow(
+      IneligibleRunError,
+    );
+
+    expect((await container.repos.jobRuns.get(foreign.id))?.status).toBe('QUEUED');
+    expect(await container.repos.jobRuns.listByJob(job.id)).toHaveLength(0);
+    expect(container.runner.calls).toHaveLength(0);
+    expect(container.logs.join('')).toContain('delivery names a run it may not adopt');
+  });
+
+  /**
+   * Only a manual run has a row before its delivery arrives. A delivery pointing at a scheduled
+   * run is pointing at a record that was opened by a tick, not for it.
+   */
+  it('refuses a delivery naming a scheduled run', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const scheduled = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'SCHEDULE',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+
+    await expect(
+      run(container, delivery(job.id, 'MANUAL', { runId: scheduled.id })),
+    ).rejects.toThrow(IneligibleRunError);
+
+    expect((await container.repos.jobRuns.get(scheduled.id))?.status).toBe('QUEUED');
+    expect(container.runner.calls).toHaveLength(0);
+  });
+
+  /**
+   * The API leaves a manual run `QUEUED`, so anything else means the delivery is a duplicate of
+   * one already in flight or a redelivery of one that finished. Neither may reopen the row: the
+   * first would run the same job twice against one record, the second would erase its outcome.
+   */
+  it('refuses a delivery naming a run that already started', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const started = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+    await container.repos.jobRuns.setStatus(started.id, 'RUNNING');
+
+    await expect(run(container, delivery(job.id, 'MANUAL', { runId: started.id }))).rejects.toThrow(
+      IneligibleRunError,
+    );
+
+    expect((await container.repos.jobRuns.get(started.id))?.status).toBe('RUNNING');
+    expect(container.runner.calls).toHaveLength(0);
+    expect(container.publisher.records).toHaveLength(0);
+  });
+
+  /**
+   * The prompt and the request are two descriptions of one run, and the agent obeys both. A prompt
+   * naming the job's branch as the place to push, next to a sentence forbidding a push there, is
+   * an instruction the agent cannot follow.
+   */
+  it('names one work branch in the prompt and in the request', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+
+    await run(container, delivery(job.id));
+
+    const request = (await requestSentTo(container)) as {
+      instructions: string;
+      repo: { workBranch: string; baseBranch: string };
+    };
+    expect(request.repo.workBranch).not.toBe(request.repo.baseBranch);
+    expect(request.instructions).toContain(
+      `push your work to the branch ${request.repo.workBranch}`,
+    );
+    expect(request.instructions).toContain(`to ${request.repo.baseBranch} and never force-push`);
   });
 
   /**

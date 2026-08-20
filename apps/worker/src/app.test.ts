@@ -47,6 +47,7 @@ function appContainer(test: TestContainer): { container: AppContainer; closed: s
     commands: test.commands,
     queues: test.queues,
     imageStatus: test.imageStatus,
+    claims: test.claims,
     close: () => {
       closed.push('container');
       return Promise.resolve();
@@ -142,7 +143,8 @@ describe('startWorker', () => {
   });
 
   /**
-   * A consumer that stops within the grace period is never forced.
+   * A consumer whose jobs finish within the grace period is closed once, gracefully: the drain is
+   * what the grace period is spent on, and `close` follows the answer it gave.
    */
   it('does not force a consumer that stopped in time', async () => {
     vi.useFakeTimers();
@@ -151,11 +153,16 @@ describe('startWorker', () => {
     const stopping = app.shutdown();
     await vi.advanceTimersByTimeAsync(0);
     for (const worker of factory.workers) {
+      worker.resolvePause();
+    }
+    await vi.advanceTimersByTimeAsync(0);
+    for (const worker of factory.workers) {
       worker.resolveClose();
     }
     await stopping;
 
     expect(factory.workers.map((worker) => worker.closes)).toEqual([[false], [false], [false]]);
+    expect(factory.workers.map((worker) => worker.pauses)).toEqual([1, 1, 1]);
     vi.useRealTimers();
   });
 
@@ -217,8 +224,10 @@ describe('startWorker', () => {
   });
 
   /**
-   * A turn that refuses to end must not stop the process from exiting: past the grace period the
-   * consumers are closed the hard way.
+   * A turn that refuses to end must not stop the process from exiting. BullMQ answers every close
+   * after the first with the first one's promise, so the forced close has to be the only close
+   * this worker ever gets — a graceful one first would swallow it and the shutdown would hang past
+   * the grace period it advertises.
    */
   it('forces the close after the grace period', async () => {
     vi.useFakeTimers();
@@ -228,11 +237,29 @@ describe('startWorker', () => {
     await vi.advanceTimersByTimeAsync(SHUTDOWN_GRACE_MS);
     await stopping;
 
-    expect(factory.workers.map((worker) => worker.closes)).toEqual([
-      [false, true],
-      [false, true],
-      [false, true],
-    ]);
+    expect(factory.workers.map((worker) => worker.closes)).toEqual([[true], [true], [true]]);
+    expect(test.logs.join('')).toContain('abandoning jobs still in flight');
+    expect(closed).toHaveLength(1);
+    vi.useRealTimers();
+  });
+
+  /**
+   * A drain that fails outright — the connection is already gone — says nothing about the jobs
+   * still in flight, so it is treated as the drain that did not happen and the close is forced.
+   * The alternative is a process that never exits because its shutdown rejected.
+   */
+  it('forces the close when the drain itself fails', async () => {
+    vi.useFakeTimers();
+    const { factory, closed, app, test } = await start({ blocking: true });
+
+    const stopping = app.shutdown();
+    await vi.advanceTimersByTimeAsync(0);
+    for (const worker of factory.workers) {
+      worker.rejectPause(new Error('connection is already gone'));
+    }
+    await stopping;
+
+    expect(factory.workers.map((worker) => worker.closes)).toEqual([[true], [true], [true]]);
     expect(test.logs.join('')).toContain('abandoning jobs still in flight');
     expect(closed).toHaveLength(1);
     vi.useRealTimers();

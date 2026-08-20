@@ -28,6 +28,15 @@ import { reconcileSchedulers } from './scheduler-reconcile.js';
 /** The part of a BullMQ worker this application drives. */
 export interface WorkerLike {
   /**
+   * Stops taking new jobs and waits for the ones in flight.
+   *
+   * Separate from {@link WorkerLike.close} because BullMQ caches the promise of the first `close`
+   * and answers every later call with it, whatever force flag that call carried. Draining has to
+   * be asked for by something that is not `close`, or the decision to force could never be acted
+   * on.
+   */
+  pause(): Promise<void>;
+  /**
    * Stops consuming.
    *
    * @param force - Abandon jobs still in flight instead of waiting for them.
@@ -140,7 +149,14 @@ function delay(ms: number): Promise<boolean> {
  * halfway leaves a container the next boot has to reconcile. Past that, they are abandoned: a
  * runaway turn must not stop the process from exiting.
  *
+ * The wait is asked for with `pause` and `close` is called exactly once, forced or not. BullMQ
+ * caches the promise of the first `close` and returns it for every later call, force flag and all,
+ * so a graceful close issued first would swallow the forced one that was meant to override it and
+ * the process would hang past the grace period it advertises. A `pause` that fails is treated as a
+ * drain that did not happen, which is the side that still lets the process exit.
+ *
  * @param workers - The consumers to stop.
+ * @param heartbeat - Stopped before anything else, so a dying worker stops advertising itself.
  * @param container - Released once the consumers are stopped.
  * @returns A function that stops everything at most once.
  */
@@ -156,11 +172,15 @@ function createShutdown(
   const run = async (): Promise<void> => {
     container.logger.info('stopping workers');
     heartbeat.stop();
-    const closed = Promise.all(workers.map((worker) => worker.close())).then(() => false);
-    if (await Promise.race([closed, delay(SHUTDOWN_GRACE_MS)])) {
+    const drained = Promise.all(workers.map((worker) => worker.pause())).then(
+      () => false,
+      () => true,
+    );
+    const force = await Promise.race([drained, delay(SHUTDOWN_GRACE_MS)]);
+    if (force) {
       container.logger.warn('workers did not stop in time; abandoning jobs still in flight');
-      await Promise.all(workers.map((worker) => worker.close(true)));
     }
+    await Promise.all(workers.map((worker) => worker.close(force)));
     await container.close();
   };
   return (): Promise<void> => (inFlight ??= run());

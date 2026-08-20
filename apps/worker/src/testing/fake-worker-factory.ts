@@ -3,8 +3,13 @@
  *
  * Layer: test double.
  *
- * The close of each worker is resolvable by hand, which is what makes the shutdown grace period
+ * The drain of each worker is resolvable by hand, which is what makes the shutdown grace period
  * testable: a worker that never stops is exactly the case the forced close exists for.
+ *
+ * `close` caches its first promise and answers every later call with it, exactly as BullMQ's
+ * `Worker.close` does. That fidelity is the point: a shutdown that closes gracefully and then
+ * tries to force the same worker rejoins the wait it meant to override, and against a double that
+ * answered each call separately the mistake would be invisible.
  */
 import type { QueueName } from '@agent-hangar/core';
 
@@ -16,17 +21,22 @@ export class FakeWorker implements WorkerLike {
   /** Every `close` call, in order, with the force flag it carried. */
   readonly closes: boolean[] = [];
 
+  /** How many times a drain was asked for. */
+  pauses = 0;
+
   /** Event names the application subscribed to. */
   readonly events: string[] = [];
 
   private readonly listeners = new Map<string, (...args: never[]) => void>();
-  private settle: (() => void) | undefined;
+  private closing: Promise<void> | undefined;
+  private settleClose: (() => void) | undefined;
+  private settlePause: { resolve: () => void; reject: (error: Error) => void } | undefined;
 
   /**
    * @param name - Queue this consumer reads.
    * @param processor - Handler the application registered.
    * @param options - Connection, concurrency and stalled-job settings.
-   * @param blocking - Whether a graceful close waits to be resolved by hand.
+   * @param blocking - Whether a drain and a graceful close wait to be settled by hand.
    */
   constructor(
     readonly name: QueueName,
@@ -36,19 +46,35 @@ export class FakeWorker implements WorkerLike {
   ) {}
 
   /**
-   * Records a close.
+   * Records a drain request.
+   *
+   * @returns A promise that resolves at once, unless this worker holds its jobs.
+   */
+  pause(): Promise<void> {
+    this.pauses += 1;
+    if (!this.blocking) {
+      return Promise.resolve();
+    }
+    return new Promise<void>((resolve, reject) => {
+      this.settlePause = { resolve, reject };
+    });
+  }
+
+  /**
+   * Records a close, answering every call after the first with the promise the first produced.
    *
    * @param force - Whether jobs in flight were abandoned.
-   * @returns A promise that resolves at once, unless this worker blocks its graceful close.
+   * @returns The one close promise of this worker.
    */
   close(force = false): Promise<void> {
     this.closes.push(force);
-    if (!this.blocking || force) {
-      return Promise.resolve();
-    }
-    return new Promise<void>((resolve) => {
-      this.settle = resolve;
-    });
+    this.closing ??=
+      this.blocking && !force
+        ? new Promise<void>((resolve) => {
+            this.settleClose = resolve;
+          })
+        : Promise.resolve();
+    return this.closing;
   }
 
   /**
@@ -76,7 +102,21 @@ export class FakeWorker implements WorkerLike {
 
   /** Lets a blocked graceful close finish. */
   resolveClose(): void {
-    this.settle?.();
+    this.settleClose?.();
+  }
+
+  /** Reports that the jobs in flight finished within the grace period. */
+  resolvePause(): void {
+    this.settlePause?.resolve();
+  }
+
+  /**
+   * Reports that the drain itself failed, as a consumer whose connection is already gone does.
+   *
+   * @param error - What `pause` rejects with.
+   */
+  rejectPause(error: Error): void {
+    this.settlePause?.reject(error);
   }
 }
 

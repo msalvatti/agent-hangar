@@ -41,6 +41,8 @@ import { FakeWorkspaceRunner } from '@agent-hangar/core/testing';
 import type { Redis } from 'ioredis';
 import type { Logger } from 'pino';
 
+import { createWorkspaceClaims } from './claims.js';
+import type { WorkspaceClaims } from './claims.js';
 import { createCommandListener } from './commands.js';
 import type { CommandListener, CommandRedis } from './commands.js';
 import { parseWorkerEnv } from './env.js';
@@ -101,6 +103,8 @@ export interface WorkerContainer<
   queues: WorkerQueues;
   /** What the last workspace create said about the image; published in the health heartbeat. */
   imageStatus: WorkspaceImageStatus;
+  /** Exclusive ownership of a workspace, shared by the turn, run and collection processors. */
+  claims: WorkspaceClaims;
   /** Closes queues, the three connections and the database pool; idempotent. */
   close(): Promise<void>;
 }
@@ -330,6 +334,7 @@ export function createContainer<
     commands: createCommandListener(subscriber, logger),
     queues,
     imageStatus: createImageStatus(),
+    claims: createWorkspaceClaims(),
     close: createClose(
       [
         { name: 'queues', run: () => closeQueues(queues) },

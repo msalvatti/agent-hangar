@@ -18,6 +18,7 @@ import type {
 } from '@agent-hangar/core';
 import type { Logger } from 'pino';
 
+import type { WorkspaceClaims } from '../claims.js';
 import type { CommandListener } from '../commands.js';
 import type { TurnEventPublisher } from '../events.js';
 import type { WorkspaceImageStatus } from '../image-status.js';
@@ -38,6 +39,13 @@ export interface ProcessorDeps {
   queues: WorkerQueues;
   /** Updated by every workspace create, read by the health heartbeat. */
   imageStatus: WorkspaceImageStatus;
+  /**
+   * Exclusive ownership of a workspace within this process.
+   *
+   * Shared by every processor on purpose: a turn and a collection pass contend for the same
+   * workspaces, so they have to contend for the same claims.
+   */
+  claims: WorkspaceClaims;
 }
 
 /**

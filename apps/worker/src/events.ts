@@ -84,27 +84,41 @@ export interface TurnEventPublisher {
   publish(turnId: string, event: AgentEvent): Promise<string>;
 }
 
+/** What `EXPIRE` answers when it set the key's lifetime. */
+const EXPIRE_APPLIED = 1;
+
 /**
- * Reads the single reply of a transaction, rejecting the driver's `[error, result]` tuple.
+ * Reads both replies of a transaction, rejecting the driver's `[error, result]` tuples.
  *
  * ioredis reports a per-command failure inside the tuple instead of rejecting the transaction, so
- * a caller that only reads the result would treat a failed `XADD` as a successful publish.
+ * a caller that only reads the result would treat a failed `XADD` as a successful publish — and a
+ * caller that reads only the first tuple would report success for a transaction whose `EXPIRE`
+ * failed, leaving a stream that outlives its retention with nothing recording that it does. Both
+ * commands are therefore checked, the `EXPIRE` down to its result: a reply of zero means the key
+ * was not there to be given a lifetime.
  *
  * @param replies - What `multi().exec()` resolved with; `null` when the transaction was aborted.
  * @returns The stream entry id.
- * @throws Error When the transaction was aborted or `XADD` failed.
+ * @throws Error When the transaction was aborted, incomplete, or either command failed.
  */
 function readStreamId(replies: [Error | null, unknown][] | null): string {
-  const first = replies?.[0];
-  if (first === undefined) {
+  const added = replies?.at(0);
+  const expired = replies?.at(1);
+  if (added === undefined || expired === undefined) {
     throw new Error('publishing a turn event returned no reply');
   }
-  const [failure, id] = first;
-  if (failure !== null) {
-    throw failure;
+  if (added[0] !== null) {
+    throw added[0];
   }
+  if (expired[0] !== null) {
+    throw expired[0];
+  }
+  const id = added[1];
   if (typeof id !== 'string') {
     throw new Error('publishing a turn event returned no stream id');
+  }
+  if (expired[1] !== EXPIRE_APPLIED) {
+    throw new Error('publishing a turn event set no lifetime on its stream');
   }
   return id;
 }

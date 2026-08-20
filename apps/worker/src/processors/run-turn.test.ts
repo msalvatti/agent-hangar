@@ -17,6 +17,7 @@ import {
   FIXTURE_REPO_URL,
   GoneRunner,
   happyTurnScript,
+  heldTurnScript,
   lastCreateSpec,
   requestSentTo,
   runTurnOn,
@@ -25,9 +26,11 @@ import {
   setupProcessorContainer,
   TickingClock,
   UnhealthyRunner,
+  whenWorkspaceIsBusy,
 } from '../testing/index.js';
 
 import { STALLED_RECOVERY_NOTE, STALLED_RECOVERY_REASON } from './constants.js';
+import { WORKSPACE_CONFLICT_CODE } from './run-turn.js';
 
 describe('createRunTurnProcessor, ensuring a workspace', () => {
   /**
@@ -259,7 +262,79 @@ describe('createRunTurnProcessor, ensuring a workspace', () => {
   });
 
   /**
-   * Without both credentials there is nothing to inject, so no container is started at all and the
-   * user is told where to configure them.
+   * A workspace the recovery destroyed takes the model's filesystem with it, and the note saying
+   * so is a message like any other — which means it only reaches the model if the history is read
+   * after the recovery wrote it.
    */
+  it('hands the model the note saying its previous filesystem is gone', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
+    const { chat, turn } = await seedChatWithTurn(container);
+    const stalled = await container.repos.workspaces.create({
+      kind: 'CHAT',
+      chatId: chat.id,
+      runnerKind: 'fake',
+      image: 'image',
+      repoUrl: FIXTURE_REPO_URL,
+      branch: 'main',
+    });
+    await container.repos.workspaces.setStatus(stalled.id, 'READY', { runnerRef: 'ref-1' });
+    await container.repos.workspaces.setStatus(stalled.id, 'BUSY');
+
+    await runTurnOn(container, turn.id);
+
+    const request = (await requestSentTo(container)) as { items: unknown[] };
+    expect(JSON.stringify(request.items)).toContain(STALLED_RECOVERY_NOTE);
+  });
+
+  /**
+   * The prompt and the request are two descriptions of one turn, and the agent obeys both. A
+   * prompt naming the base branch as the place to push, next to a sentence forbidding a push
+   * there, is an instruction the agent cannot follow.
+   */
+  it('names one work branch in the prompt and in the request', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
+    const { turn } = await seedChatWithTurn(container);
+
+    await runTurnOn(container, turn.id);
+
+    const request = (await requestSentTo(container)) as {
+      instructions: string;
+      repo: { workBranch: string; baseBranch: string };
+    };
+    expect(request.repo.workBranch).not.toBe(request.repo.baseBranch);
+    expect(request.instructions).toContain(
+      `push your work to the branch ${request.repo.workBranch}`,
+    );
+    expect(request.instructions).toContain(`to ${request.repo.baseBranch} and never force-push`);
+  });
+});
+
+describe('createRunTurnProcessor, two turns of one chat', () => {
+  /**
+   * A chat has one workspace and its turns share it. A second turn delivered while the first is
+   * executing must not take it: the two would write the same filesystem, and the second would
+   * reach it through the stalled recovery, which destroys the container the first is running in.
+   * The second turn is refused instead, and the first finishes in the workspace it owns.
+   */
+  it('refuses a second turn while the first holds the workspace', async () => {
+    const container = setupProcessorContainer({ script: heldTurnScript() });
+    const { chat, turn } = await seedChatWithTurn(container);
+    const second = await container.repos.turns.create({ chatId: chat.id, model: 'test-model' });
+    const busy = whenWorkspaceIsBusy(container);
+
+    const first = runTurnOn(container, turn.id);
+    await busy;
+    await runTurnOn(container, second.id);
+
+    const refused = await container.repos.turns.get(second.id);
+    expect(refused?.status).toBe('FAILED');
+    expect(refused?.error).toContain(WORKSPACE_CONFLICT_CODE);
+    expect(container.publisher.eventsFor(second.id).at(-1)).toMatchObject({ type: 'turn.failed' });
+    expect([...container.repos.store.workspaces.values()]).toHaveLength(1);
+    expect(container.runner.calls.filter((call) => call.method === 'exec')).toHaveLength(1);
+
+    container.commands.emitCancel(turn.id);
+    await first;
+    expect((await container.repos.turns.get(turn.id))?.status).toBe('CANCELLED');
+  });
 });

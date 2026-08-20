@@ -12,8 +12,10 @@
 import {
   buildJobTurnRequest,
   decideOverlap,
+  defaultWorkBranch,
   InvalidCronError,
   isTerminalRunStatus,
+  JOB_WORK_BRANCH_PREFIX,
   nextRunAt,
   runScheduledJobPayload,
 } from '@agent-hangar/core';
@@ -45,6 +47,26 @@ const scheduledDeliveryPayload = runScheduledJobPayload.extend({
 
 /** A delivery of `run-scheduled-job`. */
 export type ScheduledDelivery = z.infer<typeof scheduledDeliveryPayload>;
+
+/** Failure code recorded on a tick dropped because the previous run was still executing. */
+export const OVERLAP_SKIP_CODE = 'overlapping_run';
+
+/**
+ * Raised when a delivery names a run row it is not entitled to drive.
+ *
+ * The delivery is failed rather than quietly re-pointed at a fresh row: a delivery naming a run
+ * that belongs elsewhere is a bug or a stale message, and both are worth seeing.
+ */
+export class IneligibleRunError extends Error {
+  /**
+   * @param runId - The run the delivery named.
+   * @param jobId - The job the delivery belongs to.
+   */
+  constructor(runId: string, jobId: string) {
+    super(`run ${runId} is not an open manual run of job ${jobId}`);
+    this.name = 'IneligibleRunError';
+  }
+}
 
 /** What the run's workspace is torn down with. */
 interface Teardown {
@@ -241,13 +263,16 @@ async function teardownRun(deps: ProcessorDeps, teardown: Teardown): Promise<voi
 /**
  * Records the tick that was dropped because the previous run is still executing.
  *
+ * It goes through the same failure path as every other failed run, terminal event included. A
+ * manual run already has a browser attached to its stream, and a run finished without a terminal
+ * event leaves that page waiting for something nobody is going to send.
+ *
  * The run times are deliberately left alone: the run that is still executing owns them, and
  * moving `nextRunAt` here would report a schedule the job is not following.
  *
- * @param deps - Repositories and logger.
+ * @param deps - Publisher, repositories and logger.
  * @param job - The job definition.
- * @param payload - The delivery being dropped.
- * @param scheduledFor - The tick this delivery belongs to.
+ * @param run - The run being dropped.
  * @param reason - Why it was dropped.
  */
 async function recordSkippedTick(
@@ -256,8 +281,25 @@ async function recordSkippedTick(
   run: JobRun,
   reason: string,
 ): Promise<void> {
-  await deps.repos.jobRuns.finish(run.id, { status: 'FAILED', usage: NO_USAGE, error: reason });
+  await failRun(deps, run.id, OVERLAP_SKIP_CODE, reason);
   deps.logger.info({ jobId: job.id, runId: run.id }, 'scheduled run skipped');
+}
+
+/**
+ * Reports whether a delivery may take over the run row it names.
+ *
+ * The API opens a manual run as `QUEUED` and answers the request with its id, so that is the one
+ * shape a delivery is entitled to adopt. Anything else — a run of another job, a scheduled run, a
+ * run that already started or already finished — means the delivery is stale or mismatched, and
+ * writing to that row would overwrite another run's record and hang a workspace and a tool log
+ * off it.
+ *
+ * @param run - The row the delivery named.
+ * @param job - The job the delivery belongs to.
+ * @returns `true` when the row is this delivery's to drive.
+ */
+function mayAdopt(run: JobRun, job: ScheduledJob): boolean {
+  return run.jobId === job.id && run.trigger === 'MANUAL' && run.status === 'QUEUED';
 }
 
 /**
@@ -268,11 +310,12 @@ async function recordSkippedTick(
  * nothing writes to. A row that has since vanished is treated as a tick, so a delivery is never
  * dropped for want of a record.
  *
- * @param deps - Repositories.
+ * @param deps - Repositories and logger.
  * @param job - The job definition.
  * @param payload - The delivery.
  * @param scheduledFor - The tick this delivery belongs to.
  * @returns The run to record against.
+ * @throws IneligibleRunError When the delivery names a row it may not adopt.
  */
 async function openRun(
   deps: ProcessorDeps,
@@ -283,6 +326,13 @@ async function openRun(
   if (payload.runId !== undefined) {
     const adopted = await deps.repos.jobRuns.get(payload.runId);
     if (adopted !== null) {
+      if (!mayAdopt(adopted, job)) {
+        deps.logger.error(
+          { jobId: job.id, runId: payload.runId },
+          'delivery names a run it may not adopt',
+        );
+        throw new IneligibleRunError(payload.runId, job.id);
+      }
       return adopted;
     }
     deps.logger.warn({ jobId: job.id, runId: payload.runId }, 'run to adopt is gone');
@@ -297,6 +347,10 @@ async function openRun(
 
 /**
  * Runs the prepared run to completion inside its own workspace.
+ *
+ * The prompt names the branch the request carries, derived by the same function the request
+ * builder uses. Naming the job's own branch instead would tell the agent to push to the branch
+ * the next sentence of the prompt forbids it to push to.
  *
  * @param deps - The processor's collaborators.
  * @param job - The job definition.
@@ -331,7 +385,7 @@ async function runInFreshWorkspace(
     instructions: buildTurnInstructions({
       repoUrl: job.repoUrl,
       baseBranch: job.branch,
-      workBranch: job.branch,
+      workBranch: defaultWorkBranch(runId, JOB_WORK_BRANCH_PREFIX),
     }),
     job: { repoUrl: job.repoUrl, branch: job.branch, prompt: job.prompt },
   });
@@ -377,10 +431,10 @@ export function createRunScheduledJobProcessor(
       delivery.timestamp === undefined ? deps.clock.now() : new Date(delivery.timestamp);
 
     const running = await deps.repos.jobRuns.findRunningByJob(job.id);
+    // The run this delivery drives is either brand new or an adopted `QUEUED` row, and neither is
+    // what `findRunningByJob` answers with, so the two can never be the same record.
     const run = await openRun(deps, job, payload, scheduledFor);
-    const overlap = decideOverlap({
-      runningRun: running === null || running.id === run.id ? null : running,
-    });
+    const overlap = decideOverlap({ runningRun: running });
     if (overlap.action === 'skip') {
       await recordSkippedTick(deps, job, run, overlap.reason);
       return;
