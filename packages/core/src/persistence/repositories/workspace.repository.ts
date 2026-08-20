@@ -173,7 +173,7 @@ export class PrismaWorkspaceRepository implements WorkspaceRepository {
   }
 
   /**
-   * Reads the chat a workspace belongs to, on the error path of {@link setStatus} only.
+   * Reads the chat a workspace belongs to, on the error path of a status write only.
    *
    * `LiveWorkspaceExistsError` carries the chat that already owns a live workspace, but the
    * violated partial unique index reports neither; the row itself is the only place the chat can
