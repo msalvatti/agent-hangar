@@ -10,7 +10,9 @@
 | **Depends on** | W2-A, W2-B, W2-C merged (hence every Wave 1 lane and W0) |
 | **Unblocks** | W4-A, W4-B (mutation testing on stable code) |
 | **Source** | [docs/plan.md §8](../plan.md) (W3-A) · spec [01 §5](../spec/01-overview.md) [06 §4](../spec/06-testing.md) [10 §10](../spec/10-ui-design.md) [05 §4](../spec/05-local-dev.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
+
+**Where this lane stands on 2026-08-20.** It has not run: no branch exists and all six tasks are open. Nothing blocks it — W2-A, W2-B and W2-C are all merged. What has changed underneath it is the backlog: besides these six tasks the lane was routed every finding no lane owned, and eleven of those were closed by orchestrator fix pull requests rather than by the lane (R4, R5, R6, R17 and R18 by PR #46; R12, R13 and R28 by PR #60; R33, R34 and R35 by PR #61), with R10 closed halfway by PR #60. [plan §14](../plan.md) is the live list and every open row in it is routed here; [plan §12](../plan.md) records what closed and by what, and carries the count so this file does not have to keep a second copy of it. Read both before planning the work; the tasks below were written when none of it had happened.
 
 ## Context
 
