@@ -164,8 +164,10 @@ interface Latch {
  * against a library older than `Promise.withResolvers`, so the resolver is captured here. The
  * capture is complete before this function returns — a Promise executor runs synchronously — which
  * is what the definite-assignment assertion states. That ordering is the entire point: a resolver
- * a caller reaches before the code that assigns it has run is `undefined`, and calling it is then
- * a silent no-op rather than a failure.
+ * a caller reaches before the code that assigns it has run is `undefined`. Calling that through an
+ * optional call — the shape this replaced — does nothing at all and reports nothing, so the test
+ * goes on to wait for a release that was never delivered. A bare call would at least have thrown a
+ * `TypeError`; neither is a hand-off, which is why both halves are handed out together instead.
  *
  * @returns The promise and the function that settles it.
  */
