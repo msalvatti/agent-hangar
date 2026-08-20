@@ -705,3 +705,27 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   assertion first looks depends on how long the clone takes, and this lane cannot run the real
   stack to measure it; asserting the order would be a timing bet, and a flaky spec is worse than a
   narrower one.
+- 2C.15 ✅ 2026-08-20 — rebased onto the widened validators and ran the real stack. It now boots
+  past the configuration error: compose up, migrations, git server, worker, and the readiness gate
+  passing on a real heartbeat — the gate held as written, on the positive condition rather than a
+  message. `smoke` and the second half of `chat-create-run` ("send stays disabled until a
+  repository, a branch and a prompt are set") now pass against the real API, database and git
+  server; both could only be skipped before.
+  · The fixture conformance was right: the owner-qualified path and the whole-origin allow-list
+  entry are what the merged `repoUrlForHosts` and `ALLOWED_REPO_HOSTS` validators require, and
+  `GITHUB_API_BASE_URL` accepts the loopback stub over http.
+  · Where it stops now is **not** the workspace credential helper, and not the API. The turn
+  reaches `FAILED` during prepare, with `prepare: git clone failed: Cloning into '.'...`, and the
+  chat row records `repoUrl = https://github.com/e2e/sample.git` — the local git server was never
+  addressed. The interface rebuilds the clone URL from the picker's `owner/name` instead of
+  carrying the URL the API returned for that repository:
+  `apps/web/src/features/chats/lib/repo-url.ts` hard-codes `https://github.com` in `toRepoUrl`,
+  and `useCreateChat.ts:54` calls it. `parseRepoUrl` refuses any other origin on the way back, so
+  a chat on another forge would not render its repository chip either. The API side is already
+  correct — `github.ts:156` maps `url: repo.html_url`, which the stub rewrites to the git server —
+  so the discard happens entirely in the client.
+  · Verified rather than inferred: a clone of `http://host.docker.internal:4107/e2e/sample.git`
+  succeeds from the workspace image under the runner's exact constraints (user `agent`, workdir
+  `/workspace`, `--cap-drop ALL`, `no-new-privileges`, tmpfs `/tmp`, bridge, init, `GIT_ASKPASS`
+  set). The clone is fine; the URL was wrong. The credential-helper wall is therefore still ahead,
+  behind this one.
