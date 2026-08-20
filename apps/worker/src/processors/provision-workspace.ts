@@ -20,7 +20,9 @@
  * two plaintexts live in local constants, go into the environment of the `create` call and into
  * the redactor, and are referenced nowhere else — not on the result, not in a log record, and not
  * in the message of a failure. Failures are reported by the typed error the runner raised, whose
- * messages are built from ids and image names only.
+ * messages are built from ids and image names only. The environment of that call carries nothing
+ * else of the sort: the one block added to it is resolved from configuration at boot and holds no
+ * credential.
  *
  * Being that single point is also why the forge allow-list is applied again here. The write routes
  * check a repository URL when a chat or a job is created, but the URL is then stored and cloned by
@@ -349,6 +351,9 @@ export async function provisionWorkspace(
       kind: input.kind,
       image: deps.config.WORKSPACE_IMAGE,
       env: {
+        // Spread first so nothing an extra block carries can shadow a credential or the provider
+        // selection below it.
+        ...deps.fakeProviderEnv,
         GITHUB_TOKEN: pat,
         OPENAI_API_KEY: apiKey,
         GIT_ASKPASS: ASKPASS_PATH,

@@ -3,7 +3,8 @@
  *
  * Layer: unit.
  * Goal: `docker` is the default, `fake` is accepted, anything else fails at boot with a message
- * naming the variable.
+ * naming the variable; and the scripted provider's script path is read when it is set, absent
+ * when it is not, and refused when it is blank.
  * Mocks: none (the environment is passed explicitly).
  */
 import { ConfigError } from '@agent-hangar/core';
@@ -34,6 +35,35 @@ describe('parseWorkerEnv', () => {
   it('rejects an unknown runner, naming the variable', () => {
     expect(() => parseWorkerEnv({ WORKSPACE_RUNNER: 'podman' })).toThrow(ConfigError);
     expect(() => parseWorkerEnv({ WORKSPACE_RUNNER: 'podman' })).toThrow(/WORKSPACE_RUNNER/);
+  });
+
+  /**
+   * The path of a supplied scripted-provider script is worker-local: the web app can do nothing
+   * with it, and only the worker builds a container environment.
+   */
+  it('reads the scripted-provider script path', () => {
+    const env = parseWorkerEnv({ FAKE_PROVIDER_SCRIPT_PATH: '/scripts/script.json' });
+
+    expect(env.FAKE_PROVIDER_SCRIPT_PATH).toBe('/scripts/script.json');
+  });
+
+  /**
+   * Almost every run supplies no script, which has to be the quiet case: absent means the runtime
+   * keeps the script built into it.
+   */
+  it('leaves the script path absent when nothing sets it', () => {
+    expect(parseWorkerEnv({}).FAKE_PROVIDER_SCRIPT_PATH).toBeUndefined();
+  });
+
+  /**
+   * A blank value is a mistake, not a way of unsetting the variable: silently ignoring it would
+   * run the built-in script while the operator believes their own is in force.
+   */
+  it('refuses a blank script path', () => {
+    expect(() => parseWorkerEnv({ FAKE_PROVIDER_SCRIPT_PATH: '' })).toThrow(ConfigError);
+    expect(() => parseWorkerEnv({ FAKE_PROVIDER_SCRIPT_PATH: '' })).toThrow(
+      /FAKE_PROVIDER_SCRIPT_PATH/u,
+    );
   });
 
   /**

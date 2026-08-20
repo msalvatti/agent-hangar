@@ -10,11 +10,16 @@
  * the route that vetted it.
  * Mocks: `createTestContainer` plus runner subclasses for the failures the fake cannot produce.
  */
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 import { WorkspaceImageMissing } from '@agent-hangar/core';
 import type { WorkspaceHandle, WorkspaceSpec } from '@agent-hangar/core';
 import { FakeWorkspaceRunner, GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
+import { FAKE_SCRIPT_ENV_KEY, fakeProviderScriptEnv } from '../fake-provider-script.js';
 import { createTestContainer, FakeSecretsService } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
@@ -24,6 +29,32 @@ import {
   SECRETS_MISSING_REASON,
   UNRECORDED_WORKSPACE_REASON,
 } from './provision-workspace.js';
+
+/** A supplied script, in the shape a caller writes on disk. */
+const SCRIPT = {
+  default: [
+    {
+      events: [
+        { type: 'text.done', text: 'Answered from the supplied script.' },
+        { type: 'response.done', responseId: 'fake-1', usage: { inputTokens: 1, outputTokens: 1 } },
+      ],
+    },
+  ],
+};
+
+/** Directory the supplied script is written into, and the file inside it. */
+let scriptDirectory: string;
+let scriptPath: string;
+
+beforeAll(() => {
+  scriptDirectory = mkdtempSync(join(tmpdir(), 'ah-provision-script-'));
+  scriptPath = join(scriptDirectory, 'script.json');
+  writeFileSync(scriptPath, JSON.stringify(SCRIPT), 'utf8');
+});
+
+afterAll(() => {
+  rmSync(scriptDirectory, { recursive: true, force: true });
+});
 
 /** A runner whose `create` always rejects with the given failure. */
 class FailingRunner extends FakeWorkspaceRunner {
@@ -221,6 +252,76 @@ describe('provisionWorkspace', () => {
     });
 
     expect(createSpec(container).env.OPENAI_BASE_URL).toBe('https://proxy.internal/v1');
+  });
+
+  /**
+   * The worker side of the scripted-provider join: a script resolved at boot is composed into the
+   * environment the container is created with, under the name the provider inside it reads. This
+   * is the crossing the two sides never made — the worker built a fixed block that had no room
+   * for it — so it is asserted on the spec the runner was actually called with.
+   */
+  it('composes a supplied script into the container environment', async () => {
+    const base = createTestContainer();
+    const container: TestContainer = {
+      ...base,
+      fakeProviderEnv: fakeProviderScriptEnv('fake', scriptPath),
+    };
+
+    await provisionWorkspace(container, {
+      kind: 'CHAT',
+      chatId: 'chat-1',
+      repoUrl: 'https://github.com/octocat/Hello-World',
+      branch: 'main',
+    });
+
+    const { env } = createSpec(container);
+    expect(JSON.parse(env[FAKE_SCRIPT_ENV_KEY] ?? '')).toEqual(SCRIPT);
+    expect(env.AGENT_MODEL_PROVIDER).toBe('fake');
+  });
+
+  /**
+   * The extra block is spread before the credentials, so a script can never shadow the token the
+   * clone authenticates with, the API key or the provider selection.
+   */
+  it('never lets the extra block shadow a credential', async () => {
+    const base = createTestContainer();
+    const container: TestContainer = {
+      ...base,
+      fakeProviderEnv: {
+        [FAKE_SCRIPT_ENV_KEY]: '{}',
+        GITHUB_TOKEN: 'shadowed',
+        AGENT_MODEL_PROVIDER: 'openai',
+      },
+    };
+
+    await provisionWorkspace(container, {
+      kind: 'CHAT',
+      chatId: 'chat-1',
+      repoUrl: 'https://github.com/octocat/Hello-World',
+      branch: 'main',
+    });
+
+    const { env } = createSpec(container);
+    expect(env[FAKE_SCRIPT_ENV_KEY]).toBe('{}');
+    expect(env.GITHUB_TOKEN).toBe(GITHUB_CANARY);
+    expect(env.AGENT_MODEL_PROVIDER).toBe('fake');
+  });
+
+  /**
+   * A run that supplied no script adds no variable at all: the container keeps the environment it
+   * had, and the runtime keeps the script built into it.
+   */
+  it('adds no script variable when none was supplied', async () => {
+    const container = createTestContainer();
+
+    await provisionWorkspace(container, {
+      kind: 'CHAT',
+      chatId: 'chat-1',
+      repoUrl: 'https://github.com/octocat/Hello-World',
+      branch: 'main',
+    });
+
+    expect(createSpec(container).env[FAKE_SCRIPT_ENV_KEY]).toBeUndefined();
   });
 
   /**

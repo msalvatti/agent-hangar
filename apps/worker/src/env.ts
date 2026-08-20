@@ -4,9 +4,10 @@
  * Layer: config.
  *
  * Everything the whole application shares lives in core's `loadConfig`. This module holds only
- * what no other process reads: which `WorkspaceRunner` implementation the worker instantiates.
- * Keeping it here means the web app's configuration surface does not grow a variable it can do
- * nothing with, and a typo still fails at boot rather than at the first job.
+ * what no other process reads: which `WorkspaceRunner` implementation the worker instantiates,
+ * and where the scripted provider's script is read from. Keeping them here means the web app's
+ * configuration surface does not grow variables it can do nothing with, and a typo still fails at
+ * boot rather than at the first job.
  */
 import { ConfigError } from '@agent-hangar/core';
 import { z } from 'zod';
@@ -22,9 +23,14 @@ export type WorkspaceRunnerKind = (typeof WORKSPACE_RUNNERS)[number];
  *
  * `docker` is the default: the fake runner executes nothing, so a worker that silently fell back
  * to it would accept turns and produce scripted output that looks real.
+ *
+ * `FAKE_PROVIDER_SCRIPT_PATH` names a file of scripted model responses. It is read only when
+ * `AGENT_MODEL_PROVIDER` selects the scripted provider, and it is absent in every other run; a
+ * blank value is a mistake rather than a way of unsetting it, so it is refused here.
  */
 export const workerEnvSchema = z.object({
   WORKSPACE_RUNNER: z.enum(WORKSPACE_RUNNERS).default('docker'),
+  FAKE_PROVIDER_SCRIPT_PATH: z.string().min(1).optional(),
 });
 
 /** Validated worker-local environment. */

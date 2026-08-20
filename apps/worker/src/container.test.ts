@@ -3,11 +3,16 @@
  *
  * Layer: unit.
  * Goal: three Redis connections opened for their three roles, the subscriber duplicated from the
- * producer, the runner chosen by the worker-local environment, and a close that releases
+ * producer, the runner chosen by the worker-local environment, a supplied scripted-provider
+ * script resolved once at boot for the scripted provider alone, and a close that releases
  * everything once, in order, even when a release fails.
  * Mocks: injected factories over in-memory doubles; no Redis, Postgres or Docker.
  */
-import { createRedactor, loadConfig } from '@agent-hangar/core';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { ConfigError, createRedactor, loadConfig } from '@agent-hangar/core';
 import type { AppConfig, Clock, Redactor, Repositories, SecretsService } from '@agent-hangar/core';
 import {
   createInMemoryRepositories,
@@ -15,7 +20,7 @@ import {
   FakeWorkspaceRunner,
 } from '@agent-hangar/core/testing';
 import type { Logger } from 'pino';
-import { describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import {
   createContainer,
@@ -25,6 +30,7 @@ import {
   factoriesFor,
 } from './container.js';
 import type { ContainerFactories } from './container.js';
+import { FAKE_SCRIPT_ENV_KEY } from './fake-provider-script.js';
 import { createLogger } from './logger.js';
 import {
   createFakeQueues,
@@ -144,6 +150,32 @@ function harness(options: { queueQuitFails?: boolean } = {}): Harness {
   return { config, factories, released, connections, database, logs, runnerCalls, queues };
 }
 
+/** A supplied script, in the shape a caller writes on disk. */
+const SUPPLIED_SCRIPT = {
+  default: [
+    {
+      events: [
+        { type: 'text.done', text: 'Answered from the supplied script.' },
+        { type: 'response.done', responseId: 'fake-1', usage: { inputTokens: 1, outputTokens: 1 } },
+      ],
+    },
+  ],
+};
+
+/** Directory the supplied script is written into, and the file inside it. */
+let scriptDirectory: string;
+let scriptPath: string;
+
+beforeAll(() => {
+  scriptDirectory = mkdtempSync(join(tmpdir(), 'ah-container-script-'));
+  scriptPath = join(scriptDirectory, 'script.json');
+  writeFileSync(scriptPath, JSON.stringify(SUPPLIED_SCRIPT), 'utf8');
+});
+
+afterAll(() => {
+  rmSync(scriptDirectory, { recursive: true, force: true });
+});
+
 describe('createContainer', () => {
   /**
    * Three connections are opened for three roles that cannot share one: a producer, a consumer
@@ -201,6 +233,64 @@ describe('createContainer', () => {
     expect(container.config.AH_INSTANCE).toBe('w2b-unit');
     expect(container.workerEnv.WORKSPACE_RUNNER).toBe('fake');
     expect(container.clock).toBe(factories.clock);
+  });
+
+  /**
+   * A supplied script is read once, where the process reads its environment, and carried on the
+   * container for every workspace create to compose in. Reading it per create would repeat work
+   * that cannot change and would turn one unreadable file into a failure of every turn.
+   */
+  it('resolves a supplied scripted-provider script at boot', async () => {
+    const { config, factories } = harness();
+
+    const container = await createContainer({
+      config,
+      env: { FAKE_PROVIDER_SCRIPT_PATH: scriptPath },
+      factories,
+    });
+
+    expect(JSON.parse(container.fakeProviderEnv[FAKE_SCRIPT_ENV_KEY] ?? '')).toEqual(
+      SUPPLIED_SCRIPT,
+    );
+  });
+
+  /**
+   * The scripted provider is the only way in. A deployment running the real provider composes
+   * nothing extra into a container even when the variable names a readable script, so the
+   * variable cannot become a way of making a real agent say and do arbitrary things.
+   */
+  it('resolves nothing for a provider that is not the scripted one', async () => {
+    const { config, factories } = harness();
+
+    const container = await createContainer({
+      config: { ...config, AGENT_MODEL_PROVIDER: 'openai' },
+      env: { FAKE_PROVIDER_SCRIPT_PATH: scriptPath },
+      factories,
+    });
+
+    expect(container.fakeProviderEnv).toEqual({});
+  });
+
+  /**
+   * Nothing is added when no script was named, which is every ordinary run.
+   */
+  it('resolves nothing when no script was named', async () => {
+    const { config, factories } = harness();
+
+    const container = await createContainer({ config, env: {}, factories });
+
+    expect(container.fakeProviderEnv).toEqual({});
+  });
+
+  /**
+   * A script that cannot be read stops the process where the operator is still watching, instead
+   * of letting the worker start and fail every turn it accepts.
+   */
+  it('refuses to build when a named script cannot be read', () => {
+    const { config, factories } = harness();
+    const env = { FAKE_PROVIDER_SCRIPT_PATH: join(scriptDirectory, 'absent.json') };
+
+    expect(() => createContainer({ config, env, factories })).toThrow(ConfigError);
   });
 
   /**

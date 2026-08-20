@@ -107,6 +107,7 @@ export function createTestContainer(overrides: Partial<TestContainer> = {}): Tes
     commands: new InMemoryCommandListener(),
     queues: createFakeQueues(),
     imageStatus: createImageStatus(),
+    fakeProviderEnv: {},
     claims: createWorkspaceClaims(),
     logs,
   };
