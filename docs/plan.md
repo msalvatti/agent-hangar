@@ -302,11 +302,11 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | W1-D | 🟩 merged | PR #11 | 100/100/100/100 (agent-runtime `src/**`) | three Dockerfile `COPY` lines (bundle, map, `{"type":"module"}` manifest) written in the PR body for the infra lane to apply, not in this diff; path confinement resolves symlinks |
 | W1-E | 🟩 merged | PR #8 | core 100 (all four metrics) | status stamps are transactional; `ScheduledJob.prompt` and `Chat.title` redacted on write |
 | W1-F | 🟩 merged | PR #12 | core 100 (all four metrics) | BullMQ 6 API read from the installed types |
-| W1-G | 🟨 PR open | PR #19 | web 100 (all four metrics) | chats list, composer and streaming detail; Lighthouse a11y 100 on both routes. Routed a pre-existing blocker: `next dev` cannot resolve `@agent-hangar/core` from source under Turbopack |
-| W1-H | 🟥 blocked | `feat/w1h-web-scheduled-settings` | web 100 (all four metrics) | 1H.1–1H.5 done and pushed; stopped at its close-out because opening a pull request now would ship 18 `TEMP-STUB(W1-H)` files standing in for W1-G's modules. The orchestrator finalises it once W1-G merges |
+| W1-G | 🟨 PR open | PR #19 | web 100 (all four metrics) | chats list, composer and streaming detail; Lighthouse accessibility 100 on both routes |
+| W1-H | 🟥 blocked | `feat/w1h-web-scheduled-settings` | web 100 (all four metrics) | 1H.1–1H.5 done and pushed; stopped at its close-out because opening a pull request now would ship 18 `TEMP-STUB(W1-H)` files standing in for W1-G's modules. The orchestrator finalises it once W1-G merges, and must add `ports` to the health handler — see R7 |
 | W1-I | 🟨 PR open | PR #18 | scripts 100 (all four metrics) | run, doctor, archive, prune and the Conductor wiring; the two-instance walkthrough was executed against real Docker, not simulated |
-| W2-A | 🟦 running | `feat/w2a-web-api-sse` | — | started once W1-A, W1-E and W1-F were merged |
-| W2-B 🐳 | 🟦 running | `feat/w2b-worker` | — | started once W1-A…W1-F were merged; its 🐳 suite needs the runtime bundled into the image (PR #16) |
+| W2-A | 🟨 PR open | PR #21 | web 100 · core 100 (all four metrics) | 19 routes and both SSE streams; found and fixed a path traversal in the forge slug pattern that would have sent the authorisation header to an unnamed path |
+| W2-B 🐳 | 🟨 PR open | PR #22 | worker 100 (all four metrics) | three consumers, cancel channel, scheduler reconcile and graceful shutdown; Docker suite ran green six consecutive times with no leftover containers |
 | W2-C | ⬜ | — | — | gate is W1-G and W1-H merged — both are still running |
 | W3-A 🐳 | ⬜ | — | — | success criteria S1–S6, S8 |
 | W3-B | ⬜ | — | — | |
@@ -336,5 +336,26 @@ Legend: ⬜ not started · 🟦 running (branch) · 🟨 PR open · 🟩 merged 
 | W3 | 6 | ≈ 4 |
 | W4 | 4 | ≈ 2 (deferrable) |
 | **Total** | **53** | **≈ 18–20 h** |
+
+## 14. Routed findings that no lane owns yet
+
+Raised by a review, a lane report or the orchestrator, confirmed against the code, and too large or
+too cross-cutting to fold into the lane that found them. Each names the lane that must close it.
+Nothing here is silently dropped: an item that ships unfixed becomes a README "Known gaps" entry
+stating the residual risk in plain terms.
+
+| # | Finding | Why it was not fixed in place | Owner |
+|---|---|---|---|
+| R1 | A task's `run_shell` can read the forge token through `AH_GIT_TOKEN_FILE` and send it anywhere the container can reach. Credential mediation via `GIT_ASKPASS` stops the token appearing in a remote URL or in `git` output; it does not stop code that deliberately reads the file. | The fix is architectural — running the agent under a second uid that cannot read the token file, plus an egress policy on the workspace network. | W3-A |
+| R2 | The BullMQ scheduler keeps every completed repeatable job. At one job every five minutes that is 288 records a day, growing without bound in Redis. | Retention belongs with the processors that create the jobs, not with the scheduling contract. | W2-B |
+| R3 | `JobRun.workspaceId` is not constrained to workspace-kind identifiers. Both the in-memory double and the Prisma repository must change together for the invariant to mean anything. | Split across two lanes it would be half-enforced, which is worse than not claiming it. | W3-A |
+| R4 | Vitest resolves `@agent-hangar/core/testing` through the production condition rather than the source. It passes only because the built output happens to be present. | Needs the `development`-condition contract test extended rather than a local workaround. | W3-A |
+| R5 | `packages/core/fixtures/openai/recorded-*.ndjson` is not ignored. A recorded fixture carries whatever the live API returned. | Belongs with the fixture-recording story rather than an unrelated diff. | W3-A |
+| R6 | No continuous-integration job declares `timeout-minutes`. A hung job holds a runner for the platform default of six hours. | Infrastructure hygiene, not a lane deliverable. | W3-A |
+| R7 | `healthResponse` now requires `ports`. Any health fixture or mock handler without it fails response parsing. | The contract changed after both consuming lanes were written. | W1-H, W2-C |
+| R8 | Four contract values are **mirrored** in `apps/worker/src` rather than imported — `TURN_EVENT_FIELD` in `events.ts`, the heartbeat key, timings and schema in `heartbeat.ts`, and the scheduled-delivery payload in `processors/run-scheduled-job.ts`. Each is byte-identical to the definition in `packages/core/src/queues/contracts.ts` today. | They live on the web API lane's branch, which the worker lane may not touch. Two copies of a constant diverge silently and both sides stay green — this must become a one-line import each the moment that branch merges. | orchestrator, immediately after PR #21 merges |
+| R9 | The same-origin guard compares `Origin` against `Host`, which DNS rebinding defeats. Closing it needs a Host allow-list. | A deployment decision, not a code one: the app binds to loopback, and an allow-list would refuse any proxy an operator fronts it with. Documented in `same-origin.ts`. | W3-A |
+| R10 | `WorkspaceRunner` exposes no `imageExists`, so the boot check and the health card report what the last `create` observed — accurate once anything has run, optimistic before that. | Adding a method to a frozen port is an additive one-file change the runner lane owns. | W1-B or W3-A |
+| R11 | The presence check that greps route files for `assertSameOrigin` reports every route as covered **by construction**, because the guard lives in the handler behind a thin wiring module. It cannot fail. | Replaced by `apps/web/app/api/same-origin-policy.test.ts`, which calls every state-changing export from a foreign origin and names the offending route when the guard is removed. The grep must be retired from the lane prompts so it is not reintroduced. | orchestrator |
 
 Approved 2026-08-19. Per-lane task files with self-contained agent prompts live in [docs/tasks/](tasks/README.md).
