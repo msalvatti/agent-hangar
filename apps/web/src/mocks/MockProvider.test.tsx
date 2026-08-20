@@ -2,12 +2,16 @@
  * Tests for the MSW browser-worker bootstrap provider.
  */
 import { render, screen, waitFor } from '@testing-library/react';
+import type { RequestHandler } from 'msw';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-const startMock = vi.fn().mockResolvedValue(undefined);
+import { handlers } from './handlers';
 
-vi.mock('./browser', () => ({
-  worker: { start: startMock },
+const startMock = vi.fn().mockResolvedValue(undefined);
+const setupWorkerMock = vi.fn((..._served: RequestHandler[]) => ({ start: startMock }));
+
+vi.mock('msw/browser', () => ({
+  setupWorker: setupWorkerMock,
 }));
 
 afterEach(() => {
@@ -45,6 +49,63 @@ describe('MockProvider', () => {
       expect(screen.getByText('content')).toBeInTheDocument();
     });
     expect(startMock).toHaveBeenCalledWith({ onUnhandledRequest: 'bypass', quiet: true });
+  });
+
+  /**
+   * Mock mode is the only mode in which the app answers its own requests, so the worker has to be
+   * handed the whole mock API rather than some slice of it: a route left out here does not fall
+   * back to anything, it leaves for a backend the mock build does not have. Nothing else pins the
+   * handler set that reaches the browser — the Node server used by the tests is built separately.
+   */
+  it('serves every handler of the mock API', async () => {
+    vi.stubEnv('NEXT_PUBLIC_API_MOCK', '1');
+    vi.resetModules();
+    const { MockProvider } = await import('./MockProvider');
+    render(
+      <MockProvider>
+        <span>content</span>
+      </MockProvider>,
+    );
+    await waitFor(() => {
+      expect(setupWorkerMock).toHaveBeenCalled();
+    });
+
+    const served = setupWorkerMock.mock.calls[0] ?? [];
+    expect(served.map((handler) => handler.info.header)).toEqual(
+      handlers.map((handler) => handler.info.header),
+    );
+  });
+
+  /**
+   * React runs an effect twice in development, and a mount can follow an unmount within one page
+   * load. Each run building its own worker would register the service worker again and take the
+   * previous registration's place, so the boot is remembered and later runs join it.
+   */
+  it('registers one worker however often the boot runs', async () => {
+    startMock.mockResolvedValue(undefined);
+    vi.stubEnv('NEXT_PUBLIC_API_MOCK', '1');
+    vi.resetModules();
+    const { MockProvider } = await import('./MockProvider');
+    const first = render(
+      <MockProvider>
+        <span>content</span>
+      </MockProvider>,
+    );
+    await waitFor(() => {
+      expect(setupWorkerMock).toHaveBeenCalledTimes(1);
+    });
+    first.unmount();
+
+    render(
+      <MockProvider>
+        <span>content</span>
+      </MockProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('content')).toBeInTheDocument();
+    });
+
+    expect(setupWorkerMock).toHaveBeenCalledTimes(1);
   });
 
   // A worker that cannot start (missing service-worker asset, blocked registration) must say so:

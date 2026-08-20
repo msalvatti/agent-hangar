@@ -5,16 +5,21 @@
  *
  * Two projects, the same split `packages/core` uses: `unit` (default `pnpm test`) excludes
  * `*.integration.test.{ts,tsx}`, and `integration` (`pnpm test:integration`) runs only those —
- * currently the Redis-backed SSE suite, which needs the compose Redis. Coverage is collected over
- * the unit project with 100 % thresholds on every path listed in `coverage.include`; each lane
- * appends its own paths, one line per lane, at the end of the list. `src/shared/ui/**` is
- * generated shadcn vendor code and is excluded (the integration wave decides whether to include
- * it).
+ * currently the Redis-backed SSE and retry suites, which need the compose Redis.
+ *
+ * Coverage is collected over the unit project with 100 % thresholds. It measures the whole package
+ * — `src/**` and the App Router tree in `app/**` — rather than a list of paths one per lane: a
+ * list only measures what someone remembered to add, so a file nobody claimed was measured by
+ * nobody and the 100 % said nothing about it. Everything now starts measured, and the exclusions
+ * below say, one by one, why a path is not code this project authors. "Hard to test" is not a
+ * reason to appear there; a file that is hard to test is a file whose test is missing.
  */
 import { fileURLToPath } from 'node:url';
 
 import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
+
+import { VENDORED_UI_COVERAGE_EXCLUDE } from './src/shared/ui/vendored.ts';
 
 export default defineConfig({
   test: {
@@ -67,19 +72,8 @@ export default defineConfig({
       reporter: ['text', 'html', 'json-summary'],
       reportsDirectory: './coverage',
       include: [
-        'src/shared/api/**',
-        'src/shared/lib/**',
-        'src/shared/transcript/**',
-        'src/shared/feedback/**',
-        'src/features/chats/**',
-        'src/features/shell/**',
-        'src/features/scheduled/**',
-        'src/features/settings/**',
-        'src/mocks/**',
-        'src/shared/repo-picker/**',
-        'src/shared/shell/PageHeader.tsx',
-        'app/api/**',
-        'src/server/**',
+        'src/**/*.{ts,tsx}',
+        'app/**/*.{ts,tsx}',
         // End-to-end harness, the modules a unit test can decide. `gitserver.ts`, `docker.ts`,
         // `db.ts`, `process.ts`, `worker.ts`, `heartbeat.ts`, `prepare-stack.ts`, `stack.ts`,
         // `stack-state.ts`, the page objects and the Playwright hooks spawn processes, signal
@@ -93,17 +87,17 @@ export default defineConfig({
         'e2e/fake-provider/script.ts',
       ],
       exclude: [
+        // Tests, which are the measurement rather than the measured.
         '**/*.test.{ts,tsx}',
-        '**/index.ts',
-        'src/shared/ui/**',
-        'src/test/**',
-        // Pure wiring, not exercised in isolation: MSW bootstraps and route composition.
-        'src/mocks/browser.ts',
-        'src/mocks/server.ts',
-        'src/mocks/handlers.ts',
-        'src/mocks/vitest.ts',
-        'src/shared/repo-picker/testing/setup.ts',
-        'src/features/shell/testing/**',
+        // The shadcn primitives, which the CLI wrote from the registry named in `components.json`
+        // and nobody has edited since. Holding generated code to 100 % lines and branches buys
+        // nothing that could ever fail for a reason worth acting on. The list is enumerated in
+        // `src/shared/ui/vendored.ts` and checked by `vendored.test.ts`, which re-hashes every
+        // file behind it: edit one and the digest stops matching, so the file leaves this
+        // exclusion and comes under measurement instead of staying hidden behind it. That is why
+        // `button.tsx`, `sheet.tsx` and `sonner.tsx` are measured — each carries a decision of
+        // this project's own.
+        ...VENDORED_UI_COVERAGE_EXCLUDE,
       ],
       thresholds: {
         lines: 100,

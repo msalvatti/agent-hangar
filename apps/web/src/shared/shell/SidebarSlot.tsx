@@ -3,8 +3,9 @@
  *
  * Layer: component (shell).
  *
- * Renders its children, or an empty primary navigation landmark until the sidebar feature fills
- * it. The layout owns the grid; this component owns the surface and the landmark.
+ * The layout owns the grid; this component owns the surface and its width. The navigation landmark
+ * belongs to the content: `PrimaryNav` renders the only `nav` labelled "Primary", and a second one
+ * here would give the page two navigations with the same accessible name.
  *
  * One element takes both widths rather than one element per width. Swapping between two elements
  * would unmount whatever control was just used, and someone who collapses the sidebar from the
@@ -18,9 +19,9 @@ import { cn } from '@/shared/lib/cn';
 /** Props of {@link SidebarSlot}. */
 export interface SidebarSlotProps {
   /** Renders the 56 px icon rail instead of the 260 px column. */
-  compact?: boolean;
-  /** Sidebar content; an empty `nav` landmark is rendered when omitted. */
-  children?: ReactNode;
+  compact: boolean;
+  /** Sidebar content. */
+  children: ReactNode;
 }
 
 /**
@@ -28,7 +29,7 @@ export interface SidebarSlotProps {
  *
  * @param props - Compact flag and the sidebar content.
  */
-export function SidebarSlot({ compact = false, children }: SidebarSlotProps) {
+export function SidebarSlot({ compact, children }: SidebarSlotProps) {
   return (
     <aside
       aria-label="Sidebar"
@@ -38,7 +39,7 @@ export function SidebarSlot({ compact = false, children }: SidebarSlotProps) {
       )}
       data-testid={compact ? 'sidebar-rail' : 'sidebar-slot'}
     >
-      {children ?? <nav aria-label="Primary" className="flex-1" />}
+      {children}
     </aside>
   );
 }

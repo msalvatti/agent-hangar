@@ -146,10 +146,10 @@ The plan's execution model (plan §3 rules 3–4, §4, §13) **is** the schedule
   `git pull` on `main`). After every merge, check every other open lane PR:
   `gh pr view <N> --json mergeStateStatus` — `CONFLICTING`/`DIRTY` → rebase
   it (fix sub-agent on that branch, or inline in a fresh worktree: the
-  shared files are append-only by design — `vitest.config.ts`
-  `coverage.include` lines, `packages/core/package.json` `exports`,
-  `apps/web/src/mocks/handlers.ts` spreads, §12/README rows — take both
-  sides), re-run the lane's gates, push. `BEHIND` alone needs no action
+  shared files are append-only by design — `packages/core/package.json`
+  `exports`, `apps/web/src/mocks/handlers.ts` spreads, §12/README rows —
+  take both sides; a `vitest.config.ts` `coverage.include` is no longer one
+  of them, since every package now measures its whole `src/**`), re-run the lane's gates, push. `BEHIND` alone needs no action
   (squash merges keep linear history without an up-to-date branch).
 
 ## Orchestrator-owned coordination actions (beyond the standard loop)
@@ -278,7 +278,8 @@ W4-B (Stryker full runs). All others: ~60 min.
 
 Every lane runs the common gate set; lanes add the rows marked for them.
 All coverage thresholds are **100/100/100/100** on the package's
-`coverage.include` (owned paths until W3-A widens to `src/**`).
+`coverage.include`, which is now the whole of `src/**` — `apps/web` its
+`app/**` as well — with each exclusion enumerated and justified in place.
 
 | Gate (local command) | Active for |
 |---|---|
@@ -577,9 +578,10 @@ Beyond /bymax-workflow:standards and the `CLAUDE.md` W0 writes:
 - **Contracts are frozen after W0** (plan §3 rule 6) — additive 1-file PRs
   only; see coordination action 3.
 - **Shared files are append-only, one line per lane at the end**:
-  `packages/core/src/index.ts` per-folder barrels, each package's
-  `vitest.config.ts` `coverage.include`, `packages/core/package.json`
-  `exports`, `apps/web/src/mocks/handlers.ts`. Root `package.json` scripts
+  `packages/core/src/index.ts` per-folder barrels, `packages/core/package.json`
+  `exports`, `apps/web/src/mocks/handlers.ts`. A `vitest.config.ts`
+  `coverage.include` is no longer among them: that convention is retired and
+  every package measures its whole `src/**`. Root `package.json` scripts
   block belongs to W1-I (W0 wires the names first; W3 may add
   `smoke:openai`).
 - **A package manifest's `scripts` block has two authors, and the
