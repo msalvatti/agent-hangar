@@ -122,19 +122,32 @@ function readPortBase(env: E2eProcessEnv): number {
 /** An IPv4 literal, which is an address the git server's port can be published on. */
 const IPV4 = /^\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}$/u;
 
+/** Addresses that mean "every interface", which this must never publish the git server on. */
+const WILDCARD_ADDRESSES: readonly string[] = ['0.0.0.0', '::', '[::]'];
+
 /**
  * Address the git server's port is published on.
  *
- * Never `0.0.0.0`: the server accepts anonymous pushes, and publishing it on every interface would
- * offer a writable git endpoint to the whole network for the length of a run. A named host such as
+ * Never a wildcard: the server accepts anonymous pushes, and publishing it on every interface
+ * would offer a writable git endpoint to the whole network for the length of a run. A wildcard is
+ * refused outright rather than mapped to loopback, because it was asked for explicitly and
+ * silently doing something else would hide the mistake. A named host such as
  * `host.docker.internal` is a container-side alias with no address on this side, and a port bound
  * to loopback is reachable through it; an IPv4 literal — the bridge gateway on Linux — is bound
  * directly, because loopback is not reachable from a container there.
  *
  * @param gitServerHost - Host a workspace container dials.
  * @returns The address to publish on.
+ * @throws Error when the host names every interface.
  */
 export function gitServerBindAddress(gitServerHost: string): string {
+  if (WILDCARD_ADDRESSES.includes(gitServerHost)) {
+    throw new Error(
+      `E2E_GITSERVER_HOST must name one interface, not "${gitServerHost}": the git server it ` +
+        `publishes accepts anonymous pushes, so a wildcard address would offer a writable git ` +
+        `endpoint to the whole network.`,
+    );
+  }
   return IPV4.test(gitServerHost) ? gitServerHost : LOOPBACK;
 }
 

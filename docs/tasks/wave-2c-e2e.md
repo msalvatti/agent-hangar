@@ -653,3 +653,14 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   the managed web server never reaches the global teardown, so its worker is left behind. The next
   run's pre-step found the recorded id, confirmed it was still the worker, stopped its whole group
   and recorded the replacement — the old process and its child were gone afterwards.
+- 2C.11 ✅ 2026-08-20 — three more reviewer findings, all real, all in the worker lifecycle and all
+  hazards of a shared machine rather than of this checkout. The command line `--filter worker dev`
+  is shared by every concurrent checkout's worker, so it never identified *ours*; a handle now
+  carries the process start time as well, and both must agree before a group is signalled. The
+  wait after signalling polled only the group leader, but the package runner exits while the worker
+  it supervises drains — demonstrated directly: with the leader gone, a leader-only check reports
+  "exited" while the group check still reports it running — so the wait now polls the group, and a
+  group that survives SIGKILL is reported rather than assumed gone. And `E2E_GITSERVER_HOST=0.0.0.0`
+  matched the IPv4 pattern and would have published the anonymously writable git server on every
+  interface, defeating the invariant added two rounds earlier; a wildcard is now refused outright
+  rather than quietly mapped to loopback, since it was asked for explicitly.

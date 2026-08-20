@@ -98,6 +98,24 @@ describe('gitServerBindAddress', () => {
   it('publishes on an IPv4 host directly', () => {
     expect(gitServerBindAddress('172.17.0.1')).toBe('172.17.0.1');
   });
+
+  /**
+   * A wildcard is an IPv4 literal and would otherwise be bound directly, publishing an anonymously
+   * writable git endpoint on every interface. It is refused rather than quietly mapped to
+   * loopback, because it was asked for explicitly.
+   */
+  it('refuses an address naming every interface', () => {
+    for (const wildcard of ['0.0.0.0', '::', '[::]']) {
+      expect(() => gitServerBindAddress(wildcard)).toThrow(/must name one interface/);
+    }
+  });
+
+  /** The refusal has to reach a real run, not just the helper. */
+  it('refuses a wildcard through the resolved environment', () => {
+    expect(() => resolveE2eEnv({ E2E_MODE: 'real', E2E_GITSERVER_HOST: '0.0.0.0' })).toThrow(
+      /must name one interface/,
+    );
+  });
 });
 
 describe('serverEnv', () => {

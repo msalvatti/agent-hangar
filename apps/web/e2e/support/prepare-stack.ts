@@ -138,13 +138,13 @@ export async function prepareStack(
   // A run killed before its teardown leaves its worker behind, and a second worker on the same
   // queues would take jobs the first is already running. The git server is reused; the worker is
   // replaced, because it holds no state worth keeping.
-  if (previous.workerPid !== undefined) {
-    await stopWorker(previous.workerPid);
+  if (previous.worker !== undefined) {
+    await stopWorker(previous.worker);
   }
-  const workerPid = startWorker(env);
-  writeStackState(env, { ...previous, gitServer, workerPid });
+  const worker = await startWorker(env);
+  writeStackState(env, { ...previous, gitServer, worker });
   process.stdout.write(
-    `prepare-stack: git server ready at ${gitServer.url}; worker ${String(workerPid)} started, ` +
+    `prepare-stack: git server ready at ${gitServer.url}; worker ${String(worker.pid)} started, ` +
       `logging to ${workerLogPath(env)}\n`,
   );
 }

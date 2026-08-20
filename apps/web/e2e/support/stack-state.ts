@@ -14,7 +14,7 @@ import type { E2eEnv } from './env';
 const stackState = z.object({
   gitServer: z.object({ url: z.string().min(1), containerName: z.string().min(1) }).optional(),
   githubStubBaseUrl: z.string().min(1).optional(),
-  workerPid: z.number().int().positive().optional(),
+  worker: z.object({ pid: z.number().int().positive(), startedAt: z.string().min(1) }).optional(),
 });
 
 /** State of the running stack. */

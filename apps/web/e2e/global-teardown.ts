@@ -23,9 +23,9 @@ export default async function globalTeardown(): Promise<void> {
   if (env.mode === 'mock' || process.env.E2E_KEEP_STACK === '1') {
     return;
   }
-  const { gitServer, workerPid } = readStackState(env);
-  if (workerPid !== undefined) {
-    await stopWorker(workerPid);
+  const { gitServer, worker } = readStackState(env);
+  if (worker !== undefined) {
+    await stopWorker(worker);
   }
   if (gitServer !== undefined) {
     await stopGitServer(gitServer);
