@@ -23,14 +23,14 @@ import {
   setupProcessorContainer,
 } from '../testing/index.js';
 
-import { STALLED_RUN_REASON } from './constants.js';
 import {
-  IneligibleRunError,
   JOB_DISABLED_CODE,
   JOB_MISSING_CODE,
   STALLED_RUN_CODE,
   STALLED_RUN_MESSAGE,
-} from './run-scheduled-job.js';
+  STALLED_RUN_REASON,
+} from './constants.js';
+import { IneligibleRunError } from './run-scheduled-job.js';
 
 describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
   /**

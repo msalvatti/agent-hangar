@@ -28,8 +28,8 @@ import {
   UnreachableRunner,
 } from '../testing/index.js';
 
+import { WORKSPACE_RECLAIMED_CODE } from './constants.js';
 import { createGcProcessor } from './gc.js';
-import { WORKSPACE_RECLAIMED_CODE } from './run-scheduled-job.js';
 
 describe('createRunScheduledJobProcessor', () => {
   /**
