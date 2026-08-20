@@ -1,6 +1,7 @@
 /**
  * Real process wiring for {@link rotateSecrets}: reads the old key from `MASTER_KEY_PATH`, the
- * new key from `AH_NEW_MASTER_KEY_PATH`, and exits with its code.
+ * new key from `AH_NEW_MASTER_KEY_PATH`, the rotation mode from `AH_ROTATION_MODE`, and exits with
+ * its code. `rotate-key.sh` sets all three; it is the only caller.
  *
  * Layer: entry point. Excluded from coverage — see the root `vitest.config.ts` comment.
  */
@@ -16,7 +17,7 @@ import { StaticMasterKey } from '../../../packages/core/src/secrets/master-key.j
 import { createSecretsService } from '../../../packages/core/src/secrets/secrets-service.js';
 
 import { parseFlags } from './cli-args.js';
-import { rotateSecrets } from './rotate-key.js';
+import { parseRotationMode, rotateSecrets } from './rotate-key.js';
 
 parseFlags(process.argv.slice(2), { allowed: [] });
 
@@ -40,6 +41,7 @@ const result = await rotateSecrets({
     }),
   oldKey: Buffer.from(fsPort.readFileSync(config.MASTER_KEY_PATH, 'utf8').trim(), 'hex'),
   newKey: Buffer.from(fsPort.readFileSync(newKeyPath, 'utf8').trim(), 'hex'),
+  mode: parseRotationMode(process.env.AH_ROTATION_MODE),
   log: (line) => {
     console.log(line);
   },

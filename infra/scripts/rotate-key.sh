@@ -1,26 +1,50 @@
 #!/usr/bin/env bash
-# rotate-key.sh — generates a new master key, re-encrypts every stored secret under it, then
-# swaps the key file atomically and keeps a timestamped backup of the old one.
+# rotate-key.sh — generates a new master key, re-encrypts every stored secret under it, then puts
+# the new key in place and keeps a timestamped backup of the old one.
 #
-# Guarantee, stated exactly as it holds: every failure the helper can roll back leaves the current
-# master key unchanged and every stored secret decryptable with it, and the half-written key file
-# is removed. The one failure it cannot roll back is a database that disappears mid-rollback; the
-# helper reports that as exit 4, and this script then KEEPS "<key>.new", because part of the store
-# is sealed under it and deleting it would destroy those credentials.
+# A rotation changes two things that cannot be changed together: the rows in Postgres and the key
+# file on disk. The phase it has reached is therefore written to "<key>.rotation" before each step,
+# and `--resume` reads it back:
+#
+#   prepared      the new key file exists and the database has not been touched. Resuming
+#                 re-encrypts exactly as a fresh run would.
+#   reencrypting  the helper was started. Rows may be under the current key, under the new key, or
+#                 split between them (a rollback that could not finish leaves them split).
+#                 Resuming re-encrypts in salvage mode: each row is opened with whichever of the
+#                 two keys authenticates it — AES-GCM makes that unambiguous, an envelope opens
+#                 under exactly one key and fails closed under the other — and rewritten under the
+#                 new key. Salvage is correct for all three of those states, which is also why a
+#                 lost state file falls back to it.
+#   reencrypted   every row is under the new key and only the key files are left to put in place.
+#                 Resuming skips the helper entirely, so the swap finishes even while the database
+#                 is unreachable.
+#
+# Putting the key in place copies "<key>" to the backup first and then RENAMES "<key>.new" over
+# "<key>". "<key>" therefore always exists — holding either the old material or the new one, never
+# nothing — and the old material is already on disk under the backup name before it stops being the
+# current key.
+#
+# No key file is ever deleted while a row might still be sealed under it. "<key>" is never deleted
+# at all (it is copied, then replaced in place); "<key>.new" is deleted only when the helper
+# reported that every row is back under the current key.
 #
 # Flags:
 #   --yes      required to actually rotate; without it the plan is printed and nothing runs
-#   --resume   continue a previously interrupted rotation (a "<key>.new" from a prior run)
+#   --resume   continue a previously interrupted rotation
 set -euo pipefail
 
-# Helper exit code meaning "the rollback itself failed"; mirrors EXIT_COMPENSATION_INCOMPLETE in
-# lib/rotate-key.ts, which is the only place that produces it.
+# Helper exit codes, mirroring lib/rotate-key.ts, which is the only place that produces them.
+# EXIT_ABORTED: nothing was written. EXIT_ROLLED_BACK: a partial rotation was fully undone.
+# EXIT_COMPENSATION_INCOMPLETE: undoing it failed and the store is split across the two keys.
+readonly EXIT_ABORTED=2
+readonly EXIT_ROLLED_BACK=3
 readonly EXIT_COMPENSATION_INCOMPLETE=4
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 eval "$(bash "$here"/env.sh --print)"
 key="$MASTER_KEY_PATH"
+state="$key.rotation"
 
 confirmed=0
 resume=0
@@ -53,6 +77,35 @@ run_helper() {
   fi
 }
 
+# read_state <field>: prints the value of the "<field>=<value>" line, or nothing when the state
+# file does not exist or does not carry that field.
+read_state() {
+  [ -f "$state" ] || return 0
+  sed -n "s/^$1=//p" "$state"
+}
+
+# write_state <phase> <backup path>: records the phase reached, before the step it describes runs.
+write_state() {
+  printf 'phase=%s\nbackup=%s\n' "$1" "$2" > "$state"
+  chmod 600 "$state"
+}
+
+# put_key_in_place <backup path>: keeps the current key under <backup path> and makes "<key>.new"
+# the current key. Idempotent — a crash anywhere inside it is finished by running it again — and it
+# leaves no instant in which "<key>" is missing.
+put_key_in_place() {
+  local backup="$1"
+  if [ -f "$key.new" ]; then
+    if [ ! -f "$backup" ]; then
+      cp "$key" "$backup"
+      chmod 600 "$backup"
+    fi
+    mv "$key.new" "$key"
+    chmod 600 "$key"
+  fi
+  rm -f "$state"
+}
+
 if [ $confirmed -ne 1 ]; then
   set +e
   run_helper secrets-status.main.ts
@@ -65,47 +118,79 @@ if [ $confirmed -ne 1 ]; then
   echo "  key: $key"
   echo "  backup: $key.bak-<YYYYMMDDHHMMSS>"
   echo "  re-encrypts $set_count secret(s)"
+  if [ -f "$state" ]; then
+    echo "  in progress: phase $(read_state phase) — finish it with --yes --resume"
+  fi
   exit 2
 fi
 
-if [ -f "$key.new" ] && [ $resume -ne 1 ]; then
-  echo "A previous rotation was interrupted; inspect $key.new and re-run with --resume, or delete it" >&2
-  exit 1
-fi
+umask 077
+
+phase="$(read_state phase)"
+backup="$(read_state backup)"
 
 if [ $resume -ne 1 ]; then
-  umask 077
+  if [ -f "$key.new" ] || [ -f "$state" ]; then
+    echo "A previous rotation was interrupted (phase ${phase:-unknown}); re-run with --resume. Do not delete $key.new before then: secrets may be sealed under it." >&2
+    exit 1
+  fi
   openssl rand -hex 32 > "$key.new"
   chmod 600 "$key.new"
+  write_state prepared ""
+  phase="prepared"
+elif [ ! -f "$key.new" ] && [ ! -f "$state" ]; then
+  echo "Nothing to resume: neither $key.new nor $state exists." >&2
+  exit 1
+elif [ -z "$phase" ]; then
+  # The state file is gone but "<key>.new" is still here, so how far the interrupted run got is
+  # unknown. Salvage handles every pre-swap state, so assume the widest one.
+  phase="reencrypting"
 fi
 
-export AH_NEW_MASTER_KEY_PATH="$key.new"
-set +e
-run_helper rotate-key.main.ts
-rc=$HELPER_RC
-set -e
-unset AH_NEW_MASTER_KEY_PATH
-echo "$HELPER_OUTPUT"
+if [ "$phase" = "reencrypted" ]; then
+  if [ -z "$backup" ]; then
+    echo "Corrupt rotation state: $state records phase reencrypted without a backup path. Restore the backup line or move $key.new aside manually." >&2
+    exit 1
+  fi
+else
+  mode="salvage"
+  if [ "$phase" = "prepared" ]; then
+    mode="strict"
+  fi
+  write_state reencrypting ""
+  export AH_NEW_MASTER_KEY_PATH="$key.new"
+  export AH_ROTATION_MODE="$mode"
+  set +e
+  run_helper rotate-key.main.ts
+  rc=$HELPER_RC
+  set -e
+  unset AH_NEW_MASTER_KEY_PATH AH_ROTATION_MODE
+  echo "$HELPER_OUTPUT"
 
-if [ "$rc" = "0" ]; then
-  ts="$(date +%Y%m%d%H%M%S)"
-  mv "$key" "$key.bak-$ts"
-  mv "$key.new" "$key"
-  chmod 600 "$key"
-  echo "Master key rotated. Backup: $key.bak-$ts — it can still decrypt the PREVIOUS ciphertext; delete it once you verified the app (pnpm doctor) and keep it out of backups."
-  exit 0
+  if [ "$rc" != "0" ]; then
+    # "$key.new" may only be removed when every row is provably back under the current key. The
+    # helper says so in exactly two ways: it rolled the partial rotation back, or it aborted a
+    # strict run — which writes nothing, to a store that was wholly under the current key to begin
+    # with. Any other outcome, a salvage abort and a killed helper included, leaves the split
+    # possible, and deleting either key file would then destroy the credentials it holds.
+    if [ "$rc" = "$EXIT_ROLLED_BACK" ] ||
+      { [ "$rc" = "$EXIT_ABORTED" ] && [ "$mode" = "strict" ]; }; then
+      rm -f "$key.new" "$state"
+      echo "Rotation aborted (helper exit $rc); the current master key is unchanged." >&2
+      exit "$rc"
+    fi
+    if [ "$rc" = "$EXIT_COMPENSATION_INCOMPLETE" ]; then
+      echo "Rotation failed during rollback. Part of the store is now sealed under $key.new and the rest under $key: KEEP BOTH files (mode 600, out of backups) — deleting either one destroys the credentials it holds. Re-run with --resume once the database is reachable again." >&2
+    else
+      echo "Rotation stopped in phase reencrypting (helper exit $rc). Rows may be sealed under $key.new: KEEP BOTH files (mode 600, out of backups) and re-run with --resume; it opens each row with whichever key authenticates it." >&2
+    fi
+    exit "$rc"
+  fi
+
+  backup="$key.bak-$(date +%Y%m%d%H%M%S)"
+  write_state reencrypted "$backup"
 fi
 
-# Exit 4 is the one outcome that is not an abort: the rollback itself failed, so some rows are
-# sealed under "$key.new" and the rest under "$key". Removing the new key here would make those
-# rows permanently unreadable, so it stays on disk and the operator is told both files matter.
-if [ "$rc" = "$EXIT_COMPENSATION_INCOMPLETE" ]; then
-  echo "Rotation failed during rollback. Part of the store is now sealed under $key.new and the rest under $key: KEEP BOTH files (mode 600, out of backups) — deleting either one destroys the credentials it holds. Re-run with --resume once the database is reachable again." >&2
-  exit "$rc"
-fi
-
-if [ $resume -ne 1 ]; then
-  rm -f "$key.new"
-fi
-echo "Rotation aborted (helper exit $rc); the current master key is unchanged." >&2
-exit "$rc"
+put_key_in_place "$backup"
+echo "Master key rotated. Backup: $backup — it can still decrypt the PREVIOUS ciphertext; delete it once you verified the app (pnpm doctor) and keep it out of backups."
+exit 0

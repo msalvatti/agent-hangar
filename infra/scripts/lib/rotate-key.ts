@@ -11,19 +11,24 @@
  * keys apart.
  *
  * Two phases, so a failure never leaves a secret unreadable. Phase 1 is read-only: every set
- * secret is revealed under the current key into memory; any decryption failure aborts before a
- * single byte is written. Phase 2 writes each revealed value under the new key; if a write fails
- * partway through, every secret already rotated is written back under the OLD key (compensation),
- * so the current master key stays fully authoritative for every row.
+ * secret is revealed into memory; any secret that cannot be opened aborts before a single byte is
+ * written. Phase 2 writes each revealed value under the new key; if a write fails partway through,
+ * every secret currently sealed under the new key is written back under the OLD key
+ * (compensation), so the current master key stays fully authoritative for every row.
+ *
+ * Which key phase 1 may open a row with is the caller's decision, because it depends on where an
+ * interrupted rotation stopped — see {@link RotationMode}. `strict` is a rotation starting from a
+ * store that must be entirely readable with the current key; `salvage` resumes one that was
+ * interrupted, where a row may already be sealed under the new key. No bookkeeping is needed to
+ * tell the two apart: an envelope authenticates under exactly one of the keys and fails closed
+ * under the other, so `salvage` simply tries the current key first and the new key second.
  *
  * Compensation can itself fail — the database can disappear mid-rollback. That case is reported
  * separately ({@link EXIT_COMPENSATION_INCOMPLETE}) instead of being presented as a clean abort:
  * the store is then split across the two keys, and the only recoverable state is one where BOTH
- * key files are kept. The caller must not delete the new key file on that outcome. Which key opens
- * which row needs no bookkeeping: an envelope authenticates under exactly one of the two keys and
- * fails closed under the other.
+ * key files are kept. The caller must not delete the new key file on that outcome.
  *
- * The revealed plaintexts live only in a local `Map`, cleared in a `finally` so they never outlive
+ * The revealed plaintexts live only in local `Map`s, cleared in a `finally` so they never outlive
  * this function.
  */
 import type { SecretRepository } from '../../../packages/core/src/persistence/ports.js';
@@ -39,6 +44,16 @@ export const EXIT_ROLLED_BACK = 3;
 
 /** Exit code when rollback failed and the store is split across the old and the new key. */
 export const EXIT_COMPENSATION_INCOMPLETE = 4;
+
+/**
+ * Which master key a stored secret is allowed to open under.
+ *
+ * `strict` — a rotation that starts from an untouched store: every row must open with the current
+ * key, and one that does not aborts the run. `salvage` — a rotation resumed after an interruption:
+ * a row may already have been re-sealed under the new key, so either key is accepted and only a
+ * row that opens under neither aborts the run.
+ */
+export type RotationMode = 'strict' | 'salvage';
 
 /** Outcome of {@link rotateSecrets}. */
 export interface RotateSecretsResult {
@@ -73,8 +88,52 @@ export interface RotateSecretsDeps {
   oldKey: Uint8Array | string;
   /** New master key material. */
   newKey: Uint8Array | string;
+  /** Whether a row may already be sealed under the new key; see {@link RotationMode}. */
+  mode: RotationMode;
   /** Receives one line per notable step (never a plaintext value). */
   log: (line: string) => void;
+}
+
+/** The two services a rotation reads and writes through. */
+interface RotationServices {
+  /** Bound to the current master key. */
+  current: SecretsService;
+  /** Bound to the replacement master key. */
+  replacement: SecretsService;
+}
+
+/** One secret opened in phase 1. */
+interface OpenedSecret {
+  /** The revealed value, or `null` when nothing is stored under the key. */
+  plaintext: string | null;
+  /** Whether it had to be opened with the replacement key, i.e. it is already re-sealed. */
+  underNewKey: boolean;
+}
+
+/** What phase 1 hands to phase 2. */
+interface RevealedStore {
+  /** Every stored secret's plaintext, in storage order. */
+  plaintexts: Map<SecretKey, string>;
+  /** The subset already sealed under the new key, with their plaintext. */
+  sealedUnderNewKey: Map<SecretKey, string>;
+}
+
+/**
+ * Parses the rotation mode a caller passed through the environment.
+ *
+ * @param raw - The raw value; unset or empty means a fresh, strict rotation.
+ * @returns The mode.
+ * @throws When the value is neither `strict` nor `salvage`, so a typo cannot silently downgrade
+ * the run to the mode that accepts secrets sealed under the replacement key.
+ */
+export function parseRotationMode(raw: string | undefined): RotationMode {
+  if (raw === undefined || raw === '') {
+    return 'strict';
+  }
+  if (raw === 'strict' || raw === 'salvage') {
+    return raw;
+  }
+  throw new Error(`unknown rotation mode "${raw}"; expected "strict" or "salvage"`);
 }
 
 /**
@@ -96,57 +155,94 @@ async function currentKeyVersion(repository: SecretRepository): Promise<number> 
 }
 
 /**
- * Writes every already-rotated secret back under the old key.
+ * Writes every secret currently sealed under the new key back under the old one.
  *
- * @param serviceA - Service bound to the current (old) master key.
- * @param rotated - Secrets written under the new key, with their plaintext.
+ * @param service - Service bound to the current (old) master key.
+ * @param sealedUnderNewKey - Secrets sealed under the new key, with their plaintext.
  * @returns The keys that could not be written back and are still sealed under the new key.
  */
 async function compensate(
-  serviceA: SecretsService,
-  rotated: readonly [SecretKey, string][],
+  service: SecretsService,
+  sealedUnderNewKey: ReadonlyMap<SecretKey, string>,
 ): Promise<SecretKey[]> {
   const stranded: SecretKey[] = [];
-  for (const [key, plaintext] of rotated) {
-    try {
-      await serviceA.set(key, plaintext);
-    } catch {
-      stranded.push(key);
+  for (const key of SECRET_KEYS) {
+    const plaintext = sealedUnderNewKey.get(key);
+    if (plaintext !== undefined) {
+      try {
+        await service.set(key, plaintext);
+      } catch {
+        stranded.push(key);
+      }
     }
   }
   return stranded;
 }
 
 /**
- * Reveals every stored secret under the current key into memory.
+ * Opens one stored secret with whichever master key the mode allows.
  *
- * Read-only: nothing is written, so an abort here leaves the store exactly as it was. The map is
- * cleared before the failure is reported, so a plaintext never outlives the attempt.
- *
- * @param service - Service bound to the current (old) master key.
- * @param log - Receives the abort line; never a plaintext value.
- * @returns The revealed plaintexts by key, or `null` when one of them could not be decrypted.
+ * @param services - The services bound to the current and the replacement key.
+ * @param key - Secret to open.
+ * @param mode - Whether the replacement key may be tried too.
+ * @returns The revealed value and which key opened it, or `null` when no allowed key opens it.
  */
-async function revealAll(
-  service: SecretsService,
-  log: (line: string) => void,
-): Promise<Map<SecretKey, string> | null> {
-  const revealed = new Map<SecretKey, string>();
-  for (const key of SECRET_KEYS) {
-    try {
-      // `reveal` itself distinguishes "nothing stored" (null, nothing to rotate) from a
-      // decryption failure (throws) — no separate `status()` call is needed to tell them apart.
-      const plaintext = await service.reveal(key);
-      if (plaintext !== null) {
-        revealed.set(key, plaintext);
-      }
-    } catch {
-      revealed.clear();
-      log(`abort: cannot decrypt ${key} with the current master key`);
+async function openSecret(
+  services: RotationServices,
+  key: SecretKey,
+  mode: RotationMode,
+): Promise<OpenedSecret | null> {
+  try {
+    // `reveal` itself distinguishes "nothing stored" (null, nothing to rotate) from a decryption
+    // failure (throws) — no separate `status()` call is needed to tell them apart.
+    return { plaintext: await services.current.reveal(key), underNewKey: false };
+  } catch {
+    if (mode === 'strict') {
       return null;
     }
   }
-  return revealed;
+  try {
+    return { plaintext: await services.replacement.reveal(key), underNewKey: true };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reveals every stored secret into memory.
+ *
+ * Read-only: nothing is written, so an abort here leaves the store exactly as it was. The maps are
+ * cleared before the failure is reported, so a plaintext never outlives the attempt.
+ *
+ * @param services - The services bound to the current and the replacement key.
+ * @param mode - Whether a secret may already be sealed under the replacement key.
+ * @param log - Receives the abort line; never a plaintext value.
+ * @returns The revealed plaintexts, or `null` when one of them could not be decrypted.
+ */
+async function revealAll(
+  services: RotationServices,
+  mode: RotationMode,
+  log: (line: string) => void,
+): Promise<RevealedStore | null> {
+  const plaintexts = new Map<SecretKey, string>();
+  const sealedUnderNewKey = new Map<SecretKey, string>();
+  for (const key of SECRET_KEYS) {
+    const opened = await openSecret(services, key, mode);
+    if (opened === null) {
+      plaintexts.clear();
+      sealedUnderNewKey.clear();
+      const keys = mode === 'strict' ? 'the current master key' : 'either master key';
+      log(`abort: cannot decrypt ${key} with ${keys}`);
+      return null;
+    }
+    if (opened.plaintext !== null) {
+      plaintexts.set(key, opened.plaintext);
+      if (opened.underNewKey) {
+        sealedUnderNewKey.set(key, opened.plaintext);
+      }
+    }
+  }
+  return { plaintexts, sealedUnderNewKey };
 }
 
 /**
@@ -158,23 +254,25 @@ async function revealAll(
  */
 export async function rotateSecrets(deps: RotateSecretsDeps): Promise<RotateSecretsResult> {
   const version = await currentKeyVersion(deps.repos.secrets);
-  const serviceA = deps.createService(deps.oldKey, version);
-  const serviceB = deps.createService(deps.newKey, version);
+  const services: RotationServices = {
+    current: deps.createService(deps.oldKey, version),
+    replacement: deps.createService(deps.newKey, version),
+  };
 
-  const revealed = await revealAll(serviceA, deps.log);
+  const revealed = await revealAll(services, deps.mode, deps.log);
   if (revealed === null) {
     return { rotated: 0, keyVersion: version, exitCode: EXIT_ABORTED, strandedKeys: [] };
   }
+  const { plaintexts, sealedUnderNewKey } = revealed;
 
   try {
-    const rotated: [SecretKey, string][] = [];
     try {
-      for (const [key, plaintext] of revealed) {
-        await serviceB.set(key, plaintext);
-        rotated.push([key, plaintext]);
+      for (const [key, plaintext] of plaintexts) {
+        await services.replacement.set(key, plaintext);
+        sealedUnderNewKey.set(key, plaintext);
       }
     } catch {
-      const strandedKeys = await compensate(serviceA, rotated);
+      const strandedKeys = await compensate(services.current, sealedUnderNewKey);
       if (strandedKeys.length > 0) {
         deps.log(
           `rollback incomplete: ${strandedKeys.join(', ')} still sealed under the NEW key — keep both key files`,
@@ -186,13 +284,14 @@ export async function rotateSecrets(deps: RotateSecretsDeps): Promise<RotateSecr
           strandedKeys,
         };
       }
-      deps.log(`rolled back ${rotated.length} secret(s)`);
+      deps.log(`rolled back ${sealedUnderNewKey.size} secret(s)`);
       return { rotated: 0, keyVersion: version, exitCode: EXIT_ROLLED_BACK, strandedKeys: [] };
     }
 
-    deps.log(`rotated ${revealed.size} secret(s) under keyVersion ${version}`);
-    return { rotated: revealed.size, keyVersion: version, exitCode: 0, strandedKeys: [] };
+    deps.log(`rotated ${plaintexts.size} secret(s) under keyVersion ${version}`);
+    return { rotated: plaintexts.size, keyVersion: version, exitCode: 0, strandedKeys: [] };
   } finally {
-    revealed.clear();
+    plaintexts.clear();
+    sealedUnderNewKey.clear();
   }
 }
