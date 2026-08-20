@@ -96,6 +96,57 @@ const PLACEHOLDER: Record<ComposerMode, string> = {
 };
 
 /**
+ * What is still missing, one sentence per thing that can hold Send shut.
+ *
+ * Each names the specific thing rather than the form as a whole. "Complete the form" would leave
+ * somebody who has chosen a repository and cannot get a branch exactly as stuck as no message at
+ * all — and that is the case people actually hit, because a repository with no commits has no
+ * branch for the picker to default to.
+ */
+const SUBMIT_HINT = {
+  repo: 'Choose a repository to start this chat from.',
+  branch:
+    'Choose a branch to start from. A repository with no commits has no branches yet, so it cannot be used until it has a first commit.',
+  prompt: 'Write a prompt to send.',
+} as const;
+
+/**
+ * Why the composer cannot send yet.
+ *
+ * The Send button's `disabled` state is derived from this same answer rather than from a parallel
+ * condition, so the button and its explanation cannot drift apart: whatever shuts the button is by
+ * construction the thing the user is told about.
+ *
+ * A locked composer returns nothing. Being busy is already shown by the spinner, and the reason a
+ * composer is `disabled` — an archived chat — is stated by the banner above it; repeating either
+ * one here would announce a change that has not happened.
+ *
+ * The checks run in the order the composer is filled in, and only the first is reported: with no
+ * repository chosen there is no branch either, and naming both would bury the one action to take.
+ *
+ * @param props - The composer's props, whose placement decides whether targets are required.
+ * @param locked - Whether the composer is busy or externally disabled.
+ * @returns The sentence to announce, or `null` when nothing is missing.
+ */
+function submitBlockedReason(props: ComposerProps, locked: boolean): string | null {
+  if (locked) {
+    return null;
+  }
+  // Gated on the placement, not merely on the value: a follow-up inherits the chat's repository
+  // and branch, so telling that user to choose a repository would be wrong as well as useless.
+  if (props.mode === 'new' && props.repo === null) {
+    return SUBMIT_HINT.repo;
+  }
+  if (props.mode === 'new' && props.branch === null) {
+    return SUBMIT_HINT.branch;
+  }
+  if (props.value.trim().length === 0) {
+    return SUBMIT_HINT.prompt;
+  }
+  return null;
+}
+
+/**
  * Renders the composer and reports submissions.
  *
  * @param props - Placement, repository/branch selection, value, handlers and lock state.
@@ -118,8 +169,9 @@ export function Composer(props: ComposerProps) {
   useAutogrow(ref, value);
 
   const locked = busy || disabled;
-  const missingTarget = props.mode === 'new' && (props.repo === null || props.branch === null);
-  const canSubmit = !locked && value.trim().length > 0 && !missingTarget;
+  const blockedReason = submitBlockedReason(props, locked);
+  const canSubmit = !locked && blockedReason === null;
+  const hintId = `${promptId}-submit-hint`;
 
   function submit(): void {
     if (canSubmit) {
@@ -160,6 +212,20 @@ export function Composer(props: ComposerProps) {
         className="min-h-0 resize-none border-0 bg-transparent px-3 py-2.5 shadow-none focus-visible:ring-0 dark:bg-transparent"
       />
       <div className="flex items-center justify-end gap-3 px-3 pb-2">
+        {/*
+          Rendered in every state, empty when there is nothing to say. A live region has to be in
+          the document before its content changes for the change to be announced, so this element
+          may not appear and disappear with the message it carries.
+
+          It is also the reason a `title` on the button is not the answer: a disabled button does
+          not reliably emit the pointer events a native tooltip needs, so the one state that most
+          needs explaining is the state where the tooltip never shows. The button points at this
+          element with `aria-describedby` instead — the same wiring the dialog fields use — so the
+          reason is part of the control rather than merely next to it.
+        */}
+        <p id={hintId} role="status" className="text-muted-foreground mr-auto text-xs">
+          {blockedReason}
+        </p>
         {model === undefined && <Skeleton className="h-4 w-24" data-testid="model-skeleton" />}
         {typeof model === 'string' && (
           <span className="text-muted-foreground font-mono text-xs">{model}</span>
@@ -169,6 +235,7 @@ export function Composer(props: ComposerProps) {
           size="icon"
           aria-label="Send"
           title="Send (⌘↵)"
+          aria-describedby={blockedReason === null ? undefined : hintId}
           disabled={!canSubmit}
           onClick={submit}
           className="size-10 cursor-pointer rounded-full"
