@@ -70,12 +70,12 @@ another lane's path gets the PR rejected.
 | W4-A    | `packages/core` tests + Stryker config                                                                                                                                           |
 | W4-B    | `packages/agent-runtime` tests + Stryker config                                                                                                                                  |
 
-Shared files are append-only, one line per lane: `apps/web`'s `vitest.config.ts`
-`coverage.include`, `packages/core/package.json` `exports`, the per-folder barrels re-exported by
-`packages/core/src/index.ts` (the root barrel itself is frozen), `apps/web/src/mocks/handlers.ts`.
-`packages/core` and `packages/agent-runtime` no longer take that line: both measure `src/**`, so a
-new folder is covered the moment it exists, and each `coverage.exclude` entry has to argue in place
-that nothing in this repository authors the path.
+Shared files are append-only, one line per lane: `packages/core/package.json` `exports`, the
+per-folder barrels re-exported by `packages/core/src/index.ts` (the root barrel itself is frozen),
+`apps/web/src/mocks/handlers.ts`. A `vitest.config.ts` `coverage.include` is no longer one of them:
+that convention is retired, because a list of the paths lanes remembered to add measures nothing
+about the file nobody claimed. Every package measures its whole `src/**` — `apps/web` its `app/**`
+as well — and the few exclusions are enumerated and justified where they are written.
 Contracts in `packages/core` are frozen after W0; changes are additive, one-file PRs.
 
 `packages/core` is `composite`, so `tsc -b` reaching it — directly, or through any project that
