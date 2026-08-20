@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W2-A (one agent; runs in parallel with W2-B 🐳 and W2-C) |
 | **Status** | 🟦 running |
-| **Progress** | 1/6 tasks |
+| **Progress** | 2/6 tasks |
 | **Branch** | `feat/w2a-web-api-sse` |
 | **Owned paths** | `apps/web/app/api/**`, `apps/web/src/server/**` · plus, by explicit exception: `apps/web/vitest.config.ts` (`coverage.include` + test `include` globs only), `apps/web/package.json` (`scripts.test:integration` only), and **additive** lines in `packages/core/src/queues/contracts.ts`, `packages/core/src/api/contracts.ts`, `packages/core/src/config/schema.ts` (listed in Task 2A.1; every such addition is reported under `contractChangeRequests`) |
 | **Depends on** | W0, W1-A (secrets/redaction/logging), W1-E (persistence repositories), W1-F (scheduling, queues) — all merged to `main` |
@@ -48,7 +48,7 @@ Two decisions are taken here and must be stated in the PR description:
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
 | 2A.1 | Server DI container, HTTP helpers, test container, GitHub client, additive core contracts | ✅ | P0 | M | — |
-| 2A.2 | Chats, messages, archive/restore, delete, turn cancel routes | 📋 | P0 | M | 2A.1 |
+| 2A.2 | Chats, messages, archive/restore, delete, turn cancel routes | ✅ | P0 | M | 2A.1 |
 | 2A.3 | Jobs CRUD + manual run, runs list/detail, repos + branches routes | 📋 | P0 | M | 2A.1 |
 | 2A.4 | Settings (status/set/remove, no request logging) and health routes | 📋 | P0 | S | 2A.1 |
 | 2A.5 | SSE: stream factory, `chats/[id]/events`, `runs/[id]/events`, `@redis` integration | 📋 | P0 | L | 2A.1, 2A.2 |
@@ -188,19 +188,19 @@ Completion Protocol (after you finish):
 
 ## Task 2A.2 — Chats, messages, archive/restore, delete, turn cancel routes
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 2A.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 2A.1
 
 **Description.** Implement the chat side of spec 03 §4: create chat (+ first message + first turn + enqueue), list, detail, post message, archive (+ enqueue workspace destroy), restore (+ system notice), delete, and turn cancel via the Redis command channel. Handlers in `src/server/handlers/{chats,turns}.ts`, thin route files under `app/api/**`.
 
 **Acceptance criteria**
-- [ ] `POST /api/chats` validates `createChatRequest`, enforces repo host allow-list and secrets presence, creates Chat (title = trimmed prompt ≤ 80 chars) + Message(USER, seq 1) + Turn(QUEUED, model from config, `queueJobId = turnId`), enqueues `chat-turns`/`run-turn` `{ turnId }` with `jobId: turnId`, returns 201
-- [ ] `GET /api/chats?status=ACTIVE|ARCHIVED|ALL` (default `ACTIVE`) returns `chatSummary[]` sorted by `updatedAt` desc; `GET /api/chats/:id` returns `chatDetail` (messages by `seq`, turns by `queuedAt`, tool calls per turn) or 404
-- [ ] `POST /api/chats/:id/messages` → 409 `CHAT_ARCHIVED` / 409 `TURN_IN_PROGRESS` / 409 `SECRETS_MISSING` guards, else Message(USER, next seq) + Turn(QUEUED) + enqueue, 201
-- [ ] `PATCH /api/chats/:id` (`renameChatRequest { title }`, trimmed, 1–120 chars → 200 `chatSummary`; 400 `VALIDATION`; 404 unknown) — frozen contract route (spec 03 §4); route file `app/api/chats/[id]/route.ts` hosts GET/PATCH/DELETE
-- [ ] `POST /api/chats/:id/archive` (ACTIVE only; 409 `TURN_IN_PROGRESS` if a turn is QUEUED/PREPARING/RUNNING) → ARCHIVED + enqueue `workspace-gc`/`destroy-chat-workspace` `{ chatId }` → 200 `chatDetail`; `POST /api/chats/:id/restore` (ARCHIVED only) → ACTIVE + SYSTEM message → 200 `chatDetail`; `?warm=1` accepted and documented as a no-op in v1
-- [ ] `DELETE /api/chats/:id` → 409 `TURN_IN_PROGRESS` if a turn is live; else enqueue destroy job when a live workspace exists, then cascade delete → 204
-- [ ] `POST /api/turns/:id/cancel` → 404; terminal turn → 409 `TURN_NOT_CANCELLABLE`; QUEUED with a removable BullMQ job → job removed + Turn CANCELLED + 200 `{ status: 'CANCELLED' }`; otherwise PUBLISH `turnCommandSchema` `{ type: 'cancel' }` on `turnCommandChannel(turnId)` → 202 `{ status: 'CANCEL_REQUESTED' }`
-- [ ] 100 % coverage on `src/server/handlers/{chats,turns}.ts` and the route files
+- [x] `POST /api/chats` validates `createChatRequest`, enforces repo host allow-list and secrets presence, creates Chat (title = trimmed prompt ≤ 80 chars) + Message(USER, seq 1) + Turn(QUEUED, model from config, `queueJobId = turnId`), enqueues `chat-turns`/`run-turn` `{ turnId }` with `jobId: turnId`, returns 201
+- [x] `GET /api/chats?status=ACTIVE|ARCHIVED|ALL` (default `ACTIVE`) returns `chatSummary[]` sorted by `updatedAt` desc; `GET /api/chats/:id` returns `chatDetail` (messages by `seq`, turns by `queuedAt`, tool calls per turn) or 404
+- [x] `POST /api/chats/:id/messages` → 409 `CHAT_ARCHIVED` / 409 `TURN_IN_PROGRESS` / 409 `SECRETS_MISSING` guards, else Message(USER, next seq) + Turn(QUEUED) + enqueue, 201
+- [x] `PATCH /api/chats/:id` (`renameChatRequest { title }`, trimmed, 1–120 chars → 200 `chatSummary`; 400 `VALIDATION`; 404 unknown) — frozen contract route (spec 03 §4); route file `app/api/chats/[id]/route.ts` hosts GET/PATCH/DELETE
+- [x] `POST /api/chats/:id/archive` (ACTIVE only; 409 `TURN_IN_PROGRESS` if a turn is QUEUED/PREPARING/RUNNING) → ARCHIVED + enqueue `workspace-gc`/`destroy-chat-workspace` `{ chatId }` → 200 `chatDetail`; `POST /api/chats/:id/restore` (ARCHIVED only) → ACTIVE + SYSTEM message → 200 `chatDetail`; `?warm=1` accepted and documented as a no-op in v1
+- [x] `DELETE /api/chats/:id` → 409 `TURN_IN_PROGRESS` if a turn is live; else enqueue destroy job when a live workspace exists, then cascade delete → 204
+- [x] `POST /api/turns/:id/cancel` → 404; terminal turn → 409 `TURN_NOT_CANCELLABLE`; QUEUED with a removable BullMQ job → job removed + Turn CANCELLED + 200 `{ status: 'CANCELLED' }`; otherwise PUBLISH `turnCommandSchema` `{ type: 'cancel' }` on `turnCommandChannel(turnId)` → 202 `{ status: 'CANCEL_REQUESTED' }`
+- [x] 100 % coverage on `src/server/handlers/{chats,turns}.ts` and the route files
 
 **Files to create**
 `apps/web/src/server/handlers/{chats,turns}.ts` + `*.test.ts`; `apps/web/src/server/handlers/mappers.ts` (domain → `chatSummary`/`chatDetail`) + test; `apps/web/app/api/chats/route.ts`, `app/api/chats/[id]/route.ts`, `app/api/chats/[id]/messages/route.ts`, `app/api/chats/[id]/archive/route.ts`, `app/api/chats/[id]/restore/route.ts`, `app/api/turns/[id]/cancel/route.ts`; `apps/web/app/api/routes.test.ts` (wiring test, extended by later tasks).
@@ -606,4 +606,5 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 
+- 2A.2 ✅ 2026-08-19 — chat, message, rename, archive, restore, delete and turn-cancel routes over the in-memory repositories and the BullMQ double
 - 2A.1 ✅ 2026-08-19 — server container, HTTP helpers, same-origin guard, GitHub client, test doubles and the additive core contracts
