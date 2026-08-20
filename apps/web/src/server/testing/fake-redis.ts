@@ -111,8 +111,11 @@ export class FakeRedis implements RedisCommands {
    */
   del(key: string): Promise<number> {
     return this.guard(() => {
-      const removed = this.store.keys.delete(key) || this.store.streams.delete(key);
-      return removed ? 1 : 0;
+      // Both stores are consulted, never short-circuited: `DEL` removes the key whatever its type
+      // is, and a double that stopped at the first hit would leave the other behind.
+      const keyRemoved = this.store.keys.delete(key);
+      const streamRemoved = this.store.streams.delete(key);
+      return keyRemoved || streamRemoved ? 1 : 0;
     });
   }
 

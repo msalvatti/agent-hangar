@@ -230,7 +230,7 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
         onSubmit={() => {
           void submit(draft);
         }}
-        sending={send.busy}
+        sending={send.busy || retryAction.busy}
         retrying={retryAction.busy}
         actionError={lastAction === 'retry' ? retryAction.error : send.error}
         turnLive={running}

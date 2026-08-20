@@ -332,6 +332,31 @@ describe('ChatView', () => {
     });
   });
 
+  // A retry in flight has already moved the turn out of FAILED, so a message sent alongside it
+  // races the same work slot and one of the two is refused. The composer locks for a retry exactly
+  // as it does for a send, so the user is never offered an action that is about to be rejected.
+  it('locks the composer while a retry is in flight', async () => {
+    let release: (() => void) | undefined;
+    server.use(
+      http.post('/api/turns/:id/retry', async () => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    renderChat('chat-failed');
+    expect(await screen.findByText('The turn failed')).toBeInTheDocument();
+    expect(screen.getByLabelText('Prompt')).not.toBeDisabled();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Prompt')).toBeDisabled();
+    });
+    release?.();
+  });
+
   // An archived chat is read-only until it is restored.
   it('offers to restore an archived chat', async () => {
     renderChat('chat-archived');
