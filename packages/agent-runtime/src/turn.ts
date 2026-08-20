@@ -17,7 +17,7 @@ import type { CliIo } from './cli.js';
 import { createGitRunner, GitError } from './git.js';
 import type { GitRunner } from './git.js';
 import { runTurnLoop } from './loop.js';
-import { prepare, PrepareError } from './prepare.js';
+import { prepare, PrepareError, repositoryUrlPolicyFromEnv } from './prepare.js';
 import type { RepositoryUrlPolicy } from './prepare.js';
 import { createDiagnostics, createEventWriter, readTurnRequest } from './protocol.js';
 import type { EventWriter } from './protocol.js';
@@ -46,7 +46,10 @@ export interface TurnDeps {
   runtimeDir?: string;
   /** Overrides the git runner. */
   git?: GitRunner;
-  /** Overrides the repository URL policy; tests use `any` for a local `file://` remote. */
+  /**
+   * Overrides the repository URL policy, which is otherwise read from the container environment;
+   * tests use `{ allow: 'any' }` for a local `file://` remote.
+   */
   urlPolicy?: RepositoryUrlPolicy;
 }
 
@@ -134,7 +137,7 @@ async function prepareAndRun(
     git: context.git,
     env: context.childEnv,
     emit,
-    urlPolicy: deps.urlPolicy ?? 'github-https',
+    urlPolicy: deps.urlPolicy ?? repositoryUrlPolicyFromEnv(deps.io.env),
   });
   await runTurnLoop({
     ...context,

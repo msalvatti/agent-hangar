@@ -49,6 +49,17 @@ export const RUNTIME_CMD: readonly string[] = ['node', '/opt/agent-runtime/cli.j
 export const ASKPASS_PATH = '/opt/agent-runtime/askpass.sh';
 
 /**
+ * Container variable naming the single origin a workspace may reach.
+ *
+ * Both readers of it live inside the container — the askpass helper decides whether to release the
+ * PAT for the origin git dials, and the agent runtime decides whether to hand git the repository
+ * URL at all — so the name is spelled on each side of the boundary rather than shared, exactly as
+ * {@link ASKPASS_PATH} is. The value is derived from the repository URL the workspace was created
+ * for, once that URL has been measured against `ALLOWED_REPO_HOSTS`.
+ */
+export const ALLOWED_ORIGIN_VAR = 'AH_GIT_ALLOWED_ORIGIN';
+
+/**
  * Slack added to the exec's wall-clock limit on top of the turn's own.
  *
  * The runtime enforces `maxTurnMs` itself and then needs time to write its terminal event; the

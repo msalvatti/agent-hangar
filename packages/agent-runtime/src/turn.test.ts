@@ -121,6 +121,7 @@ function io(stdinText: string, env: Record<string, string | undefined> = {}): Cl
       GIT_CONFIG_GLOBAL: '/dev/null',
       GIT_CONFIG_SYSTEM: '/dev/null',
       AGENT_MODEL_PROVIDER: 'fake',
+      AH_GIT_ALLOWED_ORIGIN: 'https://github.com',
       ...env,
     },
     cwd: root,
@@ -155,6 +156,16 @@ async function runTurn(
     git: gitAgainstFixture(),
     ...overrides,
   });
+}
+
+/**
+ * The message of the last emitted event, when that event is a `turn.failed`.
+ *
+ * @returns The failure message, or an empty string when the last event was something else.
+ */
+function lastFailureMessage(): string {
+  const last = emitted().at(-1);
+  return last?.type === 'turn.failed' ? last.error.message : '';
 }
 
 /**
@@ -298,10 +309,10 @@ describe('runTurnCommand and failures it can name', () => {
     expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'prepare' } });
   });
 
-  it('applies the strict URL policy and the container paths when none are chosen', async () => {
+  it("applies the environment's URL policy and the container paths when none are chosen", async () => {
     // Production passes no overrides at all. Nothing here touches `/workspace` or `/tmp` and
     // nothing reaches the network: with no token in the environment no file is written, and this
-    // remote is refused before git runs because the policy requires https on github.com. The
+    // remote is refused before git runs because it is not on the origin the environment names. The
     // schema upstream already requires a credential-free http(s) URL, so the rejection under test
     // is the runtime's own policy rather than the parse.
     const turn = request('hello');
@@ -312,6 +323,37 @@ describe('runTurnCommand and failures it can name', () => {
     });
     expect(exit).toBe(EXIT.ok);
     expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'prepare' } });
+  });
+
+  it('refuses a repository on a forge the workspace was not created for', async () => {
+    // The whole point of binding the container to one origin: this URL is a perfectly ordinary
+    // GitHub repository, and this workspace exists for a local forge, so preparation refuses it
+    // rather than clone — and authenticate to — something nobody provisioned it for.
+    const turn = request('hello');
+    const exit = await runTurnCommand({
+      io: io(`${JSON.stringify(turn)}\n`, {
+        AH_GIT_ALLOWED_ORIGIN: 'http://host.docker.internal:3907',
+      }),
+      workspaceRoot: root,
+      runtimeDir,
+      git: gitAgainstFixture(),
+    });
+    expect(exit).toBe(EXIT.ok);
+    expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'prepare' } });
+    expect(lastFailureMessage()).toContain('http://host.docker.internal:3907/<owner>/<repo>');
+  });
+
+  it('fails closed when the container was never told which origin it serves', async () => {
+    // A container nobody prepared has no forge to fall back to; reporting it as configuration is
+    // what puts the missing variable in front of the operator instead of a clone failure.
+    const exit = await runTurn(
+      `${JSON.stringify(request('hello'))}\n`,
+      {},
+      { AH_GIT_ALLOWED_ORIGIN: undefined },
+    );
+    expect(exit).toBe(EXIT.ok);
+    expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'config' } });
+    expect(lastFailureMessage()).toContain('AH_GIT_ALLOWED_ORIGIN must name the origin');
   });
 
   it('reports a git command that failed outright as a preparation failure', async () => {

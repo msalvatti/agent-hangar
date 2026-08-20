@@ -30,6 +30,13 @@
  * receiving the PAT through rows that were legitimate when they were written. The check therefore
  * belongs where the credential is revealed rather than only where the row is written, and it runs
  * before the reveal so a repository that is no longer allowed never decrypts anything.
+ *
+ * That same check is what the container is bound to. It yields one origin, and the container is
+ * told that origin and nothing else: the askpass helper releases the PAT only for it, and the
+ * agent runtime clones only from it. Handing the container the allow-list instead would be a
+ * wider grant than the workspace needs — both readers decide from a URL the agent can influence,
+ * so a list would let a crafted URL pick any entry on it — and a wider grant than the workspace
+ * had, since the allow-list is a policy about forges while a workspace exists for one repository.
  */
 import {
   describeClientFailure,
@@ -41,7 +48,7 @@ import type { Workspace, WorkspaceHandle, WorkspaceKind } from '@agent-hangar/co
 
 import { isTransportError } from '../errors.js';
 
-import { ASKPASS_PATH, LABELS, WORKSPACE_LIMITS } from './constants.js';
+import { ALLOWED_ORIGIN_VAR, ASKPASS_PATH, LABELS, WORKSPACE_LIMITS } from './constants.js';
 import type { ProcessorDeps } from './types.js';
 
 /** Why a workspace could not be provisioned. */
@@ -164,45 +171,77 @@ async function openWorkspaceRow(deps: ProcessorDeps, input: ProvisionInput): Pro
 }
 
 /**
- * Whether a stored repository URL still names an origin the operator allows.
+ * The origin a stored repository URL names, when the operator still allows that origin.
  *
  * The list is read from configuration on every call rather than captured once, so removing an
  * origin takes effect on the next turn instead of on the next restart of this process. Callers
  * that reach a repository without provisioning a workspace — a chat whose container is still
  * running — have to ask this themselves; provisioning asks it below.
  *
+ * The origin comes back rather than a verdict because it is what the container is then told. It is
+ * `URL.origin` of the very URL that has just been measured, which is also how the allow-list
+ * entries were normalised, so what the container enforces is the same origin the operator
+ * authorised, in the same spelling.
+ *
+ * @param deps - For the configured allow-list.
+ * @param repoUrl - The stored repository URL.
+ * @returns The origin, or `null` when the URL is unusable or its origin is not allowed.
+ */
+export function allowedRepoOrigin(deps: ProcessorDeps, repoUrl: string): string | null {
+  const allowed = repoUrlForHosts(parseAllowedRepoHosts(deps.config.ALLOWED_REPO_HOSTS));
+  const result = allowed.safeParse(repoUrl);
+  const parsed = result.success ? URL.parse(result.data) : null;
+  return parsed === null ? null : parsed.origin;
+}
+
+/**
+ * Whether a stored repository URL still names an origin the operator allows.
+ *
  * @param deps - For the configured allow-list.
  * @param repoUrl - The stored repository URL.
  * @returns `true` when the URL names one repository on a currently allowed origin.
  */
 export function isRepoUrlAllowed(deps: ProcessorDeps, repoUrl: string): boolean {
-  const allowed = repoUrlForHosts(parseAllowedRepoHosts(deps.config.ALLOWED_REPO_HOSTS));
-  return allowed.safeParse(repoUrl).success;
+  return allowedRepoOrigin(deps, repoUrl) !== null;
 }
 
+/** The origin a workspace may reach, or the refusal already recorded on its row. */
+type OriginDecision =
+  | { readonly allowed: true; readonly origin: string }
+  | { readonly allowed: false; readonly refusal: ProvisionResult };
+
 /**
- * Refuses a repository the operator no longer allows, before anything has been decrypted.
+ * Resolves the one origin this workspace's container may reach, or refuses a repository the
+ * operator no longer allows — either way before anything has been decrypted.
+ *
+ * Resolving and refusing are the same act on purpose: the origin the container is bound to can
+ * only be one that has just passed the allow-list, because it is the value that passing it
+ * produced.
  *
  * @param deps - Configuration and repositories.
  * @param input - What the workspace serves.
  * @param workspaceId - The row already opened for it.
- * @returns The failure result, or `null` when the repository is still on the list.
+ * @returns The origin, or the failure result recorded for a repository that is not allowed.
  */
-async function refuseDisallowedRepo(
+async function resolveWorkspaceOrigin(
   deps: ProcessorDeps,
   input: ProvisionInput,
   workspaceId: string,
-): Promise<ProvisionResult | null> {
-  if (isRepoUrlAllowed(deps, input.repoUrl)) {
-    return null;
+): Promise<OriginDecision> {
+  const origin = allowedRepoOrigin(deps, input.repoUrl);
+  if (origin !== null) {
+    return { allowed: true, origin };
   }
-  return failWorkspace(
-    deps,
-    workspaceId,
-    REPO_URL_NOT_ALLOWED_CODE,
-    REPO_URL_NOT_ALLOWED_MESSAGE,
-    REPO_URL_NOT_ALLOWED_REASON,
-  );
+  return {
+    allowed: false,
+    refusal: await failWorkspace(
+      deps,
+      workspaceId,
+      REPO_URL_NOT_ALLOWED_CODE,
+      REPO_URL_NOT_ALLOWED_MESSAGE,
+      REPO_URL_NOT_ALLOWED_REASON,
+    ),
+  };
 }
 
 /**
@@ -326,9 +365,9 @@ export async function provisionWorkspace(
   input: ProvisionInput,
 ): Promise<ProvisionResult> {
   const workspace = await openWorkspaceRow(deps, input);
-  const refusal = await refuseDisallowedRepo(deps, input, workspace.id);
-  if (refusal !== null) {
-    return refusal;
+  const decision = await resolveWorkspaceOrigin(deps, input, workspace.id);
+  if (!decision.allowed) {
+    return decision.refusal;
   }
 
   const pat = await deps.secrets.reveal('GITHUB_PAT');
@@ -359,6 +398,9 @@ export async function provisionWorkspace(
         GIT_ASKPASS: ASKPASS_PATH,
         OPENAI_MODEL: deps.config.OPENAI_MODEL,
         AGENT_MODEL_PROVIDER: deps.config.AGENT_MODEL_PROVIDER,
+        // A fixed name and a value that is an origin: it is spelled as a key of this literal
+        // rather than spread in, so it cannot stand in for the credentials above it.
+        [ALLOWED_ORIGIN_VAR]: decision.origin,
         ...(deps.config.OPENAI_BASE_URL === undefined
           ? {}
           : { OPENAI_BASE_URL: deps.config.OPENAI_BASE_URL }),

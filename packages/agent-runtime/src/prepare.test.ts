@@ -2,14 +2,17 @@
  * Unit tests for workspace preparation.
  *
  * Layer: unit.
- * Goal: every shape of repository URL that is not a credential-free GitHub https URL is refused;
- * cloning, refreshing and the three work-branch cases each land on the right commit and announce
- * themselves in order; a moved branch warns without failing; and git never sees the credentials.
+ * Goal: every repository URL that is not a credential-free repository on the workspace's own
+ * origin is refused, whatever that origin is; the origin itself is read from the container
+ * environment and a container that was never told one fails closed; cloning, refreshing and the
+ * three work-branch cases each land on the right commit and announce themselves in order; a moved
+ * branch warns without failing; and git never sees the credentials.
  * Mocks: none for git — real repositories on a `file://` remote stand in for GitHub.
  */
 import { writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { ConfigError } from '@agent-hangar/core';
 import type { AgentEvent, TurnRequest } from '@agent-hangar/core';
 import { GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -17,8 +20,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createChildEnv } from './child-env.js';
 import { createGitRunner } from './git.js';
 import type { GitArgs, GitRunOptions, GitRunner } from './git.js';
-import { assertBranchName, assertGithubHttpsUrl, prepare, PrepareError } from './prepare.js';
-import type { PrepareDeps } from './prepare.js';
+import {
+  ALLOWED_ORIGIN_VAR,
+  assertBranchName,
+  prepare,
+  PrepareError,
+  repositoryUrlPolicyFromEnv,
+  resolveRepoUrl,
+} from './prepare.js';
+import type { PrepareDeps, RepositoryUrlPolicy } from './prepare.js';
 import { createBareRepoWithSeed } from './testing/bare-repo.js';
 import type { BareRepo } from './testing/bare-repo.js';
 import { makeTempDir, removeTempDir } from './testing/temp-dir.js';
@@ -83,7 +93,7 @@ beforeEach(async () => {
       events.push(event);
       await Promise.resolve();
     },
-    urlPolicy: 'any',
+    urlPolicy: { allow: 'any' },
   };
 });
 
@@ -92,16 +102,23 @@ afterEach(async () => {
   await removeTempDir(root);
 });
 
-describe('assertGithubHttpsUrl', () => {
+/** The policy a workspace created for a repository on the public forge runs under. */
+const GITHUB: RepositoryUrlPolicy = { allow: 'origin', origin: 'https://github.com' };
+
+/** The policy a workspace created for a local forge on a non-default port runs under. */
+const LOCAL_FORGE: RepositoryUrlPolicy = {
+  allow: 'origin',
+  origin: 'http://host.docker.internal:3907',
+};
+
+describe('resolveRepoUrl', () => {
   it.each([
     ['a plain repository URL', 'https://github.com/acme/widgets'],
     ['a URL with the git suffix', 'https://github.com/acme/widgets.git'],
     ['a name with dots and dashes', 'https://github.com/acme-co/my.widgets-v2'],
-  ])('accepts %s', (_name, url) => {
-    // These are the URLs the repository picker produces.
-    expect(() => {
-      assertGithubHttpsUrl(url);
-    }).not.toThrow();
+  ])('accepts %s on the workspace origin', (_name, url) => {
+    // These are the URLs the repository picker produces for the public forge.
+    expect(resolveRepoUrl(url, GITHUB)).toBe(url);
   });
 
   it.each([
@@ -118,17 +135,90 @@ describe('assertGithubHttpsUrl', () => {
     ['a missing repository name', 'https://github.com/acme'],
     ['text that is not a URL at all', 'not a url'],
   ])('refuses %s', (_name, url) => {
-    // The askpass helper releases the PAT for github.com over https; anything else that git is
-    // pointed at is a way to get the token sent somewhere it does not belong.
-    expect(() => {
-      assertGithubHttpsUrl(url);
-    }).toThrow(PrepareError);
+    // Anything git is pointed at that is not the workspace's own repository is a way to get the
+    // token sent somewhere it does not belong, or to work on something nobody asked for.
+    expect(() => resolveRepoUrl(url, GITHUB)).toThrow(PrepareError);
   });
 
-  it('is applied by default, without a policy being asked for', async () => {
-    // A caller that forgets the policy must get the strict one, not the permissive one.
-    const { urlPolicy: _ignored, ...strict } = deps;
-    await expect(prepare(repoSection(), { clone: true }, strict)).rejects.toThrow(PrepareError);
+  it('accepts a repository on a local forge the operator configured', () => {
+    // The origin decides the scheme and the port, so a forge listed as `http://host:port` is
+    // clonable — anonymously, because the askpass helper still refuses to release a token over
+    // cleartext. A rule fixed on the public forge refused this outright.
+    expect(resolveRepoUrl('http://host.docker.internal:3907/acme/sample.git', LOCAL_FORGE)).toBe(
+      'http://host.docker.internal:3907/acme/sample.git',
+    );
+  });
+
+  it('refuses a repository on the public forge when the workspace is not for it', () => {
+    // The narrowing that matters most: a workspace created for a local forge must not be talked
+    // into cloning — and authenticating to — a repository on github.com.
+    expect(() => resolveRepoUrl('https://github.com/acme/widgets', LOCAL_FORGE)).toThrow(
+      PrepareError,
+    );
+  });
+
+  it('still accepts a different repository on the same origin', () => {
+    // The limit of what one origin can express, stated rather than left implied: this policy is a
+    // transport policy. A workspace on github.com may still be pointed at another repository
+    // there, which is why the loop's other guards — the branch names, the workspace root — are
+    // not redundant with it.
+    expect(resolveRepoUrl('https://github.com/other/repo', GITHUB)).toBe(
+      'https://github.com/other/repo',
+    );
+  });
+
+  it('names the origin and never the URL when it refuses', () => {
+    // The refused URL is exactly the one that may be carrying a credential, and this message is
+    // persisted and displayed.
+    expect(() =>
+      resolveRepoUrl(`https://x-access-token:${GITHUB_CANARY}@github.com/acme/widgets`, GITHUB),
+    ).toThrow('repository URL must be https://github.com/<owner>/<repo> without credentials');
+  });
+
+  it('hands git the URL as it was parsed, not as it was written', () => {
+    // Git echoes the remote into the credential prompt verbatim and the askpass helper compares
+    // that prompt to an origin the host produced with the same normalisation, so a URL written
+    // with a default port or a mixed-case host must be cloned in its canonical spelling or it
+    // would fail authentication on a difference nobody can see.
+    expect(resolveRepoUrl('https://GitHub.com:443/acme/widgets', GITHUB)).toBe(
+      'https://github.com/acme/widgets',
+    );
+  });
+
+  it('returns the URL untouched under the permissive policy the local suites use', () => {
+    // `any` exists for the suites that clone a `file://` remote; nothing in the environment can
+    // produce it.
+    expect(resolveRepoUrl(repo.url, { allow: 'any' })).toBe(repo.url);
+  });
+});
+
+describe('repositoryUrlPolicyFromEnv', () => {
+  it('reads the origin the workspace was created for', () => {
+    // This is the variable the worker sets from the repository URL it has just vetted.
+    expect(
+      repositoryUrlPolicyFromEnv({ [ALLOWED_ORIGIN_VAR]: 'https://github.com' }),
+    ).toStrictEqual(GITHUB);
+  });
+
+  it.each([
+    ['absent', undefined],
+    ['empty', ''],
+    ['carrying a path', 'https://github.com/acme/widgets'],
+    ['carrying a trailing slash', 'https://github.com/'],
+    ['not a URL at all', 'github.com'],
+    ['an opaque scheme with no origin', 'file:///srv/git'],
+  ])('refuses a value that is %s', (_name, value) => {
+    // A container nobody told an origin has no forge to fall back to: falling back to one would
+    // give a workspace whose origin was never decided a policy from somewhere else.
+    expect(() => repositoryUrlPolicyFromEnv({ [ALLOWED_ORIGIN_VAR]: value })).toThrow(ConfigError);
+  });
+
+  it('accepts an origin with a non-default port', () => {
+    // The local forge is reached on a port, and the port is part of the origin rather than a
+    // separate rule.
+    expect(
+      repositoryUrlPolicyFromEnv({ [ALLOWED_ORIGIN_VAR]: 'http://host.docker.internal:3907' }),
+    ).toStrictEqual(LOCAL_FORGE);
   });
 });
 
