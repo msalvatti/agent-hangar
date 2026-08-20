@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W2-A (one agent; runs in parallel with W2-B 🐳 and W2-C) |
-| **Status** | 🟦 running |
-| **Progress** | 5/6 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 6/6 tasks |
 | **Branch** | `feat/w2a-web-api-sse` |
 | **Owned paths** | `apps/web/app/api/**`, `apps/web/src/server/**` · plus, by explicit exception: `apps/web/vitest.config.ts` (`coverage.include` + test `include` globs only), `apps/web/package.json` (`scripts.test:integration` only), and **additive** lines in `packages/core/src/queues/contracts.ts`, `packages/core/src/api/contracts.ts`, `packages/core/src/config/schema.ts` (listed in Task 2A.1; every such addition is reported under `contractChangeRequests`) |
 | **Depends on** | W0, W1-A (secrets/redaction/logging), W1-E (persistence repositories), W1-F (scheduling, queues) — all merged to `main` |
@@ -52,7 +52,7 @@ Two decisions are taken here and must be stated in the PR description:
 | 2A.3 | Jobs CRUD + manual run, runs list/detail, repos + branches routes | ✅ | P0 | M | 2A.1 |
 | 2A.4 | Settings (status/set/remove, no request logging) and health routes | ✅ | P0 | S | 2A.1 |
 | 2A.5 | SSE: stream factory, `chats/[id]/events`, `runs/[id]/events`, `@redis` integration | ✅ | P0 | L | 2A.1, 2A.2 |
-| 2A.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 2A.1–2A.5 |
+| 2A.6 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 2A.1–2A.5 |
 
 ---
 
@@ -546,15 +546,15 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 
 ## Task 2A.6 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 2A.1–2A.5
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 2A.1–2A.5
 
 **Description.** Run every gate (lint, format, typecheck, unit 100 %, `@redis` integration), run `/bymax-quality:code-review` to zero findings, update the plan dashboard and the tasks index, open the PR with the structured summary including the two decisions and every additive contract change, and return the orchestrator payload.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter web test -- --coverage` 100/100/100/100 on `app/api/**` + `src/server/**`; `pnpm --filter @agent-hangar/core test -- --coverage` still 100 %; `pnpm --filter web test:integration` green against compose Redis
-- [ ] `/bymax-quality:code-review` run on the branch with zero open findings (no suppressions added to pass)
-- [ ] `docs/plan.md` §12 row W2-A → 🟨 with branch and PR number; `docs/tasks/README.md` row for this lane updated
-- [ ] PR opened against `main` with the structured body; returned payload `{ pr, branch, headSha, gates, coverage, contractChangeRequests }`
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` exit 0; `pnpm --filter web test -- --coverage` 100/100/100/100 on `app/api/**` + `src/server/**`; `pnpm --filter @agent-hangar/core test -- --coverage` still 100 %; `pnpm --filter web test:integration` green against compose Redis
+- [x] `/bymax-quality:code-review` run on the branch with zero open findings (no suppressions added to pass)
+- [x] `docs/plan.md` §12 row W2-A → 🟨 with branch and PR number; `docs/tasks/README.md` row for this lane updated
+- [x] PR opened against `main` with the structured body; returned payload `{ pr, branch, headSha, gates, coverage, contractChangeRequests }`
 
 **Files to modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (lane row only), `docs/tasks/wave-2a-web-api-sse.md` (header status, log).
@@ -606,6 +606,7 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 
+- 2A.6 ✅ 2026-08-19 — every gate green, code review and security review to zero open findings, dashboards updated and the pull request opened
 - 2A.5 ✅ 2026-08-19 — SSE stream factory with replay, tail, heartbeat and expiry, the two events routes, and a @redis suite against a real Redis
 - 2A.4 ✅ 2026-08-19 — settings routes that never echo or log a credential, and a health route that reports Docker from the worker heartbeat
 - 2A.3 ✅ 2026-08-19 — scheduled-job CRUD with scheduler sync, manual run, run history and detail, and the GitHub repository and branch pickers
