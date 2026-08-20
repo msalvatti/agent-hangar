@@ -25,7 +25,7 @@ export default async function globalTeardown(): Promise<void> {
   }
   const { gitServer, workerPid } = readStackState(env);
   if (workerPid !== undefined) {
-    stopWorker(workerPid);
+    await stopWorker(workerPid);
   }
   if (gitServer !== undefined) {
     await stopGitServer(gitServer);

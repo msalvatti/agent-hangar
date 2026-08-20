@@ -29,7 +29,7 @@ import type { E2eEnv } from './env';
 import { startGitServer } from './gitserver';
 import { exec } from './process';
 import { readStackState, writeStackState } from './stack-state';
-import { startWorker, workerLogPath } from './worker';
+import { startWorker, stopWorker, workerLogPath } from './worker';
 
 /** Bytes of the master key; the secrets module expects a 32-byte hex key. */
 const MASTER_KEY_BYTES = 32;
@@ -134,8 +134,15 @@ export async function prepareStack(
     bindAddress: env.gitServerBindAddress,
     repoRoot: repoRoot(),
   });
+  const previous = readStackState(env);
+  // A run killed before its teardown leaves its worker behind, and a second worker on the same
+  // queues would take jobs the first is already running. The git server is reused; the worker is
+  // replaced, because it holds no state worth keeping.
+  if (previous.workerPid !== undefined) {
+    await stopWorker(previous.workerPid);
+  }
   const workerPid = startWorker(env);
-  writeStackState(env, { ...readStackState(env), gitServer, workerPid });
+  writeStackState(env, { ...previous, gitServer, workerPid });
   process.stdout.write(
     `prepare-stack: git server ready at ${gitServer.url}; worker ${String(workerPid)} started, ` +
       `logging to ${workerLogPath(env)}\n`,
