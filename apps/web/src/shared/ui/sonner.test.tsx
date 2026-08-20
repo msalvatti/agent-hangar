@@ -27,10 +27,10 @@ describe('Toaster', () => {
    * Handed the wrong one, a toast lands as a light card over a dark page.
    */
   it.each([
-    { label: 'dark', dark: true },
-    { label: 'light', dark: false },
-  ])('paints toasts in the $label palette the document is in', async ({ label, dark }) => {
-    document.documentElement.classList.toggle(DARK_CLASS, dark);
+    { label: 'dark', isDark: true },
+    { label: 'light', isDark: false },
+  ])('paints toasts in the $label palette the document is in', async ({ label, isDark }) => {
+    document.documentElement.classList.toggle(DARK_CLASS, isDark);
     const { baseElement } = render(<Toaster />);
 
     toast('Settings saved');

@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 
 import { describe, expect, it } from 'vitest';
+import { z } from 'zod';
 
 import {
   VENDORED_UI_COVERAGE_EXCLUDE,
@@ -34,6 +35,11 @@ async function readPackageFile(relativePath: string): Promise<string> {
   return readFile(`${PACKAGE_ROOT}${relativePath}`, 'utf8');
 }
 
+/** The part of `components.json` this suite reads: the two aliases the CLI writes imports to. */
+const generatorConfig = z.object({
+  aliases: z.object({ utils: z.string(), ui: z.string() }),
+});
+
 /**
  * The import aliases the shadcn CLI is configured to write into a generated primitive: the single
  * `utils` module, and anything under the components directory.
@@ -42,8 +48,7 @@ async function readPackageFile(relativePath: string): Promise<string> {
  */
 async function generatorAliases(): Promise<{ utils: string; ui: string }> {
   const parsed: unknown = JSON.parse(await readPackageFile('components.json'));
-  const aliases = (parsed as { aliases: { utils: string; ui: string } }).aliases;
-  return { utils: aliases.utils, ui: aliases.ui };
+  return generatorConfig.parse(parsed).aliases;
 }
 
 /**

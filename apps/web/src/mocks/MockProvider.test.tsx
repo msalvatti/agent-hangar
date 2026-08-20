@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { handlers } from './handlers';
 
 const startMock = vi.fn().mockResolvedValue(undefined);
-const setupWorkerMock = vi.fn((...used: RequestHandler[]) => ({ start: startMock, used }));
+const setupWorkerMock = vi.fn((..._served: RequestHandler[]) => ({ start: startMock }));
 
 vi.mock('msw/browser', () => ({
   setupWorker: setupWorkerMock,
@@ -74,6 +74,38 @@ describe('MockProvider', () => {
     expect(served.map((handler) => handler.info.header)).toEqual(
       handlers.map((handler) => handler.info.header),
     );
+  });
+
+  /**
+   * React runs an effect twice in development, and a mount can follow an unmount within one page
+   * load. Each run building its own worker would register the service worker again and take the
+   * previous registration's place, so the boot is remembered and later runs join it.
+   */
+  it('registers one worker however often the boot runs', async () => {
+    startMock.mockResolvedValue(undefined);
+    vi.stubEnv('NEXT_PUBLIC_API_MOCK', '1');
+    vi.resetModules();
+    const { MockProvider } = await import('./MockProvider');
+    const first = render(
+      <MockProvider>
+        <span>content</span>
+      </MockProvider>,
+    );
+    await waitFor(() => {
+      expect(setupWorkerMock).toHaveBeenCalledTimes(1);
+    });
+    first.unmount();
+
+    render(
+      <MockProvider>
+        <span>content</span>
+      </MockProvider>,
+    );
+    await waitFor(() => {
+      expect(screen.getByText('content')).toBeInTheDocument();
+    });
+
+    expect(setupWorkerMock).toHaveBeenCalledTimes(1);
   });
 
   // A worker that cannot start (missing service-worker asset, blocked registration) must say so:

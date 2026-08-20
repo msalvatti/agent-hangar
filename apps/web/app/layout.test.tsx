@@ -12,6 +12,8 @@ import { runInNewContext } from 'node:vm';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 
+import { assertPresent } from '@/shared/transcript';
+
 import RootLayout, { metadata } from './layout';
 
 vi.mock('next/font/google', () => ({
@@ -32,24 +34,26 @@ function documentMarkup(): string {
   );
 }
 
-/** The inline script the layout puts in the head. */
+/** The inline script the layout puts in the head, read back out of the document it renders. */
 function bootstrapScript(): string {
-  const script = /<script>([\s\S]*?)<\/script>/.exec(documentMarkup())?.[1];
-  expect(script).toBeDefined();
-  return script ?? '';
+  return assertPresent(
+    /<script>([\s\S]*?)<\/script>/.exec(documentMarkup())?.[1],
+    'the root layout renders an inline script',
+  );
 }
 
 /**
  * Runs the bootstrap script against a stored preference and a system setting.
  *
- * The script is executed in a context holding nothing but the three globals it is allowed to
- * touch, so a script that reached for anything else would fail here rather than in a browser.
+ * What runs is the module's own constant, read back out of the document it renders, in a context
+ * holding nothing but the three globals it is allowed to touch — so a script that reached for
+ * anything else fails here rather than in a browser.
  *
  * @param stored - Value `localStorage` holds for the theme key, or `null` for nothing stored.
- * @param systemDark - Whether the operating system asks for the dark palette.
+ * @param isSystemDark - Whether the operating system asks for the dark palette.
  * @returns Whether the script applied the dark class.
  */
-function paintsDark(stored: string | null, systemDark: boolean): boolean {
+function paintsDark(stored: string | null, isSystemDark: boolean): boolean {
   const classes = new Set<string>();
   runInNewContext(bootstrapScript(), {
     localStorage: {
@@ -57,7 +61,7 @@ function paintsDark(stored: string | null, systemDark: boolean): boolean {
     },
     window: {
       matchMedia: (query: string) => ({
-        matches: query === '(prefers-color-scheme: dark)' && systemDark,
+        matches: query === '(prefers-color-scheme: dark)' && isSystemDark,
       }),
     },
     document: {
@@ -96,10 +100,10 @@ describe('RootLayout', () => {
    * system asks for dark.
    */
   it.each([
-    { stored: 'dark', systemDark: false, dark: true },
-    { stored: 'light', systemDark: true, dark: false },
-  ])('honours a stored $stored preference', ({ stored, systemDark, dark }) => {
-    expect(paintsDark(stored, systemDark)).toBe(dark);
+    { stored: 'dark', isSystemDark: false, isDark: true },
+    { stored: 'light', isSystemDark: true, isDark: false },
+  ])('honours a stored $stored preference', ({ stored, isSystemDark, isDark }) => {
+    expect(paintsDark(stored, isSystemDark)).toBe(isDark);
   });
 
   /**
