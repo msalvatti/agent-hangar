@@ -2,6 +2,9 @@
  * Boots the MSW browser worker before rendering children, when the app is running in mock mode.
  *
  * Layer: mock (bootstrap).
+ *
+ * Both `msw/browser` and the handler set are reached through a dynamic import inside the effect, so
+ * a build with mocking off never pulls the interceptor or the mock API into its bundle.
  */
 'use client';
 
@@ -44,8 +47,11 @@ export function MockProvider({ children }: MockProviderProps) {
     const start = async (): Promise<void> => {
       try {
         initializeScenario();
-        const { worker } = await import('./browser');
-        await worker.start({ onUnhandledRequest: 'bypass', quiet: true });
+        const [{ setupWorker }, { handlers }] = await Promise.all([
+          import('msw/browser'),
+          import('./handlers'),
+        ]);
+        await setupWorker(...handlers).start({ onUnhandledRequest: 'bypass', quiet: true });
         if (!cancelled) {
           setBoot('ready');
         }
