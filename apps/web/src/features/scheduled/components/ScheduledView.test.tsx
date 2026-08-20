@@ -25,6 +25,17 @@ afterEach(() => {
   resetScheduledStore();
 });
 
+/**
+ * Budget for the tests that drive a command palette or fill the whole form.
+ *
+ * These are the most expensive tests in the suite by an order of magnitude — a palette mounts
+ * hundreds of command items, and filling the form dispatches a full event sequence per keystroke —
+ * so on a loaded machine they run well past the default per-test budget while every neighbour
+ * finishes in tens of milliseconds. Measured at roughly 0.5 s idle and 3 s under heavy CPU
+ * contention; this leaves ample room above that while still failing a test that never settles.
+ */
+const PALETTE_TEST_TIMEOUT_MS = 20_000;
+
 describe('ScheduledView', () => {
   /** Shows the loading skeleton before the jobs query settles. */
   it('shows a loading skeleton before jobs arrive', () => {
@@ -108,27 +119,31 @@ describe('ScheduledView', () => {
   });
 
   /** Saving the create dialog adds the new job to the list. */
-  it('saves a new job from the dialog and refreshes the list', async () => {
-    const user = userEvent.setup();
-    render(<ScheduledView />);
-    await screen.findByText('Nightly tests');
-    await user.click(screen.getByRole('button', { name: 'New job' }));
-    await user.type(screen.getByLabelText('Name'), 'Weekly report');
-    await user.click(screen.getByRole('button', { name: /Choose repository/i }));
-    await user.click(await screen.findByText('acme/api'));
-    await waitFor(() => {
-      expect(screen.getByRole('group', { name: 'Branch' })).toHaveTextContent('main');
-    });
-    await user.type(screen.getByLabelText('Cron'), '0 8 * * 1');
-    await user.type(screen.getByLabelText('Prompt'), 'Summarize the week.');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => {
-      expect(
-        screen.queryByText('Runs your prompt in a fresh workspace on a schedule.'),
-      ).not.toBeInTheDocument();
-    });
-    expect(await screen.findByText('Weekly report')).toBeInTheDocument();
-  });
+  it(
+    'saves a new job from the dialog and refreshes the list',
+    async () => {
+      const user = userEvent.setup();
+      render(<ScheduledView />);
+      await screen.findByText('Nightly tests');
+      await user.click(screen.getByRole('button', { name: 'New job' }));
+      await user.type(screen.getByLabelText('Name'), 'Weekly report');
+      await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+      await user.click(await screen.findByText('acme/api'));
+      await waitFor(() => {
+        expect(screen.getByRole('group', { name: 'Branch' })).toHaveTextContent('main');
+      });
+      await user.type(screen.getByLabelText('Cron'), '0 8 * * 1');
+      await user.type(screen.getByLabelText('Prompt'), 'Summarize the week.');
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => {
+        expect(
+          screen.queryByText('Runs your prompt in a fresh workspace on a schedule.'),
+        ).not.toBeInTheDocument();
+      });
+      expect(await screen.findByText('Weekly report')).toBeInTheDocument();
+    },
+    PALETTE_TEST_TIMEOUT_MS,
+  );
 
   /** Run now, from the row menu, starts a run without throwing. */
   it('starts a run from the row menu', async () => {

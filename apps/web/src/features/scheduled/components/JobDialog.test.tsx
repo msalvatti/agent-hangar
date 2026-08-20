@@ -60,6 +60,17 @@ const job: JobSummary = {
 };
 
 /**
+ * Budget for the tests that drive a command palette or fill the whole form.
+ *
+ * These are the most expensive tests in the suite by an order of magnitude — a palette mounts
+ * hundreds of command items, and filling the form dispatches a full event sequence per keystroke —
+ * so on a loaded machine they run well past the default per-test budget while every neighbour
+ * finishes in tens of milliseconds. Measured at roughly 0.5 s idle and 3 s under heavy CPU
+ * contention; this leaves ample room above that while still failing a test that never settles.
+ */
+const PALETTE_TEST_TIMEOUT_MS = 20_000;
+
+/**
  * Fills every field of the create form. Repository and branch are command palettes, not text
  * inputs: the repository is chosen from the list, and the branch picker then defaults itself to
  * the repository's default branch, which is the interaction a user actually performs.
@@ -77,35 +88,43 @@ async function fillCreateForm(user: ReturnType<typeof userEvent.setup>) {
 
 describe('JobDialog create mode', () => {
   /** Starts blank with Save disabled until the form becomes valid. */
-  it('starts blank with Save disabled', async () => {
-    render(<JobDialog open onOpenChange={vi.fn()} />);
-    expect(screen.getByText('New job')).toBeInTheDocument();
-    expect(screen.getByLabelText('Name')).toHaveValue('');
-    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
+  it(
+    'starts blank with Save disabled',
+    async () => {
+      render(<JobDialog open onOpenChange={vi.fn()} />);
+      expect(screen.getByText('New job')).toBeInTheDocument();
+      expect(screen.getByLabelText('Name')).toHaveValue('');
+      expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
 
-    const user = userEvent.setup();
-    await fillCreateForm(user);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
-    });
-  });
+      const user = userEvent.setup();
+      await fillCreateForm(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+      });
+    },
+    PALETTE_TEST_TIMEOUT_MS,
+  );
 
   /** Submitting a valid form posts the job and closes the dialog. */
-  it('saves and closes on submit', async () => {
-    const user = userEvent.setup();
-    const onOpenChange = vi.fn();
-    const onSaved = vi.fn();
-    render(<JobDialog open onOpenChange={onOpenChange} onSaved={onSaved} />);
-    await fillCreateForm(user);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
-    });
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-    await waitFor(() => {
-      expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ name: 'Weekly report' }));
-    });
-    expect(onOpenChange.mock.calls[0]?.[0]).toBe(false);
-  });
+  it(
+    'saves and closes on submit',
+    async () => {
+      const user = userEvent.setup();
+      const onOpenChange = vi.fn();
+      const onSaved = vi.fn();
+      render(<JobDialog open onOpenChange={onOpenChange} onSaved={onSaved} />);
+      await fillCreateForm(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+      });
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ name: 'Weekly report' }));
+      });
+      expect(onOpenChange.mock.calls[0]?.[0]).toBe(false);
+    },
+    PALETTE_TEST_TIMEOUT_MS,
+  );
 
   /** Esc closes the dialog without saving. */
   it('closes on Escape without saving', async () => {
@@ -126,25 +145,29 @@ describe('JobDialog create mode', () => {
   });
 
   /** A server error renders an ErrorCard and keeps the entered values. */
-  it('shows an ErrorCard on a server error and keeps the values', async () => {
-    server.use(
-      http.post('/api/jobs', () =>
-        HttpResponse.json(
-          { error: { code: 'SERVER_ERROR', message: 'Server exploded' } },
-          { status: 500 },
+  it(
+    'shows an ErrorCard on a server error and keeps the values',
+    async () => {
+      server.use(
+        http.post('/api/jobs', () =>
+          HttpResponse.json(
+            { error: { code: 'SERVER_ERROR', message: 'Server exploded' } },
+            { status: 500 },
+          ),
         ),
-      ),
-    );
-    const user = userEvent.setup();
-    render(<JobDialog open onOpenChange={vi.fn()} />);
-    await fillCreateForm(user);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
-    });
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByText('Server exploded')).toBeInTheDocument();
-    expect(screen.getByLabelText('Name')).toHaveValue('Weekly report');
-  });
+      );
+      const user = userEvent.setup();
+      render(<JobDialog open onOpenChange={vi.fn()} />);
+      await fillCreateForm(user);
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+      });
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      expect(await screen.findByText('Server exploded')).toBeInTheDocument();
+      expect(screen.getByLabelText('Name')).toHaveValue('Weekly report');
+    },
+    PALETTE_TEST_TIMEOUT_MS,
+  );
 
   /** Toggling the Enabled switch flips its state. */
   it('toggles the Enabled switch', async () => {
@@ -157,15 +180,19 @@ describe('JobDialog create mode', () => {
   });
 
   /** Selecting the System group's timezone option closes the combobox. */
-  it('selects the system timezone from the combobox', async () => {
-    const user = userEvent.setup();
-    render(<JobDialog open onOpenChange={vi.fn()} />);
-    await user.click(screen.getByRole('button', { name: 'Timezone' }));
-    await screen.findByPlaceholderText('Search timezones…');
-    const [systemOption] = screen.getAllByRole('option');
-    await user.click(systemOption!);
-    expect(screen.queryByPlaceholderText('Search timezones…')).not.toBeInTheDocument();
-  });
+  it(
+    'selects the system timezone from the combobox',
+    async () => {
+      const user = userEvent.setup();
+      render(<JobDialog open onOpenChange={vi.fn()} />);
+      await user.click(screen.getByRole('button', { name: 'Timezone' }));
+      await screen.findByPlaceholderText('Search timezones…');
+      const [systemOption] = screen.getAllByRole('option');
+      await user.click(systemOption!);
+      expect(screen.queryByPlaceholderText('Search timezones…')).not.toBeInTheDocument();
+    },
+    PALETTE_TEST_TIMEOUT_MS,
+  );
 });
 
 describe('JobDialog edit mode', () => {
