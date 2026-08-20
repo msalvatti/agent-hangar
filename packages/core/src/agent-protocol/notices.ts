@@ -1,12 +1,13 @@
 /**
- * The transcript notices a lifecycle event renders to, and how a persisted one is read back.
+ * The text a lifecycle event is shown as in a transcript, and how a stored one is read back.
  *
  * Layer: contract.
  *
- * A notice is produced twice for the same fact: once by the web reducer while the stream is live,
- * and once by the worker as the `SYSTEM` message that keeps it after a reload. Both call the
- * builders here, so the live line and the reloaded line cannot drift apart, and the transcript
- * recognises a stored notice by the same prefix the builder wrote.
+ * A push notice is written twice for the same fact: once by the web reducer while the stream is
+ * live, and once by the worker as the `SYSTEM` message that keeps the line after a reload. That is
+ * only safe while the two readings are identical, which is the reason this vocabulary lives in one
+ * module instead of at either end: both callers build the line here, so neither can drift away
+ * from the other, and the transcript recognises a stored notice by the same prefix that wrote it.
  */
 
 /** Characters of a commit sha a notice shows. */

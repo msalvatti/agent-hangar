@@ -213,7 +213,7 @@ function twoTurnChat(): ChatDetail {
 }
 
 describe('mapChatDetail', () => {
-  // Messages come back in `seq` order regardless of how the API listed them.
+  /** Messages come back in `seq` order regardless of how the API listed them. */
   it('orders messages by seq and maps each displayed role', () => {
     const mapped = mapChatDetail(
       detailWith({
@@ -228,7 +228,7 @@ describe('mapChatDetail', () => {
     expect(mapped.lastPrompt).toBe('question');
   });
 
-  // Compaction summaries are model-facing and never rendered.
+  /** Compaction summaries are model-facing and never rendered. */
   it('drops TOOL_SUMMARY messages', () => {
     const mapped = mapChatDetail(
       detailWith({
@@ -248,8 +248,10 @@ describe('mapChatDetail', () => {
     expect(mapped.lastPrompt).toBeNull();
   });
 
-  // The defect this file exists for: nothing in the payload links a prompt to its turn, so a
-  // mapper that waits for a user message naming the turn drops every tool call the chat made.
+  /**
+   * The defect this file exists for: nothing in the payload links a prompt to its turn, so a mapper
+   * that waits for a user message naming the turn drops every tool call the chat made.
+   */
   it('keeps the tool calls of a chat whose user messages name no turn', () => {
     const detail = twoTurnChat();
     expect(detail.messages.filter((message) => message.role === 'USER')).toSatisfy(
@@ -263,7 +265,7 @@ describe('mapChatDetail', () => {
     expect(tools.map((item) => item.id)).toEqual(['t1', 't2', 't3']);
   });
 
-  // Each turn's work reads between the prompt that asked for it and the answer that followed.
+  /** Each turn's work reads between the prompt that asked for it and the answer that followed. */
   it('places every row of a two-turn chat in the order it happened', () => {
     const mapped = mapChatDetail(twoTurnChat());
 
@@ -279,8 +281,10 @@ describe('mapChatDetail', () => {
     ]);
   });
 
-  // A push is the one thing a turn does that outlives its workspace, so the worker stores the
-  // notice and the reloaded transcript shows it as the success the live stream showed.
+  /**
+   * A push is the one thing a turn does that outlives its workspace, so the worker stores the
+   * notice and the reloaded transcript shows it as the success the live stream showed.
+   */
   it('rebuilds the push notice with the tone the live stream used', () => {
     const mapped = mapChatDetail(twoTurnChat());
 
@@ -292,7 +296,7 @@ describe('mapChatDetail', () => {
     });
   });
 
-  // Nothing persists the cancellation notice, but the turn's own status is the same fact.
+  /** Nothing persists the cancellation notice, but the turn's own status is the same fact. */
   it('rebuilds the cancellation notice from the stopped turn', () => {
     const mapped = mapChatDetail(twoTurnChat());
 
@@ -304,9 +308,11 @@ describe('mapChatDetail', () => {
     });
   });
 
-  // The stopped call keeps what it was running and how it ended, which is what a reader needs to
-  // know; a command killed by a signal reports no exit code, and the row says so rather than
-  // inventing one.
+  /**
+   * The stopped call keeps what it was running and how it ended, which is what a reader needs to
+   * know; a command killed by a signal reports no exit code, and the row says so rather than
+   * inventing one.
+   */
   it('keeps the arguments and the outcome of a stopped tool call', () => {
     const mapped = mapChatDetail(twoTurnChat());
 
@@ -320,8 +326,10 @@ describe('mapChatDetail', () => {
     });
   });
 
-  // A turn the API cancelled to give a contested claim back was never on screen: it has an error
-  // where a real cancellation has none, and it earns no notice.
+  /**
+   * A turn the API cancelled to give a contested claim back was never on screen: it has an error
+   * where a real cancellation has none, and it earns no notice.
+   */
   it('does not announce a turn that was cancelled to release a claim', () => {
     const mapped = mapChatDetail(
       detailWith({
@@ -333,8 +341,10 @@ describe('mapChatDetail', () => {
     expect(mapped.items.at(-1)).toMatchObject({ kind: 'error' });
   });
 
-  // What is on screen is measured in the unit the runtime capped it in, so a head full of
-  // multi-byte characters is not mistaken for a result that was cut.
+  /**
+   * What is on screen is measured in the unit the runtime capped it in, so a head full of
+   * multi-byte characters is not mistaken for a result that was cut.
+   */
   it('measures the shown output in UTF-8 bytes', () => {
     const mapped = mapChatDetail(
       detailWith({
@@ -352,7 +362,7 @@ describe('mapChatDetail', () => {
     expect(mapped.items[1]).toMatchObject({ kind: 'tool', shownBytes: 9, totalBytes: 9 });
   });
 
-  // Tool calls appear under the prompt of the turn that produced them, in `seq` order.
+  /** Tool calls appear under the prompt of the turn that produced them, in `seq` order. */
   it('interleaves tool calls after their turn prompt', () => {
     const mapped = mapChatDetail(
       detailWith({
@@ -389,7 +399,7 @@ describe('mapChatDetail', () => {
     expect(mapped.items.map((item) => item.id)).toEqual(['m1', 't1', 't2', 'm2']);
   });
 
-  // Every persisted tool status has a transcript counterpart.
+  /** Every persisted tool status has a transcript counterpart. */
   it.each([
     ['RUNNING', 'running'],
     ['SUCCEEDED', 'succeeded'],
@@ -405,7 +415,7 @@ describe('mapChatDetail', () => {
     expect(mapped.items[1]).toMatchObject({ kind: 'tool', status: expected });
   });
 
-  // A tool call with no captured output still renders, with an empty body.
+  /** A tool call with no captured output still renders, with an empty body. */
   it('handles a tool call without output', () => {
     const mapped = mapChatDetail(
       detailWith({
@@ -416,7 +426,7 @@ describe('mapChatDetail', () => {
     expect(mapped.items[1]).toMatchObject({ kind: 'tool', stdout: '', shownBytes: 0 });
   });
 
-  // A tool name the schema does not know still renders, as a shell call.
+  /** A tool name the schema does not know still renders, as a shell call. */
   it('falls back for an unknown tool name', () => {
     const mapped = mapChatDetail(
       detailWith({
@@ -427,7 +437,7 @@ describe('mapChatDetail', () => {
     expect(mapped.items[1]).toMatchObject({ kind: 'tool', name: 'run_shell' });
   });
 
-  // Every persisted turn status has a phase, and only live ones keep the stream open.
+  /** Every persisted turn status has a phase, and only live ones keep the stream open. */
   it.each([
     ['QUEUED', 'queued', 'turn-1'],
     ['PREPARING', 'preparing', 'turn-1'],
@@ -441,7 +451,7 @@ describe('mapChatDetail', () => {
     expect(mapped.activeTurnId).toBe(activeTurnId);
   });
 
-  // A chat with no turn yet is idle and follows nothing.
+  /** A chat with no turn yet is idle and follows nothing. */
   it('is idle without any turn', () => {
     const mapped = mapChatDetail(detailWith({}));
     expect(mapped.phase).toBe('idle');
@@ -449,13 +459,13 @@ describe('mapChatDetail', () => {
     expect(mapped.startedAt).toBeNull();
   });
 
-  // A failed turn contributes an error row so the failure is visible in the transcript itself.
+  /** A failed turn contributes an error row so the failure is visible in the transcript itself. */
   it('appends an error item for a failed turn', () => {
     const mapped = mapChatDetail(detailWith({ turns: [turn('FAILED', { error: 'boom' })] }));
     expect(mapped.items.at(-1)).toMatchObject({ kind: 'error', message: 'boom' });
   });
 
-  // The start time drives the elapsed timer in the header pill.
+  /** The start time drives the elapsed timer in the header pill. */
   it('parses the turn start time', () => {
     const mapped = mapChatDetail(detailWith({ turns: [turn('RUNNING', { startedAt: AT })] }));
     expect(mapped.startedAt).toBe(Date.parse(AT));
