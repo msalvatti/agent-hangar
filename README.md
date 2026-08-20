@@ -248,21 +248,21 @@ Everything is environment-driven and validated with Zod at boot. `.env.example` 
 
 ## 📜 Scripts
 
-Every script is a thin wrapper over `infra/scripts/*.sh`, so it resolves the instance the same way whether you run it by hand or Conductor runs it for you. Scripts marked 🐳 need a reachable Docker daemon.
+Every script is a thin wrapper over `infra/scripts/*.sh`, so it resolves the instance the same way whether you run it by hand or Conductor runs it for you. Scripts marked 🐳 talk to the Docker daemon; the database ones need this instance's compose stack up, which needs Docker too. Only the quality gates run without it.
 
 | Script                                                          | Does                                                                              |
 | --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
 | `pnpm setup` 🐳                                                 | First-run bootstrap (idempotent) — see [Quick start](#-quick-start)               |
-| `pnpm dev`                                                      | Web (`next dev -H 127.0.0.1`) + worker (`tsx watch`), concurrently                |
+| `pnpm dev` 🐳                                                   | Web (`next dev -H 127.0.0.1`) + worker (`tsx watch`), concurrently                |
 | `pnpm build` · `pnpm start`                                     | Build every workspace / run the built output of both apps (`build` first)         |
 | `pnpm run doctor`                                               | Diagnose every dependency and print the fix for each failure (`--json` available) |
 | `pnpm infra:up` · `infra:down` · `infra:reset` 🐳               | Compose lifecycle (`reset` drops volumes)                                         |
 | `pnpm infra:image` 🐳                                           | Stage the agent-runtime bundle and rebuild the workspace image                    |
 | `pnpm db:generate`                                              | Prisma client — needed once in a fresh worktree before typecheck or tests         |
-| `pnpm db:migrate` · `db:studio` · `db:prune`                    | Apply migrations · open Prisma Studio · trim old rows                             |
+| `pnpm db:migrate` · `db:studio` · `db:prune` 🐳                 | Apply migrations · open Prisma Studio · trim old rows                             |
 | `pnpm ws:list` · `ws:reap` 🐳                                   | List / destroy the workspace containers of this instance                          |
 | `pnpm archive` 🐳                                               | Tear this instance's compose stack and workspaces down (Conductor's archive hook) |
-| `pnpm run rotate-key`                                           | Re-encrypt every stored secret under a new master key (`--yes` to commit to it)   |
+| `pnpm run rotate-key` 🐳                                        | Re-encrypt every stored secret under a new master key (`--yes` to commit to it)   |
 | `pnpm lint` · `lint:fix` · `format` · `format:check`            | ESLint and Prettier                                                               |
 | `pnpm typecheck`                                                | `tsc -b` over every project reference                                             |
 | `pnpm test` · `test:integration` · `test:e2e` · `test:mutation` | See [Testing](#-testing)                                                          |
