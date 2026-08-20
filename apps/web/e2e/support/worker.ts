@@ -17,7 +17,7 @@ import { closeSync, openSync } from 'node:fs';
 
 import { repoRoot, serverEnv } from './env';
 import type { E2eEnv } from './env';
-import { exec } from './process';
+import { CommandError, exec } from './process';
 
 /** Arguments the worker is spawned with; also part of how a recorded process is identified. */
 const WORKER_ARGS = ['--filter', 'worker', 'dev'] as const;
@@ -104,6 +104,10 @@ export interface LeaderFacts {
  * under the recorded id is the tree this run left behind. Reporting it stopped is what would put a
  * second worker on the queues the first is still consuming.
  *
+ * `undefined` here always means `ps` ran and found nothing, never that it could not be asked —
+ * {@link isNoSuchProcessError} is what keeps the second from arriving as the first, because this
+ * answers `groupAlive` for an absent leader and would otherwise do so having established nothing.
+ *
  * @param handle - The worker this run started.
  * @param leader - What `ps` reports for its id, or `undefined` when nothing holds that id.
  * @param groupAlive - Whether any process of the recorded group still exists.
@@ -120,22 +124,41 @@ export function ownsRecordedGroup(
 }
 
 /**
+ * Whether a failed inspection means the process is absent, rather than that the inspection failed.
+ *
+ * `ps -p` exits non-zero when nothing holds the id, which is an answer. A `ps` that could not be
+ * started — missing, not executable, or killed before it reported — produces no answer at all, and
+ * the two arrive here as the same rejection. Only the first may be read as "absent": the caller
+ * signals a whole process group on the strength of that word, and treating silence as absence is
+ * how a signal reaches a group nobody identified.
+ *
+ * The arguments are fixed by the only caller, so a non-zero exit cannot mean "bad usage" here.
+ *
+ * @param error - Whatever the inspection rejected with.
+ * @returns `true` only when `ps` ran and reported nothing for the id.
+ */
+export function isNoSuchProcessError(error: unknown): boolean {
+  return error instanceof CommandError && error.exitCode !== undefined;
+}
+
+/**
  * Reads one field of a process from `ps`.
  *
  * @param pid - Process id to inspect.
  * @param field - `ps` output field, such as `command=` or `lstart=`.
  * @returns The field's value, or `undefined` when no process has that id.
- * @throws CommandError when `ps` cannot be run at all.
+ * @throws CommandError when `ps` could not be run, so nothing is known about the id.
  */
 async function readProcessField(pid: number, field: string): Promise<string | undefined> {
   try {
     const { stdout } = await exec('ps', ['-p', String(pid), '-o', field]);
     const value = stdout.trim();
     return value.length === 0 ? undefined : value;
-  } catch {
-    // `ps` exits non-zero when nothing has that id. It also would if `ps` itself were missing,
-    // which is why the caller never treats "absent" as a reason to signal anything.
-    return undefined;
+  } catch (error) {
+    if (isNoSuchProcessError(error)) {
+      return undefined;
+    }
+    throw error;
   }
 }
 

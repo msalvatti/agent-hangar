@@ -22,16 +22,34 @@ export interface CommandResult {
   stderr: string;
 }
 
-/** Failure of a command, carrying whatever the process managed to write. */
+/**
+ * Failure of a command, carrying whatever the process managed to write.
+ *
+ * {@link CommandError.exitCode} separates the two failures a caller may need to tell apart: a
+ * command that ran and rejected its input, and one that never started. Reporting a verdict for the
+ * second is how a caller ends up acting on the absence of an answer it never received.
+ */
 export class CommandError extends Error {
   readonly stdout: string;
   readonly stderr: string;
+  /**
+   * Status the command exited with, or `undefined` when it never ran — a missing executable, a
+   * denied one, or one killed by a signal before it could report.
+   */
+  readonly exitCode: number | undefined;
 
-  constructor(command: string, args: readonly string[], stdout: string, stderr: string) {
+  constructor(
+    command: string,
+    args: readonly string[],
+    stdout: string,
+    stderr: string,
+    exitCode: number | undefined,
+  ) {
     super(`${command} ${args.join(' ')} failed: ${stderr.trim() || stdout.trim()}`);
     this.name = 'CommandError';
     this.stdout = stdout;
     this.stderr = stderr;
+    this.exitCode = exitCode;
   }
 }
 
@@ -42,7 +60,8 @@ export class CommandError extends Error {
  * @param args - Arguments, passed without a shell.
  * @param options - Working directory and extra environment.
  * @returns Its output.
- * @throws CommandError when the command exits non-zero.
+ * @throws CommandError when the command exits non-zero, and when it cannot be started at all —
+ *   the two are told apart by its `exitCode`.
  */
 export async function exec(
   command: string,
@@ -57,8 +76,16 @@ export async function exec(
     });
     return { stdout: result.stdout, stderr: result.stderr };
   } catch (error) {
-    const failure = error as { stdout?: string; stderr?: string };
-    throw new CommandError(command, args, failure.stdout ?? '', failure.stderr ?? String(error));
+    // Node reports the exit status in `code` as a number, and a failure to start in the same field
+    // as an `errno` string such as `ENOENT`. Only the number means the command ran.
+    const failure = error as { stdout?: string; stderr?: string; code?: number | string };
+    throw new CommandError(
+      command,
+      args,
+      failure.stdout ?? '',
+      failure.stderr ?? String(error),
+      typeof failure.code === 'number' ? failure.code : undefined,
+    );
   }
 }
 

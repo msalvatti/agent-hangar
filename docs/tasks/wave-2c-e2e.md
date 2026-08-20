@@ -831,3 +831,34 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   master key and the worker log all live at a fixed `e2e/.tmp`, not under the instance — harmless
   across checkouts, which have their own, but two runs of one checkout on different port bases
   would still clobber each other.
+- 2C.19 ✅ 2026-08-20 — rebased onto both halves of the origin policy and took the first real
+  measurement that is actually about this tree. The previous one was not: the containers had run a
+  runtime from the machine-global `agent-hangar/workspace:dev` tag, rebuilt by another lane a
+  minute into the run, so it described a worker and a runtime that were never released together.
+  This run built the image from this checkout to a private tag and pointed `WORKSPACE_IMAGE` at it,
+  with the shipped `askpass.sh` checked against the tree by digest before the run started. Nothing
+  touched `:dev`.
+  · **A turn completes.** `SUCCEEDED`, three steps, 30 input and 15 output tokens, 451 ms from
+  queued to finished, workspace left `READY`, both scripted tool calls persisted and the assistant
+  message stored as the script writes it. The clone, the container, the tool loop and the
+  persistence all work end to end; the URL policy wall is gone rather than moved.
+  · The spec still fails, and now for its own reasons. Three assertions describe a turn slow enough
+  to be watched — a non-terminal status pill, a preparation notice, and tool rows in the transcript
+  — and a scripted provider answering from a local git server settles the turn in under half a
+  second, before the browser can observe anything. `mapChatDetail` does render persisted tool
+  calls, so the transcript is not missing the capability; the page simply has no reason to fetch
+  again once the turn it was watching has already ended. Whether the fix belongs in the specs, in
+  the script's timing, or in a refetch on a terminal event is a decision above this lane, and the
+  reviewer thread about the status progression should be read with this measurement rather than
+  without it.
+  · `list_dir` is recorded `FAILED` with no exit code and no output, in 1 ms, while the same call's
+  summary reads `listed .` and the turn as a whole succeeds. The recorder persists the status the
+  runtime sends verbatim, so the verdict comes from inside the container. No unit test covers it and
+  the spec compares only tool names, so nothing but a real run shows it.
+  · The inspection that precedes a signal now distinguishes an answer from a silence.
+  `readProcessField` treated every rejection as "no such process", including a `ps` that never ran,
+  and `ownsRecordedGroup` signals a live group for an absent leader — so a failure to inspect could
+  authorise a signal. `CommandError` carries the exit status, `undefined` when the command never
+  started, and the reader propagates that case instead of reporting absence. Both comments that
+  claimed the old protection are gone; the `@throws` on `stopWorker` was already written for this
+  behaviour and is now true.

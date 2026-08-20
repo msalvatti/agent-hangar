@@ -8,9 +8,16 @@
  * group, so an identification that is too generous reaches a tree belonging to somebody else. On a
  * machine running several checkouts at once, every one of their workers shares this command line.
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
-import { isSameWorker, isWorkerCommandLine, ownsRecordedGroup } from './worker';
+import { CommandError } from './process';
+import {
+  isNoSuchProcessError,
+  isSameWorker,
+  isWorkerCommandLine,
+  ownsRecordedGroup,
+  stopWorker,
+} from './worker';
 import type { WorkerHandle } from './worker';
 
 const HANDLE: WorkerHandle = { pid: 4321, startedAt: 'Thu Aug 20 06:39:22 2026' };
@@ -98,5 +105,53 @@ describe('ownsRecordedGroup', () => {
   /** Leader gone and group empty: the run really did end, and there is nothing to signal. */
   it('refuses a group that is gone along with its leader', () => {
     expect(ownsRecordedGroup(HANDLE, undefined, false)).toBe(false);
+  });
+});
+
+describe('isNoSuchProcessError', () => {
+  /**
+   * A `ps` that ran and exited non-zero has answered: nothing holds the id. That answer is what
+   * lets the caller treat the leader as gone.
+   */
+  it('reads a non-zero exit as the process being absent', () => {
+    const ran = new CommandError('ps', ['-p', '4321'], '', '', 1);
+    expect(isNoSuchProcessError(ran)).toBe(true);
+  });
+
+  /**
+   * A `ps` that never started has answered nothing, and the caller signals a whole process group on
+   * the strength of this word. Silence must not arrive as "absent".
+   */
+  it('refuses to read a failure to start as the process being absent', () => {
+    const neverRan = new CommandError('ps', ['-p', '4321'], '', 'spawn ps ENOENT', undefined);
+    expect(isNoSuchProcessError(neverRan)).toBe(false);
+  });
+
+  /** Anything that is not a command failure says nothing about a process either. */
+  it('refuses an error that did not come from running a command', () => {
+    expect(isNoSuchProcessError(new Error('boom'))).toBe(false);
+    expect(isNoSuchProcessError(undefined)).toBe(false);
+  });
+});
+
+describe('stopWorker', () => {
+  const realPath = process.env.PATH;
+
+  afterEach(() => {
+    process.env.PATH = realPath;
+  });
+
+  /**
+   * With `ps` unreachable the harness knows nothing about the recorded id, and the recorded id may
+   * by then belong to an unrelated process group. Failing here is what keeps a signal from being
+   * sent on the strength of an inspection that never happened.
+   */
+  it('fails rather than deciding anything when the inspection cannot be run', async () => {
+    // An empty PATH is the cheapest true "ps cannot be started": the spawn fails with ENOENT,
+    // exactly as a missing or non-executable `ps` would.
+    process.env.PATH = '';
+    await expect(
+      stopWorker({ pid: 999_999, startedAt: 'Thu Aug 20 06:39:22 2026' }),
+    ).rejects.toThrow(/ps/);
   });
 });
