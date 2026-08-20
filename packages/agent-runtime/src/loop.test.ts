@@ -9,7 +9,7 @@
  * Mocks: the shared `FakeAgentModelProvider` for the model; real tools against a temporary
  * directory; a real bare repository for the push case.
  */
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import type {
@@ -204,6 +204,7 @@ describe('runTurnLoop with tool calls', () => {
     expect(eventTypes()).toStrictEqual([
       'step.started',
       'tool.call',
+      'tool.output.delta',
       'tool.result',
       'step.started',
       'assistant.delta',
@@ -243,8 +244,10 @@ describe('runTurnLoop with tool calls', () => {
     expect(eventTypes()).toStrictEqual([
       'step.started',
       'tool.call',
+      'tool.output.delta',
       'tool.result',
       'tool.call',
+      'tool.output.delta',
       'tool.result',
       'step.started',
       'assistant.delta',
@@ -280,6 +283,76 @@ describe('runTurnLoop with tool calls', () => {
       'tool.output.delta',
       'tool.result',
     ]);
+  });
+
+  it('reports the output of a tool that never streams, once, before its result', async () => {
+    // Only `run_shell` streams. Without an event of its own, a `list_dir` would reach the model
+    // and nothing else: `tool.result` carries the byte count and the status but not the text, so
+    // the persisted row and the transcript would show a size beside no output at all.
+    await writeFile(path.join(root, 'a.txt'), 'x', 'utf8');
+    const provider = scripted({
+      default: toolThenAnswer(
+        {
+          callId: 'c1',
+          name: 'list_dir',
+          arguments: JSON.stringify({ path: '.', depth: 1 }),
+        },
+        'Listed.',
+      ),
+    });
+    await run(request('list it'), provider);
+    expect(eventTypes().slice(0, 4)).toStrictEqual([
+      'step.started',
+      'tool.call',
+      'tool.output.delta',
+      'tool.result',
+    ]);
+    const deltas = events.filter((event) => event.type === 'tool.output.delta');
+    expect(deltas).toStrictEqual([
+      { type: 'tool.output.delta', callId: 'c1', stream: 'stdout', text: 'a.txt' },
+    ]);
+  });
+
+  it('reports the message of a failed call that never streams, on stderr', async () => {
+    // The reason a call did not work is the one thing its row has to show; it arrives on the same
+    // road as any other output, and stderr is what the transcript renders as a failure.
+    const provider = scripted({
+      default: toolThenAnswer(
+        {
+          callId: 'c1',
+          name: 'read_file',
+          arguments: JSON.stringify({ path: 'missing.md', startLine: null, endLine: null }),
+        },
+        'It is not there.',
+      ),
+    });
+    await run(request('read it'), provider);
+    const deltas = events.filter((event) => event.type === 'tool.output.delta');
+    expect(deltas).toStrictEqual([
+      {
+        type: 'tool.output.delta',
+        callId: 'c1',
+        stream: 'stderr',
+        text: 'file not found: missing.md',
+      },
+    ]);
+  });
+
+  it('emits no output event for a call that produced no output', async () => {
+    // A command that says nothing must not be given an empty line to say it with: the transcript
+    // reads "No output" from the absence of the event, not from an event carrying nothing.
+    const provider = scripted({
+      default: toolThenAnswer(
+        {
+          callId: 'c1',
+          name: 'run_shell',
+          arguments: JSON.stringify({ command: 'true', cwd: null, timeoutMs: null }),
+        },
+        'Nothing to say.',
+      ),
+    });
+    await run(request('run quiet'), provider);
+    expect(eventTypes().slice(0, 3)).toStrictEqual(['step.started', 'tool.call', 'tool.result']);
   });
 
   it('survives a stream event that could not be written', async () => {

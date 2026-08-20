@@ -11,6 +11,7 @@ import {
   okResponse,
   postMessageRequest,
   renameChatRequest,
+  restorationNotice,
   routes,
 } from '@agent-hangar/core';
 import type { ChatSummary, MessageView, TurnView } from '@agent-hangar/core';
@@ -18,10 +19,6 @@ import { http, HttpResponse } from 'msw';
 
 import type { StoredChat } from './store';
 import { nextId, nowIso, store } from './store';
-
-/** Text of the SYSTEM message appended when an archived chat is restored (spec 04 (b)). */
-export const RESTORE_NOTICE =
-  'This chat was restored. A new workspace will be created for the next message.';
 
 function validationError(message: string) {
   return HttpResponse.json(apiError.parse({ error: { code: 'VALIDATION', message } }), {
@@ -207,7 +204,13 @@ const archiveChat = http.post(routes.chatArchive, ({ params }) => {
   return HttpResponse.json(entry.chat);
 });
 
-/** `POST /api/chats/:id/restore` — reactivates the chat and records the restoration notice. */
+/**
+ * `POST /api/chats/:id/restore` — reactivates the chat and records the restoration notice.
+ *
+ * The notice is built from the shared helper, not written out here. Its wording is normative
+ * (spec 02 §4, spec 04 (b)) and the end-to-end suite reads it in mock mode, so a sentence of this
+ * double's own would let that assertion pass against text the product never writes.
+ */
 const restoreChat = http.post(routes.chatRestore, ({ params }) => {
   const id = String(params.id);
   const entry = findChat(id);
@@ -221,7 +224,7 @@ const restoreChat = http.post(routes.chatRestore, ({ params }) => {
     turnId: null,
     seq: entry.messages.length + 1,
     role: 'SYSTEM',
-    content: RESTORE_NOTICE,
+    content: restorationNotice({ at: new Date(now), workBranch: entry.chat.workBranch }),
     createdAt: now,
   });
   return HttpResponse.json(entry.chat);
