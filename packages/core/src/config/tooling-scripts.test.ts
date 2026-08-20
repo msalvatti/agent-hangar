@@ -17,8 +17,10 @@
  *     change under review were never executed. Every group must run, and the exit status must
  *     still be non-zero when any of them failed.
  *
- * The last test closes the same gap one level up, in the manifests: a script that runs the
- * compiler and never rewrites is the omission both wrappers exist to prevent.
+ * The manifest tests close the same gaps one level up, where they are actually introduced: a
+ * script that runs the compiler and never rewrites is the omission both wrappers exist to prevent,
+ * and a script that fans the test suites across workspaces without `--sequential` starts them all
+ * against one Postgres and one Redis.
  * Mocks: `pnpm` is a PATH shim that logs its invocation and exits with a status chosen per
  * subcommand.
  */
@@ -58,6 +60,34 @@ const WRAPPER_BASENAME = 'tsc-build.sh';
  * because a name assembled at run time is a name no reader can check against the file on disk.
  */
 const WRAPPER_REFERENCE_PATTERN = /\S*tsc-build\.sh/;
+
+/** Flag that makes a recursive `pnpm run` execute one workspace at a time instead of all at once. */
+const SEQUENTIAL_FLAG = '--sequential';
+
+/**
+ * Matches a script that runs its command in every workspace, in either spelling pnpm accepts.
+ *
+ * Anchored on word boundaries so it reads the flag rather than a substring of a path or of a
+ * longer option: `--recursive` and `-r` are the fan-out, `--report-dir` and `scripts/run-tests.sh`
+ * are not.
+ */
+const RECURSIVE_RUN_PATTERN = /(?:^|\s)(?:--recursive|-r)(?:\s|$)/u;
+
+/** Name of the script that runs a package's default suite. */
+const TEST_SCRIPT = 'test';
+
+/** Prefix of every script that runs one of a package's other suites (`test:integration`, …). */
+const TEST_SCRIPT_PREFIX = 'test:';
+
+/**
+ * Whether a script name is one that runs a test suite.
+ *
+ * @param name - Key of the script in its manifest.
+ * @returns `true` for `test` and for every `test:<suite>`.
+ */
+function isTestScript(name: string): boolean {
+  return name === TEST_SCRIPT || name.startsWith(TEST_SCRIPT_PREFIX);
+}
 
 /**
  * How long a spawned script may run before it is killed.
@@ -446,5 +476,48 @@ describe('the manifests that reach the compiler', () => {
       ([, glob]) => glob,
     );
     expect(declaredGlobs).toEqual(WORKSPACE_ROOTS.map((root) => `${root}/*`));
+  });
+});
+
+describe('the manifests that fan a suite out across workspaces', () => {
+  /**
+   * The invariant a shared Redis makes non-negotiable. Recursive `pnpm run` is concurrent by
+   * default, so a script that fans the integration suites out across workspaces starts them at the
+   * same instant — and they do not have separate infrastructure to run against. One of those suites
+   * empties Redis on purpose (`FLUSHDB`, which cannot be narrowed to a key prefix once it has run),
+   * so a suite in another workspace loses the jobs and streams it is mid-assertion on and reports a
+   * state that never existed. Measured: the web app's retry suite failed with its BullMQ job
+   * `undefined` rather than `completed`, because the worker's harness had flushed the database
+   * underneath it.
+   *
+   * `--sequential` is what makes the fan-out one suite at a time, which is also the shape the
+   * memory budget is written for. It is asserted on the manifest rather than on a run, because the
+   * flag is the whole mechanism: a fan-out without it is concurrent, whatever the suites do.
+   *
+   * Those scripts also state `--no-include-workspace-root`, which this check does not demand and
+   * which changes nothing today, because pnpm excludes the root by default. It is written out for
+   * the same reason `scripts/run-tests.sh` writes it out: each of them fans out a script that has
+   * the name it is itself declared under, so a workspace configuration that ever opted the root
+   * in would have them call themselves forever.
+   */
+  it('runs every workspace test suite one at a time', () => {
+    const fanOuts = listManifests().flatMap((manifest) =>
+      Object.entries(readScripts(manifest))
+        .filter(([name, command]) => isTestScript(name) && RECURSIVE_RUN_PATTERN.test(command))
+        .map(([name, command]) => ({ manifest, name, command })),
+    );
+    expect(
+      fanOuts.length,
+      'no manifest fans a test suite across workspaces any more; this check would pass vacuously',
+    ).toBeGreaterThan(0);
+
+    const concurrent = fanOuts
+      .filter(({ command }) => !command.includes(SEQUENTIAL_FLAG))
+      .map(({ manifest, name }) => `${manifest} → ${name}`);
+    expect(
+      concurrent,
+      `these scripts start every workspace suite at once, against one Postgres and one Redis; ` +
+        `add ${SEQUENTIAL_FLAG}`,
+    ).toEqual([]);
   });
 });
