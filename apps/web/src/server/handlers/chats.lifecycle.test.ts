@@ -278,6 +278,72 @@ describe('postMessage', () => {
   });
 
   /**
+   * The ordering key is bumped inside the block that owns the claim, before the turn is dispatched.
+   * The rule this protects is that a write which fails still releases the claim: placed after the
+   * dispatch it could not, and placed before it but outside the block it would leave a `QUEUED`
+   * turn holding the chat's work slot with no worker coming for it.
+   */
+  it('gives its claim back when the ordering key cannot be bumped', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    vi.spyOn(harness.doubles.repos.chats, 'touch').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+
+    const response = await postMessage(
+      harness.container,
+      writeRequest(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'hello' }),
+      { id: chatId },
+    );
+
+    expect(response.status).toBe(500);
+    const live = (await harness.doubles.repos.turns.listByChat(chatId)).filter((turn) =>
+      LIVE_STATUSES.includes(turn.status),
+    );
+    expect(live).toEqual([]);
+    expect(await harness.doubles.repos.messages.listByChat(chatId)).toHaveLength(1);
+    expect(harness.doubles.queues.chatTurns.added).toHaveLength(1);
+  });
+
+  /**
+   * A dispatch that fails marks its turn `FAILED`, which is what frees the chat's work slot. The
+   * rule this protects is that a failed send leaves the chat retryable: were the turn left live,
+   * the caller trying again would be told its own failed message was a turn already in progress,
+   * with nothing running to wait for.
+   */
+  it('leaves the chat ready for a retry when the turn cannot be dispatched', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    harness.doubles.queues.chatTurns.addFailure = new Error('redis unreachable');
+
+    const failed = await postMessage(
+      harness.container,
+      writeRequest(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'hello' }),
+      { id: chatId },
+    );
+    expect(failed.status).toBe(500);
+
+    harness.doubles.queues.chatTurns.addFailure = null;
+    const retried = await postMessage(
+      harness.container,
+      writeRequest(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'hello' }),
+      { id: chatId },
+    );
+
+    expect(retried.status).toBe(201);
+  });
+
+  /**
    * Both the append and the release failing is the case nothing here can repair: the request still
    * fails with the append's own error and the log line naming the chat is the only record that a
    * turn is left holding the slot.

@@ -29,11 +29,18 @@
  * the ordinary outcome for two genuinely simultaneous requests, not a rare corner — *both* requests
  * give their claim back and neither message is accepted. A double-click or a client retry whose
  * latencies match is therefore answered twice with 409, and the caller has to send the message
- * again; nothing here breaks the tie for them. Two further limits: if giving a claim back fails,
- * the chat keeps a `QUEUED` turn no worker will run until it is cancelled through
- * `POST /api/turns/:id/cancel`; and the ordering bump that closes an accepted message is not
- * guarded, so a failure of that last write answers 500 for a turn the worker already has — a
- * caller that retries on it meets its own turn as `TURN_IN_PROGRESS`.
+ * again; nothing here breaks the tie for them. One further limit: if giving a claim back fails, the
+ * chat keeps a `QUEUED` turn no worker will run until it is cancelled through
+ * `POST /api/turns/:id/cancel`.
+ *
+ * Nothing fallible runs after the turn is handed to the worker. Every write a message needs — the
+ * claim, the sidebar's ordering key, the message row — happens before the dispatch, so a failure
+ * is always a failure of work that has not started: the error is honest and the retry is clean. A
+ * bookkeeping write placed after the dispatch would answer 500 for a turn the worker already holds
+ * and send the caller into a retry that meets its own turn as `TURN_IN_PROGRESS`, which is why
+ * none is. The bump costs one small wrong in exchange: a send that fails after it leaves the chat
+ * sorting as recently touched with nothing new in it, until the next write to that chat corrects
+ * the key. A misordered sidebar is a smaller wrong than an error for work that is running.
  *
  * Archiving and restoring each write the chat's status before a second operation that can fail —
  * enqueuing the teardown job, appending the restoration notice — and each is a status the guards
@@ -336,6 +343,11 @@ export function renameChat(
  * The message is appended only once both checks have held, so a refused request leaves no half of
  * the exchange behind.
  *
+ * Both durable writes sit inside that guarded block, and the ordering key is bumped before the
+ * message rather than after the dispatch. The order is what makes each failure cheap: a bump that
+ * fails has written nothing but a sort key, an append that fails has written nothing at all, and
+ * either way the claim goes back and no turn was ever queued.
+ *
  * @param container - The server container.
  * @param request - The incoming request.
  * @param params - Resolved path parameters.
@@ -359,6 +371,7 @@ export function postMessage(
     try {
       await requireSoleClaim(container, chat.id, turn.id);
       await requireStillActive(container, chat.id);
+      await container.repos.chats.touch(chat.id);
       await container.repos.messages.append(chat.id, 'USER', body.prompt);
     } catch (error) {
       await compensate(
@@ -370,7 +383,6 @@ export function postMessage(
       throw error;
     }
     await dispatchTurn(container, turn);
-    await container.repos.chats.touch(chat.id);
     return jsonResponse(postMessageResponse, { turnId: turn.id }, { status: 201 });
   });
 }
