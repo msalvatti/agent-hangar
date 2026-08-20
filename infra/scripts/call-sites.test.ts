@@ -58,7 +58,7 @@ describe('instance resolution call sites', () => {
    * The root one-liners bring compose up and run migrations against an instance's ports and
    * database, so they answer to the same rule as the scripts.
    */
-  it.each(['infra:up', 'infra:down', 'infra:reset', 'db:migrate', 'db:studio'])(
+  it.each(['infra:up', 'infra:down', 'infra:reset', 'db:migrate', 'db:studio', 'smoke:openai'])(
     '%s resolves the instance through --print-checked',
     (name) => {
       const command = rootScripts()[name];
