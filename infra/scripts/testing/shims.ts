@@ -331,6 +331,9 @@ export function writeGnuStatShim(dir: string, mode = '600'): string {
 /** The script that writes an instance env file; used so tests never hand-roll that format. */
 const envScriptPath = fileURLToPath(new URL('../env.sh', import.meta.url));
 
+/** Port base recorded when a caller states none — the same default `env.sh` derives. */
+const DEFAULT_PORT_BASE = 3000;
+
 /** Options accepted by {@link writeInstanceEnvFile}. */
 export interface WriteInstanceEnvFileOptions {
   /** Instance name to record, before slugification. */
@@ -341,7 +344,7 @@ export interface WriteInstanceEnvFileOptions {
    * developer's real home would point a script at the real master key.
    */
   home: string;
-  /** Port base to record. Default `3000`. */
+  /** Port base to record; {@link DEFAULT_PORT_BASE} when omitted. */
   portBase?: number;
 }
 
@@ -365,7 +368,7 @@ export function writeInstanceEnvFile(envFile: string, options: WriteInstanceEnvF
       HOME: options.home,
       AH_ENV_FILE: envFile,
       AH_INSTANCE: options.instance,
-      AH_PORT_BASE: String(options.portBase ?? 3000),
+      AH_PORT_BASE: String(options.portBase ?? DEFAULT_PORT_BASE),
     },
     encoding: 'utf8',
   });
