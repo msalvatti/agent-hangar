@@ -10,9 +10,12 @@
  * after the copy but before the rename, and after the rename — reaching the same end state from
  * all five, without ever leaving the key path empty.
  * Mocks: `openssl`, and (for the swap-order assertions) `cp`/`mv`, via PATH shims; a bespoke
- * `AH_DOCTOR_HELPER_CMD` shim standing in for the secrets-status/rotate-key helpers; a real
+ * `AH_DOCTOR_HELPER_CMD` shim standing in for the secrets-status/rotate-key helpers, including one
+ * that blocks mid-rotation so a second run meets the first inside its critical section; a real
  * `node:net` listener standing in for a running instance.
  */
+import { spawn, spawnSync } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
 import {
   chmodSync,
   existsSync,
@@ -113,6 +116,9 @@ async function sandbox(): Promise<Sandbox> {
 }
 
 afterEach(() => {
+  while (children.length > 0) {
+    children.pop()?.kill('SIGKILL');
+  }
   while (servers.length > 0) {
     servers.pop()?.close();
   }
@@ -207,6 +213,98 @@ function run(
       ...env,
     },
   });
+}
+
+/** Child processes started by a test, torn down in `afterEach`. */
+const children: ChildProcess[] = [];
+
+/**
+ * Starts the script without waiting for it, so a second run can meet it mid-flight.
+ *
+ * @param box - The sandbox.
+ * @param args - Command-line arguments.
+ * @param env - Extra environment variables.
+ * @param shimDir - Shim directory to use.
+ * @returns The child, and a promise resolving to its exit code.
+ */
+function runDetached(
+  box: Sandbox,
+  args: string[],
+  env: Record<string, string>,
+  shimDir: string,
+): { child: ChildProcess; exitCode: Promise<number | null> } {
+  const child = spawn('bash', [scriptPath, ...args], {
+    env: {
+      HOME: box.dir,
+      AH_PORT_BASE: String(box.portBase),
+      MASTER_KEY_PATH: box.keyPath,
+      AH_SHIM_LOG: box.log,
+      ...env,
+      PATH: `${shimDir}:/usr/bin:/bin`,
+    },
+  });
+  children.push(child);
+  const exitCode = new Promise<number | null>((resolve) => {
+    child.once('exit', (code) => {
+      resolve(code);
+    });
+  });
+  return { child, exitCode };
+}
+
+/**
+ * Writes a helper shim that stops inside the re-encryption step until it is released, so a test
+ * can hold a run open inside the section the lock protects.
+ *
+ * @param shimDir - Shim directory to write into.
+ * @param started - Path the shim creates once it has been reached.
+ * @param release - Path the shim waits for before returning.
+ * @returns The absolute path of the shim.
+ */
+function gateHelperShim(shimDir: string, started: string, release: string): string {
+  return writeExtraShim(
+    shimDir,
+    'gate-helper.sh',
+    [
+      'log="${AH_SHIM_LOG:?AH_SHIM_LOG is not set}"',
+      'printf \'%s\\n\' "helper ${AH_ROTATION_MODE:-none} $1" >> "$log"',
+      'case "$1" in',
+      '  *rotate-key*)',
+      `    printf '%s\\n' 'reached' > '${started}'`,
+      `    while [ ! -f '${release}' ]; do sleep 0.05; done`,
+      "    printf '%s\\n' 'rotated 1 secret(s)'",
+      '    exit 0',
+      '    ;;',
+      'esac',
+      'exit 0',
+    ].join('\n'),
+  );
+}
+
+/**
+ * Waits until a path exists.
+ *
+ * @param path - Path to poll for.
+ */
+async function waitForFile(path: string): Promise<void> {
+  for (let attempt = 0; attempt < 200; attempt += 1) {
+    if (existsSync(path)) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 25));
+  }
+  throw new Error(`timed out waiting for ${path}`);
+}
+
+/**
+ * Returns a process id that is certainly not running: a trivial child is started and reaped, and
+ * its id is reported once it has exited.
+ *
+ * @returns The dead process id.
+ */
+function deadPid(): number {
+  const finished = spawnSync('bash', ['-c', 'exit 0']);
+  return finished.pid;
 }
 
 function fileMode(path: string): string {
@@ -701,6 +799,108 @@ describe('rotate-key.sh with the instance running', () => {
 
     expect(result.status).toBe(2);
     expect(result.stdout).toContain('Plan (not run without --yes)');
+  });
+});
+
+describe('rotate-key.sh concurrency', () => {
+  /**
+   * The interleaving the lock exists for. The state-file check alone is a check, not a claim: two
+   * --yes runs could both find no rotation in progress before either created `.new`, then
+   * re-encrypt the same rows independently and overwrite each other's key and state files, leaving
+   * the installed key and the stored ciphertext mismatched. Here the first run is held inside the
+   * re-encryption step — squarely inside the section — and the second must refuse rather than
+   * proceed, without disturbing anything the first is holding.
+   */
+  it('refuses a second run that meets the first inside the critical section', async () => {
+    const box = await sandbox();
+    const shimDir = createShimDir({ log: box.log });
+    const started = join(box.dir, 'gate-started');
+    const release = join(box.dir, 'gate-release');
+    const gate = gateHelperShim(shimDir, started, release);
+
+    const first = runDetached(box, ['--yes'], { AH_DOCTOR_HELPER_CMD: gate }, shimDir);
+    await waitForFile(started);
+
+    // The first run now holds the lock and its `.new` exists; the second must bounce off it.
+    const second = run(box, ['--yes']);
+    expect(second.status).toBe(1);
+    expect(second.stderr).toContain('Another rotation is already running');
+    expect(readFileSync(box.statePath, 'utf8')).toContain('phase=reencrypting');
+    expect(readFileSync(box.newKeyPath, 'utf8')).toBe(GENERATED_KEY);
+    expect(readFileSync(box.keyPath, 'utf8')).toBe(OLD_KEY);
+
+    writeFileSync(release, '');
+    expect(await first.exitCode).toBe(0);
+
+    // The first run finishes normally and leaves nothing behind for the next one.
+    expect(readFileSync(box.keyPath, 'utf8')).toBe(GENERATED_KEY);
+    expect(existsSync(box.statePath)).toBe(false);
+    expect(existsSync(`${box.keyPath}.lock`)).toBe(false);
+  });
+
+  /**
+   * A lock is released however the run ends, so a failed rotation does not wedge the next one.
+   */
+  it('releases the lock when the rotation fails', async () => {
+    const box = await sandbox();
+    const result = run(box, ['--yes'], { AH_SHIM_ROTATE_RC: '3' });
+
+    expect(result.status).toBe(3);
+    expect(existsSync(`${box.keyPath}.lock`)).toBe(false);
+    expect(run(box, ['--yes']).status).toBe(0);
+  });
+
+  /**
+   * A lock left behind by a killed run must not block every future rotation — that would be a
+   * denial of service dressed as safety — so one whose recorded process is gone is reclaimed, and
+   * the operator is told it happened rather than it being silently swallowed.
+   */
+  it('reclaims a lock whose owner is no longer running', async () => {
+    const box = await sandbox();
+    const stale = deadPid();
+    writeFileSync(`${box.keyPath}.lock`, `${String(stale)}\n`);
+
+    const result = run(box, ['--yes']);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('Removed a rotation lock left behind');
+    expect(result.stderr).toContain(String(stale));
+    expect(readFileSync(box.keyPath, 'utf8')).toBe(GENERATED_KEY);
+    expect(existsSync(`${box.keyPath}.lock`)).toBe(false);
+  });
+
+  /**
+   * The complement, which is what stops the reclaim from turning the lock into a suggestion: a
+   * lock whose owner is alive is never taken, whatever this run would like to do.
+   */
+  it('never takes a lock whose owner is alive', async () => {
+    const box = await sandbox();
+    // This test process is unquestionably running, so it stands in for a live rotation.
+    writeFileSync(`${box.keyPath}.lock`, `${String(process.pid)}\n`);
+
+    const result = run(box, ['--yes']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('Another rotation is already running');
+    expect(readFileSync(box.keyPath, 'utf8')).toBe(OLD_KEY);
+    expect(existsSync(box.newKeyPath)).toBe(false);
+    // The live owner's lock is still there, untouched.
+    expect(readFileSync(`${box.keyPath}.lock`, 'utf8')).toBe(`${String(process.pid)}\n`);
+  });
+
+  /**
+   * A lock file with no readable owner is the trace of a run killed before it could name itself.
+   * Nothing is alive to protect, so it is reclaimed on the same terms.
+   */
+  it('reclaims a lock that names no owner', async () => {
+    const box = await sandbox();
+    writeFileSync(`${box.keyPath}.lock`, '');
+
+    const result = run(box, ['--yes']);
+
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('Removed a rotation lock left behind');
+    expect(existsSync(`${box.keyPath}.lock`)).toBe(false);
   });
 });
 

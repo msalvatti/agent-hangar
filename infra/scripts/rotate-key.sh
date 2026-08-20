@@ -28,6 +28,11 @@
 # at all (it is copied, then replaced in place); "<key>.new" is deleted only when the helper
 # reported that every row is back under the current key.
 #
+# One rotation at a time. A per-key lock is taken before any state is inspected and held through
+# the swap and the cleanup, so two --yes runs cannot both decide a rotation is needed and then
+# re-encrypt the same rows into each other. A lock left behind by a killed run is reclaimed, but
+# only after its recorded pid is shown to be gone.
+#
 # The instance must not be running. `MasterKeyFile` caches the key for the lifetime of the process
 # that read it, so a web or worker still up keeps encrypting with the OLD key however long ago the
 # files were swapped — a credential saved in Settings afterwards would be sealed under a key no
@@ -54,6 +59,8 @@ here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 eval "$(bash "$here"/env.sh --print)"
 key="$MASTER_KEY_PATH"
 state="$key.rotation"
+lock="$key.lock"
+lock_held=0
 
 confirmed=0
 resume=0
@@ -84,6 +91,34 @@ run_helper() {
   else
     HELPER_RC=$?
   fi
+}
+
+# release_lock: removes the lock, but only when this run is the one holding it. Registered as an
+# EXIT trap before the lock is taken, so it is a no-op on every path that never acquired one and
+# cannot remove a lock another run owns.
+release_lock() {
+  if [ "$lock_held" = "1" ]; then
+    rm -f "$lock"
+    lock_held=0
+  fi
+}
+
+# take_lock: creates "$lock" holding this run's pid, or fails when it already exists.
+#
+# The pid is written to a temporary file and the lock is hard-linked from it, rather than being
+# redirected straight into place: `ln` fails outright when the target exists, which is the atomic
+# test-and-set this needs, and the file is already complete before it becomes visible under the
+# lock name — so the lock never exists without naming its owner, not even for an instant.
+take_lock() {
+  local temp="$lock.$$"
+  printf '%s\n' "$$" > "$temp"
+  if ln "$temp" "$lock" 2>/dev/null; then
+    rm -f "$temp"
+    lock_held=1
+    return 0
+  fi
+  rm -f "$temp"
+  return 1
 }
 
 # ah_tcp_open <host> <port>: succeeds when something accepts a connection there.
@@ -169,12 +204,37 @@ if [ ! -f "$key" ]; then
   exit 1
 fi
 
-# Exclusion by refusing to start, not by locking: it stops the app's writers, which are the only
-# ones that exist in normal operation. It cannot stop a second rotation, nor anything writing to
-# the database directly — the store has no lock the two sides could share.
+# This stops the app's writers. A second rotation is excluded separately, by the lock taken below;
+# what neither covers is something writing to the database directly, because the store has no lock
+# that side could share.
 if ah_tcp_open 127.0.0.1 "$WEB_PORT"; then
   echo "Something is listening on 127.0.0.1:$WEB_PORT, so instance \"$AH_INSTANCE\" looks like it is running. Stop it before rotating and start it again afterwards: a running process caches the master key for its lifetime, so it would keep using the old one and any credential saved in Settings meanwhile would be sealed under a key nothing reads again." >&2
   exit 1
+fi
+
+# Everything from here down — reading the state, generating the key, re-encrypting, swapping the
+# files, cleaning up — is one critical section. The state file being absent is a check, not a
+# claim: two --yes runs could both pass it before either created "<key>.new", then re-encrypt the
+# same rows independently and overwrite each other's key and state files, leaving the installed key
+# and the stored ciphertext mismatched. The lock is what makes the check a claim, and the EXIT trap
+# is registered first so it is released however this run ends.
+trap release_lock EXIT
+if ! take_lock; then
+  lock_owner="$(cat "$lock" 2>/dev/null || printf '')"
+  # A lock whose owner is still alive is never taken. One left behind by a killed run must not
+  # block every future rotation, so it is removed and re-acquired — and only then. The test errs
+  # safe in the one direction that matters: a recycled pid makes a dead owner look alive, which
+  # refuses a rotation rather than admitting a second one.
+  if [ -n "$lock_owner" ] && kill -0 "$lock_owner" 2>/dev/null; then
+    echo "Another rotation is already running for $key (pid $lock_owner). Wait for it to finish, or check $lock if you believe it is wrong." >&2
+    exit 1
+  fi
+  rm -f "$lock"
+  if ! take_lock; then
+    echo "Could not take the rotation lock at $lock — another run took it first. Try again once it finishes." >&2
+    exit 1
+  fi
+  echo "Removed a rotation lock left behind by pid ${lock_owner:-unknown}, which is no longer running." >&2
 fi
 
 phase="$(read_state phase)"
