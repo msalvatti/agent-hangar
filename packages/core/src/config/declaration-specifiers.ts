@@ -13,8 +13,10 @@
  * by substituting a matching `.d.ts` when it resolves a `.ts`-suffixed specifier, but that
  * substitution is a TypeScript-specific accommodation, not something every declaration consumer
  * implements, and it does not change the fact that the specifier written to disk is wrong. This
- * module supplies the rewrite that makes the emitted graph name files that actually exist; the
- * build script applies it to the files on disk.
+ * module supplies the rewrite that makes the emitted graph name files that actually exist;
+ * `packages/core/scripts/rewrite-declaration-specifiers.ts` applies it to the files on disk after
+ * every successful `tsc -b` — every caller chains the two with `&&`, so a failing compile skips
+ * the rewrite and can leave a partially-emitted, unrewritten `dist` behind.
  */
 
 /**

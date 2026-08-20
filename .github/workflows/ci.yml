@@ -77,6 +77,12 @@ jobs:
           node-version: 24
       - run: pnpm install --frozen-lockfile
       - run: pnpm db:generate
+      # `declaration-specifiers-dist.test.ts` scans the emitted declaration graph of
+      # @agent-hangar/core and skips when `packages/core/dist` is absent, so this job builds that
+      # package: without it the scan reports a skip, which reads like a pass while checking
+      # nothing. The build also runs `assertFullyRewritten`, so a declaration left unrewritten
+      # fails this job twice over.
+      - run: pnpm --filter @agent-hangar/core build
       - run: pnpm test -- --coverage
       - uses: actions/upload-artifact@v7
         if: always()

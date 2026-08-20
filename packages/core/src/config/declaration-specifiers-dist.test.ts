@@ -1,29 +1,28 @@
 /**
  * Regression guard over the actually emitted declaration graph of @agent-hangar/core.
  *
- * Layer: integration (reads `packages/core/dist`; requires a prior
- * `pnpm --filter @agent-hangar/core build` — a fresh worktree has never been built).
+ * Layer: integration (reads `packages/core/dist`, so it needs a tree where `tsc -b` has already
+ * run — a fresh worktree has never been built).
  * Goal: `declaration-specifiers.test.ts` proves the rewrite transform is correct in isolation;
- * this suite proves the build actually applied it to what is on disk. A regression here would
- * mean either the `build` script stopped calling
+ * this suite proves the emit actually applied it to what is on disk. A regression here would
+ * mean either a script that runs `tsc -b` stopped calling
  * `packages/core/scripts/rewrite-declaration-specifiers.ts`, or a new TypeScript release started
  * emitting a specifier shape the transform does not recognize.
  *
- * `packages/core/dist` does not exist in a worktree that has never been built, and this suite has
- * nothing to check in that state — scanning an absent directory would either report a trivial,
- * meaningless pass or require fabricating content to scan, neither of which tests anything real.
- * `describe.skipIf` marks every test below as SKIPPED, not passed, whenever `dist` is missing, so
- * a reporter always shows the true state: skipped (nothing was checked), passed (checked and
- * clean) or failed (checked and found a regression) — never a silent, unearned green. Build the
- * package first (`pnpm --filter @agent-hangar/core build`) to exercise this guard locally.
+ * `dist` is produced by any `tsc -b` that reaches this package, not only by `build`: the project
+ * is `composite`, so type-checking emits as well. `pnpm typecheck`, `pnpm build` and
+ * `pnpm --filter @agent-hangar/core build` therefore all leave a `dist` for this suite to scan,
+ * and the continuous-integration `unit` job builds this package before running the tests, so the
+ * suite executes there rather than reporting a skip that reads like a pass. It runs alongside —
+ * not instead of — `assertFullyRewritten` in `rewrite-declaration-specifiers.ts`, which fails the
+ * emit itself the moment a declaration file is left unrewritten.
  *
- * This repository's continuous integration runs the `unit` job (which runs this suite) and the
- * `build` job as separate, independent jobs with no shared file system, so `dist` is absent here
- * in CI too and this suite is always skipped there. The guarantee CI actually enforces is
- * `assertFullyRewritten` in `rewrite-declaration-specifiers.ts`, which runs inside the `build` job
- * itself and fails that job the moment a declaration file is left unrewritten. This suite exists
- * for the local development loop: it catches the same regression the moment `dist` exists on the
- * machine running the tests, without waiting for a separate build job.
+ * The one state that has nothing to check is a worktree where `tsc -b` has never run, and there
+ * scanning an absent directory would either report a trivial, meaningless pass or require
+ * fabricating content to scan, neither of which tests anything real. `describe.skipIf` marks
+ * every test below as SKIPPED, not passed, in that state, so a reporter always shows the true
+ * state: skipped (nothing was on disk), passed (checked and clean) or failed (checked and found a
+ * regression) — never a silent, unearned green.
  * Mocks: none.
  */
 import { existsSync, readFileSync, readdirSync } from 'node:fs';

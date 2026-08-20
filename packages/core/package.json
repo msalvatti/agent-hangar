@@ -26,9 +26,10 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b && tsx scripts/rewrite-declaration-specifiers.ts",
+    "build": "tsc -b && pnpm declarations:rewrite",
+    "declarations:rewrite": "tsx scripts/rewrite-declaration-specifiers.ts",
     "lint": "eslint .",
-    "typecheck": "tsc -b",
+    "typecheck": "tsc -b && pnpm declarations:rewrite",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration --coverage.enabled=false",
     "fixtures:record": "tsx scripts/record-fixtures.ts",
