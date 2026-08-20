@@ -17,7 +17,7 @@ import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
 import { chmodSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
-import type { AddressInfo, Server } from 'node:net';
+import type { Server } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -83,29 +83,38 @@ export function listen(port: number): Promise<Server> {
 }
 
 /**
+ * Lowest port base handed out, and the width of the block. The range sits below the ephemeral
+ * range both Linux (32768+) and macOS (49152+) allocate from, so the OS never hands one of these
+ * ports to somebody else — which an OS-assigned port emphatically does not guarantee.
+ */
+const PORT_BASE_FLOOR = 30000;
+const PORT_BASE_SPAN = 1500;
+
+/** Ports consumed per instance (web, Postgres, Redis), so blocks never overlap. */
+const PORT_BASE_STRIDE = 3;
+
+/**
+ * Where this process starts allocating. Seeding from the pid spreads concurrent Vitest workers
+ * across the range instead of having them all start at the same base.
+ */
+let nextPortBase = process.pid * PORT_BASE_STRIDE;
+
+/**
  * Reserves a port base whose web port (`base + 0`) nothing is listening on.
  *
- * The script probes that port to decide whether the instance is running, so every test that is
- * not about that check has to name a base where the probe finds nothing. The port is bound and
- * released rather than merely guessed: the OS hands out ephemeral ports in rotation rather than
- * reissuing the one just returned, so it stays free for the length of one test.
+ * The script probes that port to decide whether the instance is running, so every test that is not
+ * about that check has to name a base where the probe finds nothing. Bases are handed out from a
+ * private range rather than by binding port 0 and releasing it: a released ephemeral port is free
+ * only until the OS hands it to the next caller, and with suites running in parallel it did
+ * exactly that — a doctor listener landed on a base a rotation test had just released, and the
+ * rotation refused to start because its instance looked like it was running.
  *
- * @returns A base whose web port is free.
+ * @returns A base whose ports no other suite in this run can be given.
  */
-export async function freePortBase(): Promise<number> {
-  const server = await listen(0);
-  // A TCP server that has emitted `listening` always reports an AddressInfo; the union with
-  // `string | null` covers pipe servers and the not-yet-listening state, neither of which can
-  // occur here. Narrowing by assertion rather than by a check keeps this module branch-free,
-  // which is what lets it sit under the 100% coverage gate honestly.
-  const { port } = server.address() as AddressInfo;
-  await new Promise<void>((resolve) => {
-    server.close(() => {
-      resolve();
-    });
-  });
-  servers.pop();
-  return port;
+function reservePortBase(): number {
+  const base = PORT_BASE_FLOOR + (nextPortBase % PORT_BASE_SPAN);
+  nextPortBase += PORT_BASE_STRIDE;
+  return base;
 }
 
 /**
@@ -114,7 +123,7 @@ export async function freePortBase(): Promise<number> {
  *
  * @returns The sandbox paths and port base.
  */
-export async function sandbox(): Promise<Sandbox> {
+export function sandbox(): Sandbox {
   const dir = fsPort.mkdtempSync(join(tmpdir(), 'ah-rotate-'));
   dirs.push(dir);
   const keyPath = join(dir, 'master.key');
@@ -126,7 +135,7 @@ export async function sandbox(): Promise<Sandbox> {
     keyPath,
     statePath: `${keyPath}.rotation`,
     newKeyPath: `${keyPath}.new`,
-    portBase: await freePortBase(),
+    portBase: reservePortBase(),
   };
 }
 
