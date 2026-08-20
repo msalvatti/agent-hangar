@@ -135,10 +135,12 @@ export async function drainExec(events: AsyncIterable<ExecEvent>): Promise<Drain
  * Creates a ready workspace from the baseline spec.
  *
  * @param runner - Runner to create through.
+ * @param overrides - Fields to replace on the baseline chat spec.
  * @returns The handle of the created workspace.
  */
 export async function createFixtureWorkspace(
   runner: DockerWorkspaceRunner,
+  overrides: Partial<WorkspaceSpec> = {},
 ): Promise<WorkspaceHandle> {
-  return runner.create(fixtureSpec());
+  return runner.create(fixtureSpec(overrides));
 }

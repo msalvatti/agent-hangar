@@ -14,6 +14,7 @@ describe('@agent-hangar/agent-runtime barrel', () => {
   it('exports the command dispatcher, the turn machinery and the protocol adapters', () => {
     // A missing entry here is an unnoticed break for every consumer of the package.
     expect(Object.keys(runtime).toSorted()).toStrictEqual([
+      'ALLOWED_ORIGIN_FILE',
       'EXIT',
       'GitError',
       'PrepareError',
@@ -21,7 +22,6 @@ describe('@agent-hangar/agent-runtime barrel', () => {
       'RUNTIME_VERSION',
       'TOOL_DEFINITIONS',
       'assertBranchName',
-      'assertGithubHttpsUrl',
       'builtInFakeScript',
       'createDiagnostics',
       'createEventWriter',
@@ -34,8 +34,10 @@ describe('@agent-hangar/agent-runtime barrel', () => {
       'looksLikeGitPush',
       'prepare',
       'readTurnRequest',
+      'repositoryUrlPolicyFromFile',
       'resolveGitHead',
       'resolveProviderName',
+      'resolveRepoUrl',
       'runCli',
       'runTurnCommand',
       'runTurnLoop',

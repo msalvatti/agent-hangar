@@ -71,8 +71,10 @@ export interface CliOverrides {
   runtimeDir?: string;
   /** Overrides the git runner. */
   git?: GitRunner;
-  /** Overrides the repository URL policy. */
+  /** Overrides the repository URL policy, which is otherwise read from the file the host placed. */
   urlPolicy?: RepositoryUrlPolicy;
+  /** Overrides where the approved origin is read from. */
+  originFile?: string;
 }
 
 /**

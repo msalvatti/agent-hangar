@@ -21,11 +21,13 @@ import type {
   ExecSpec,
   WorkspaceHandle,
   WorkspaceHealth,
+  WorkspaceFile,
   WorkspaceRunner,
   WorkspaceSnapshot,
   WorkspaceSpec,
 } from '../types.ts';
 
+import { buildContainerFileArchive } from './container-files.ts';
 import {
   buildContainerCreateOptions,
   LABEL_INSTANCE,
@@ -152,6 +154,7 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     // container holds the workspace name for good, so the retry the caller is about to make would
     // fail the name-conflict check forever instead of recovering.
     try {
+      await this.#placeFiles(container, spec.files ?? []);
       await container.start();
       await this.#awaitReadiness(container, opts?.signal);
     } catch (error) {
@@ -159,6 +162,25 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
       throw error;
     }
     return { workspaceId: spec.workspaceId, runnerRef: container.id };
+  }
+
+  /**
+   * Places the spec's files, root-owned, before the container has run anything.
+   *
+   * Before `start` on purpose. The workspace user cannot race a file into position that no process
+   * of its own has had the chance to touch yet, so what the first process sees is what the host
+   * asked for — which is the whole reason a policy the workspace must not be able to restate is
+   * delivered as a file rather than as an environment variable it could simply set again.
+   *
+   * @param container - The created, not yet started container.
+   * @param files - Files to place; usually none or one.
+   * @throws DockerRunnerError when a path is unusable; the daemon's own failures propagate.
+   */
+  async #placeFiles(container: DockerContainerApi, files: readonly WorkspaceFile[]): Promise<void> {
+    for (const file of files) {
+      const { path, archive } = await buildContainerFileArchive(file);
+      await container.putArchive(archive, { path });
+    }
   }
 
   /**

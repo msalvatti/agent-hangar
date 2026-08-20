@@ -7,7 +7,7 @@
  * closes the row out with the right reason — with only an unreachable daemon rethrown. Plus the
  * one failure that cannot be closed out by anybody else: a reference the row refused to record,
  * and the forge allow-list, which is applied again here because a stored URL is cloned long after
- * the route that vetted it.
+ * the route that vetted it and because it is what binds the container to one origin.
  * Mocks: `createTestContainer` plus runner subclasses for the failures the fake cannot produce.
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
@@ -23,6 +23,7 @@ import { FAKE_SCRIPT_ENV_KEY, fakeProviderScriptEnv } from '../fake-provider-scr
 import { createTestContainer, FakeSecretsService } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
+import { ALLOWED_ORIGIN_PATH } from './constants.js';
 import {
   provisionWorkspace,
   REPO_URL_NOT_ALLOWED_REASON,
@@ -385,6 +386,84 @@ describe('provisionWorkspace', () => {
     });
 
     expect(result.ok).toBe(true);
+  });
+
+  /**
+   * The container is told the one origin it may reach, derived from the repository URL that has
+   * just passed the allow-list. Both readers inside it — the askpass helper and the agent runtime
+   * — decide from a URL the agent can influence, so what they are given is one origin rather than
+   * the operator's list.
+   */
+  it('tells the container the single origin the workspace was created for', async () => {
+    const container = createTestContainer();
+
+    await provisionWorkspace(container, {
+      kind: 'CHAT',
+      chatId: 'chat-1',
+      repoUrl: 'https://github.com/octocat/Hello-World',
+      branch: 'main',
+    });
+
+    expect(createSpec(container).files).toStrictEqual([
+      { path: ALLOWED_ORIGIN_PATH, content: 'https://github.com\n' },
+    ]);
+  });
+
+  /**
+   * The origin is the URL's origin and not a fixed forge, so an operator who lists a local forge
+   * on a port gets that scheme, that host and that port — which is what a private repository
+   * anywhere but github.com needs in order to authenticate at all.
+   */
+  it('forwards the origin of a forge the operator listed, port and scheme included', async () => {
+    const base = createTestContainer();
+    const container: TestContainer = {
+      ...base,
+      config: { ...base.config, ALLOWED_REPO_HOSTS: 'http://host.docker.internal:3907' },
+    };
+
+    const result = await provisionWorkspace(container, {
+      kind: 'JOB',
+      jobRunId: 'run-1',
+      repoUrl: 'http://host.docker.internal:3907/acme/sample.git',
+      branch: 'main',
+    });
+
+    expect(result.ok).toBe(true);
+    expect(createSpec(container).files?.[0]?.content).toBe('http://host.docker.internal:3907\n');
+  });
+
+  /**
+   * The origin travels as a file and NOT as an environment entry, which is the whole of the
+   * defence: the shell tool runs a command the model wrote, and a command may set any variable for
+   * the process it starts, so a policy in the environment is a policy the workspace picks. The
+   * environment of the only `create` in the application is therefore enumerated — an addition to
+   * it becomes a deliberate edit here, and naming the keys is also what proves nothing added can
+   * stand in for a credential.
+   */
+  it('places the origin outside the environment, shadowing no credential', async () => {
+    const container = createTestContainer();
+
+    await provisionWorkspace(container, {
+      kind: 'CHAT',
+      chatId: 'chat-1',
+      repoUrl: 'https://github.com/octocat/Hello-World',
+      branch: 'main',
+    });
+
+    const spec = createSpec(container);
+    expect(Object.keys(spec.env).toSorted()).toStrictEqual([
+      'AGENT_MODEL_PROVIDER',
+      'GITHUB_TOKEN',
+      'GIT_ASKPASS',
+      'OPENAI_API_KEY',
+      'OPENAI_MODEL',
+    ]);
+    expect(spec.env).toMatchObject({
+      GITHUB_TOKEN: GITHUB_CANARY,
+      OPENAI_API_KEY: OPENAI_CANARY,
+      AGENT_MODEL_PROVIDER: 'fake',
+    });
+    expect(spec.files).toHaveLength(1);
   });
 
   /**

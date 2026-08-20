@@ -45,6 +45,12 @@ const PIDS_LIMIT = 256;
 /** Prompt git uses when it asks for the password of the approved host. */
 const PASSWORD_PROMPT = "Password for 'https://x-access-token@github.com': ";
 
+/** Origin every workspace of this suite is created for. */
+const APPROVED_ORIGIN = 'https://github.com';
+
+/** Where the runner places the approved origin, and where the askpass helper reads it. */
+const ALLOWED_ORIGIN_PATH = '/opt/agent-runtime/allowed-origin';
+
 const decoder = new TextDecoder();
 
 /** Everything one exec produced. */
@@ -82,6 +88,7 @@ if (!gate.run) {
       kind: 'CHAT',
       image: IMAGE,
       env: { AH_TEST_VAR: 'visible', GITHUB_TOKEN: GITHUB_CANARY },
+      files: [{ path: ALLOWED_ORIGIN_PATH, content: `${APPROVED_ORIGIN}\n` }],
       limits: { cpus: 1, memoryBytes: MEMORY_BYTES, pids: PIDS_LIMIT },
       labels,
     };
@@ -362,6 +369,49 @@ if (!gate.run) {
       expect(entry).not.toMatch(/AH_TEST_VAR|TOKEN|KEY|SECRET/i);
     }
     assertNoCanary(JSON.stringify(image));
+  });
+
+  /**
+   * The policy the credential helper enforces must be one the workspace cannot restate. The
+   * workspace user runs every command in this container, so the test is the direct one: try to
+   * rewrite the file, try to unlink it and put another in its place, then ask the helper for a
+   * foreign origin both plainly and with the old environment variable set. Root ownership of the
+   * file and of the directory around it is what makes all four fail — and unlink is governed by
+   * the directory's write bit, not by the file's owner, which is why the directory matters as much
+   * as the file.
+   */
+  it('places the approved origin where the workspace can read it and cannot author it', async () => {
+    const handle = await workspace();
+
+    const content = await run(handle, ['cat', ALLOWED_ORIGIN_PATH]);
+    const owners = await run(handle, ['sh', '-c', `stat -c "%U %a" ${ALLOWED_ORIGIN_PATH}`]);
+    const overwrite = await run(handle, [
+      'sh',
+      '-c',
+      `printf 'https://evil.test\n' > ${ALLOWED_ORIGIN_PATH}`,
+    ]);
+    const replace = await run(handle, [
+      'sh',
+      '-c',
+      `rm -f ${ALLOWED_ORIGIN_PATH} 2>/dev/null || true; printf 'https://evil.test\n' > ${ALLOWED_ORIGIN_PATH}`,
+    ]);
+    const stillApproved = await run(handle, ['cat', ALLOWED_ORIGIN_PATH]);
+    const foreign = await run(handle, [
+      'sh',
+      '-c',
+      'AH_GIT_ALLOWED_ORIGIN=https://evil.test ALLOWED_ORIGIN_FILE=/tmp/mine /opt/agent-runtime/askpass.sh "$1"',
+      'sh',
+      "Password for 'https://evil.test': ",
+    ]);
+
+    expect(content.stdout).toBe(`${APPROVED_ORIGIN}\n`);
+    expect(owners.stdout.trim()).toBe('root 644');
+    expect(overwrite.exit).not.toEqual({ type: 'exit', code: 0 });
+    expect(replace.exit).not.toEqual({ type: 'exit', code: 0 });
+    expect(stillApproved.stdout).toBe(`${APPROVED_ORIGIN}\n`);
+    expect(foreign.stdout).toBe('');
+    expect(foreign.exit).not.toEqual({ type: 'exit', code: 0 });
+    assertNoCanary(foreign.stdout + foreign.stderr);
   });
 
   /**

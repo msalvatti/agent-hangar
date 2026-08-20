@@ -128,6 +128,18 @@ export interface DockerContainerApi {
    * @returns The created exec, not yet started.
    */
   exec(opts: DockerExecCreateOptions): Promise<DockerExecApi>;
+  /**
+   * Extracts a tar archive into a directory of the container's filesystem.
+   *
+   * The daemon does this as root and honours the ownership in each tar header, which is how a file
+   * the container's own user cannot replace gets there in the first place. Usable before the
+   * container has ever been started.
+   *
+   * @param file - The tar archive.
+   * @param options - `path` is the directory the archive is extracted into; it must exist.
+   * @returns Resolves once the daemon has extracted the archive.
+   */
+  putArchive(file: Buffer, options: { path: string }): Promise<unknown>;
 }
 
 /** The daemon-level operations the runner performs. */

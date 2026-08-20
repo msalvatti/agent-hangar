@@ -49,6 +49,23 @@ export const RUNTIME_CMD: readonly string[] = ['node', '/opt/agent-runtime/cli.j
 export const ASKPASS_PATH = '/opt/agent-runtime/askpass.sh';
 
 /**
+ * File inside the workspace naming the single origin it may reach.
+ *
+ * Both readers of it live inside the container — the askpass helper decides whether to release the
+ * PAT for the origin git dials, and the agent runtime decides whether to hand git the repository
+ * URL at all — so the path is spelled on each side of the boundary rather than shared, exactly as
+ * {@link ASKPASS_PATH} is. The content is derived from the repository URL the workspace was
+ * created for, once that URL has been measured against `ALLOWED_REPO_HOSTS`.
+ *
+ * A file and not an environment variable, and it sits beside the askpass helper for the same
+ * reason the helper sits there: `/opt/agent-runtime` is root-owned, so the workspace user can read
+ * what is in it and can neither rewrite nor unlink it. A policy in the environment is a policy the
+ * workspace can restate — the shell tool runs `bash -lc` with a command a model chose, and
+ * `VAR=whatever git clone ...` is all it would take to pick its own.
+ */
+export const ALLOWED_ORIGIN_PATH = '/opt/agent-runtime/allowed-origin';
+
+/**
  * Slack added to the exec's wall-clock limit on top of the turn's own.
  *
  * The runtime enforces `maxTurnMs` itself and then needs time to write its terminal event; the

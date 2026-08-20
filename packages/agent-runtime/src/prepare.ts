@@ -3,14 +3,35 @@
  *
  * Layer: domain.
  *
- * The repository URL is validated before git ever sees it. `GIT_ASKPASS` releases the PAT for
- * github.com over https, so a URL naming another host — or carrying its own credentials — is the
- * one input that could turn preparation into an exfiltration step. It is refused here as well as
- * in the helper, because two independent checks are what keeps a change to either one honest.
+ * The repository URL is validated before git ever sees it, against the single origin this
+ * workspace was created for. A URL naming another origin — or carrying its own credentials — is
+ * the one input that could turn preparation into an exfiltration step, and it is refused here as
+ * well as in the askpass helper, because two independent checks are what keeps a change to either
+ * one honest.
+ *
+ * That origin arrives in a root-owned file the runner places before the container starts, already
+ * measured against the operator's `ALLOWED_REPO_HOSTS` by the host process. It is read from that
+ * file and not from the environment for the same reason the askpass helper reads it from there:
+ * this container runs shell commands the model chooses, and a command may set any variable for the
+ * process it starts, so an environment entry is a policy the workspace can restate. The allow-list
+ * itself is not handed to the container either — a policy naming several origins would let a
+ * crafted URL pick whichever of them it liked.
+ *
+ * The binding is origin-level: scheme, host and port. A different repository on the same origin is
+ * still accepted, because the origin is what the credential boundary is drawn around; narrowing to
+ * one repository would be a different rule with different consequences for the agent's own git
+ * commands, and it is not the rule stated here.
+ *
+ * The scheme is not judged here. Which transports may be cloned over is the operator's decision,
+ * expressed by the allow-list entry this origin came from; whether a credential may cross that
+ * transport is a separate question, answered independently by the helper, which releases nothing
+ * over cleartext. A workspace created for an `http` origin therefore clones anonymously.
  */
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 
+import { ConfigError } from '@agent-hangar/core';
 import type { AgentEvent, TurnRequest } from '@agent-hangar/core';
+import { z } from 'zod';
 
 import { GitError, gitOrThrow } from './git.js';
 import type { GitRunner } from './git.js';
@@ -18,8 +39,15 @@ import type { GitRunner } from './git.js';
 /** Characters of a sha shown in a progress message. */
 const SHORT_SHA_LENGTH = 7;
 
-/** The only forge the product supports; the askpass helper enforces the same host. */
-const ALLOWED_HOST = 'github.com';
+/**
+ * File naming the one origin this workspace may clone from.
+ *
+ * Spelled here, in the worker that writes it and in `askpass.sh` that also reads it, because the
+ * three live on opposite sides of a container boundary and share no module — the same reason the
+ * askpass path itself is spelled in each of them. Root-owned in a root-owned directory, so the
+ * workspace user can read it and cannot author it.
+ */
+export const ALLOWED_ORIGIN_FILE = '/opt/agent-runtime/allowed-origin';
 
 /** Owner and repository name, with an optional `.git` suffix and nothing else. */
 const REPOSITORY_PATH = /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?$/;
@@ -49,8 +77,49 @@ export class PrepareError extends Error {
   }
 }
 
-/** How strictly the repository URL is checked. */
-export type RepositoryUrlPolicy = 'github-https' | 'any';
+/**
+ * Which repository URLs preparation will hand to git.
+ *
+ * `origin` is what production runs: exactly one origin, the one the workspace was created for.
+ * `any` skips the check and exists for the suites that clone a local `file://` remote; it is
+ * reachable only by passing it in through {@link PrepareDeps}, never by anything the container
+ * environment says, so no misconfiguration can produce it.
+ */
+export type RepositoryUrlPolicy =
+  { readonly allow: 'origin'; readonly origin: string } | { readonly allow: 'any' };
+
+/**
+ * An origin as `URL` spells one: scheme, host, and a port only when it is not the scheme's
+ * default. A value that survives this round-trip is already normalised, so comparing it to
+ * `URL.origin` is a comparison of two canonical forms rather than of two spellings.
+ */
+const allowedOriginSchema = z.string().refine((value) => URL.parse(value)?.origin === value, {
+  message: 'must be <scheme>://<host>[:<port>] and nothing else',
+});
+
+/**
+ * Reads the origin this workspace was created for from the file the host placed.
+ *
+ * A missing, unreadable or malformed file is a container no host prepared, and it fails closed:
+ * there is no forge to fall back to, because falling back to one would mean a workspace whose
+ * origin was never decided still gets a repository policy from somewhere.
+ *
+ * @param file - Path of the file; defaults to {@link ALLOWED_ORIGIN_FILE}.
+ * @returns The policy the turn runs under.
+ * @throws ConfigError when the file cannot be read or does not hold a bare origin.
+ */
+export async function repositoryUrlPolicyFromFile(
+  file: string = ALLOWED_ORIGIN_FILE,
+): Promise<RepositoryUrlPolicy> {
+  const content = await readFile(file, 'utf8').catch(() => null);
+  const parsed = allowedOriginSchema.safeParse(content?.trim());
+  if (!parsed.success) {
+    throw new ConfigError(
+      `${file} must hold the origin this workspace was created for, as <scheme>://<host>[:<port>]`,
+    );
+  }
+  return { allow: 'origin', origin: parsed.data };
+}
 
 /** Everything preparation needs beyond the request. */
 export interface PrepareDeps {
@@ -66,8 +135,12 @@ export interface PrepareDeps {
    * @param event - Progress or completion of preparation.
    */
   emit(event: AgentEvent): Promise<void>;
-  /** Defaults to `github-https`; tests use `any` for a local `file://` remote. */
-  urlPolicy?: RepositoryUrlPolicy;
+  /**
+   * Which URLs may be cloned. Deliberately not optional: a default would be a policy nobody chose,
+   * and the only safe default — refusing everything — is more usefully reported by
+   * {@link repositoryUrlPolicyFromEnv} as a configuration failure.
+   */
+  urlPolicy: RepositoryUrlPolicy;
 }
 
 /** Where preparation left the workspace. */
@@ -79,29 +152,59 @@ export interface PrepareResult {
 }
 
 /**
- * Rejects any repository URL that is not a credential-free GitHub https URL.
+ * Whether a parsed URL names one repository on the workspace's own origin.
  *
- * @param url - URL from the turn request.
- * @throws PrepareError when the URL names another host or scheme, carries credentials, or is not
- *   a plain owner/repository path.
+ * The origin comparison is whole-origin equality, so scheme, host and port are decided by one
+ * test: `github.com.evil.test`, `github.com@evil.test` and `github.com:8443` are each simply a
+ * different origin. The path is not compared, only shaped — a different repository on the same
+ * origin passes. Everything else here is a place a credential hides, and holds whatever the origin
+ * is.
+ *
+ * @param parsed - The parsed repository URL.
+ * @param origin - The origin this workspace was created for.
+ * @returns `true` when git may be pointed at it.
  */
-export function assertGithubHttpsUrl(url: string): void {
-  const parsed = URL.parse(url);
-  const acceptable =
-    parsed !== null &&
-    parsed.protocol === 'https:' &&
-    parsed.hostname === ALLOWED_HOST &&
-    parsed.host === ALLOWED_HOST &&
+function isRepoUrlOnOrigin(parsed: URL, origin: string): boolean {
+  return (
+    parsed.origin === origin &&
     parsed.username === '' &&
     parsed.password === '' &&
     parsed.search === '' &&
     parsed.hash === '' &&
-    REPOSITORY_PATH.test(parsed.pathname);
-  if (!acceptable) {
+    REPOSITORY_PATH.test(parsed.pathname)
+  );
+}
+
+/**
+ * Returns the URL preparation will hand to git, having refused anything off the workspace's
+ * origin.
+ *
+ * What comes back is the URL as `URL` parsed it, not as it was written. Git echoes the remote it
+ * was given into the credential prompt verbatim, and the askpass helper compares that prompt to an
+ * origin the host produced with the same `URL` normalisation — so cloning the parse rather than
+ * the text is what keeps the two spellings equal, and a repository written as
+ * `https://GitHub.com:443/acme/widgets` authenticates instead of failing on a difference no one
+ * can see.
+ *
+ * @param url - URL from the turn request.
+ * @param policy - Which URLs this turn may clone.
+ * @returns The URL to clone.
+ * @throws PrepareError when the URL is off the workspace's origin, carries credentials, or is not
+ *   a plain owner/repository path.
+ */
+export function resolveRepoUrl(url: string, policy: RepositoryUrlPolicy): string {
+  if (policy.allow === 'any') {
+    return url;
+  }
+  const parsed = URL.parse(url);
+  if (parsed === null || !isRepoUrlOnOrigin(parsed, policy.origin)) {
+    // The message names the origin and never the URL: a refused URL is exactly the one that may
+    // be carrying a credential, and this text is persisted and shown.
     throw new PrepareError(
-      `repository URL must be https://${ALLOWED_HOST}/<owner>/<repo> without credentials`,
+      `repository URL must be ${policy.origin}/<owner>/<repo> without credentials`,
     );
   }
+  return parsed.href;
 }
 
 /**
@@ -146,13 +249,13 @@ async function isWorkTree(deps: PrepareDeps): Promise<boolean> {
 /**
  * Clones the base branch, or refreshes a workspace that already holds the repository.
  *
- * @param repo - Repository section of the turn request.
+ * @param repo - URL to clone and the branch to clone it at.
  * @param prepareOptions - Preparation section of the turn request.
  * @param deps - Preparation dependencies.
  * @throws PrepareError when cloning was not requested and the workspace holds no repository.
  */
 async function cloneOrFetch(
-  repo: TurnRequest['repo'],
+  repo: { readonly url: string; readonly baseBranch: string },
   prepareOptions: TurnRequest['prepare'],
   deps: PrepareDeps,
 ): Promise<void> {
@@ -263,13 +366,11 @@ export async function prepare(
   prepareOptions: TurnRequest['prepare'],
   deps: PrepareDeps,
 ): Promise<PrepareResult> {
-  if ((deps.urlPolicy ?? 'github-https') === 'github-https') {
-    assertGithubHttpsUrl(repo.url);
-  }
+  const url = resolveRepoUrl(repo.url, deps.urlPolicy);
   assertBranchName(repo.baseBranch, 'baseBranch');
   assertBranchName(repo.workBranch, 'workBranch');
   try {
-    await cloneOrFetch(repo, prepareOptions, deps);
+    await cloneOrFetch({ url, baseBranch: repo.baseBranch }, prepareOptions, deps);
     await checkoutWorkBranch(repo, deps);
     const result = await verifyHead(repo, deps);
     await deps.emit({ type: 'prepare.done', ...result });

@@ -8,7 +8,14 @@ export type { GitArgs, GitCommandResult, GitRunner, GitRunOptions } from './git.
 export { looksLikeGitPush, resolveGitHead } from './git-events.js';
 export { runTurnLoop } from './loop.js';
 export type { LoopDeps, LoopOutcome } from './loop.js';
-export { assertBranchName, assertGithubHttpsUrl, prepare, PrepareError } from './prepare.js';
+export {
+  ALLOWED_ORIGIN_FILE,
+  assertBranchName,
+  prepare,
+  PrepareError,
+  repositoryUrlPolicyFromFile,
+  resolveRepoUrl,
+} from './prepare.js';
 export type { PrepareDeps, PrepareResult, RepositoryUrlPolicy } from './prepare.js';
 export { createDiagnostics, createEventWriter, readTurnRequest } from './protocol.js';
 export type { EventWriter } from './protocol.js';

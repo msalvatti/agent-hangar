@@ -9,7 +9,7 @@
  * Mocks: in-memory streams for the process pipes, the shared fake provider for the model, and a
  * local bare repository for GitHub.
  */
-import { stat } from 'node:fs/promises';
+import { rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { Writable } from 'node:stream';
 
@@ -32,6 +32,7 @@ import type { TurnDeps } from './turn.js';
 let repo: BareRepo;
 let root: string;
 let runtimeDir: string;
+let originFile: string;
 let stdout: string[];
 let stderr: string[];
 let sigintHandlers: (() => void)[];
@@ -152,9 +153,20 @@ async function runTurn(
     io: io(stdinText, env),
     workspaceRoot: root,
     runtimeDir,
+    originFile,
     git: gitAgainstFixture(),
     ...overrides,
   });
+}
+
+/**
+ * The message of the last emitted event, when that event is a `turn.failed`.
+ *
+ * @returns The failure message, or an empty string when the last event was something else.
+ */
+function lastFailureMessage(): string {
+  const last = emitted().at(-1);
+  return last?.type === 'turn.failed' ? last.error.message : '';
 }
 
 /**
@@ -174,6 +186,10 @@ beforeEach(async () => {
   repo = await createBareRepoWithSeed();
   root = await makeTempDir('turn-workspace');
   runtimeDir = await makeTempDir('turn-runtime');
+  // Stands in for the root-owned file the runner places before the container starts. Every test
+  // that does not say otherwise runs as a workspace created for the fixture's own origin.
+  originFile = path.join(runtimeDir, 'allowed-origin');
+  await writeFile(originFile, 'https://github.com\n', 'utf8');
   stdout = [];
   stderr = [];
   sigintHandlers = [];
@@ -298,12 +314,10 @@ describe('runTurnCommand and failures it can name', () => {
     expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'prepare' } });
   });
 
-  it('applies the strict URL policy and the container paths when none are chosen', async () => {
-    // Production passes no overrides at all. Nothing here touches `/workspace` or `/tmp` and
-    // nothing reaches the network: with no token in the environment no file is written, and this
-    // remote is refused before git runs because the policy requires https on github.com. The
-    // schema upstream already requires a credential-free http(s) URL, so the rejection under test
-    // is the runtime's own policy rather than the parse.
+  it('applies the placed URL policy and the container paths when none are chosen', async () => {
+    // Production passes no overrides at all, so the policy comes from the file at its default
+    // path, which does not exist here. Nothing touches `/workspace` or `/tmp` and nothing reaches
+    // the network: a container nobody prepared is a configuration failure before anything clones.
     const turn = request('hello');
     const exit = await runTurnCommand({
       io: io(
@@ -311,7 +325,49 @@ describe('runTurnCommand and failures it can name', () => {
       ),
     });
     expect(exit).toBe(EXIT.ok);
+    expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'config' } });
+    expect(lastFailureMessage()).toContain('/opt/agent-runtime/allowed-origin');
+  });
+
+  it('refuses a repository on a forge the workspace was not created for', async () => {
+    // The whole point of binding the container to one origin: this URL is a perfectly ordinary
+    // GitHub repository, and this workspace exists for a local forge, so preparation refuses it
+    // rather than clone — and authenticate to — something nobody provisioned it for.
+    await writeFile(originFile, 'http://host.docker.internal:3907\n', 'utf8');
+
+    const exit = await runTurn(`${JSON.stringify(request('hello'))}\n`);
+
+    expect(exit).toBe(EXIT.ok);
     expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'prepare' } });
+    expect(lastFailureMessage()).toContain('http://host.docker.internal:3907/<owner>/<repo>');
+  });
+
+  it('fails closed when the container was never told which origin it serves', async () => {
+    // A container nobody prepared has no forge to fall back to; reporting it as configuration is
+    // what puts the missing file in front of the operator instead of an authentication failure.
+    await rm(originFile, { force: true });
+
+    const exit = await runTurn(`${JSON.stringify(request('hello'))}\n`);
+
+    expect(exit).toBe(EXIT.ok);
+    expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'config' } });
+    expect(lastFailureMessage()).toContain('must hold the origin this workspace was created for');
+  });
+
+  it('ignores an origin named in the environment', async () => {
+    // The variable this policy used to travel in is model-controlled: the shell tool runs a
+    // command the model wrote, and a command may set any variable for the process it starts.
+    // Naming a foreign origin there must change nothing, because nothing reads it any more.
+    const exit = await runTurn(
+      `${JSON.stringify(request('hello'))}\n`,
+      {},
+      {
+        AH_GIT_ALLOWED_ORIGIN: 'https://evil.test',
+      },
+    );
+
+    expect(exit).toBe(EXIT.ok);
+    expect(emitted().map((event) => event.type)).toContain('prepare.done');
   });
 
   it('reports a git command that failed outright as a preparation failure', async () => {
