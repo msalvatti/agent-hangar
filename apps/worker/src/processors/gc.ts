@@ -56,10 +56,14 @@ const NOTHING: GcResult = { reaped: 0, orphansDestroyed: 0, goneMarked: 0 };
  * catch runs, and a `CREATING` row keeps a live container that nothing reclaims. Closing it needs a
  * staleness rule for `CREATING` rows, which is a threshold decision rather than a status one: too
  * short and a first-run image pull is reaped mid-create, which is exactly what this exclusion
- * exists to prevent. `STOPPING` is different — the only writer of it is a
- * teardown, teardowns run on this consumer's own single-slot queue and the idle one holds the
- * workspace's claim, so a `STOPPING` row a pass can see is one whose teardown is gone and which
- * nothing else will ever close out.
+ * exists to prevent. `STOPPING` is different, and for a reason that survives a second worker
+ * process: the only writer of it is a teardown, a teardown reaches `STOPPING` only after it has
+ * committed to destroying the container, and the only statuses it writes after that are
+ * `DESTROYED` and `FAILED`. So the two writers of a `STOPPING` row whose container is already gone
+ * — this pass and the teardown that removed it — agree on the terminal state, and whichever of
+ * them the conditional write lets through leaves the same row. That is what makes `STOPPING` safe
+ * to name here while it is not safe to name in a teardown's own claim, where the move would be
+ * `STOPPING -> STOPPING` and both callers would proceed to destroy.
  */
 const RECONCILABLE_STATUSES: readonly WorkspaceStatus[] = ['READY', 'STOPPING'];
 
@@ -125,7 +129,11 @@ async function closeOutGoneRows(
       // The listing this row came from was taken before the runner was asked what it still holds,
       // so a turn may have taken the workspace since. Closing it out unconditionally would write
       // `DESTROYED` over a workspace that is executing; naming the status the listing reported
-      // leaves that one alone and closes out only the row that has not moved.
+      // leaves that one alone and closes out only the row that has not moved. Naming the status
+      // found is safe here and nowhere else in this file: the target is terminal, so a second
+      // caller can never match the row this one wrote, and both statuses that reach here are
+      // rows whose only other writer would reach the same terminal state (see
+      // {@link RECONCILABLE_STATUSES}).
       const closed = await deps.repos.workspaces.claimStatus(
         workspace.id,
         workspace.status,
@@ -240,10 +248,12 @@ async function reapIdle(deps: ProcessorDeps): Promise<GcResult> {
 /**
  * Destroys the live workspace of a chat that was archived.
  *
- * The archive runs on its own queue, so it can arrive while a turn of the chat is executing. It
- * takes the same claim that turn holds rather than tearing the container down underneath it: a
+ * The archive runs on its own queue, so it can arrive while a turn of the chat is executing. Unlike
+ * the idle pass, which selects only `READY` rows, this one hands the teardown whatever live
+ * workspace the chat has — so the teardown's own rule that only a `READY` workspace may be taken is
+ * what protects the running turn, and the claim taken here only saves this worker the work. A
  * container removed mid-exec fails a turn the user is watching, and the archive loses nothing by
- * waiting — the chat takes no further turn, so the workspace falls idle and the collector reaps it
+ * waiting: the chat takes no further turn, so the workspace falls idle and the collector reaps it
  * on a later pass.
  *
  * @param deps - Runner, repositories, claims and logger.

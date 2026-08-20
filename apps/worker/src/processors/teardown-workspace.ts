@@ -17,16 +17,26 @@
  * container the daemon refuses to remove — or one chat record the database refuses to write — must
  * not stop the rest.
  *
- * `STOPPING` is written conditionally, from the status the caller's row reported. Everything above
- * it takes time — an exec into the container, two writes for the chat — and a turn may take the
+ * A teardown may only take a workspace that is `READY`, and it asks in two steps. The row it was
+ * handed is checked first, because the other live statuses are not races to lose but rows with an
+ * owner: `CREATING` belongs to whoever is provisioning, `BUSY` to the turn executing inside the
+ * container, `STOPPING` to another teardown. Tearing one of those down destroys a filesystem
+ * somebody is using, and naming the status found instead of `READY` would make that an *accepted*
+ * claim — `BUSY -> STOPPING` is a valid move, and `STOPPING -> STOPPING` would let two teardowns
+ * both believe they won.
+ *
+ * The `READY -> STOPPING` write is the second step and the binding one. Everything between the two
+ * takes time — an exec into the container, two writes for the chat — and a turn may take the
  * workspace while it runs, so the write that commits to destroying the container is also the one
- * that arbitrates: it applies only while the row still holds what was read, and reports a
- * workspace somebody else took instead of tearing it down underneath them. What it cannot take
- * back is the note already appended to the chat, so a teardown that loses leaves a message saying
- * the workspace was reclaimed when it was not. Within one worker that never happens — the
- * collector holds the workspace's claim across all of it — and across workers a stale sentence in
- * the transcript is the cheaper of the two outcomes: writing the record after the destroy would
- * lose it altogether whenever the process dies in between.
+ * that arbitrates, whichever process the other writer is in.
+ *
+ * What that write cannot take back is the note already appended to the chat, so a teardown that
+ * loses at that point leaves a message saying the workspace was reclaimed when it was not. It is
+ * the only way left to lose — a row that was owned when it was read is refused before anything is
+ * recorded — and within one worker it cannot happen at all, because the collector holds the
+ * workspace's claim across the whole sequence. Across workers a stale sentence in the transcript
+ * is the cheaper of the two outcomes: writing the record after the destroy would lose it
+ * altogether whenever the process dies in between.
  */
 import { archivedNotice, describeClientFailure } from '@agent-hangar/core';
 import type { Workspace, WorkspaceSnapshot } from '@agent-hangar/core';
@@ -178,29 +188,33 @@ async function recordBeforeTeardown(
  * @param workspace - The workspace to destroy.
  * @param options - Why it is going away.
  * @returns `destroyed` when the container is gone, `failed` when it could not be, and `skipped`
- *   when another writer moved the workspace out of the status this teardown read.
+ *   when the workspace was not this teardown's to take — owned by another writer when it was read,
+ *   or taken by one before the `STOPPING` claim landed.
  */
 export async function teardownWorkspace(
   deps: ProcessorDeps,
   workspace: Workspace,
   options: TeardownOptions,
 ): Promise<TeardownOutcome> {
+  if (workspace.status !== 'READY') {
+    deps.logger.info(
+      { workspaceId: workspace.id, foundStatus: workspace.status },
+      'workspace is not free to stop; left for a later pass',
+    );
+    return 'skipped';
+  }
   if (!(await recordBeforeTeardown(deps, workspace, options))) {
     return 'failed';
   }
   // The row was read before the snapshot was taken and before the chat's record was written, and
-  // a turn can take the workspace in that window. Naming the status that read reported is what
-  // turns "somebody else moved it" from an overwrite into an answer: the container that turn is
-  // executing in is left alone, and the workspace falls idle again for a later pass.
-  const stopping = await deps.repos.workspaces.claimStatus(
-    workspace.id,
-    workspace.status,
-    'STOPPING',
-  );
+  // a turn can take the workspace in that window. `READY` is what makes this a claim rather than
+  // an overwrite: the container that turn is executing in is left alone, and the workspace falls
+  // idle again for a later pass.
+  const stopping = await deps.repos.workspaces.claimStatus(workspace.id, 'READY', 'STOPPING');
   if (stopping === null) {
     deps.logger.info(
-      { workspaceId: workspace.id, expectedStatus: workspace.status },
-      'workspace moved on before it could be stopped; left for a later pass',
+      { workspaceId: workspace.id },
+      'workspace was taken while its record was written; left for a later pass',
     );
     return 'skipped';
   }

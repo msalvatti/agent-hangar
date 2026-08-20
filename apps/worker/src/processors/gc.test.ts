@@ -267,6 +267,28 @@ describe('createGcProcessor', () => {
   });
 
   /**
+   * The cross-process case, and the one the in-process register cannot answer: no claim is held
+   * here, so the archive reaches the teardown exactly as a second worker's archive would. It must
+   * still leave the container standing, because the row itself says a turn owns it.
+   */
+  it('leaves an archived chat workspace a turn owns alone with no claim held', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, {
+      status: 'BUSY',
+      idleMinutes: 0,
+      withContainer: true,
+    });
+    const chatId = workspace.chatId ?? '';
+
+    const result = await collect(container, JOB_NAMES.destroyChatWorkspace, { chatId });
+
+    expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0 });
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
+    expect(container.runner.getWorkspace(workspace.id)?.status).toBe('running');
+    expect(await container.repos.messages.listByChat(chatId)).toHaveLength(0);
+  });
+
+  /**
    * Archiving a chat that has no live workspace is a no-op, which is what a double archive is.
    */
   it('does nothing for an archived chat with no workspace', async () => {
