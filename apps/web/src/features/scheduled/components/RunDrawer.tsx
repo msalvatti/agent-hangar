@@ -95,6 +95,11 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
     }
     if (mapped !== null && runId !== seededRunId.current) {
       seededRunId.current = runId;
+      // A run switch discards any recovery still pending for the run the drawer just left: its
+      // in-flight refetch, if it lands late, updates a different query key and is dropped by
+      // `useRun` itself, but the flag would otherwise still be set and misattribute that drop (or
+      // a coincidental later match) as this new run's own recovery.
+      recoveringFromExpiry.current = false;
       dispatch({ type: 'reset', items: mapped.items, phase: mapped.phase });
     }
   }, [open, mapped, runId, dispatch]);
