@@ -1,0 +1,21 @@
+{
+  "e2e/sample": [
+    {
+      "name": "main",
+      "commit": { "sha": "ff55e2f1c3b12be1db375a5e3bb1ac177b6e324e" },
+      "protected": false
+    },
+    {
+      "name": "feature/docs",
+      "commit": { "sha": "b0a36572647b644b9b5744bf5e1db5415d1f4f2c" },
+      "protected": false
+    }
+  ],
+  "e2e/other": [
+    {
+      "name": "main",
+      "commit": { "sha": "0000000000000000000000000000000000000000" },
+      "protected": false
+    }
+  ]
+}
