@@ -88,7 +88,7 @@ export function RunRow({ run, onOpen }: RunRowProps) {
             render={
               <button
                 type="button"
-                className="cursor-pointer rounded-sm text-left underline-offset-2 hover:underline focus-visible:ring-3 focus-visible:outline-none"
+                className="focus-visible:ring-ring/50 cursor-pointer rounded-sm text-left underline-offset-2 outline-hidden hover:underline focus-visible:ring-3"
                 aria-label={`Open run from ${startedLabel}`}
                 onClick={(event) => {
                   event.stopPropagation();
