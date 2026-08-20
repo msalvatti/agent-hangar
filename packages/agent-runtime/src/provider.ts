@@ -7,6 +7,12 @@
  * imported here: a factory is injected by whoever composes the runtime, which keeps the OpenAI SDK
  * — and its transitive dependencies — out of the bundle until something actually wires it in, and
  * keeps this module free of any code that reads an API key.
+ *
+ * A supplied script arrives as text, so a scripted step that has to carry the workspace's GitHub
+ * credential — the way to prove the credential is redacted on its way to a row — writes a
+ * placeholder instead and has it substituted here. That keeps the credential in the one variable
+ * the workspace already holds it in, rather than copying it into a second one that crosses a
+ * process boundary to get here.
  */
 import { ConfigError } from '@agent-hangar/core';
 import type { AgentModelProvider } from '@agent-hangar/core';
@@ -17,6 +23,9 @@ import { builtInFakeScript } from './fake-scripts.js';
 
 /** Provider used when the environment names none. */
 export const DEFAULT_PROVIDER_NAME = 'openai';
+
+/** Text a scripted response writes where the workspace's GitHub credential belongs. */
+export const GITHUB_CREDENTIAL_PLACEHOLDER = '{{GITHUB_CANARY}}';
 
 /** Options a provider factory receives. */
 export interface ProviderFactoryOptions {
@@ -43,6 +52,30 @@ export function resolveProviderName(env: Readonly<Record<string, string | undefi
 }
 
 /**
+ * Fills the credential placeholder of a supplied script.
+ *
+ * A workspace without a GitHub credential leaves the placeholder as it is: substituting an empty
+ * string would turn a script that asks for the credential into one that quietly asks for nothing,
+ * and the literal placeholder is what makes the omission visible in whatever the step produced.
+ *
+ * The substitution is textual, and a script nests JSON inside JSON — a tool call's arguments are
+ * a string of their own — so what goes in has to be a token: a value carrying a quote or a
+ * backslash would not survive the encoding it lands in. It fails loudly when it does not, as an
+ * unparseable script or unparseable tool arguments, and the credentials this stands for are
+ * token-shaped.
+ *
+ * @param script - Text of the supplied script.
+ * @param credential - The workspace's GitHub credential, when it has one.
+ * @returns The text, with every placeholder replaced.
+ */
+function fillCredentialPlaceholder(script: string, credential: string | undefined): string {
+  if (credential === undefined || credential.length === 0) {
+    return script;
+  }
+  return script.replaceAll(GITHUB_CREDENTIAL_PLACEHOLDER, credential);
+}
+
+/**
  * Builds the scripted provider, from the environment's script when it supplies one.
  *
  * @param env - Container environment.
@@ -54,8 +87,9 @@ function createFakeProvider(env: Readonly<Record<string, string | undefined>>): 
   if (override === undefined) {
     return new FakeAgentModelProvider({ script: builtInFakeScript() });
   }
+  const filled = fillCredentialPlaceholder(override, env.GITHUB_TOKEN);
   try {
-    return new FakeAgentModelProvider({ script: JSON.parse(override) as ProviderScript });
+    return new FakeAgentModelProvider({ script: JSON.parse(filled) as ProviderScript });
   } catch {
     // The parse error quotes a prefix of its input, which came from the container environment.
     throw new ConfigError('AGENT_FAKE_SCRIPT_JSON is not valid JSON');

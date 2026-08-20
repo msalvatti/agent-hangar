@@ -47,6 +47,7 @@ function appContainer(test: TestContainer): { container: AppContainer; closed: s
     commands: test.commands,
     queues: test.queues,
     imageStatus: test.imageStatus,
+    fakeProviderEnv: test.fakeProviderEnv,
     claims: test.claims,
     close: () => {
       closed.push('container');

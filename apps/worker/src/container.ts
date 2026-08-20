@@ -49,6 +49,7 @@ import { parseWorkerEnv } from './env.js';
 import type { WorkerEnv, WorkspaceRunnerKind } from './env.js';
 import { createTurnEventPublisher } from './events.js';
 import type { EventStreamRedis, TurnEventPublisher } from './events.js';
+import { fakeProviderScriptEnv } from './fake-provider-script.js';
 import type { HeartbeatRedis } from './heartbeat.js';
 import { createImageStatus } from './image-status.js';
 import type { WorkspaceImageStatus } from './image-status.js';
@@ -103,6 +104,13 @@ export interface WorkerContainer<
   queues: WorkerQueues;
   /** What the last workspace create said about the image; published in the health heartbeat. */
   imageStatus: WorkspaceImageStatus;
+  /**
+   * Extra variables every workspace container is created with, on top of its credentials.
+   *
+   * Empty in every run that has not selected the scripted model provider: the only thing it ever
+   * carries is a supplied script, and a script is what the scripted provider answers from.
+   */
+  fakeProviderEnv: Readonly<Record<string, string>>;
   /** Exclusive ownership of a workspace, shared by the turn, run and collection processors. */
   claims: WorkspaceClaims;
   /** Closes queues, the three connections and the database pool; idempotent. */
@@ -300,7 +308,9 @@ function createClose(
  *
  * @param options - Configuration, environment and construction seams.
  * @returns The container, with every connection open.
- * @throws ConfigError When the worker-local environment is invalid.
+ * @throws ConfigError When the worker-local environment is invalid, or when it names a scripted
+ *   provider script that cannot be read. Both are read here so a misconfiguration stops the
+ *   process at boot instead of failing every turn it accepts.
  */
 export function createContainer<
   TDatabase extends ContainerDatabase,
@@ -308,6 +318,10 @@ export function createContainer<
 >(options: CreateContainerOptions<TDatabase, TRedis>): Promise<WorkerContainer<TDatabase, TRedis>> {
   const { config, factories } = options;
   const workerEnv = parseWorkerEnv(options.env);
+  const fakeProviderEnv = fakeProviderScriptEnv(
+    config.AGENT_MODEL_PROVIDER,
+    workerEnv.FAKE_PROVIDER_SCRIPT_PATH,
+  );
 
   const redactor = factories.createRedactor();
   const logger = factories.createLogger({ level: config.LOG_LEVEL, redactor });
@@ -334,6 +348,7 @@ export function createContainer<
     commands: createCommandListener(subscriber, logger),
     queues,
     imageStatus: createImageStatus(),
+    fakeProviderEnv,
     claims: createWorkspaceClaims(),
     close: createClose(
       [

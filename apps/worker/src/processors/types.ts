@@ -40,6 +40,14 @@ export interface ProcessorDeps {
   /** Updated by every workspace create, read by the health heartbeat. */
   imageStatus: WorkspaceImageStatus;
   /**
+   * Extra variables every workspace container is created with, on top of its credentials.
+   *
+   * Resolved once, where the process reads its environment, rather than per create: it is the
+   * same for every workspace, and a value that cannot be resolved has to stop the process rather
+   * than fail each turn in turn. Empty unless the scripted model provider was selected.
+   */
+  fakeProviderEnv: Readonly<Record<string, string>>;
+  /**
    * Exclusive ownership of a workspace within this process.
    *
    * Shared by every processor on purpose: a turn and a collection pass contend for the same

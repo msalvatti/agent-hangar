@@ -6,7 +6,9 @@
  * Everything here is the production wiring: the real container, the real Docker runner, the real
  * repositories and the real secrets service over a throwaway master key. Only the model is fake,
  * because a scheduled turn against a paid API is not a test. Credentials are the canaries, so the
- * suite can assert they reach the container environment and nothing else.
+ * suite can assert they reach the container environment and nothing else. A scenario that needs
+ * its own answers hands over a script file, which the worker resolves at boot exactly as it does
+ * in production.
  */
 import { setTimeout as delay } from 'node:timers/promises';
 
@@ -123,11 +125,13 @@ async function seedCanaryCredentials(
 /**
  * Builds the harness against the running compose instance and Docker daemon.
  *
- * @param options - Where the throwaway master key lives.
+ * @param options - Where the throwaway master key lives, and the script to answer from.
  * @returns The harness, with the workers already consuming.
  */
 export async function createIntegrationHarness(options: {
   masterKeyPath: string;
+  /** Script the containers answer from; absent leaves the runtime's built-in one in force. */
+  fakeProviderScriptPath?: string;
 }): Promise<IntegrationHarness> {
   const config = loadConfig({
     ...process.env,
@@ -136,7 +140,12 @@ export async function createIntegrationHarness(options: {
   });
   const container = await createContainer({
     config,
-    env: { WORKSPACE_RUNNER: 'docker' },
+    env: {
+      WORKSPACE_RUNNER: 'docker',
+      ...(options.fakeProviderScriptPath === undefined
+        ? {}
+        : { FAKE_PROVIDER_SCRIPT_PATH: options.fakeProviderScriptPath }),
+    },
     factories: defaultContainerFactories,
   });
   const inspect = createQueueConnection(config.REDIS_URL);
