@@ -9,7 +9,8 @@
  * `--json` parses into 10 objects with the four documented keys.
  * Mocks: docker/pnpm/openssl/node via `infra/scripts/testing/shims.ts`; a bespoke
  * `AH_DOCTOR_HELPER_CMD` shim standing in for the secrets-status/openai-check helpers; real
- * `node:net` listeners standing in for Postgres/Redis reachability.
+ * `node:net` listeners standing in for Postgres/Redis reachability — bound on the ports `env.sh`
+ * derives from AH_PORT_BASE, because the derivation deliberately ignores POSTGRES_PORT/REDIS_PORT.
  */
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -33,24 +34,94 @@ afterEach(() => {
   }
 });
 
-/** Starts a throwaway TCP listener on an ephemeral loopback port, standing in for reachability. */
-function listen(): Promise<{ port: number }> {
+/** Lowest and highest port base `env.sh` accepts. */
+const MIN_PORT_BASE = 1024;
+const MAX_PORT_BASE = 65000;
+
+/** How many adjacent-pair candidates to try before giving up. */
+const PORT_BASE_ATTEMPTS = 50;
+
+/** A reserved port base together with the listeners holding its derived ports. */
+interface BoundPorts {
+  /** Value to pass as `AH_PORT_BASE`; `+ 1` and `+ 2` are the bound ports. */
+  portBase: number;
+  /** Releases both listeners. */
+  close: () => void;
+}
+
+/**
+ * Binds a loopback listener, or reports that the port is taken.
+ *
+ * @param port - Port to bind; `0` lets the OS choose a free one.
+ * @returns The listening server, or `null` when the port could not be bound.
+ */
+function tryListen(port: number): Promise<Server | null> {
   return new Promise((resolve) => {
     const server: Server = createServer();
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address();
-      const port = typeof address === 'object' && address !== null ? address.port : 0;
-      cleanups.push(() => server.close());
-      resolve({ port });
+    server.once('error', () => {
+      resolve(null);
+    });
+    server.listen(port, '127.0.0.1', () => {
+      resolve(server);
     });
   });
 }
 
-/** Reserves a loopback port nothing listens on, to simulate an unreachable service. */
-function closedPort(): number {
-  // An ephemeral port bound then immediately released is almost certainly free for the
-  // duration of one test; no test asserts on the exact value, only on unreachability.
-  return 1;
+/**
+ * Reads the port a listening server was given.
+ *
+ * @param server - A server that has already emitted `listening`.
+ * @returns Its loopback port.
+ */
+function portOf(server: Server): number {
+  const address = server.address();
+  return typeof address === 'object' && address !== null ? address.port : 0;
+}
+
+/**
+ * Reserves a port base whose derived Postgres and Redis ports are both listening.
+ *
+ * `env.sh` derives POSTGRES_PORT/REDIS_PORT from AH_PORT_BASE and ignores any same-named variable
+ * in the environment, so a test that needs "Postgres is reachable" listens where the derivation
+ * points instead of pointing the derivation at a listener it picked. The OS hands out one free
+ * port; the base is that port minus one, and the Redis port next to it is bound explicitly, which
+ * is why the search may have to try more than one candidate.
+ *
+ * @returns The reserved base and a function releasing both listeners.
+ */
+async function bindDerivedPorts(): Promise<BoundPorts> {
+  for (let attempt = 0; attempt < PORT_BASE_ATTEMPTS; attempt += 1) {
+    const postgres = await tryListen(0);
+    if (postgres !== null) {
+      const portBase = portOf(postgres) - 1;
+      const inRange = portBase >= MIN_PORT_BASE && portBase + 2 <= MAX_PORT_BASE;
+      const redis = inRange ? await tryListen(portBase + 2) : null;
+      if (redis !== null) {
+        return {
+          portBase,
+          close: () => {
+            postgres.close();
+            redis.close();
+          },
+        };
+      }
+      postgres.close();
+    }
+  }
+  throw new Error('could not reserve an adjacent Postgres/Redis port pair');
+}
+
+/**
+ * Reserves a port base whose derived ports nothing listens on, to simulate an unreachable service.
+ *
+ * @returns A base whose `+ 1` and `+ 2` ports are free.
+ */
+async function closedPortBase(): Promise<number> {
+  // A pair bound and immediately released stays free for the duration of one test: the OS hands
+  // out ephemeral ports in rotation rather than reissuing the one just returned.
+  const bound = await bindDerivedPorts();
+  bound.close();
+  return bound.portBase;
 }
 
 interface HelperFixture {
@@ -87,8 +158,7 @@ interface Sandbox {
   dir: string;
   log: string;
   keyPath: string;
-  postgresPort: number;
-  redisPort: number;
+  portBase: number;
 }
 
 async function greenSandbox(): Promise<Sandbox> {
@@ -99,24 +169,17 @@ async function greenSandbox(): Promise<Sandbox> {
   const keyPath = join(dir, 'master.key');
   writeFileSync(keyPath, `${'0'.repeat(64)}\n`);
   chmodSync(keyPath, 0o600);
-  const postgres = await listen();
-  const redis = await listen();
-  return {
-    dir,
-    log: join(dir, 'log'),
-    keyPath,
-    postgresPort: postgres.port,
-    redisPort: redis.port,
-  };
+  const ports = await bindDerivedPorts();
+  cleanups.push(ports.close);
+  return { dir, log: join(dir, 'log'), keyPath, portBase: ports.portBase };
 }
 
 function greenEnv(sandbox: Sandbox, extra: Record<string, string> = {}): Record<string, string> {
   return {
     HOME: sandbox.dir,
     AH_INSTANCE: 'default',
+    AH_PORT_BASE: String(sandbox.portBase),
     MASTER_KEY_PATH: sandbox.keyPath,
-    POSTGRES_PORT: String(sandbox.postgresPort),
-    REDIS_PORT: String(sandbox.redisPort),
     AH_SHIM_LOG: sandbox.log,
     AH_SHIM_SECRETS_LINES: 'GITHUB_PAT=set:ab12\nOPENAI_API_KEY=set:cd34',
     AH_SHIM_OPENAI_LINE: 'ok gpt-5.6-sol',
@@ -336,7 +399,7 @@ describe('doctor.sh — required failures', () => {
       args: ['--json'],
       env: greenEnv(sandbox, {
         AH_DOCTOR_HELPER_CMD: helper.path,
-        POSTGRES_PORT: String(closedPort()),
+        AH_PORT_BASE: String(await closedPortBase()),
       }),
     });
     expect(result.status).toBe(1);
@@ -408,7 +471,7 @@ describe('doctor.sh — optional rows never fail the exit code', () => {
     expect(secrets?.status).toBe('⚠');
     expect(secrets?.detail).toBe('GitHub PAT: set (…ab12) · OpenAI key: unset');
     expect(secrets?.fix).toContain('/settings');
-    expect(secrets?.fix).toContain(String(3000));
+    expect(secrets?.fix).toContain(String(sandbox.portBase));
     const openai = rows.find((row) => row.check === 'OpenAI model');
     expect(openai).toEqual({
       check: 'OpenAI model',

@@ -3,6 +3,12 @@
 # AH_INSTANCE / AH_PORT_BASE, falling back to CONDUCTOR_WORKSPACE_NAME / CONDUCTOR_PORT, then to
 # default / 3000. Mirrors packages/core/src/config/instance.ts — a test keeps both in sync.
 #
+# The instance identity — AH_INSTANCE, AH_PORT_BASE and everything derived from them (ports,
+# database name, URLs, compose project, container prefix) — is computed here and only here. Those
+# variables are NOT read from the environment, so nothing can hold an instance's name while
+# pointing its connection strings at another instance's data. The remaining variables are ordinary
+# configuration and an explicit value in the environment does win over the default.
+#
 # AH_ENV_FILE overrides the path of the env file read/written below (default: <repo-root>/.env.local),
 # so tests exercise this script against a throwaway file instead of the developer's real one.
 #
@@ -71,12 +77,14 @@ ah_resolve_env() {
 
   AH_INSTANCE=$(ah_slugify "$raw_instance")
   AH_PORT_BASE=$raw_port
+  # Identity block. Every value below is a pure function of AH_INSTANCE/AH_PORT_BASE and ignores
+  # any same-named variable already in the environment: an instance is a sealed sandbox, and a
+  # POSTGRES_PORT that could be set independently of the base would let a shell calling itself
+  # "feat-x" build a DATABASE_URL pointing at another instance's database while every other value
+  # still named feat-x. Change the instance or the base to move the ports; nothing else does.
   WEB_PORT=$((AH_PORT_BASE + 0))
-  # POSTGRES_PORT/REDIS_PORT are normally derived from AH_PORT_BASE, but an explicit value in the
-  # environment wins — tests point these at an ephemeral port a throwaway listener is bound to,
-  # independent of the rest of the derived block.
-  POSTGRES_PORT="${POSTGRES_PORT:-$((AH_PORT_BASE + 1))}"
-  REDIS_PORT="${REDIS_PORT:-$((AH_PORT_BASE + 2))}"
+  POSTGRES_PORT=$((AH_PORT_BASE + 1))
+  REDIS_PORT=$((AH_PORT_BASE + 2))
   POSTGRES_DB="agent_hangar_$(printf '%s' "$AH_INSTANCE" | tr '-' '_')"
   # Local compose credentials (not a secret: loopback only, ciphertext-only contents).
   local db_scheme="postgresql" db_credentials="ah:ah"
@@ -84,6 +92,8 @@ ah_resolve_env() {
   REDIS_URL="redis://127.0.0.1:${REDIS_PORT}"
   COMPOSE_PROJECT_NAME="agent-hangar-${AH_INSTANCE}"
   WORKSPACE_NAME_PREFIX="ah-ws-${AH_INSTANCE}-"
+  # Configuration block. These name what an instance runs with, not which instance it is, so an
+  # explicit value wins over the default and no two instances can collide through one.
   WORKSPACE_IMAGE="${WORKSPACE_IMAGE:-agent-hangar/workspace:dev}"
   MASTER_KEY_PATH="${MASTER_KEY_PATH:-$HOME/.agent-hangar/master.key}"
   WORKSPACE_IDLE_TTL_MIN="${WORKSPACE_IDLE_TTL_MIN:-30}"
