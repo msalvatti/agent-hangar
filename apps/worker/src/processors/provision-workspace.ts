@@ -21,8 +21,20 @@
  * the redactor, and are referenced nowhere else — not on the result, not in a log record, and not
  * in the message of a failure. Failures are reported by the typed error the runner raised, whose
  * messages are built from ids and image names only.
+ *
+ * Being that single point is also why the forge allow-list is applied again here. The write routes
+ * check a repository URL when a chat or a job is created, but the URL is then stored and cloned by
+ * every later turn, so a forge the operator has since removed from `ALLOWED_REPO_HOSTS` would keep
+ * receiving the PAT through rows that were legitimate when they were written. The check therefore
+ * belongs where the credential is revealed rather than only where the row is written, and it runs
+ * before the reveal so a repository that is no longer allowed never decrypts anything.
  */
-import { describeClientFailure, WorkspaceImageMissing } from '@agent-hangar/core';
+import {
+  describeClientFailure,
+  parseAllowedRepoHosts,
+  repoUrlForHosts,
+  WorkspaceImageMissing,
+} from '@agent-hangar/core';
 import type { Workspace, WorkspaceHandle, WorkspaceKind } from '@agent-hangar/core';
 
 import { isTransportError } from '../errors.js';
@@ -32,7 +44,10 @@ import type { ProcessorDeps } from './types.js';
 
 /** Why a workspace could not be provisioned. */
 export type ProvisionFailureReason =
-  'secrets_missing' | 'workspace_image_missing' | 'workspace_create_failed';
+  | 'repo_url_not_allowed'
+  | 'secrets_missing'
+  | 'workspace_image_missing'
+  | 'workspace_create_failed';
 
 /** `Workspace.failureReason` written when the container could not be recorded on its row. */
 export const UNRECORDED_WORKSPACE_REASON = 'container reference was never recorded';
@@ -43,6 +58,22 @@ export const SECRETS_MISSING_REASON = 'secrets missing';
 /** What the user is told to do when a credential is not configured. */
 export const SECRETS_MISSING_MESSAGE =
   'Configure the GitHub PAT and the OpenAI API key in Settings, then try again.';
+
+/** `Workspace.failureReason` written when the repository is not on the configured forge list. */
+export const REPO_URL_NOT_ALLOWED_REASON = 'repository host is not allowed';
+
+/** Failure code reported for a repository that is not on the configured forge list. */
+export const REPO_URL_NOT_ALLOWED_CODE: ProvisionFailureReason = 'repo_url_not_allowed';
+
+/**
+ * What the user is told when the stored repository is no longer allowed.
+ *
+ * It names the variable and nothing else. Quoting the repository URL back would put a value the
+ * redactor does not know about into a persisted, displayed message, and the operator who has to
+ * act on it is reading the configuration, not this string.
+ */
+export const REPO_URL_NOT_ALLOWED_MESSAGE =
+  'This repository is not on an origin listed in ALLOWED_REPO_HOSTS.';
 
 /** Outcome of {@link provisionWorkspace}. */
 export type ProvisionResult =
@@ -128,6 +159,48 @@ async function openWorkspaceRow(deps: ProcessorDeps, input: ProvisionInput): Pro
     repoUrl: input.repoUrl,
     branch: input.branch,
   });
+}
+
+/**
+ * Whether a stored repository URL still names an origin the operator allows.
+ *
+ * The list is read from configuration on every call rather than captured once, so removing an
+ * origin takes effect on the next turn instead of on the next restart of this process. Callers
+ * that reach a repository without provisioning a workspace — a chat whose container is still
+ * running — have to ask this themselves; provisioning asks it below.
+ *
+ * @param deps - For the configured allow-list.
+ * @param repoUrl - The stored repository URL.
+ * @returns `true` when the URL names one repository on a currently allowed origin.
+ */
+export function isRepoUrlAllowed(deps: ProcessorDeps, repoUrl: string): boolean {
+  const allowed = repoUrlForHosts(parseAllowedRepoHosts(deps.config.ALLOWED_REPO_HOSTS));
+  return allowed.safeParse(repoUrl).success;
+}
+
+/**
+ * Refuses a repository the operator no longer allows, before anything has been decrypted.
+ *
+ * @param deps - Configuration and repositories.
+ * @param input - What the workspace serves.
+ * @param workspaceId - The row already opened for it.
+ * @returns The failure result, or `null` when the repository is still on the list.
+ */
+async function refuseDisallowedRepo(
+  deps: ProcessorDeps,
+  input: ProvisionInput,
+  workspaceId: string,
+): Promise<ProvisionResult | null> {
+  if (isRepoUrlAllowed(deps, input.repoUrl)) {
+    return null;
+  }
+  return failWorkspace(
+    deps,
+    workspaceId,
+    REPO_URL_NOT_ALLOWED_CODE,
+    REPO_URL_NOT_ALLOWED_MESSAGE,
+    REPO_URL_NOT_ALLOWED_REASON,
+  );
 }
 
 /**
@@ -236,6 +309,9 @@ async function recordReadyWorkspace(
 /**
  * Creates a workspace row and the container behind it.
  *
+ * The repository is measured against the configured forge list first, so a stored URL that the
+ * operator has since stopped allowing is refused before any credential is decrypted.
+ *
  * @param deps - The processor's collaborators.
  * @param input - What the workspace serves.
  * @returns The ready workspace, or why it could not be created.
@@ -248,6 +324,10 @@ export async function provisionWorkspace(
   input: ProvisionInput,
 ): Promise<ProvisionResult> {
   const workspace = await openWorkspaceRow(deps, input);
+  const refusal = await refuseDisallowedRepo(deps, input, workspace.id);
+  if (refusal !== null) {
+    return refusal;
+  }
 
   const pat = await deps.secrets.reveal('GITHUB_PAT');
   const apiKey = await deps.secrets.reveal('OPENAI_API_KEY');

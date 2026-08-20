@@ -32,12 +32,63 @@ describe('assertRepoUrlAllowed', () => {
   });
 
   /**
-   * Plain http is allowed when the operator lists the host: the end-to-end harness clones from a
-   * local git server, and forcing https there would mean the suite could not exercise the path.
+   * Plain http is allowed when the operator writes the origin out in full: the end-to-end harness
+   * clones from a local git server, and forcing https there would mean the suite could not
+   * exercise the path.
    */
-  it('accepts http for a host the operator listed', () => {
-    const hosts = ['git.internal'];
-    expect(assertRepoUrlAllowed('http://git.internal:8080/sample.git', hosts).port).toBe('8080');
+  it('accepts http for an origin the operator listed', () => {
+    const hosts = ['http://git.internal:8080'];
+    expect(assertRepoUrlAllowed('http://git.internal:8080/acme/sample.git', hosts).port).toBe(
+      '8080',
+    );
+  });
+
+  /**
+   * A bare entry authorises https on the default port and nothing else. The PAT is delivered to
+   * whatever origin the URL names, so a cleartext or off-port clone of an allowed host is a
+   * different destination and needs a different entry.
+   */
+  it('rejects a scheme or port the entry did not name', () => {
+    expect(() => assertRepoUrlAllowed('http://github.com/acme/widgets', HOSTS)).toThrow(
+      ValidationError,
+    );
+    expect(() => assertRepoUrlAllowed('https://github.com:8443/acme/widgets', HOSTS)).toThrow(
+      ValidationError,
+    );
+  });
+
+  /**
+   * The list is matched whole, never as a substring: a host that merely ends with an allowed name
+   * is a different machine and would receive the token.
+   */
+  it('rejects a host that only looks like an allowed one', () => {
+    expect(() => assertRepoUrlAllowed('https://github.com.evil.test/a/b', HOSTS)).toThrow(
+      ValidationError,
+    );
+    expect(() => assertRepoUrlAllowed('https://evil.com/a/b', ['com'])).toThrow(ValidationError);
+  });
+
+  /**
+   * An empty list closes the door. A default forge appearing when the operator configured none
+   * would send the token somewhere nobody asked for.
+   */
+  it('rejects everything when the list is empty', () => {
+    expect(() => assertRepoUrlAllowed('https://github.com/acme/widgets', [])).toThrow(
+      ValidationError,
+    );
+  });
+
+  /**
+   * A query string and a fragment are the other two places a token hides in a URL that is about
+   * to become a clone command.
+   */
+  it('rejects a query string and a fragment', () => {
+    expect(() => assertRepoUrlAllowed('https://github.com/a/b?token=x', HOSTS)).toThrow(
+      ValidationError,
+    );
+    expect(() => assertRepoUrlAllowed('https://github.com/a/b#token=x', HOSTS)).toThrow(
+      ValidationError,
+    );
   });
 
   /**
@@ -73,11 +124,15 @@ describe('assertRepoUrlAllowed', () => {
   });
 
   /**
-   * A URL with no path names no repository, so it cannot be cloned; refusing it here beats a
-   * confusing clone failure inside a container minutes later.
+   * A URL that does not name exactly one owner and one repository cannot be cloned; refusing it
+   * here beats a confusing clone failure inside a container minutes later.
    */
-  it('rejects a URL with no repository path', () => {
+  it('rejects a URL that is not one owner and one repository', () => {
     expect(() => assertRepoUrlAllowed('https://github.com/', HOSTS)).toThrow(ValidationError);
+    expect(() => assertRepoUrlAllowed('https://github.com/acme', HOSTS)).toThrow(ValidationError);
+    expect(() => assertRepoUrlAllowed('https://github.com/a/b/tree/main', HOSTS)).toThrow(
+      ValidationError,
+    );
   });
 
   /**
@@ -104,9 +159,8 @@ describe('allowedRepoHosts', () => {
    * with a different environment sees a different policy.
    */
   it('reads the configured hosts', () => {
-    expect(allowedRepoHosts({ ALLOWED_REPO_HOSTS: 'github.com, Git.Internal' })).toEqual([
-      'github.com',
-      'git.internal',
-    ]);
+    expect(
+      allowedRepoHosts({ ALLOWED_REPO_HOSTS: 'github.com, Git.Internal, HTTP://127.0.0.1:3907' }),
+    ).toEqual(['github.com', 'git.internal', 'http://127.0.0.1:3907']);
   });
 });

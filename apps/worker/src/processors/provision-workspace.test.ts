@@ -5,7 +5,9 @@
  * Goal: the row precedes the container, the credentials reach the container environment and the
  * redactor and nothing else, the labels carry the run the workspace serves, and each failure
  * closes the row out with the right reason — with only an unreachable daemon rethrown. Plus the
- * one failure that cannot be closed out by anybody else: a reference the row refused to record.
+ * one failure that cannot be closed out by anybody else: a reference the row refused to record,
+ * and the forge allow-list, which is applied again here because a stored URL is cloned long after
+ * the route that vetted it.
  * Mocks: `createTestContainer` plus runner subclasses for the failures the fake cannot produce.
  */
 import { WorkspaceImageMissing } from '@agent-hangar/core';
@@ -18,6 +20,7 @@ import type { TestContainer } from '../testing/index.js';
 
 import {
   provisionWorkspace,
+  REPO_URL_NOT_ALLOWED_REASON,
   SECRETS_MISSING_REASON,
   UNRECORDED_WORKSPACE_REASON,
 } from './provision-workspace.js';
@@ -237,6 +240,50 @@ describe('provisionWorkspace', () => {
 
     expect(register).toHaveBeenCalledExactlyOnceWith([GITHUB_CANARY, OPENAI_CANARY]);
     expect(container.redactor.redact(`x ${OPENAI_CANARY}`)).toBe('x [REDACTED]');
+  });
+
+  /**
+   * The write routes vet a repository URL when the chat or job is written, but the URL is stored
+   * and cloned again by every later turn. An operator who removes an origin from
+   * `ALLOWED_REPO_HOSTS` must stop the PAT reaching it, so the list is applied again here — before
+   * the reveal, so a repository that is no longer allowed decrypts nothing.
+   */
+  it('refuses a stored repository that is no longer on the allow-list', async () => {
+    const container = createTestContainer();
+    const reveal = vi.spyOn(container.secrets, 'reveal');
+
+    const result = await provisionWorkspace(container, {
+      kind: 'CHAT',
+      chatId: 'chat-1',
+      repoUrl: 'https://forge.removed.test/octocat/Hello-World',
+      branch: 'main',
+    });
+
+    expect(result).toMatchObject({ ok: false, reason: 'repo_url_not_allowed' });
+    expect(reveal).not.toHaveBeenCalled();
+    expect(container.runner.calls).toHaveLength(0);
+    expect([...container.repos.store.workspaces.values()][0]).toMatchObject({
+      status: 'FAILED',
+      failureReason: REPO_URL_NOT_ALLOWED_REASON,
+    });
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * The refusal is about the origin, not about the product: a repository on the configured forge
+   * still provisions, which is what keeps the guard from being a blanket denial.
+   */
+  it('provisions a stored repository that is still on the allow-list', async () => {
+    const container = createTestContainer();
+
+    const result = await provisionWorkspace(container, {
+      kind: 'JOB',
+      jobRunId: 'run-1',
+      repoUrl: 'https://github.com/octocat/Hello-World',
+      branch: 'main',
+    });
+
+    expect(result.ok).toBe(true);
   });
 
   /**

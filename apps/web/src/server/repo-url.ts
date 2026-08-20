@@ -3,13 +3,13 @@
  *
  * Layer: service (server).
  *
- * The request contracts already pin a repository URL to
- * `https://github.com/<owner>/<repository>` with no credentials, query or fragment, and they run
- * first. This check can therefore only ever narrow that set, never widen it: it is the operator's
- * switch (`ALLOWED_REPO_HOSTS`) for refusing a forge the contract would otherwise allow, and the
- * second reader of a URL that ends up in a `git clone` command line.
+ * The request contracts describe the shape of a repository URL — one owner, one repository, no
+ * credentials, no query, no fragment — and they run first. This check adds the half a contract
+ * cannot know: which origins the operator allowed. Both halves come from `@agent-hangar/core`,
+ * so the rule that guards a `git clone` here is the same one the schema states, and the list is
+ * read from configuration at every call rather than captured at import time.
  */
-import { parseAllowedRepoHosts } from '@agent-hangar/core';
+import { parseAllowedRepoHosts, repoUrlForHosts } from '@agent-hangar/core';
 
 import { ValidationError } from './errors';
 
@@ -17,24 +17,18 @@ import { ValidationError } from './errors';
 export const REPO_URL_NOT_ALLOWED = 'REPO_URL_NOT_ALLOWED';
 
 /**
- * Verifies that a repository URL names an allowed host and carries no credential.
+ * Verifies that a repository URL names an allowed origin and carries no credential.
  *
  * @param url - Repository URL, already parsed by its request contract.
- * @param allowedHosts - Hostnames from `ALLOWED_REPO_HOSTS`, lower-cased.
+ * @param allowedHosts - Entries of `ALLOWED_REPO_HOSTS`, trimmed and lower-cased.
  * @returns The parsed URL.
- * @throws ValidationError 400 `REPO_URL_NOT_ALLOWED` when the URL is unusable or the host is not
- *   on the list.
+ * @throws ValidationError 400 `REPO_URL_NOT_ALLOWED` when the URL is unusable or its origin is
+ *   not on the list.
  */
 export function assertRepoUrlAllowed(url: string, allowedHosts: readonly string[]): URL {
-  const parsed = URL.parse(url);
-  if (
-    parsed === null ||
-    (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
-    parsed.username !== '' ||
-    parsed.password !== '' ||
-    parsed.pathname === '/' ||
-    !allowedHosts.includes(parsed.hostname.toLowerCase())
-  ) {
+  const result = repoUrlForHosts(allowedHosts).safeParse(url);
+  const parsed = result.success ? URL.parse(result.data) : null;
+  if (parsed === null) {
     throw new ValidationError(
       'Repository host is not allowed; see ALLOWED_REPO_HOSTS',
       REPO_URL_NOT_ALLOWED,
@@ -44,10 +38,10 @@ export function assertRepoUrlAllowed(url: string, allowedHosts: readonly string[
 }
 
 /**
- * Reads the configured host allow-list.
+ * Reads the configured allow-list.
  *
  * @param config - Loaded configuration.
- * @returns The allowed hostnames, lower-cased.
+ * @returns The allowed entries, trimmed and lower-cased.
  */
 export function allowedRepoHosts(config: { readonly ALLOWED_REPO_HOSTS: string }): string[] {
   return parseAllowedRepoHosts(config.ALLOWED_REPO_HOSTS);

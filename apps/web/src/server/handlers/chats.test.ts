@@ -11,6 +11,7 @@
 import { chatDetail, chatSummary, JOB_NAMES, listChatsResponse } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
+import { REPO_URL_NOT_ALLOWED } from '../repo-url';
 import { CREATE_BODY, REPO_URL, seedChat } from '../testing/chat-fixtures';
 import { foreignRequest, readRequest, writeRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
@@ -91,7 +92,9 @@ describe('createChat', () => {
 
   /**
    * A repository on a host the operator did not allow is refused before any row exists; the URL
-   * ends up on a clone command line inside a container, so the check belongs at the boundary.
+   * ends up on a clone command line inside a container, so the check belongs at the boundary. The
+   * URL is well-formed on purpose: a malformed one is refused by the contract instead, which would
+   * leave this route green with the allow-list check deleted.
    */
   it('rejects a repository host that is not allowed', async () => {
     const { container, doubles } = createTestContainer({
@@ -99,9 +102,10 @@ describe('createChat', () => {
     });
     const response = await createChat(
       container,
-      writeRequest('/api/chats', 'POST', { ...CREATE_BODY, repoUrl: 'https://github.com/a/b/c' }),
+      writeRequest('/api/chats', 'POST', { ...CREATE_BODY, repoUrl: 'https://evil.example/a/b' }),
     );
     expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: REPO_URL_NOT_ALLOWED } });
     expect(await doubles.repos.chats.list()).toHaveLength(0);
   });
 

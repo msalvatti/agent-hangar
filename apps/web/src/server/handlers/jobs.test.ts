@@ -16,6 +16,7 @@ import {
 } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
+import { REPO_URL_NOT_ALLOWED } from '../repo-url';
 import { foreignRequest, writeRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
@@ -114,15 +115,17 @@ describe('createJob', () => {
 
   /**
    * A repository the operator did not allow is refused, and a foreign origin never reaches the
-   * body at all.
+   * body at all. The rejected URL is well-formed on purpose: a malformed one is refused by the
+   * contract, which would leave this route green with the allow-list check deleted.
    */
   it('rejects a disallowed repository and a cross-origin request', async () => {
     const harness = createTestContainer({ now: NOW });
     const badRepo = await createJob(
       harness.container,
-      writeRequest('/api/jobs', 'POST', { ...JOB_BODY, repoUrl: 'https://github.com/a/b/c' }),
+      writeRequest('/api/jobs', 'POST', { ...JOB_BODY, repoUrl: 'https://evil.example/a/b' }),
     );
     expect(badRepo.status).toBe(400);
+    expect(await badRepo.json()).toMatchObject({ error: { code: REPO_URL_NOT_ALLOWED } });
 
     const foreign = foreignRequest('/api/jobs', 'POST', JOB_BODY);
     expect((await createJob(harness.container, foreign)).status).toBe(403);
@@ -415,6 +418,7 @@ describe('updateJob', () => {
       { id: job.id },
     );
     expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: REPO_URL_NOT_ALLOWED } });
   });
 });
 

@@ -16,10 +16,13 @@ import { ConfigError } from '../errors.ts';
 import { resolveInstance } from './instance.ts';
 import {
   COMPOSE_DB_CREDENTIALS,
+  DEFAULT_ALLOWED_REPO_HOSTS,
   defaultMasterKeyPath,
   envSchema,
   expandHomePrefix,
   instanceDefaults,
+  isCredentialSafeBaseUrl,
+  isLoopbackHostname,
   loadConfig,
   parseAllowedRepoHosts,
 } from './schema.ts';
@@ -248,8 +251,9 @@ describe('helpers', () => {
   });
 
   /**
-   * Both new variables are overridable, and the GitHub base URL is narrowed to https: the PAT
-   * travels in its `Authorization` header, so a plaintext scheme would put it on the wire.
+   * Both variables are overridable, and the GitHub base URL keeps requiring https for a remote
+   * host: the PAT travels in its `Authorization` header, so a plaintext scheme to anywhere but
+   * this machine would put the token on the wire.
    */
   it('accepts overrides for the repository host list and the GitHub base URL', () => {
     const config = loadConfig({
@@ -264,5 +268,124 @@ describe('helpers', () => {
     expect(() => loadConfig({ GITHUB_API_BASE_URL: 'http://ghe.example.org' })).toThrow(
       ConfigError,
     );
+  });
+
+  /**
+   * A stub or proxy running beside the app is the reason the base URL is configurable at all, and
+   * it is reached over plaintext. Traffic to a loopback origin never leaves the machine, so the
+   * token cannot be observed on the wire there.
+   */
+  it.each([
+    'http://127.0.0.1:3908',
+    'http://localhost:3908/api/v3',
+    'http://[::1]:3908',
+    'http://127.1',
+  ])('loads a loopback http GitHub base URL (%s)', (value) => {
+    expect(loadConfig({ GITHUB_API_BASE_URL: value }).GITHUB_API_BASE_URL).toBe(value);
+  });
+
+  /**
+   * Every spelling that is not provably this machine is refused rather than guessed at: a host
+   * that merely reads like loopback, the unspecified address, and a scheme that is neither http
+   * nor https.
+   */
+  it.each([
+    'http://127.0.0.1.evil.test/api',
+    'http://localhost.evil.test/api',
+    'http://0.0.0.0:3908',
+    'ftp://127.0.0.1',
+    'not a url',
+  ])('refuses the GitHub base URL %s', (value) => {
+    expect(() => loadConfig({ GITHUB_API_BASE_URL: value })).toThrow(ConfigError);
+  });
+
+  /**
+   * An allow-list entry that is not a bare authority can never match a URL, so it would silently
+   * disable the forge the operator thought they had configured. Boot is where that must surface.
+   */
+  it('refuses an allow-list entry that is not an origin', () => {
+    expect(() => loadConfig({ ALLOWED_REPO_HOSTS: 'github.com/acme' })).toThrow(ConfigError);
+    expect(() => loadConfig({ ALLOWED_REPO_HOSTS: 'user@github.com' })).toThrow(ConfigError);
+  });
+
+  /**
+   * A list whose entries are all blank is a valid way to say "no forge at all"; it loads, and it
+   * admits nothing. That statement has to be spelled out, which is why the variable is not simply
+   * left empty: the two are different instructions and the next test pins the other one.
+   */
+  it('loads a list that names no host, and that list allows nothing', () => {
+    const config = loadConfig({ ALLOWED_REPO_HOSTS: ',,' });
+    expect(parseAllowedRepoHosts(config.ALLOWED_REPO_HOSTS)).toEqual([]);
+  });
+
+  /**
+   * An absent variable and a blank one are the same instruction — `loadConfig` treats an empty
+   * string as unset — and both resolve to the product's own forge, never to an empty list. An
+   * operator reading the documentation has to find that here, because the difference decides
+   * whether an unconfigured install clones from `github.com` or from nowhere.
+   */
+  it.each([
+    ['absent', {}],
+    ['blank', { ALLOWED_REPO_HOSTS: '' }],
+    ['whitespace', { ALLOWED_REPO_HOSTS: '   ' }],
+  ])('falls back to the default forge when the list is %s', (_name, env) => {
+    const config = loadConfig(env);
+    expect(config.ALLOWED_REPO_HOSTS).toBe(DEFAULT_ALLOWED_REPO_HOSTS);
+    expect(parseAllowedRepoHosts(config.ALLOWED_REPO_HOSTS)).toEqual(['github.com']);
+  });
+
+  /**
+   * An entry may pin the scheme and the port, which is how a local forge over plaintext is
+   * authorised without opening every other daemon on the same host.
+   */
+  it('loads an allow-list entry that pins scheme and port', () => {
+    const config = loadConfig({ ALLOWED_REPO_HOSTS: 'github.com,http://127.0.0.1:3907' });
+    expect(parseAllowedRepoHosts(config.ALLOWED_REPO_HOSTS)).toEqual([
+      'github.com',
+      'http://127.0.0.1:3907',
+    ]);
+  });
+});
+
+describe('the loopback rules', () => {
+  /**
+   * `URL` canonicalises before the predicate is consulted, so the set only has to cover the
+   * spellings it produces — both address families included.
+   */
+  it.each([
+    'localhost',
+    '127.0.0.1',
+    '127.0.0.53',
+    '[::1]',
+    '[::ffff:7f00:1]',
+    '[::ffff:7fff:ffff]',
+  ])('treats %s as this machine', (hostname) => {
+    expect(isLoopbackHostname(hostname)).toBe(true);
+  });
+
+  /**
+   * Anything unrecognised is remote, which refuses a plaintext URL rather than admitting one: a
+   * name that merely contains a loopback address must not inherit its trust.
+   */
+  it.each([
+    'github.com',
+    '127.0.0.1.evil.test',
+    'localhost.',
+    'app.localhost',
+    '0.0.0.0',
+    '[::ffff:c000:201]',
+  ])('treats %s as remote', (hostname) => {
+    expect(isLoopbackHostname(hostname)).toBe(false);
+  });
+
+  /**
+   * The predicate is exported so a caller can apply the rule without Zod, and it has to answer
+   * for a string that is not a URL at all rather than throw.
+   */
+  it('answers for an unparseable value', () => {
+    expect(isCredentialSafeBaseUrl('https://api.github.com')).toBe(true);
+    expect(isCredentialSafeBaseUrl('http://127.0.0.1:3908')).toBe(true);
+    expect(isCredentialSafeBaseUrl('http://api.github.com')).toBe(false);
+    expect(isCredentialSafeBaseUrl('not a url')).toBe(false);
   });
 });
