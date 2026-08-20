@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Lane** | W1-I (parallel with W1-A … W1-H; no Docker-integration tests — scripts are tested with PATH shims) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 Merged |
 | **Progress** | 6/6 tasks |
 | **Branch** | `feat/w1i-infra-conductor` · PR [#18](https://github.com/bymaxone/agent-hangar/pull/18) |
 | **Owned paths** | `infra/scripts/{setup,run,archive,doctor,rotate-key,ws,db-prune}.sh`, `infra/scripts/lib/**` (node helpers), `infra/scripts/*.test.ts`, `.conductor/settings.toml`, `infra/docker-compose.yml`, `.env.example`, root `package.json` **scripts block only**, root `vitest.config.ts` (`scripts` project lines only). `infra/scripts/env.sh` is W0 output with no other Wave 1 owner — additive edits allowed (see rules). |

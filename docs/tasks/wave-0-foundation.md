@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Lane** | W0 (single agent, sequential — critical path) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 Merged |
 | **Progress** | 8/8 tasks |
 | **Branch** | `feat/w0-foundation` |
 | **Owned paths** | everything (only lane in this wave) |

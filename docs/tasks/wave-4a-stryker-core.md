@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Lane** | W4-A (single agent; last wave, non-blocking — runs in parallel with W4-B; no Docker needed) |
-| **Status** | 📋 ToDo |
+| **Status** | 🟥 Held — operator gate|
 | **Progress** | 0/4 tasks |
 | **Branch** | `feat/w4a-stryker-core` |
 | **Owned paths** | `packages/core/stryker.config.mjs`, `packages/core/package.json` (scripts block only), tests and test-only helpers under `packages/core/**`; source files under `packages/core/src/**` **only** to remove an equivalent mutant by simplifying to the value that serves (no behaviour change); `.gitignore` (add `.stryker-tmp/` if missing) |
@@ -11,7 +11,7 @@
 | **Unblocks** | W4-C follow-up (orchestrator-owned `mutation` CI job + README badge — opened only when **both** W4-A and W4-B pass) |
 | **Source** | [docs/plan.md §9](../plan.md) (table row W4-A, rules) · spec [06 §5](../spec/06-testing.md) · [01 §5 S7](../spec/01-overview.md) |
 | **Notes** | may slip — documented in README "Known gaps" (plan §9: the product is complete without it; this lane turns S7 from "pending" into "verified") |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 

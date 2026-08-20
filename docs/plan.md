@@ -235,8 +235,8 @@ Deliberately last: the code is stable, so mutants are meaningful, and if time ru
 
 | Lane | Owned | Config | Gate |
 |---|---|---|---|
-| W4-A | `packages/core/stryker.config.mjs`, test improvements under `packages/core/**` | `@stryker-mutator/core@10` + `vitest-runner@10` (same version), `mutate: ['src/secrets/**','src/redaction/**','src/scheduling/**','src/workspace/**','src/restore/**','src/agent-protocol/**','src/model/openai/mapping.ts']`, `concurrency: 2`, `incremental` off for the first full run, `reporters: ['html','clear-text','progress']` | `break: 80` (target 90) |
-| W4-B | `packages/agent-runtime/stryker.config.mjs`, tests under `packages/agent-runtime/**` | `mutate: ['src/tools/**','src/loop.ts','src/prepare.ts']` | `break: 80` |
+| W4-A | 🟥 held | — | — | **Held by the operator, not by a dependency.** Mutation testing on `packages/core` starts only after the whole system has been merged, run end to end, and exercised by hand — and only when the operator says so. Do not start it on the strength of its dependency graph alone |
+| W4-B | 🟥 held | — | — | **Held by the operator, not by a dependency.** Mutation testing on `packages/agent-runtime` starts only after the whole system has been merged, run end to end, and exercised by hand — and only when the operator says so. Do not start it on the strength of its dependency graph alone |
 
 Rules: kill survivors by **strengthening tests** (or simplifying code to the value that serves); no `// Stryker disable` without a one-line reason; equivalent mutants documented in the PR. When both lanes pass, a third tiny PR adds the `mutation` CI job (PR-scoped incremental, nightly full) and the README badge/section.
 
@@ -300,10 +300,10 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | Default branch | `main`; check its latest run with `gh run list --branch main --limit 1` rather than trusting a status recorded here, which ages the moment anything merges |
 | Lanes merged | **12 of 17** — the foundation, all nine first-wave lanes, and both integration lanes: the web API and the worker |
 | Lanes in review | **1** — the end-to-end harness, which also unblocks the third wave |
-| Lanes not started | **4** — wiring and stabilisation, documentation, and both mutation-testing lanes |
+| Lanes not started | **4** — wiring and stabilisation, documentation, and both mutation-testing lanes. The two mutation lanes are additionally **held by the operator**: they wait on a working system the operator has tried, not on their dependencies |
 | Tasks merged | **69 of 94** |
 | Tasks written but not yet merged | **6** on the one open lane branch, so 75 of 94 exist as code |
-| Routed findings still open | **23**, in §14 below, each naming one lane |
+| Routed findings still open | **21**, in §14 below, each naming one lane |
 | Orchestrator fixes | **17 merged, 2 open** — defects found while shepherding, listed under the lane table |
 
 Three tables in this section describe the same build and are updated together, because one of them
@@ -312,13 +312,13 @@ table beneath it, and the task-progress table at the end. The lane index in `doc
 mirrors the first of them and moves with it.
 
 The task counts come from the per-lane task indexes in `docs/tasks/`. A lane's tasks only count as
-merged once its pull request lands, so the gap between 57 and 69 is exactly the two lanes still in
+merged once its pull request lands, so the gap between 69 and 75 is exactly the one lane still in
 review.
 
-**What unblocks what.** The first wave is done, so the end-to-end lane's gate has cleared and it is
-running. The third wave needs both remaining second-wave lanes merged, and the mutation lanes need
-the third. So the critical path now runs through the two pull requests in review, and the
-end-to-end lane proceeds alongside them rather than behind them.
+**What unblocks what.** Both integration lanes are merged, so the documentation lane's gate has
+already cleared — it waits on the web API and the worker, not on the end-to-end harness. The wiring
+lane is the one still gated, on the end-to-end lane in review, and the two mutation lanes wait on
+wiring. So there is work available now that nothing is blocking.
 
 | Lane | Status | Branch / PR | Coverage | Notes |
 |---|---|---|---|---|
@@ -358,8 +358,8 @@ end-to-end lane proceeds alongside them rather than behind them.
 | #26 | 🟩 merged | `pnpm typecheck` emits without rewriting, so it leaves a `dist` whose declarations name files that do not exist |
 | #27 | 🟩 merged | The dashboard and the task index disagreed about which lanes were ready |
 | #28 | 🟩 merged | The dashboard listed every lane's state but never what it added up to |
-| #29 | 🟩 merged | A routed row stated a contract change as though it had landed, and named the wrong remedy for it |
-| #30 | 🟩 merged | The dashboard listed every lane's state but never what it added up to |
+| #29 | 🟩 merged | The summary recorded a branch tip and a continuous-integration state, both of which age the moment anything merges|
+| #30 | 🟩 merged | The first wave completed and the board still showed a lane blocking it; two delete-versus-edit races had no record|
 | #31 | 🟩 merged | A finding was being carried as a limit when a third option closed it outright |
 | #33 | 🟨 PR open | The scripts suite failed under load from two independent causes: no timeout for its process trees, and workers colliding over the same port bases |
 | #34 | 🟨 PR open | The configuration offered a configurable forge while two validators refused everything but one hard-coded host, so end-to-end real mode could not start |
@@ -419,7 +419,6 @@ stating the residual risk in plain terms.
 | R4 | Vitest resolves `@agent-hangar/core/testing` through the production condition rather than the source. It passes only because the built output happens to be present. | Needs the `development`-condition contract test extended rather than a local workaround. | W3-A |
 | R5 | `packages/core/fixtures/openai/recorded-*.ndjson` is not ignored. A recorded fixture carries whatever the live API returned. | Belongs with the fixture-recording story rather than an unrelated diff. | W3-A |
 | R6 | No continuous-integration job declares `timeout-minutes`. A hung job holds a runner for the platform default of six hours. | Infrastructure hygiene, not a lane deliverable. | W3-A |
-| R7 | `healthResponse` declared `ports` as required on the web API lane's branch, which its own rules forbid — additive changes to an existing response schema may only add optional fields — and which would have broken `seedHealth()` in another lane's mocks on merge. | **Fixed on that branch, pending merge**: the field is now optional, all three ports still required together when the block is present, and the contract test asserts a report without ports parses while an incomplete block does not. Close this row when that pull request lands. | W2-A |
 | R8 | Four contract values are **mirrored** in `apps/worker/src` rather than imported — `TURN_EVENT_FIELD` in `events.ts`, the heartbeat key, timings and schema in `heartbeat.ts`, and the scheduled-delivery payload in `processors/run-scheduled-job.ts`. Each is byte-identical to the definition in `packages/core/src/queues/contracts.ts` today. | They live on the web API lane's branch, which the worker lane may not touch. Two copies of a constant diverge silently and both sides stay green — this must become a one-line import each the moment that branch merges. | W2-B, in a follow-up opened the moment #21 merges |
 | R9 | The same-origin guard compares `Origin` against `Host`, which DNS rebinding defeats. Closing it needs a Host allow-list. | A deployment decision, not a code one: the app binds to loopback, and an allow-list would refuse any proxy an operator fronts it with. Documented in `same-origin.ts`. | W3-A |
 | R10 | `WorkspaceRunner` exposes no `imageExists`, so the boot check and the health card report what the last `create` observed — accurate once anything has run, optimistic before that. | Not the one-file change it looks like: `DockerWorkspaceRunner` and `FakeWorkspaceRunner` both declare that they implement `WorkspaceRunner`, so adding a method to the port breaks both until each implements it — the port, the real runner and the double must land together. | W3-A |
@@ -430,7 +429,6 @@ stating the residual risk in plain terms.
 | R12 | `packages/core`'s `loadConfig()` still treats the instance-derived ports as defaults, so an explicit `POSTGRES_PORT` in the process environment wins there. `env.sh` is now stricter than the library it mirrors. In practice everything loads from `.env.local`, which `env.sh` writes with derived values, so the two agree today. | Making the identity block non-overridable lives in `packages/core/src/config/schema.ts`, which is frozen and belongs to no open lane. | W3-A |
 | R17 | `pnpm test` is `pnpm -r --if-present test && vitest run --project scripts`. The `&&` means a failure in any workspace stops the run, so the scripts suite never executes — a flake elsewhere silently voids it, and the job reports the earlier failure rather than "these tests did not run". Observed: a timing-dependent web test failed, the scripts suite was never reached, and the tests that mattered to the change under review were never executed. | Restructuring the root test script and how continuous integration reports per-workspace results is repository-wide tooling, not a lane deliverable. | W3-A |
 | R18 | `tsc -b && <rewrite>` short-circuits, so a failing typecheck emits a partial output and skips the rewrite. Worse, a **successful** typecheck also emits without rewriting when it is the root `tsc -b` rather than the package build, which then fails that package's own guard test on the very next test run — a failure nobody introduced. Accepted as unlikely when the chain was written; observed independently twice within the hour, once from a tree with no generated database client and once from an ordinary typecheck-then-test sequence. The working order is typecheck, then build the shared package, then tests. | Preserving the compiler's exit code while always rewriting needs exit-code handling in four manifests. The cheaper answers are making the prerequisite explicit so the compile does not fail that way, and making the gate order not matter. | W3-A |
-| R19 | ~~A chat's ordering bump ran after the turn was dispatched, so its failure answered an error for work the worker already held.~~ **Closed on the web API lane's branch, pending merge.** A reviewer proposed a third option neither the lane nor the orchestrator had considered — move the bump ahead of the dispatch — and it removes the problem rather than managing it. It went inside the block that owns the turn claim, because just before the dispatch would have left a failed bump stranding a queued turn. Nothing fallible now runs after the turn reaches the worker. | Kept as a struck row until that pull request lands, then deleted. | W2-A |
 | R20 | The ownership map gives a lane its source directory, but a package manifest's scripts block now has two authors: the lane, and repository-wide infrastructure work that must chain a build step from every script reaching the shared package. Nothing states who wins, so a rebase resolved mechanically can drop one side without complaining — the collision was found only because a lane stopped and read it. | The map needs a rule for shared manifests, not a fix to either change. Measured today: of the branches in flight exactly one is affected, so the rule is cheap to write now and expensive later. | W3-B |
 | R21 | Deleting a scheduled job is not serialised with editing it. After the scheduler is removed, a concurrent edit can rewrite the row and recreate the scheduler; the delete then removes the row, leaving a scheduler firing on its cron for a job that no longer exists. | Bounded in two ways, both measured rather than assumed. A delivery naming a missing job is failed with an explicit reason and a terminal event, so the orphan produces reporting failures and not corruption. And the worker's scheduler reconciliation removes schedulers with no matching enabled job — but only at worker startup, so the orphan fires on its cron until the next restart. Closing it properly needs the conditional or versioned write the persistence port does not offer. | W3-A |
 | R22 | Deleting a chat has the same check-then-write shape: its live-turn check precedes the delete, so a concurrent message can claim a turn the cascade then removes. Found by the lane while fixing the sibling race in the archive path, and deliberately not folded into that round. | Not corrupting — the chat and everything under it are gone either way, and the losing request fails with an error and logs the release it could not perform. It shares R21's root cause and should be fixed with it rather than separately. | W3-A |

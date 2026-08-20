@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Lane** | W1-F (Wave 1, parallel with W1-A … W1-I) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 Merged |
 | **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1f-scheduling-workspace` |
 | **Owned paths** | `packages/core/src/scheduling/**` (except the frozen `types.ts`), `packages/core/src/workspace/**` (except the frozen `types.ts`), `packages/core/src/restore/**`, `packages/core/src/queues/queues.ts`, `packages/core/src/queues/schedulers.ts` (+ their `*.test.ts` / `*.integration.test.ts`; `queues/contracts.ts` is frozen) — plus two append-only exceptions: `packages/core/vitest.config.ts` (`coverage.include` only) (the root `packages/core/src/index.ts` is frozen — it already re-exports `./scheduling/index.js`, `./workspace/index.js`, `./restore/index.js`, `./queues/index.js`; this lane adds exports only to those folder barrels) |

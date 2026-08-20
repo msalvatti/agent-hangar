@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Lane** | W1-D (no Docker, no Postgres, no Redis — pure Node + git in a temp dir) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 Merged |
 | **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1d-agent-runtime` |
 | **Owned paths** | `packages/agent-runtime/**` (src, tests, `esbuild.config.mjs`, `vitest.config.ts`, `package.json` scripts of this package, `scripts/`) · the two Dockerfile `COPY` lines and the `infra:image` root-script change are **requested via the PR description** (W1-B owns `infra/workspace/**`, W1-I owns root `package.json` scripts) |

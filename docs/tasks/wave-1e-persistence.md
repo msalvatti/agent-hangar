@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Lane** | W1-E (parallel with W1-A … W1-I; no Docker) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 Merged |
 | **Progress** | 5/5 tasks |
 | **Branch** | `feat/w1e-persistence` |
 | **Owned paths** | `packages/core/src/persistence/repositories/**`, `packages/core/src/persistence/testing/db.ts` (+ its test), `packages/core/vitest.config.ts` (`coverage.include` lines only) |

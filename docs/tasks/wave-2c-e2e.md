@@ -52,12 +52,12 @@ Infrastructure decisions taken here (state them in the PR description):
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 2C.1 | Local git server image + seed repo + GitHub API stub | 📋 | P0 | M | — |
-| 2C.2 | Harness: env, Playwright config (`webServer`, modes), fixtures, DB reset, fake-provider script | 📋 | P0 | L | 2C.1 |
-| 2C.3 | Page objects + selector contract validated against the MSW UI | 📋 | P0 | M | 2C.2 |
-| 2C.4 | Chat specs: `chat-create-run`, `chat-archive-restore`, `cancel-turn` | 📋 | P0 | M | 2C.3 |
-| 2C.5 | Scheduled + settings specs, CI `e2e` job body, mock-mode validation run | 📋 | P0 | M | 2C.3 |
-| 2C.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 2C.1–2C.5 |
+| 2C.1 | Local git server image + seed repo + GitHub API stub | ✅ | P0 | M | — |
+| 2C.2 | Harness: env, Playwright config (`webServer`, modes), fixtures, DB reset, fake-provider script | ✅ | P0 | L | 2C.1 |
+| 2C.3 | Page objects + selector contract validated against the MSW UI | ✅ | P0 | M | 2C.2 |
+| 2C.4 | Chat specs: `chat-create-run`, `chat-archive-restore`, `cancel-turn` | ✅ | P0 | M | 2C.3 |
+| 2C.5 | Scheduled + settings specs, CI `e2e` job body, mock-mode validation run | ✅ | P0 | M | 2C.3 |
+| 2C.6 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 2C.1–2C.5 |
 
 ---
 
