@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W2-B 🐳 (parallel with W2-A, W2-C; the only Docker-integration lane running at a time) |
 | **Status** | 🟦 running |
-| **Progress** | 2/6 tasks |
+| **Progress** | 3/6 tasks |
 | **Branch** | `feat/w2b-worker` |
 | **Owned paths** | `apps/worker/src/**` (incl. `apps/worker/src/testing/**`), `apps/worker/vitest.config.ts`, `apps/worker/package.json` scripts only (`test:integration`) |
 | **Depends on** | W0, W1-A, W1-B, W1-C, W1-D, W1-E, W1-F merged to `main` |
@@ -44,7 +44,7 @@ This lane adds the BullMQ consumers: `run-turn` (flow a and b: ensure workspace 
 |---|---|---|---|---|---|
 | 2B.1 | DI container, worker env, events publisher (XADD), cancel command listener, worker test utilities (`scriptedRuntime`) | ✅ | P0 | M | — |
 | 2B.2 | `processors/run-turn.ts` — ensure workspace, exec runtime, event → redact → publish → persist, failures, stalled recovery, cancel | ✅ | P0 | L | 2B.1 |
-| 2B.3 | `processors/run-scheduled-job.ts` + `scheduler-reconcile.ts` — overlap policy, JOB workspace, destroy in `finally`, boot reconcile | 📋 | P0 | L | 2B.2 |
+| 2B.3 | `processors/run-scheduled-job.ts` + `scheduler-reconcile.ts` — overlap policy, JOB workspace, destroy in `finally`, boot reconcile | ✅ | P0 | L | 2B.2 |
 | 2B.4 | `processors/gc.ts` (reap-idle, destroy-chat-workspace, orphan reconcile) + `main.ts` wiring, image check, graceful shutdown | 📋 | P0 | M | 2B.3 |
 | 2B.5 | 🐳 Integration suite `@docker @db @redis` — full turn, GC idle + orphan, restore turn, scheduled run | 📋 | P0 | L | 2B.4 |
 | 2B.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 2B.1–2B.5 |
@@ -259,17 +259,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2b-worker.md; 
 
 ## Task 2B.3 — `processors/run-scheduled-job.ts` + `scheduler-reconcile.ts`
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 2B.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 2B.2
 
 **Description.** Implement flow (c): the `run-scheduled-job` consumer (enabled check, overlap policy via `findRunningByJob`, `JobRun` + fresh `JOB` workspace, same executor with `items = [user prompt]` and `JOB_LIMITS`, output = `finalMessage`, destroy in `finally`, `ScheduledJob.lastRunAt/nextRunAt`) and the boot-time reconcile of BullMQ Job Schedulers against enabled jobs plus the `reap-idle` scheduler.
 
 **Acceptance criteria**
-- [ ] `createRunScheduledJobProcessor(deps)`; payload `runScheduledJobPayloadSchema` (`jobId`, `trigger` default `SCHEDULE`); job missing or `enabled === false` → log + return (ack)
-- [ ] Overlap: `jobRuns.findRunningByJob(jobId)` non-null → create a `JobRun` with `trigger`, `scheduledFor = now`, immediately `finish(FAILED, error 'previous run still running')`; no workspace, no exec; return
-- [ ] Normal: `JobRun` create (QUEUED) → `PREPARING`; Workspace `kind JOB`, `chatId` null, `branch = job.branch`; reveal + register + `runner.create` (labels `ah.instance`, `ah.workspace`, `ah.kind: 'JOB'`, `ah.jobRun`); `jobRuns.attachWorkspace`; `READY` → `RUNNING`; request via core builder with `turnId = jobRun.id`, `items = [{ role: 'user', content: job.prompt }]`, `repo { url: job.repoUrl, baseBranch: job.branch, workBranch: 'job/<runId first 8>' }`, `limits: JOB_LIMITS`, `prepare.clone true`; sink persists `ToolCallLog` with `jobRunId`, `turn.completed` → `jobRuns.finish(SUCCEEDED, output: finalMessage, usage, stepCount)`, `turn.failed` → `FAILED`, `turn.cancelled` → `CANCELLED`; events published under the run id (`events:turn:<runId>`)
-- [ ] `finally` (always, also on throw): `runner.destroy(handle)` (errors logged, not thrown) → Workspace `DESTROYED`; `scheduledJobs.setRunTimes(jobId, { lastRunAt: now, nextRunAt: computeNextRunAt(job.cron, job.timezone, now) })` via core scheduling; JobRun never left non-terminal
-- [ ] `scheduler-reconcile.ts`: `reconcileSchedulers(deps): Promise<{ upserted: number; removed: number }>` — `jobs = scheduledJobs.listEnabled()`, `existing = queues.scheduledJobs.getJobSchedulers()` (ids), `plan = reconcile(jobs, existing)` (core W1-F), `upsertJobScheduler(job.id, { pattern: job.cron, tz: job.timezone }, { name: 'run-scheduled-job', data: { jobId, trigger: 'SCHEDULE' } })` for each upsert, `removeJobScheduler(id)` for each removal, then `workspaceGc.upsertJobScheduler('reap-idle', { every: REAP_IDLE_EVERY_MS = 5 * 60_000 }, { name: 'reap-idle', data: {} })`; uses W1-F wrappers when they exist
-- [ ] Unit tests 100 %: disabled/missing job, overlap FAILED record, happy path (workspace created with JOB labels, request read back: items/limits/workBranch/clone, ToolCallLog rows carry `jobRunId`, JobRun SUCCEEDED with output, workspace destroyed and DESTROYED, run times updated with the cron's next tick), failure path (`turn.failed` → FAILED + destroyed), exec throws → JobRun FAILED + destroyed + rethrow on transport error, cancel path → CANCELLED + destroyed, image missing → FAILED without exec, secrets missing → FAILED; reconcile with a fake queue (upsert/remove sets from the plan, reap-idle scheduler always upserted, counts)
+- [x] `createRunScheduledJobProcessor(deps)`; payload `runScheduledJobPayloadSchema` (`jobId`, `trigger` default `SCHEDULE`); job missing or `enabled === false` → log + return (ack)
+- [x] Overlap: `jobRuns.findRunningByJob(jobId)` non-null → create a `JobRun` with `trigger`, `scheduledFor = now`, immediately `finish(FAILED, error 'previous run still running')`; no workspace, no exec; return
+- [x] Normal: `JobRun` create (QUEUED) → `PREPARING`; Workspace `kind JOB`, `chatId` null, `branch = job.branch`; reveal + register + `runner.create` (labels `ah.instance`, `ah.workspace`, `ah.kind: 'JOB'`, `ah.jobRun`); `jobRuns.attachWorkspace`; `READY` → `RUNNING`; request via core builder with `turnId = jobRun.id`, `items = [{ role: 'user', content: job.prompt }]`, `repo { url: job.repoUrl, baseBranch: job.branch, workBranch: 'job/<runId first 8>' }`, `limits: JOB_LIMITS`, `prepare.clone true`; sink persists `ToolCallLog` with `jobRunId`, `turn.completed` → `jobRuns.finish(SUCCEEDED, output: finalMessage, usage, stepCount)`, `turn.failed` → `FAILED`, `turn.cancelled` → `CANCELLED`; events published under the run id (`events:turn:<runId>`)
+- [x] `finally` (always, also on throw): `runner.destroy(handle)` (errors logged, not thrown) → Workspace `DESTROYED`; `scheduledJobs.setRunTimes(jobId, { lastRunAt: now, nextRunAt: computeNextRunAt(job.cron, job.timezone, now) })` via core scheduling; JobRun never left non-terminal
+- [x] `scheduler-reconcile.ts`: `reconcileSchedulers(deps): Promise<{ upserted: number; removed: number }>` — `jobs = scheduledJobs.listEnabled()`, `existing = queues.scheduledJobs.getJobSchedulers()` (ids), `plan = reconcile(jobs, existing)` (core W1-F), `upsertJobScheduler(job.id, { pattern: job.cron, tz: job.timezone }, { name: 'run-scheduled-job', data: { jobId, trigger: 'SCHEDULE' } })` for each upsert, `removeJobScheduler(id)` for each removal, then `workspaceGc.upsertJobScheduler('reap-idle', { every: REAP_IDLE_EVERY_MS = 5 * 60_000 }, { name: 'reap-idle', data: {} })`; uses W1-F wrappers when they exist
+- [x] Unit tests 100 %: disabled/missing job, overlap FAILED record, happy path (workspace created with JOB labels, request read back: items/limits/workBranch/clone, ToolCallLog rows carry `jobRunId`, JobRun SUCCEEDED with output, workspace destroyed and DESTROYED, run times updated with the cron's next tick), failure path (`turn.failed` → FAILED + destroyed), exec throws → JobRun FAILED + destroyed + rethrow on transport error, cancel path → CANCELLED + destroyed, image missing → FAILED without exec, secrets missing → FAILED; reconcile with a fake queue (upsert/remove sets from the plan, reap-idle scheduler always upserted, counts)
 
 **Files to create/modify**
 `apps/worker/src/processors/{run-scheduled-job,run-scheduled-job.test}.ts`, `apps/worker/src/{scheduler-reconcile,scheduler-reconcile.test}.ts`, `apps/worker/src/testing/fake-queues.ts` (recording queue with `getJobSchedulers`/`upsertJobScheduler`/`removeJobScheduler`/`add`).
@@ -548,3 +548,4 @@ Completion Protocol: append `- 2B.6 ✅ <date> — PR #<n> opened`; commit `docs
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 - 2B.1 ✅ 2026-08-19 — worker container, worker env, Redis Streams publisher, cancel listener and the in-memory test doubles
 - 2B.2 ✅ 2026-08-19 — run-turn processor: workspace ensure and recovery, streaming redact/publish/persist, every failure path and cancellation
+- 2B.3 ✅ 2026-08-19 — scheduled-job processor with the overlap policy and destroy-in-finally, plus the boot-time scheduler reconciliation

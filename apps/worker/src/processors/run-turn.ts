@@ -40,9 +40,10 @@ import {
 } from './constants.js';
 import { buildTurnInstructions } from './instructions.js';
 import { provisionWorkspace } from './provision-workspace.js';
+import { formatRunError, publishCancellation, publishFailure } from './run-outcome.js';
 import { createToolCallRecorder } from './tool-call-recorder.js';
 import type { ToolCallRecorder } from './tool-call-recorder.js';
-import { executeRuntimeTurn, redactAgentEvent } from './turn-executor.js';
+import { executeRuntimeTurn } from './turn-executor.js';
 import type { ExecOutcome, TurnSink, UnreportedOutcome } from './turn-executor.js';
 import type { ProcessorDeps, ProcessorJob } from './types.js';
 
@@ -80,17 +81,6 @@ function handleOf(workspace: Workspace): WorkspaceHandle {
 }
 
 /**
- * Renders a failure as the text the `Turn.error` column carries.
- *
- * @param code - Machine-readable failure code.
- * @param message - Human-readable detail.
- * @returns The combined text.
- */
-function formatError(code: string, message: string): string {
-  return `${code}: ${message}`;
-}
-
-/**
  * Records a turn as failed and tells the UI why.
  *
  * @param deps - Publisher and repositories.
@@ -104,9 +94,8 @@ async function failTurn(
   code: string,
   message: string,
 ): Promise<void> {
-  const event: AgentEvent = { type: 'turn.failed', error: { code, message } };
-  await deps.publisher.publish(turnId, redactAgentEvent(deps.redactor, event));
-  await deps.repos.turns.finish(turnId, 'FAILED', NO_USAGE, formatError(code, message));
+  await publishFailure(deps, turnId, code, message);
+  await deps.repos.turns.finish(turnId, 'FAILED', NO_USAGE, formatRunError(code, message));
 }
 
 /**
@@ -286,7 +275,7 @@ function makeTurnSink(
             context.turnId,
             'FAILED',
             { ...NO_USAGE, stepCount: steps },
-            formatError(event.error.code, event.error.message),
+            formatRunError(event.error.code, event.error.message),
           );
           break;
         case 'turn.cancelled':
@@ -358,8 +347,7 @@ async function closeOutTurn(
   outcome: UnreportedOutcome,
 ): Promise<void> {
   if (outcome.terminal === 'cancelled') {
-    const event: AgentEvent = { type: 'turn.cancelled' };
-    await deps.publisher.publish(turnId, redactAgentEvent(deps.redactor, event));
+    await publishCancellation(deps, turnId);
     await deps.repos.turns.finish(turnId, 'CANCELLED', NO_USAGE);
     return;
   }
