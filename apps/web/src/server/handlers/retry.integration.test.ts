@@ -114,7 +114,22 @@ function retryRequest(id: string): Request {
 }
 
 /**
+ * Reads what BullMQ currently says about a job.
+ *
+ * @param queue - Queue holding the job.
+ * @param jobId - Job to read.
+ * @returns The state, or `undefined` when no job holds that id at all.
+ */
+async function jobState(queue: Queue, jobId: string): Promise<string | undefined> {
+  return await (await queue.getJob(jobId))?.getState();
+}
+
+/**
  * Waits for a job to report a state, polling rather than assuming it is recorded synchronously.
+ *
+ * Only used for the transitions BullMQ makes on its own after the processor has returned. A state
+ * the test itself is responsible for producing is asserted outright, so a wait here never stands
+ * in for a missing ordering guarantee.
  *
  * @param queue - Queue holding the job.
  * @param jobId - Job to watch.
@@ -125,13 +140,51 @@ async function waitForState(queue: Queue, jobId: string, state: string): Promise
   const deadline = Date.now() + STATE_TIMEOUT_MS;
   let seen: string | undefined;
   while (Date.now() < deadline) {
-    seen = await (await queue.getJob(jobId))?.getState();
+    seen = await jobState(queue, jobId);
     if (seen === state) {
       return;
     }
     await new Promise((resolve) => setTimeout(resolve, 25));
   }
   throw new Error(`Job ${jobId} was ${String(seen)}, not ${state}, within ${STATE_TIMEOUT_MS} ms`);
+}
+
+/** A promise together with the function that settles it. */
+interface Latch {
+  /** Settles when {@link Latch.settle} is called. */
+  readonly settled: Promise<void>;
+  /** Settles {@link Latch.settled}; settling an already settled promise is a no-op. */
+  readonly settle: () => void;
+}
+
+/**
+ * Creates a latch, so both halves of a hand-off exist before either of them is used.
+ *
+ * `Promise` passes its resolver to an executor instead of returning it, and this project compiles
+ * against a library older than `Promise.withResolvers`, so the resolver is captured here. The
+ * capture is complete before this function returns — a Promise executor runs synchronously — which
+ * is what the definite-assignment assertion states. That ordering is the entire point: a resolver
+ * a caller reaches before the code that assigns it has run is `undefined`, and calling it is then
+ * a silent no-op rather than a failure.
+ *
+ * @returns The promise and the function that settles it.
+ */
+function createLatch(): Latch {
+  let settle!: () => void;
+  const settled = new Promise<void>((resolve) => {
+    settle = resolve;
+  });
+  return { settled, settle };
+}
+
+/** The first attempt at a turn, held `active` by a worker that is waiting to be let go. */
+interface RunningAttempt {
+  /** Settles once the first run has recorded the turn's outcome and is holding its job `active`. */
+  readonly recorded: Promise<void>;
+  /** Lets the first run return, so BullMQ can move its job to `completed`. Idempotent. */
+  readonly release: () => void;
+  /** How many times the processor has run. */
+  readonly runs: () => number;
 }
 
 describeRedis('@redis retryTurn against a running worker', (url) => {
@@ -214,11 +267,19 @@ describeRedis('@redis retryTurn against a running worker', (url) => {
    * Starts a worker that reproduces the product's ordering: the turn's terminal status is written
    * before the processor returns, and the first run then blocks so the job stays `active`.
    *
-   * @param onFirstRun - Resolved by the caller to let the first run finish.
-   * @returns A counter of how many times the processor ran.
+   * Both latches are created here, before the worker is, so a test never holds a release function
+   * the processor has not assigned yet. Waiting for the job to report `active` instead would not
+   * settle that: BullMQ marks a job `active` when it hands it to the worker, and the processor
+   * body runs after, so `active` is reached while the turn row is still untouched and nothing can
+   * be released. What both tests actually depend on is the first run having recorded its outcome,
+   * and that is what {@link RunningAttempt.recorded} reports.
+   *
+   * @returns The handle the tests drive the running attempt through.
    */
-  function startBlockingWorker(onFirstRun: { release?: () => void }): { runs: () => number } {
+  function startBlockingWorker(): RunningAttempt {
     let runs = 0;
+    const recorded = createLatch();
+    const held = createLatch();
     worker = createWorker<RunTurnPayload>(
       QUEUE_NAMES.chatTurns,
       async (job) => {
@@ -230,15 +291,14 @@ describeRedis('@redis retryTurn against a running worker', (url) => {
           WORKER_ERROR,
         );
         if (runs === 1) {
-          await new Promise<void>((resolve) => {
-            onFirstRun.release = resolve;
-          });
+          recorded.settle();
+          await held.settled;
         }
         return undefined;
       },
       { connection: consumer, prefix },
     );
-    return { runs: () => runs };
+    return { recorded: recorded.settled, release: held.settle, runs: () => runs };
   }
 
   /**
@@ -251,13 +311,14 @@ describeRedis('@redis retryTurn against a running worker', (url) => {
     'refuses while the previous attempt is still running, leaving the turn retryable',
     async () => {
       const turnId = await seedTurn();
-      const gate: { release?: () => void } = {};
-      const worked = startBlockingWorker(gate);
+      const attempt = startBlockingWorker();
 
       try {
         await queues.chatTurns.add(JOB_NAMES.runTurn, { turnId }, { jobId: turnId });
-        await waitForState(queues.chatTurns, turnId, 'active');
-        // The row the endpoint will read: already terminal, while its job is not.
+        await attempt.recorded;
+        // The window, asserted rather than waited for: the processor is inside its job, so the job
+        // is `active` at this instant, and the row the endpoint will read is already terminal.
+        expect(await jobState(queues.chatTurns, turnId)).toBe('active');
         expect(await repos.turns.get(turnId)).toMatchObject({ status: 'FAILED' });
 
         const response = await retryTurn(container, retryRequest(turnId), { id: turnId });
@@ -271,12 +332,12 @@ describeRedis('@redis retryTurn against a running worker', (url) => {
           error: WORKER_ERROR,
         });
         await new Promise((resolve) => setTimeout(resolve, SETTLE_MS));
-        expect(worked.runs()).toBe(1);
+        expect(attempt.runs()).toBe(1);
         expect(await queues.chatTurns.getJobCountByTypes('waiting', 'delayed', 'prioritized')).toBe(
           0,
         );
       } finally {
-        gate.release?.();
+        attempt.release();
       }
     },
     TEST_TIMEOUT_MS,
@@ -291,21 +352,25 @@ describeRedis('@redis retryTurn against a running worker', (url) => {
     'accepts the same retry once the previous attempt has finished',
     async () => {
       const turnId = await seedTurn();
-      const gate: { release?: () => void } = {};
-      const worked = startBlockingWorker(gate);
+      const attempt = startBlockingWorker();
 
-      await queues.chatTurns.add(JOB_NAMES.runTurn, { turnId }, { jobId: turnId });
-      await waitForState(queues.chatTurns, turnId, 'active');
-      expect((await retryTurn(container, retryRequest(turnId), { id: turnId })).status).toBe(409);
-
-      gate.release?.();
+      try {
+        await queues.chatTurns.add(JOB_NAMES.runTurn, { turnId }, { jobId: turnId });
+        await attempt.recorded;
+        expect(await jobState(queues.chatTurns, turnId)).toBe('active');
+        expect((await retryTurn(container, retryRequest(turnId), { id: turnId })).status).toBe(409);
+      } finally {
+        // Released in `finally` so a failed expectation above is what the run reports: a processor
+        // left blocked would instead hang the worker's close and hide it behind a hook timeout.
+        attempt.release();
+      }
       await waitForState(queues.chatTurns, turnId, 'completed');
 
       const response = await retryTurn(container, retryRequest(turnId), { id: turnId });
 
       expect(response.status).toBe(200);
       await waitForState(queues.chatTurns, turnId, 'completed');
-      expect(worked.runs()).toBe(2);
+      expect(attempt.runs()).toBe(2);
     },
     TEST_TIMEOUT_MS,
   );
