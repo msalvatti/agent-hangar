@@ -9,9 +9,9 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import type { PrismaClient } from '../generated/client.js';
+import type { PrismaClient } from '../generated/client.ts';
 
-import { PrismaSecretRepository } from './secret.repository.js';
+import { PrismaSecretRepository } from './secret.repository.ts';
 
 const NOW = new Date('2026-01-01T00:00:00.000Z');
 

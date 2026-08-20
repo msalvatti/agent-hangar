@@ -8,11 +8,11 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ConfigError } from '../errors.js';
-import { OPENAI_CANARY } from '../testing/canaries.js';
+import { ConfigError } from '../errors.ts';
+import { OPENAI_CANARY } from '../testing/canaries.ts';
 
-import { createFakeOpenAIClient } from './openai/fake-client.js';
-import { createModelProvider, isModelProviderName, MODEL_PROVIDER_NAMES } from './registry.js';
+import { createFakeOpenAIClient } from './openai/fake-client.ts';
+import { createModelProvider, isModelProviderName, MODEL_PROVIDER_NAMES } from './registry.ts';
 
 const { createOpenAIClient } = vi.hoisted(() => ({ createOpenAIClient: vi.fn() }));
 

@@ -10,8 +10,8 @@
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_FAKE_MODELS, createFakeOpenAIClient } from './fake-client.js';
-import { toResponseParams } from './mapping.js';
+import { DEFAULT_FAKE_MODELS, createFakeOpenAIClient } from './fake-client.ts';
+import { toResponseParams } from './mapping.ts';
 
 /** Two cheap events, enough to observe ordering and mid-stream failures. */
 const EVENTS: ResponseStreamEvent[] = [

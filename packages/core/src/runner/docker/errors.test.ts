@@ -9,9 +9,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { AgentHangarError, isAgentHangarError } from '../../errors.js';
+import { AgentHangarError, isAgentHangarError } from '../../errors.ts';
 
-import { DockerRunnerError } from './errors.js';
+import { DockerRunnerError } from './errors.ts';
 
 describe('DockerRunnerError', () => {
   /**

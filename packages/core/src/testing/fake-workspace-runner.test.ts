@@ -9,10 +9,10 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import type { ExecEvent, WorkspaceSpec } from '../runner/types.js';
+import type { ExecEvent, WorkspaceSpec } from '../runner/types.ts';
 
-import { FakeClock } from './fake-clock.js';
-import { FakeWorkspaceRunner } from './fake-workspace-runner.js';
+import { FakeClock } from './fake-clock.ts';
+import { FakeWorkspaceRunner } from './fake-workspace-runner.ts';
 
 const decoder = new TextDecoder();
 

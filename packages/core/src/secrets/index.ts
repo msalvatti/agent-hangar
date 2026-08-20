@@ -1,7 +1,7 @@
 // Public API of secrets: contracts, shape patterns, master key providers and the AES-GCM service.
-export * from './types.js';
-export * from './crypto.js';
-export * from './errors.js';
-export * from './master-key.js';
-export * from './master-key-file.js';
-export * from './secrets-service.js';
+export * from './types.ts';
+export * from './crypto.ts';
+export * from './errors.ts';
+export * from './master-key.ts';
+export * from './master-key-file.ts';
+export * from './secrets-service.ts';

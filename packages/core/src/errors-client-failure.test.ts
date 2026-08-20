@@ -12,7 +12,7 @@ import { inspect } from 'node:util';
 
 import { describe, expect, it } from 'vitest';
 
-import { ConfigError, describeClientFailure } from './errors.js';
+import { ConfigError, describeClientFailure } from './errors.ts';
 
 /** A password that would be unmistakable if it ever escaped. */
 const SECRET = 'SUPERSECRETPW';

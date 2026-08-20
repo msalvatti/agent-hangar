@@ -10,16 +10,16 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { CANARY_MARKER, GITHUB_CANARY } from '../../testing/canaries.js';
-import type { WorkspaceSpec } from '../types.js';
+import { CANARY_MARKER, GITHUB_CANARY } from '../../testing/canaries.ts';
+import type { WorkspaceSpec } from '../types.ts';
 
 import {
   buildContainerCreateOptions,
   LABEL_COMPOSE_PROJECT,
   LABEL_COMPOSE_SERVICE,
   toEnvArray,
-} from './container-spec.js';
-import { DockerRunnerError } from './errors.js';
+} from './container-spec.ts';
+import { DockerRunnerError } from './errors.ts';
 
 /** Naming and scoping used by every case. */
 const OPTIONS = { namePrefix: 'ah-ws-test-', instance: 'test' };

@@ -16,7 +16,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { assertNoCanary, GITHUB_CANARY } from '../testing/canaries.js';
+import { assertNoCanary, GITHUB_CANARY } from '../testing/canaries.ts';
 
 const scriptPath = fileURLToPath(
   new URL('../../../../infra/workspace/askpass.sh', import.meta.url),

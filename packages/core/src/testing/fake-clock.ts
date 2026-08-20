@@ -3,7 +3,7 @@
  *
  * Layer: test double.
  */
-import type { Clock } from '../config/clock.js';
+import type { Clock } from '../config/clock.ts';
 
 /** A clock that only moves when told to. */
 export class FakeClock implements Clock {

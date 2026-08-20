@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.js';
+import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.ts';
 
 import {
   apiError,
@@ -33,7 +33,7 @@ import {
   settingsKeyParam,
   settingsStatus,
   SSE_HEARTBEAT_MS,
-} from './contracts.js';
+} from './contracts.ts';
 
 const now = '2026-08-19T10:00:00.000Z';
 

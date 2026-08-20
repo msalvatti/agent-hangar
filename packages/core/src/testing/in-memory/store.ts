@@ -8,8 +8,8 @@
  */
 import { randomUUID } from 'node:crypto';
 
-import type { Clock } from '../../config/clock.js';
-import { NotFoundError } from '../../errors.js';
+import type { Clock } from '../../config/clock.ts';
+import { NotFoundError } from '../../errors.ts';
 import type {
   Chat,
   JobRun,
@@ -19,8 +19,8 @@ import type {
   ToolCallLog,
   Turn,
   Workspace,
-} from '../../persistence/entities.js';
-import type { SecretKey } from '../../secrets/types.js';
+} from '../../persistence/entities.ts';
+import type { SecretKey } from '../../secrets/types.ts';
 
 /** Tables of the in-memory database. */
 export class InMemoryStore {

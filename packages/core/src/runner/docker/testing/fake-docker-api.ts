@@ -22,7 +22,7 @@ import type {
   DockerExecCreateOptions,
   DockerExecStartOptions,
   DockerExecStream,
-} from '../docker-api.js';
+} from '../docker-api.ts';
 
 /** Bytes of the Docker stream frame header. */
 const FRAME_HEADER_BYTES = 8;

@@ -14,10 +14,10 @@ import { PassThrough, Writable } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ProtocolError } from '../../errors.js';
-import type { ExecEvent, ExecSignal } from '../types.js';
+import { ProtocolError } from '../../errors.ts';
+import type { ExecEvent, ExecSignal } from '../types.ts';
 
-import { DockerRunnerError } from './errors.js';
+import { DockerRunnerError } from './errors.ts';
 import {
   createDockerDemuxer,
   EXEC_PID_DIR,
@@ -25,8 +25,8 @@ import {
   killCommand,
   pumpExecStream,
   writeStdin,
-} from './exec-stream.js';
-import type { PumpExecParams } from './exec-stream.js';
+} from './exec-stream.ts';
+import type { PumpExecParams } from './exec-stream.ts';
 
 /** Docker stream type for stdout frames. */
 const STDOUT_TYPE = 1;

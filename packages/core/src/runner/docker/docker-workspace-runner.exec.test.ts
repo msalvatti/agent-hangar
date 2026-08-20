@@ -12,15 +12,15 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import { CANARY_MARKER, GITHUB_CANARY } from '../../testing/canaries.js';
+import { CANARY_MARKER, GITHUB_CANARY } from '../../testing/canaries.ts';
 
-import { DockerRunnerError } from './errors.js';
+import { DockerRunnerError } from './errors.ts';
 import {
   createFixtureWorkspace as createWorkspace,
   drainExec as drain,
   FIXTURE_EXEC_REF as EXEC_REF,
   makeRunnerFixture as makeRunner,
-} from './testing/runner-fixture.js';
+} from './testing/runner-fixture.ts';
 
 describe('DockerWorkspaceRunner.exec', () => {
   /**

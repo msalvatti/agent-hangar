@@ -9,13 +9,13 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { LiveWorkspaceExistsError, NotFoundError, UniqueViolationError } from '../errors.js';
-import type { SecretEnvelope } from '../secrets/types.js';
-import { LIVE_WORKSPACE_STATUSES } from '../workspace/types.js';
+import { LiveWorkspaceExistsError, NotFoundError, UniqueViolationError } from '../errors.ts';
+import type { SecretEnvelope } from '../secrets/types.ts';
+import { LIVE_WORKSPACE_STATUSES } from '../workspace/types.ts';
 
-import { FakeClock } from './fake-clock.js';
-import { createInMemoryRepositories } from './in-memory-repositories.js';
-import type { InMemoryRepositories } from './in-memory-repositories.js';
+import { FakeClock } from './fake-clock.ts';
+import { createInMemoryRepositories } from './in-memory-repositories.ts';
+import type { InMemoryRepositories } from './in-memory-repositories.ts';
 
 const T0 = new Date('2026-08-19T10:00:00.000Z');
 

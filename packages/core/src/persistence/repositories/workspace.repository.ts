@@ -13,15 +13,15 @@
  * intentionally does not touch `lastActiveAt` — only `markActive` does — matching
  * `InMemoryWorkspaceRepository`, which every later lane's tests run against.
  */
-import type { Redactor } from '../../secrets/types.js';
-import { LIVE_WORKSPACE_STATUSES } from '../../workspace/types.js';
-import type { WorkspaceStatus } from '../../workspace/types.js';
-import type { Workspace } from '../entities.js';
-import type { Prisma, PrismaClient } from '../generated/client.js';
-import type { CreateWorkspaceInput, WorkspaceRepository, WorkspaceStatusUpdate } from '../ports.js';
+import type { Redactor } from '../../secrets/types.ts';
+import { LIVE_WORKSPACE_STATUSES } from '../../workspace/types.ts';
+import type { WorkspaceStatus } from '../../workspace/types.ts';
+import type { Workspace } from '../entities.ts';
+import type { Prisma, PrismaClient } from '../generated/client.ts';
+import type { CreateWorkspaceInput, WorkspaceRepository, WorkspaceStatusUpdate } from '../ports.ts';
 
-import { toPrismaWorkspaceKind, toPrismaWorkspaceStatus, toWorkspace } from './mappers.js';
-import { translatePrismaError } from './prisma-errors.js';
+import { toPrismaWorkspaceKind, toPrismaWorkspaceStatus, toWorkspace } from './mappers.ts';
+import { translatePrismaError } from './prisma-errors.ts';
 
 /** Workspace rows. */
 export class PrismaWorkspaceRepository implements WorkspaceRepository {

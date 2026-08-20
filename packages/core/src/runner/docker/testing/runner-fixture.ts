@@ -11,13 +11,13 @@
  *
  * Not exported from the folder's public barrel: suites import it by relative path.
  */
-import { GITHUB_CANARY } from '../../../testing/canaries.js';
-import { FakeClock } from '../../../testing/fake-clock.js';
-import type { ExecEvent, WorkspaceHandle, WorkspaceSpec } from '../../types.js';
-import { DockerWorkspaceRunner } from '../docker-workspace-runner.js';
+import { GITHUB_CANARY } from '../../../testing/canaries.ts';
+import { FakeClock } from '../../../testing/fake-clock.ts';
+import type { ExecEvent, WorkspaceHandle, WorkspaceSpec } from '../../types.ts';
+import { DockerWorkspaceRunner } from '../docker-workspace-runner.ts';
 
-import { FakeDockerApi } from './fake-docker-api.js';
-import type { FakeExecScript } from './fake-docker-api.js';
+import { FakeDockerApi } from './fake-docker-api.ts';
+import type { FakeExecScript } from './fake-docker-api.ts';
 
 /** Image the fake daemon knows about and every spec refers to. */
 export const FIXTURE_IMAGE = 'agent-hangar/workspace:dev';

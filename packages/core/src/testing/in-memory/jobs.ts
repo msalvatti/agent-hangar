@@ -3,8 +3,8 @@
  *
  * Layer: test double.
  */
-import { UniqueViolationError } from '../../errors.js';
-import type { JobRun, ScheduledJob } from '../../persistence/entities.js';
+import { UniqueViolationError } from '../../errors.ts';
+import type { JobRun, ScheduledJob } from '../../persistence/entities.ts';
 import type {
   CreateJobRunInput,
   CreateScheduledJobInput,
@@ -14,10 +14,10 @@ import type {
   RunTimes,
   ScheduledJobRepository,
   UpdateScheduledJobInput,
-} from '../../persistence/ports.js';
-import type { JobRunStatus } from '../../workspace/types.js';
+} from '../../persistence/ports.ts';
+import type { JobRunStatus } from '../../workspace/types.ts';
 
-import type { InMemoryStore } from './store.js';
+import type { InMemoryStore } from './store.ts';
 
 /** Scheduled job rows with cascade delete to runs (and their tool calls). */
 export class InMemoryScheduledJobRepository implements ScheduledJobRepository {

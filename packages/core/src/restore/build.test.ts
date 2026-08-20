@@ -10,17 +10,17 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { turnRequestSchema } from '../agent-protocol/schemas.js';
-import { ProtocolError } from '../errors.js';
-import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.js';
-import { FakeClock } from '../testing/fake-clock.js';
-import type { EnsureWorkspaceDecision, RestoreContext } from '../workspace/types.js';
+import { turnRequestSchema } from '../agent-protocol/schemas.ts';
+import { ProtocolError } from '../errors.ts';
+import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.ts';
+import { FakeClock } from '../testing/fake-clock.ts';
+import type { EnsureWorkspaceDecision, RestoreContext } from '../workspace/types.ts';
 
-import { buildJobTurnRequest, buildRestoreContext, buildTurnRequest } from './build.js';
-import type { ChatRestoreSource } from './build.js';
-import type { HistoryMessage } from './history.js';
-import { DEFAULT_CHAT_TURN_LIMITS, DEFAULT_JOB_TURN_LIMITS } from './limits.js';
-import { RESTORATION_NOTICE_PREFIX, restorationNotice } from './notice.js';
+import { buildJobTurnRequest, buildRestoreContext, buildTurnRequest } from './build.ts';
+import type { ChatRestoreSource } from './build.ts';
+import type { HistoryMessage } from './history.ts';
+import { DEFAULT_CHAT_TURN_LIMITS, DEFAULT_JOB_TURN_LIMITS } from './limits.ts';
+import { RESTORATION_NOTICE_PREFIX, restorationNotice } from './notice.ts';
 
 /** Instant every builder call is anchored to. */
 const NOW = new FakeClock().now();

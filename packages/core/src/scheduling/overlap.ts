@@ -8,7 +8,7 @@
  * workspaces until the machine runs out of memory. The skipped run is still recorded, as a
  * failure carrying {@link OVERLAP_SKIP_REASON}, so the UI can show that a tick was dropped.
  */
-import type { OverlapPolicy } from './types.js';
+import type { OverlapPolicy } from './types.ts';
 
 /** The policy this application implements. */
 export const OVERLAP_POLICY: OverlapPolicy = 'skip';

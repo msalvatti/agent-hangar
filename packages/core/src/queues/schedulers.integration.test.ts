@@ -12,19 +12,19 @@ import type { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 
-import { reconcile } from '../scheduling/reconcile.js';
-import type { ReconcilableJob } from '../scheduling/reconcile.js';
+import { reconcile } from '../scheduling/reconcile.ts';
+import type { ReconcilableJob } from '../scheduling/reconcile.ts';
 
-import { QUEUE_NAMES } from './contracts.js';
-import { closeConnection, createQueue, createQueueConnection } from './queues.js';
-import { describeRedis, pingOrFail, uniquePrefix } from './redis.integration-helper.js';
+import { QUEUE_NAMES } from './contracts.ts';
+import { closeConnection, createQueue, createQueueConnection } from './queues.ts';
+import { describeRedis, pingOrFail, uniquePrefix } from './redis.integration-helper.ts';
 import {
   applyReconcilePlan,
   listSchedulers,
   removeScheduledJob,
   upsertGcScheduler,
   upsertScheduledJob,
-} from './schedulers.js';
+} from './schedulers.ts';
 
 /** Wall-clock limit per test; a Redis round trip is fast, a broken one must not hang the run. */
 const TEST_TIMEOUT_MS = 30_000;

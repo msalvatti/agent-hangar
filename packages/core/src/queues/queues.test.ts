@@ -11,9 +11,9 @@ import type { Queue } from 'bullmq';
 import type { Redis } from 'ioredis';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ConfigError } from '../errors.js';
+import { ConfigError } from '../errors.ts';
 
-import { JOB_NAMES, QUEUE_NAMES } from './contracts.js';
+import { JOB_NAMES, QUEUE_NAMES } from './contracts.ts';
 import {
   closeConnection,
   createQueue,
@@ -27,8 +27,8 @@ import {
   enqueueRunTurn,
   KEEP_COMPLETED_JOBS,
   KEEP_FAILED_JOBS,
-} from './queues.js';
-import type { WorkerReliabilityOptions } from './queues.js';
+} from './queues.ts';
+import type { WorkerReliabilityOptions } from './queues.ts';
 
 const mocks = vi.hoisted(() => ({
   redisCtor: vi.fn<(url: string, options?: Record<string, unknown>) => void>(),

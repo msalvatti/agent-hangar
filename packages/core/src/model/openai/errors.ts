@@ -7,9 +7,9 @@
  * consuming events. Outside one — `listModels()` — there is no stream to yield into, so the same
  * classification is thrown instead.
  */
-import { AgentHangarError } from '../../errors.js';
-import type { AgentHangarErrorOptions } from '../../errors.js';
-import type { ModelErrorCode } from '../types.js';
+import { AgentHangarError } from '../../errors.ts';
+import type { AgentHangarErrorOptions } from '../../errors.ts';
+import type { ModelErrorCode } from '../types.ts';
 
 /** A model provider call that is not a stream failed. */
 export class ModelProviderError extends AgentHangarError {

@@ -8,8 +8,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { LiveWorkspaceExistsError, NotFoundError, UniqueViolationError } from './errors.js';
-import { translatePrismaError } from './prisma-errors.js';
+import { LiveWorkspaceExistsError, NotFoundError, UniqueViolationError } from './errors.ts';
+import { translatePrismaError } from './prisma-errors.ts';
 
 describe('translatePrismaError', () => {
   /** The partial-unique-index violation is recognised via `meta.target` naming the index. */

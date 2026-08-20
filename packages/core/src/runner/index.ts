@@ -1,2 +1,2 @@
 // Public API of the runner port; the Docker implementation is added by the Docker runner lane.
-export * from './types.js';
+export * from './types.ts';

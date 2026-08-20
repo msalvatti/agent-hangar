@@ -22,10 +22,10 @@
  */
 import { createCipheriv, createDecipheriv, randomBytes } from 'node:crypto';
 
-import { SecretIntegrityError } from '../errors.js';
+import { SecretIntegrityError } from '../errors.ts';
 
-import type { MasterKey } from './master-key.js';
-import type { SecretEnvelope } from './types.js';
+import type { MasterKey } from './master-key.ts';
+import type { SecretEnvelope } from './types.ts';
 
 /** Cipher used for every envelope. */
 export const ALGORITHM = 'aes-256-gcm';

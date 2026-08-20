@@ -13,13 +13,13 @@
  */
 import { beforeEach, expect, it } from 'vitest';
 
-import type { Redactor } from '../../secrets/types.js';
-import { GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.js';
-import type { PrismaClient } from '../generated/client.js';
-import { connectTestDb, describeDb, rawSelect, sqlTemplate, truncateAll } from '../testing/db.js';
+import type { Redactor } from '../../secrets/types.ts';
+import { GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.ts';
+import type { PrismaClient } from '../generated/client.ts';
+import { connectTestDb, describeDb, rawSelect, sqlTemplate, truncateAll } from '../testing/db.ts';
 
-import { NotFoundError, UniqueViolationError } from './errors.js';
-import { PrismaJobRunRepository } from './job-run.repository.js';
+import { NotFoundError, UniqueViolationError } from './errors.ts';
+import { PrismaJobRunRepository } from './job-run.repository.ts';
 
 const testRedactor: Redactor = {
   register: () => undefined,

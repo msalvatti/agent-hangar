@@ -12,11 +12,11 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Redactor } from '../../secrets/types.js';
-import type { PrismaClient } from '../generated/client.js';
+import type { Redactor } from '../../secrets/types.ts';
+import type { PrismaClient } from '../generated/client.ts';
 
-import { PrismaChatRepository } from './chat.repository.js';
-import { NotFoundError } from './errors.js';
+import { PrismaChatRepository } from './chat.repository.ts';
+import { NotFoundError } from './errors.ts';
 
 /** Builds a P2025 (record not found) error shaped like `PrismaClientKnownRequestError`. */
 function p2025(message = 'Record not found'): Error & { code: string } {

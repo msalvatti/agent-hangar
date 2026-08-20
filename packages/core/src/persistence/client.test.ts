@@ -11,14 +11,14 @@ import { inspect } from 'node:util';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ConfigError } from '../errors.js';
+import { ConfigError } from '../errors.ts';
 
 import {
   assertDatabaseReachable,
   createPrismaClient,
   DEFAULT_REACHABILITY_TIMEOUT_MS,
   disconnectPrisma,
-} from './client.js';
+} from './client.ts';
 
 const adapterCtor = vi.fn();
 const clientCtor = vi.fn();

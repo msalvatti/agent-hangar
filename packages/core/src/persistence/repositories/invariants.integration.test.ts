@@ -11,11 +11,11 @@
  */
 import { beforeEach, expect, it } from 'vitest';
 
-import type { Redactor } from '../../secrets/types.js';
-import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.js';
-import { FakeClock } from '../../testing/fake-clock.js';
-import { createInMemoryRepositories } from '../../testing/in-memory-repositories.js';
-import type { PrismaClient } from '../generated/client.js';
+import type { Redactor } from '../../secrets/types.ts';
+import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.ts';
+import { FakeClock } from '../../testing/fake-clock.ts';
+import { createInMemoryRepositories } from '../../testing/in-memory-repositories.ts';
+import type { PrismaClient } from '../generated/client.ts';
 import {
   connectTestDb,
   describeDb,
@@ -23,9 +23,9 @@ import {
   seedChat,
   sqlTemplate,
   truncateAll,
-} from '../testing/db.js';
+} from '../testing/db.ts';
 
-import { createRepositories } from './index.js';
+import { createRepositories } from './index.ts';
 
 const BOTH_CANARIES = `${GITHUB_CANARY} and ${OPENAI_CANARY}`;
 

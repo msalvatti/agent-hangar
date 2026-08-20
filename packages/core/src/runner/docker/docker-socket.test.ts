@@ -10,8 +10,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { resolveDockerSocket } from './docker-socket.js';
-import { DockerRunnerError } from './errors.js';
+import { resolveDockerSocket } from './docker-socket.ts';
+import { DockerRunnerError } from './errors.ts';
 
 /** Home directory used by every case that reaches the user-socket probe. */
 const HOME = '/Users/tester';

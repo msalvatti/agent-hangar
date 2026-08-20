@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { ConfigError } from '../errors.js';
+import { ConfigError } from '../errors.ts';
 
 import {
   DEFAULT_INSTANCE,
@@ -16,7 +16,7 @@ import {
   INSTANCE_SLUG_MAX_LENGTH,
   resolveInstance,
   slugifyInstance,
-} from './instance.js';
+} from './instance.ts';
 
 describe('slugifyInstance', () => {
   /**

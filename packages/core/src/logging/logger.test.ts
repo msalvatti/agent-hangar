@@ -12,12 +12,12 @@ import { Writable } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
-import { createRedactor } from '../redaction/redactor.js';
-import { REDACTED_TOKEN } from '../secrets/types.js';
-import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.js';
+import { createRedactor } from '../redaction/redactor.ts';
+import { REDACTED_TOKEN } from '../secrets/types.ts';
+import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.ts';
 
-import type { CreateLoggerOptions, LoggerRedactor } from './logger.js';
-import { LOG_REDACT_PATHS, SENSITIVE_FIELD_NAMES, createLogger } from './logger.js';
+import type { CreateLoggerOptions, LoggerRedactor } from './logger.ts';
+import { LOG_REDACT_PATHS, SENSITIVE_FIELD_NAMES, createLogger } from './logger.ts';
 
 /**
  * A credential shaped like nothing the pattern layer recognises and registered nowhere, so only

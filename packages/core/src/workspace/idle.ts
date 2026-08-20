@@ -7,7 +7,7 @@
  * the chat loses nothing by being recreated from history on its next message. The collector runs
  * every five minutes and reaps what this module selects.
  */
-import type { WorkspaceKind, WorkspaceStatus } from './types.js';
+import type { WorkspaceKind, WorkspaceStatus } from './types.ts';
 
 /** Milliseconds in a minute; the TTL is configured in minutes. */
 const MINUTE_MS = 60_000;

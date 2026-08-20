@@ -9,10 +9,10 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import type { MessageRole } from '../workspace/types.js';
+import type { MessageRole } from '../workspace/types.ts';
 
-import { buildHistoryWindow, MAX_COMPACTION_TOOL_LINES, toConversationItem } from './history.js';
-import type { HistoryMessage } from './history.js';
+import { buildHistoryWindow, MAX_COMPACTION_TOOL_LINES, toConversationItem } from './history.ts';
+import type { HistoryMessage } from './history.ts';
 
 /** Budget large enough that nothing is dropped unless a test says so. */
 const ROOMY = { maxMessages: 100, maxChars: 100_000 };

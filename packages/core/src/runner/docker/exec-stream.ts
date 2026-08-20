@@ -12,10 +12,10 @@
  * signalled from inside the container: the wrapper records the shell's own pid in a tmpfs file that
  * a later `kill` exec reads back.
  */
-import { ProtocolError } from '../../errors.js';
-import type { ExecEvent, ExecSignal, ExecSpec } from '../types.js';
+import { ProtocolError } from '../../errors.ts';
+import type { ExecEvent, ExecSignal, ExecSpec } from '../types.ts';
 
-import { DockerRunnerError } from './errors.js';
+import { DockerRunnerError } from './errors.ts';
 
 /** Bytes of the Docker stream frame header that precede every payload. */
 const FRAME_HEADER_BYTES = 8;

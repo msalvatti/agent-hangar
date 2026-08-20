@@ -13,14 +13,14 @@ import { APIError } from 'openai/core/error';
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
 import { describe, expect, it } from 'vitest';
 
-import { AgentHangarError } from '../../errors.js';
-import { OPENAI_CANARY, assertNoCanary } from '../../testing/canaries.js';
-import type { ModelEvent, ModelTurnInput } from '../types.js';
+import { AgentHangarError } from '../../errors.ts';
+import { OPENAI_CANARY, assertNoCanary } from '../../testing/canaries.ts';
+import type { ModelEvent, ModelTurnInput } from '../types.ts';
 
-import { ModelProviderError } from './errors.js';
-import { createFakeOpenAIClient } from './fake-client.js';
-import { loadOpenAIFixture } from './fixtures.js';
-import { createOpenAIModelProvider } from './provider.js';
+import { ModelProviderError } from './errors.ts';
+import { createFakeOpenAIClient } from './fake-client.ts';
+import { loadOpenAIFixture } from './fixtures.ts';
+import { createOpenAIModelProvider } from './provider.ts';
 
 /** Usage every completed fixture reports. */
 const USAGE = { inputTokens: 120, outputTokens: 18 };

@@ -7,13 +7,13 @@
  * encrypted envelope (ciphertext, iv, authTag). There is nothing in an envelope's columns a
  * redactor could usefully act on.
  */
-import { SECRET_KEYS } from '../../secrets/types.js';
-import type { SecretEnvelope, SecretKey, SecretStatus } from '../../secrets/types.js';
-import type { SecretRecord } from '../entities.js';
-import type { PrismaClient } from '../generated/client.js';
-import type { SecretRepository } from '../ports.js';
+import { SECRET_KEYS } from '../../secrets/types.ts';
+import type { SecretEnvelope, SecretKey, SecretStatus } from '../../secrets/types.ts';
+import type { SecretRecord } from '../entities.ts';
+import type { PrismaClient } from '../generated/client.ts';
+import type { SecretRepository } from '../ports.ts';
 
-import { toPrismaSecretKey, toSecretRecord } from './mappers.js';
+import { toPrismaSecretKey, toSecretRecord } from './mappers.ts';
 
 /** Secret rows: one per key, append-or-replace. */
 export class PrismaSecretRepository implements SecretRepository {

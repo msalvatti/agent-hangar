@@ -11,19 +11,19 @@
  * `startedAt` stamp and the status update in one transaction, so a failing status update never
  * leaves a QUEUED run that looks started.
  */
-import type { Redactor } from '../../secrets/types.js';
-import type { JobRunStatus } from '../../workspace/types.js';
-import type { JobRun } from '../entities.js';
-import type { Prisma, PrismaClient } from '../generated/client.js';
+import type { Redactor } from '../../secrets/types.ts';
+import type { JobRunStatus } from '../../workspace/types.ts';
+import type { JobRun } from '../entities.ts';
+import type { Prisma, PrismaClient } from '../generated/client.ts';
 import type {
   CreateJobRunInput,
   FinishJobRunInput,
   JobRunRepository,
   JobRunStatusUpdate,
-} from '../ports.js';
+} from '../ports.ts';
 
-import { toJobRun, toPrismaJobRunStatus } from './mappers.js';
-import { translatePrismaError } from './prisma-errors.js';
+import { toJobRun, toPrismaJobRunStatus } from './mappers.ts';
+import { translatePrismaError } from './prisma-errors.ts';
 
 /** Job run rows. */
 export class PrismaJobRunRepository implements JobRunRepository {

@@ -10,7 +10,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { PersistenceMappingError } from './errors.js';
+import { PersistenceMappingError } from './errors.ts';
 import {
   asChatStatus,
   asJobRunStatus,
@@ -32,7 +32,7 @@ import {
   toTurn,
   toWorkspace,
   truncateResultHead,
-} from './mappers.js';
+} from './mappers.ts';
 
 describe('enum guards', () => {
   const cases: [name: string, guard: (value: string) => string, literals: string[]][] = [

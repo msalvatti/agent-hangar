@@ -17,8 +17,8 @@
  * `Date`, typed arrays — are returned unchanged by {@link Redactor.redactJson}. Never place a
  * credential inside one and expect it to be scrubbed.
  */
-import { REDACTED_TOKEN, SECRET_SHAPE_PATTERNS } from '../secrets/types.js';
-import type { Redactor } from '../secrets/types.js';
+import { REDACTED_TOKEN, SECRET_SHAPE_PATTERNS } from '../secrets/types.ts';
+import type { Redactor } from '../secrets/types.ts';
 
 /** Shortest value that may be registered; anything shorter would match ordinary prose. */
 export const MIN_REGISTERED_LENGTH = 4;

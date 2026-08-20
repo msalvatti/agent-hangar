@@ -9,10 +9,10 @@
  * explain. Self-transitions are absent from every list on purpose: writing the status a row
  * already has is a lost-update bug, not a no-op.
  */
-import { IllegalTransitionError } from '../errors.js';
+import { IllegalTransitionError } from '../errors.ts';
 
-import { LIVE_WORKSPACE_STATUSES } from './types.js';
-import type { JobRunStatus, TurnStatus, WorkspaceStatus } from './types.js';
+import { LIVE_WORKSPACE_STATUSES } from './types.ts';
+import type { JobRunStatus, TurnStatus, WorkspaceStatus } from './types.ts';
 
 /** Statuses a chat turn and a scheduled job run share; the two unions are identical by design. */
 export type RunStatus = TurnStatus;

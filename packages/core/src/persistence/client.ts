@@ -9,9 +9,9 @@
  */
 import { PrismaPg } from '@prisma/adapter-pg';
 
-import { ConfigError, describeClientFailure } from '../errors.js';
+import { ConfigError, describeClientFailure } from '../errors.ts';
 
-import { PrismaClient } from './generated/client.js';
+import { PrismaClient } from './generated/client.ts';
 
 /** Pool options explicit because pg ignores Prisma URL parameters such as `connection_limit`. */
 export interface CreatePrismaClientOptions {

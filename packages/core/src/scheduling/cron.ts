@@ -13,9 +13,9 @@
  */
 import { CronExpressionParser } from 'cron-parser';
 
-import { InvalidCronError } from '../errors.js';
+import { InvalidCronError } from '../errors.ts';
 
-import type { CronSpec } from './types.js';
+import type { CronSpec } from './types.ts';
 
 /** Number of whitespace-separated fields a valid expression has. */
 export const CRON_FIELD_COUNT = 5;

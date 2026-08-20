@@ -12,10 +12,10 @@ import { join } from 'node:path';
 
 import { z } from 'zod';
 
-import { ConfigError } from '../errors.js';
+import { ConfigError } from '../errors.ts';
 
-import { resolveInstance } from './instance.js';
-import type { InstanceInfo } from './instance.js';
+import { resolveInstance } from './instance.ts';
+import type { InstanceInfo } from './instance.ts';
 
 /** pino log levels. */
 export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'] as const;

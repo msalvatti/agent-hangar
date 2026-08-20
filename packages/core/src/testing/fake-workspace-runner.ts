@@ -9,8 +9,8 @@
  */
 import { setTimeout as sleep } from 'node:timers/promises';
 
-import { systemClock } from '../config/clock.js';
-import type { Clock } from '../config/clock.js';
+import { systemClock } from '../config/clock.ts';
+import type { Clock } from '../config/clock.ts';
 import type {
   ExecEvent,
   ExecSignal,
@@ -20,7 +20,7 @@ import type {
   WorkspaceRunner,
   WorkspaceSnapshot,
   WorkspaceSpec,
-} from '../runner/types.js';
+} from '../runner/types.ts';
 
 /** A scripted response to an exec whose command matches. */
 export interface ExecScript {

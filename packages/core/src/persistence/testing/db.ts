@@ -20,10 +20,10 @@
  */
 import { describe } from 'vitest';
 
-import type { RawEnv } from '../../config/schema.js';
-import { ConfigError } from '../../errors.js';
-import { createPrismaClient, disconnectPrisma } from '../client.js';
-import type { PrismaClient } from '../generated/client.js';
+import type { RawEnv } from '../../config/schema.ts';
+import { ConfigError } from '../../errors.ts';
+import { createPrismaClient, disconnectPrisma } from '../client.ts';
+import type { PrismaClient } from '../generated/client.ts';
 
 /** The subset of the Prisma client the helpers rely on. */
 export interface TruncatableClient {

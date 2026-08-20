@@ -10,9 +10,9 @@
  */
 import { beforeEach, expect, it } from 'vitest';
 
-import type { Redactor } from '../../secrets/types.js';
-import { assertNoCanary, GITHUB_CANARY } from '../../testing/canaries.js';
-import type { PrismaClient } from '../generated/client.js';
+import type { Redactor } from '../../secrets/types.ts';
+import { assertNoCanary, GITHUB_CANARY } from '../../testing/canaries.ts';
+import type { PrismaClient } from '../generated/client.ts';
 import {
   connectTestDb,
   countRows,
@@ -20,10 +20,10 @@ import {
   rawSelect,
   sqlTemplate,
   truncateAll,
-} from '../testing/db.js';
+} from '../testing/db.ts';
 
-import { PrismaChatRepository } from './chat.repository.js';
-import { NotFoundError } from './errors.js';
+import { PrismaChatRepository } from './chat.repository.ts';
+import { NotFoundError } from './errors.ts';
 
 const testRedactor: Redactor = {
   register: () => undefined,

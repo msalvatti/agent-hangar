@@ -8,8 +8,8 @@
  */
 import { z } from 'zod';
 
-import type { AgentEventType } from '../agent-protocol/types.js';
-import { credentialFreeUrl, repoUrl } from '../repo-url.js';
+import type { AgentEventType } from '../agent-protocol/types.ts';
+import { credentialFreeUrl, repoUrl } from '../repo-url.ts';
 
 // ────────────────────────────── shared ──────────────────────────────
 
@@ -56,7 +56,7 @@ export const MAX_CRON_LENGTH = 100;
 /** Maximum length of an IANA timezone name. */
 export const MAX_TIMEZONE_LENGTH = 64;
 
-export { repoUrl } from '../repo-url.js';
+export { repoUrl } from '../repo-url.ts';
 
 // ──────────────────────────────── repos ─────────────────────────────
 

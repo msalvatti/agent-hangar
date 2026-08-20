@@ -9,8 +9,8 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { humanDuration, MAX_SUMMARY_COMMAND_CHARS, toolSummaryText } from './compaction.js';
-import type { ToolCallSummaryInput } from './compaction.js';
+import { humanDuration, MAX_SUMMARY_COMMAND_CHARS, toolSummaryText } from './compaction.ts';
+import type { ToolCallSummaryInput } from './compaction.ts';
 
 /**
  * Builds a logged shell call with a successful outcome.

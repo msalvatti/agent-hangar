@@ -10,8 +10,8 @@
  * the five shapes selects one sentence template. Only the shapes people actually write are
  * spelled out — anything else quotes the expression, which is terse but never wrong.
  */
-import { validateCronSpec } from './cron.js';
-import type { CronSpec } from './types.js';
+import { validateCronSpec } from './cron.ts';
+import type { CronSpec } from './types.ts';
 
 /** Weekday names indexed by cron day-of-week number; 7 wraps back to Sunday. */
 const WEEKDAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'] as const;

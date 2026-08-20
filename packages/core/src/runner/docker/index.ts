@@ -9,10 +9,10 @@
  */
 import Dockerode from 'dockerode';
 
-import type { Clock } from '../../config/clock.js';
+import type { Clock } from '../../config/clock.ts';
 
-import { resolveDockerSocket } from './docker-socket.js';
-import { DockerWorkspaceRunner } from './docker-workspace-runner.js';
+import { resolveDockerSocket } from './docker-socket.ts';
+import { DockerWorkspaceRunner } from './docker-workspace-runner.ts';
 
 export {
   buildContainerCreateOptions,
@@ -27,9 +27,9 @@ export {
   toEnvArray,
   WORKSPACE_DIR,
   WORKSPACE_USER,
-} from './container-spec.js';
-export type { ContainerSpecOptions } from './container-spec.js';
-export { isDockerConflict, isDockerNotFound, isDockerNotModified } from './docker-api.js';
+} from './container-spec.ts';
+export type { ContainerSpecOptions } from './container-spec.ts';
+export { isDockerConflict, isDockerNotFound, isDockerNotModified } from './docker-api.ts';
 export type {
   DockerApi,
   DockerContainerApi,
@@ -38,26 +38,26 @@ export type {
   DockerExecCreateOptions,
   DockerExecStartOptions,
   DockerExecStream,
-} from './docker-api.js';
-export { resolveDockerSocket } from './docker-socket.js';
+} from './docker-api.ts';
+export { resolveDockerSocket } from './docker-socket.ts';
 export type {
   DockerodeOptions,
   DockerSocketResolution,
   DockerSocketSource,
   ResolveDockerSocketDeps,
-} from './docker-socket.js';
-export { DockerWorkspaceRunner } from './docker-workspace-runner.js';
-export type { DockerWorkspaceRunnerOptions, Sleep } from './docker-workspace-runner.js';
-export { DockerRunnerError } from './errors.js';
+} from './docker-socket.ts';
+export { DockerWorkspaceRunner } from './docker-workspace-runner.ts';
+export type { DockerWorkspaceRunnerOptions, Sleep } from './docker-workspace-runner.ts';
+export { DockerRunnerError } from './errors.ts';
 export {
   EXEC_PID_DIR,
   execWrapperCommand,
   killCommand,
   systemScheduleTimeout,
-} from './exec-stream.js';
-export type { ExecTermination, ScheduleTimeout } from './exec-stream.js';
-export { parseAheadBehind, truncateSummary } from './git-snapshot.js';
-export type { CaptureExec, CaptureResult } from './git-snapshot.js';
+} from './exec-stream.ts';
+export type { ExecTermination, ScheduleTimeout } from './exec-stream.ts';
+export { parseAheadBehind, truncateSummary } from './git-snapshot.ts';
+export type { CaptureExec, CaptureResult } from './git-snapshot.ts';
 
 /** Inputs for wiring the runner against a real Docker daemon. */
 export interface CreateDockerWorkspaceRunnerConfig {

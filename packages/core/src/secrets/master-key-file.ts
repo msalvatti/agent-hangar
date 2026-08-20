@@ -37,10 +37,10 @@ import { constants } from 'node:fs';
 import { mkdir, open, stat, writeFile } from 'node:fs/promises';
 import { dirname } from 'node:path';
 
-import { ConfigError } from '../errors.js';
+import { ConfigError } from '../errors.ts';
 
-import type { MasterKey, MasterKeyProvider } from './master-key.js';
-import { MASTER_KEY_BYTES, MASTER_KEY_VERSION } from './master-key.js';
+import type { MasterKey, MasterKeyProvider } from './master-key.ts';
+import { MASTER_KEY_BYTES, MASTER_KEY_VERSION } from './master-key.ts';
 
 /** Permission bits the key file is created with: owner read/write only. */
 const KEY_FILE_MODE = 0o600;

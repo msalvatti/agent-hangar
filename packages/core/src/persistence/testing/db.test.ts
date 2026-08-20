@@ -11,7 +11,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { ConfigError } from '../../errors.js';
+import { ConfigError } from '../../errors.ts';
 
 import {
   CI_ENV,
@@ -26,7 +26,7 @@ import {
   sqlTemplate,
   truncateAll,
   withTestDb,
-} from './db.js';
+} from './db.ts';
 
 const fakeClient = {
   $queryRaw: vi.fn(),

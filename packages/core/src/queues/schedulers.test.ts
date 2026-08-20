@@ -9,18 +9,18 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { GC_CRON, GC_SCHEDULER_KEY } from '../scheduling/keys.js';
-import type { ReconcilePlan } from '../scheduling/types.js';
+import { GC_CRON, GC_SCHEDULER_KEY } from '../scheduling/keys.ts';
+import type { ReconcilePlan } from '../scheduling/types.ts';
 
-import { JOB_NAMES } from './contracts.js';
+import { JOB_NAMES } from './contracts.ts';
 import {
   applyReconcilePlan,
   listSchedulers,
   removeScheduledJob,
   upsertGcScheduler,
   upsertScheduledJob,
-} from './schedulers.js';
-import type { SchedulerQueue } from './schedulers.js';
+} from './schedulers.ts';
+import type { SchedulerQueue } from './schedulers.ts';
 
 /** One recorded call against the fake queue. */
 type RecordedCall =

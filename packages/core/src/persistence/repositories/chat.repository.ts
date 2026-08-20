@@ -9,14 +9,14 @@
  * `repoUrl`, `baseBranch`, `workBranch` and `lastPushedSha` are identifiers and are never
  * redacted — the lane rule forbids redacting those.
  */
-import type { Redactor } from '../../secrets/types.js';
-import type { ChatStatus } from '../../workspace/types.js';
-import type { Chat } from '../entities.js';
-import type { PrismaClient } from '../generated/client.js';
-import type { ChatRepository, CreateChatInput, RestoreHints } from '../ports.js';
+import type { Redactor } from '../../secrets/types.ts';
+import type { ChatStatus } from '../../workspace/types.ts';
+import type { Chat } from '../entities.ts';
+import type { PrismaClient } from '../generated/client.ts';
+import type { ChatRepository, CreateChatInput, RestoreHints } from '../ports.ts';
 
-import { toChat, toPrismaChatStatus } from './mappers.js';
-import { translatePrismaError } from './prisma-errors.js';
+import { toChat, toPrismaChatStatus } from './mappers.ts';
+import { translatePrismaError } from './prisma-errors.ts';
 
 /** Chat rows. */
 export class PrismaChatRepository implements ChatRepository {

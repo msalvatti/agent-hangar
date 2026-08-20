@@ -22,9 +22,9 @@ import type {
 } from 'openai/resources/responses/responses';
 import { describe, expect, it } from 'vitest';
 
-import { SECRET_SHAPE_PATTERNS } from '../../secrets/types.js';
-import { OPENAI_CANARY } from '../../testing/canaries.js';
-import type { ConversationItem, ModelTurnInput } from '../types.js';
+import { SECRET_SHAPE_PATTERNS } from '../../secrets/types.ts';
+import { OPENAI_CANARY } from '../../testing/canaries.ts';
+import type { ConversationItem, ModelTurnInput } from '../types.ts';
 
 import {
   LIFECYCLE_EVENT_TYPES,
@@ -36,7 +36,7 @@ import {
   toResponseParams,
   toResponseTool,
   usageFromResponse,
-} from './mapping.js';
+} from './mapping.ts';
 
 /** Usage block shaped exactly as the API sends it. */
 const USAGE: ResponseUsage = {

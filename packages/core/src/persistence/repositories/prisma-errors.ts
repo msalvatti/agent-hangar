@@ -7,7 +7,7 @@
  * generated `PrismaClientKnownRequestError` class, so unit tests can exercise every branch with a
  * plain object and no Prisma runtime import is needed here at all.
  */
-import { LiveWorkspaceExistsError, NotFoundError, UniqueViolationError } from './errors.js';
+import { LiveWorkspaceExistsError, NotFoundError, UniqueViolationError } from './errors.ts';
 
 /** Name of the hand-written partial unique index (see `prisma/migrations/0001_init`). */
 const LIVE_WORKSPACE_INDEX = 'Workspace_one_live_per_chat';

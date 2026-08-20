@@ -9,7 +9,7 @@
  * HEAD or a missing remote are ordinary states, not errors, and losing the whole snapshot because
  * of one of them would lose the restore hints for the entire chat.
  */
-import type { WorkspaceSnapshot } from '../types.js';
+import type { WorkspaceSnapshot } from '../types.ts';
 
 /** Largest summary retained, matching the contract's 16 KB budget. */
 const MAX_SUMMARY_BYTES = 16_384;

@@ -10,9 +10,9 @@
  */
 import { beforeEach, expect, it } from 'vitest';
 
-import type { Redactor } from '../../secrets/types.js';
-import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.js';
-import type { PrismaClient } from '../generated/client.js';
+import type { Redactor } from '../../secrets/types.ts';
+import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.ts';
+import type { PrismaClient } from '../generated/client.ts';
 import {
   connectTestDb,
   describeDb,
@@ -20,10 +20,10 @@ import {
   seedChat,
   sqlTemplate,
   truncateAll,
-} from '../testing/db.js';
+} from '../testing/db.ts';
 
-import { NotFoundError } from './errors.js';
-import { PrismaMessageRepository } from './message.repository.js';
+import { NotFoundError } from './errors.ts';
+import { PrismaMessageRepository } from './message.repository.ts';
 
 /** Redacts the two canaries exactly, mirroring the shape a real Redactor implements. */
 const testRedactor: Redactor = {

@@ -20,7 +20,7 @@ import {
   SecretIntegrityError,
   UniqueViolationError,
   WorkspaceImageMissing,
-} from './errors.js';
+} from './errors.ts';
 
 describe('AgentHangarError', () => {
   /**

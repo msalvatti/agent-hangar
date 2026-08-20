@@ -6,15 +6,15 @@
  * The single place that knows which implementations exist, so the worker and the end-to-end suite
  * select one by configuration (`AGENT_MODEL_PROVIDER`) instead of importing a provider class.
  */
-import { MODEL_PROVIDERS } from '../config/schema.js';
-import { ConfigError } from '../errors.js';
-import { FakeAgentModelProvider } from '../testing/fake-agent-model-provider.js';
-import type { FakeAgentModelProviderOptions } from '../testing/fake-agent-model-provider.js';
+import { MODEL_PROVIDERS } from '../config/schema.ts';
+import { ConfigError } from '../errors.ts';
+import { FakeAgentModelProvider } from '../testing/fake-agent-model-provider.ts';
+import type { FakeAgentModelProviderOptions } from '../testing/fake-agent-model-provider.ts';
 
-import { createOpenAIClient } from './openai/client.js';
-import type { OpenAIResponsesClient } from './openai/client.js';
-import { createOpenAIModelProvider } from './openai/provider.js';
-import type { AgentModelProvider } from './types.js';
+import { createOpenAIClient } from './openai/client.ts';
+import type { OpenAIResponsesClient } from './openai/client.ts';
+import { createOpenAIModelProvider } from './openai/provider.ts';
+import type { AgentModelProvider } from './types.ts';
 
 /** Provider names the registry can build — the same list the environment schema validates. */
 export const MODEL_PROVIDER_NAMES = MODEL_PROVIDERS;

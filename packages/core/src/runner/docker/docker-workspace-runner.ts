@@ -13,8 +13,8 @@
  * error. All state is held in `#private` fields, so even `JSON.stringify(runner)` cannot reach the
  * Docker client and the create options it remembers.
  */
-import type { Clock } from '../../config/clock.js';
-import { WorkspaceImageMissing } from '../../errors.js';
+import type { Clock } from '../../config/clock.ts';
+import { WorkspaceImageMissing } from '../../errors.ts';
 import type {
   ExecEvent,
   ExecSignal,
@@ -24,7 +24,7 @@ import type {
   WorkspaceRunner,
   WorkspaceSnapshot,
   WorkspaceSpec,
-} from '../types.js';
+} from '../types.ts';
 
 import {
   buildContainerCreateOptions,
@@ -33,10 +33,10 @@ import {
   toEnvArray,
   WORKSPACE_DIR,
   WORKSPACE_USER,
-} from './container-spec.js';
-import type { DockerApi, DockerContainerApi, DockerContainerState } from './docker-api.js';
-import { isDockerConflict, isDockerNotFound, isDockerNotModified } from './docker-api.js';
-import { DockerRunnerError } from './errors.js';
+} from './container-spec.ts';
+import type { DockerApi, DockerContainerApi, DockerContainerState } from './docker-api.ts';
+import { isDockerConflict, isDockerNotFound, isDockerNotModified } from './docker-api.ts';
+import { DockerRunnerError } from './errors.ts';
 import {
   createDockerDemuxer,
   execWrapperCommand,
@@ -44,10 +44,10 @@ import {
   pidFileCleanupCommand,
   pumpExecStream,
   writeStdin,
-} from './exec-stream.js';
-import type { ExecTermination } from './exec-stream.js';
-import { captureGitSnapshot } from './git-snapshot.js';
-import type { CaptureResult } from './git-snapshot.js';
+} from './exec-stream.ts';
+import type { ExecTermination } from './exec-stream.ts';
+import { captureGitSnapshot } from './git-snapshot.ts';
+import type { CaptureResult } from './git-snapshot.ts';
 
 /** Runner id persisted on `Workspace.runnerKind`. */
 const RUNNER_KIND = 'docker';

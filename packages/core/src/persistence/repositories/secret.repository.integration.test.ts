@@ -9,10 +9,10 @@
  */
 import { beforeEach, expect, it } from 'vitest';
 
-import type { PrismaClient } from '../generated/client.js';
-import { connectTestDb, countRows, describeDb, truncateAll } from '../testing/db.js';
+import type { PrismaClient } from '../generated/client.ts';
+import { connectTestDb, countRows, describeDb, truncateAll } from '../testing/db.ts';
 
-import { PrismaSecretRepository } from './secret.repository.js';
+import { PrismaSecretRepository } from './secret.repository.ts';
 
 let client: PrismaClient;
 

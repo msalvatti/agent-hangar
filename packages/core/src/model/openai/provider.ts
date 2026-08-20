@@ -10,11 +10,11 @@
  * The provider never logs: the request carries the system prompt, repository content and tool
  * output, and the credential lives in the client it was handed.
  */
-import type { AgentModelProvider, ModelEvent, ModelTurnInput } from '../types.js';
+import type { AgentModelProvider, ModelEvent, ModelTurnInput } from '../types.ts';
 
-import type { OpenAIResponsesClient } from './client.js';
-import { ModelProviderError } from './errors.js';
-import { createEventMapper, mapErrorToModelEvent, toResponseParams } from './mapping.js';
+import type { OpenAIResponsesClient } from './client.ts';
+import { ModelProviderError } from './errors.ts';
+import { createEventMapper, mapErrorToModelEvent, toResponseParams } from './mapping.ts';
 
 /** Reported when the SDK stream ends without a terminal event, which the runtime retries. */
 const STREAM_ENDED_MESSAGE = 'stream ended without completion';

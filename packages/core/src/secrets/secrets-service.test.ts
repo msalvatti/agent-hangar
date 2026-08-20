@@ -9,16 +9,16 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { SecretIntegrityError } from '../errors.js';
-import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.js';
-import { createInMemoryRepositories } from '../testing/in-memory-repositories.js';
-import type { InMemoryRepositories } from '../testing/in-memory-repositories.js';
+import { SecretIntegrityError } from '../errors.ts';
+import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.ts';
+import { createInMemoryRepositories } from '../testing/in-memory-repositories.ts';
+import type { InMemoryRepositories } from '../testing/in-memory-repositories.ts';
 
-import { AUTH_TAG_BYTES, IV_BYTES, encryptSecret } from './crypto.js';
-import { InvalidSecretError } from './errors.js';
-import { MASTER_KEY_BYTES, StaticMasterKey } from './master-key.js';
-import { createSecretsService } from './secrets-service.js';
-import type { SecretsService } from './types.js';
+import { AUTH_TAG_BYTES, IV_BYTES, encryptSecret } from './crypto.ts';
+import { InvalidSecretError } from './errors.ts';
+import { MASTER_KEY_BYTES, StaticMasterKey } from './master-key.ts';
+import { createSecretsService } from './secrets-service.ts';
+import type { SecretsService } from './types.ts';
 
 /**
  * Builds a service over a fresh in-memory repository.

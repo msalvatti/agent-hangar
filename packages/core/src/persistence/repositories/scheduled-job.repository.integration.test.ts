@@ -9,9 +9,9 @@
  */
 import { beforeEach, expect, it } from 'vitest';
 
-import type { Redactor } from '../../secrets/types.js';
-import { GITHUB_CANARY, assertNoCanary } from '../../testing/canaries.js';
-import type { PrismaClient } from '../generated/client.js';
+import type { Redactor } from '../../secrets/types.ts';
+import { GITHUB_CANARY, assertNoCanary } from '../../testing/canaries.ts';
+import type { PrismaClient } from '../generated/client.ts';
 import {
   connectTestDb,
   countRows,
@@ -19,10 +19,10 @@ import {
   rawSelect,
   sqlTemplate,
   truncateAll,
-} from '../testing/db.js';
+} from '../testing/db.ts';
 
-import { NotFoundError } from './errors.js';
-import { PrismaScheduledJobRepository } from './scheduled-job.repository.js';
+import { NotFoundError } from './errors.ts';
+import { PrismaScheduledJobRepository } from './scheduled-job.repository.ts';
 
 const baseInput = {
   name: 'Nightly report',

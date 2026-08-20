@@ -14,7 +14,7 @@ import {
   pingOrFail,
   requireRedisUrl,
   uniquePrefix,
-} from './redis.integration-helper.js';
+} from './redis.integration-helper.ts';
 
 describe('requireRedisUrl', () => {
   afterEach(() => {

@@ -8,31 +8,31 @@
  * a constructor/factory parameter — nothing Prisma-typed is ever returned, mirroring
  * `createPrismaClient` in `persistence/client.ts`.
  */
-import type { Redactor } from '../../secrets/types.js';
-import type { PrismaClient } from '../generated/client.js';
-import type { Repositories } from '../ports.js';
+import type { Redactor } from '../../secrets/types.ts';
+import type { PrismaClient } from '../generated/client.ts';
+import type { Repositories } from '../ports.ts';
 
-import { PrismaChatRepository } from './chat.repository.js';
-import { PrismaJobRunRepository } from './job-run.repository.js';
-import { PrismaMessageRepository } from './message.repository.js';
-import { PrismaScheduledJobRepository } from './scheduled-job.repository.js';
-import { PrismaSecretRepository } from './secret.repository.js';
-import { PrismaToolCallLogRepository } from './tool-call-log.repository.js';
-import { PrismaTurnRepository } from './turn.repository.js';
-import { PrismaWorkspaceRepository } from './workspace.repository.js';
+import { PrismaChatRepository } from './chat.repository.ts';
+import { PrismaJobRunRepository } from './job-run.repository.ts';
+import { PrismaMessageRepository } from './message.repository.ts';
+import { PrismaScheduledJobRepository } from './scheduled-job.repository.ts';
+import { PrismaSecretRepository } from './secret.repository.ts';
+import { PrismaToolCallLogRepository } from './tool-call-log.repository.ts';
+import { PrismaTurnRepository } from './turn.repository.ts';
+import { PrismaWorkspaceRepository } from './workspace.repository.ts';
 
-export * from './errors.js';
-export * from './mappers.js';
-export { translatePrismaError } from './prisma-errors.js';
-export type { PrismaErrorContext } from './prisma-errors.js';
-export { PrismaChatRepository } from './chat.repository.js';
-export { PrismaJobRunRepository } from './job-run.repository.js';
-export { PrismaMessageRepository } from './message.repository.js';
-export { PrismaScheduledJobRepository } from './scheduled-job.repository.js';
-export { PrismaSecretRepository } from './secret.repository.js';
-export { PrismaToolCallLogRepository } from './tool-call-log.repository.js';
-export { PrismaTurnRepository } from './turn.repository.js';
-export { PrismaWorkspaceRepository } from './workspace.repository.js';
+export * from './errors.ts';
+export * from './mappers.ts';
+export { translatePrismaError } from './prisma-errors.ts';
+export type { PrismaErrorContext } from './prisma-errors.ts';
+export { PrismaChatRepository } from './chat.repository.ts';
+export { PrismaJobRunRepository } from './job-run.repository.ts';
+export { PrismaMessageRepository } from './message.repository.ts';
+export { PrismaScheduledJobRepository } from './scheduled-job.repository.ts';
+export { PrismaSecretRepository } from './secret.repository.ts';
+export { PrismaToolCallLogRepository } from './tool-call-log.repository.ts';
+export { PrismaTurnRepository } from './turn.repository.ts';
+export { PrismaWorkspaceRepository } from './workspace.repository.ts';
 
 /**
  * Builds every Prisma repository, wired to the same client and redactor.

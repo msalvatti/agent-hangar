@@ -10,7 +10,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import { InvalidCronError } from '../errors.js';
+import { InvalidCronError } from '../errors.ts';
 
 import {
   CRON_FIELD_COUNT,
@@ -18,7 +18,7 @@ import {
   nextRunAt,
   nextRuns,
   validateCronSpec,
-} from './cron.js';
+} from './cron.ts';
 
 /** Instant used wherever the starting point does not matter to the assertion. */
 const EPOCH = new Date('2026-01-01T00:00:00.000Z');
@@ -154,7 +154,7 @@ describe('validateCronSpec', () => {
         },
       },
     }));
-    const module = await import('./cron.js');
+    const module = await import('./cron.ts');
     expect(() => module.validateCronSpec({ cron: '* * * * *', timezone: 'UTC' })).toThrow(
       /parser exploded/,
     );

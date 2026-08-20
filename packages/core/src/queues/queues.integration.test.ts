@@ -12,8 +12,8 @@ import type { Queue, Worker } from 'bullmq';
 import type { Redis } from 'ioredis';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 
-import { QUEUE_NAMES } from './contracts.js';
-import type { RunTurnPayload } from './contracts.js';
+import { QUEUE_NAMES } from './contracts.ts';
+import type { RunTurnPayload } from './contracts.ts';
 import {
   closeConnection,
   createQueue,
@@ -21,8 +21,8 @@ import {
   createWorker,
   createWorkerConnection,
   enqueueRunTurn,
-} from './queues.js';
-import { describeRedis, pingOrFail, uniquePrefix } from './redis.integration-helper.js';
+} from './queues.ts';
+import { describeRedis, pingOrFail, uniquePrefix } from './redis.integration-helper.ts';
 
 /** Wall-clock limit per test; a Redis round trip is fast, a broken one must not hang the run. */
 const TEST_TIMEOUT_MS = 30_000;

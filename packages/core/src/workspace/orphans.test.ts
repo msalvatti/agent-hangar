@@ -8,9 +8,9 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import type { WorkspaceHandle } from '../runner/types.js';
+import type { WorkspaceHandle } from '../runner/types.ts';
 
-import { planOrphanReconcile } from './orphans.js';
+import { planOrphanReconcile } from './orphans.ts';
 
 /**
  * Builds a runner handle.

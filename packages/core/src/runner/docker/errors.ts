@@ -9,8 +9,8 @@
  * names, image references and environment variable KEYS only: `WorkspaceSpec.env` carries the
  * GitHub PAT and the OpenAI key, and a value must never reach an error, a log or a stack trace.
  */
-import { AgentHangarError } from '../../errors.js';
-import type { AgentHangarErrorOptions } from '../../errors.js';
+import { AgentHangarError } from '../../errors.ts';
+import type { AgentHangarErrorOptions } from '../../errors.ts';
 
 /** The Docker daemon refused an operation, or the workspace could not be driven to a usable state. */
 export class DockerRunnerError extends AgentHangarError {

@@ -13,11 +13,11 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
-import type { Redactor } from '../../secrets/types.js';
-import type { PrismaClient } from '../generated/client.js';
+import type { Redactor } from '../../secrets/types.ts';
+import type { PrismaClient } from '../generated/client.ts';
 
-import { LiveWorkspaceExistsError, NotFoundError } from './errors.js';
-import { PrismaWorkspaceRepository } from './workspace.repository.js';
+import { LiveWorkspaceExistsError, NotFoundError } from './errors.ts';
+import { PrismaWorkspaceRepository } from './workspace.repository.ts';
 
 /** Builds a P2002 error naming the partial unique index, shaped like a raw-SQL-index violation. */
 function p2002LiveWorkspace(): Error & { code: string } {

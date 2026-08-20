@@ -11,13 +11,13 @@ import { randomBytes } from 'node:crypto';
 
 import { describe, expect, it } from 'vitest';
 
-import { AgentHangarError, SecretIntegrityError } from '../errors.js';
-import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.js';
+import { AgentHangarError, SecretIntegrityError } from '../errors.ts';
+import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.ts';
 
-import type { SealedSecret } from './crypto.js';
-import { AUTH_TAG_BYTES, IV_BYTES, decryptSecret, encryptSecret, last4 } from './crypto.js';
-import { MASTER_KEY_BYTES } from './master-key.js';
-import type { MasterKey } from './master-key.js';
+import type { SealedSecret } from './crypto.ts';
+import { AUTH_TAG_BYTES, IV_BYTES, decryptSecret, encryptSecret, last4 } from './crypto.ts';
+import { MASTER_KEY_BYTES } from './master-key.ts';
+import type { MasterKey } from './master-key.ts';
 
 const masterKey: MasterKey = { key: Buffer.alloc(MASTER_KEY_BYTES, 1), version: 1 };
 const CONTEXT = 'agent-hangar:secret:GITHUB_PAT';
