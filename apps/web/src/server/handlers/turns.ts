@@ -48,7 +48,14 @@ import { assertSameOrigin } from '../same-origin';
 import { CANCEL_REQUESTED_STATUS, removeQueuedJob } from './cancel';
 import { compensate } from './compensate';
 import { dispatchTurn } from './dispatch';
-import { NO_USAGE, requireNoLiveTurn, requireSecrets } from './guards';
+import {
+  CLAIM_RELEASED,
+  NO_USAGE,
+  requireNoLiveTurn,
+  requireSecrets,
+  requireSoleClaim,
+  requireStillActive,
+} from './guards';
 
 /** Why a turn that did not fail is not run again; one sentence for both ways of reaching it. */
 const RETRY_REFUSED = 'Only a failed turn can be retried; send the prompt again to start a new one';
@@ -129,6 +136,15 @@ export function cancelTurn(
  * clause, so two retries of the same turn arriving together cannot both find it failed and both
  * proceed. The loser is answered `TURN_NOT_RETRYABLE`, which is what its turn now is.
  *
+ * That settles two retries of one turn; it does not settle a retry racing a *different* request on
+ * the same chat, which is a chat-wide invariant rather than a row-level one. Making the turn
+ * `QUEUED` is this route's claim on the chat's single work slot, so — exactly as a message does —
+ * it re-reads both the chat's turns and the chat's status *after* that write, and gives the claim
+ * back to `FAILED` if either has moved. Checking only beforehand would let a message insert its own
+ * turn in the window, or an archive commit its status write, and leave the chat with two live turns
+ * or with a teardown queued under running work. `handlers/guards.ts` carries the ordering argument
+ * and both halves of the check.
+ *
  * @param container - The server container.
  * @param request - The incoming request.
  * @param params - Resolved path parameters.
@@ -163,7 +179,19 @@ export function retryTurn(
     if (requeued === null) {
       throw new ConflictError('TURN_NOT_RETRYABLE', RETRY_REFUSED);
     }
-    await container.repos.chats.touch(turn.chatId);
+    try {
+      await requireSoleClaim(container, turn.chatId, turn.id);
+      await requireStillActive(container, turn.chatId);
+      await container.repos.chats.touch(turn.chatId);
+    } catch (error) {
+      await compensate(
+        container,
+        { chatId: turn.chatId, turnId: turn.id },
+        'could not release a retried turn claim',
+        () => container.repos.turns.finish(turn.id, 'FAILED', NO_USAGE, CLAIM_RELEASED),
+      );
+      throw error;
+    }
     await dispatchTurn(container, requeued);
     return jsonResponse(okResponse, { ok: true });
   });

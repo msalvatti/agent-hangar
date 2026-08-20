@@ -19,6 +19,7 @@ import type { TestContainer } from '../testing/test-container';
 
 import { createChat } from './chats';
 import { ENQUEUE_FAILED } from './dispatch';
+import { CLAIM_RELEASED } from './guards';
 import { cancelTurn, retryTurn } from './turns';
 
 vi.mock('bullmq', () => import('../testing/fake-queue'));
@@ -476,6 +477,102 @@ describe('retryTurn', () => {
 
     expect(response.status).toBe(409);
     expect(await response.json()).toMatchObject({ error: { code: 'TURN_NOT_RETRYABLE' } });
+    expect(harness.doubles.queues.chatTurns.added).toEqual([]);
+  });
+
+  /**
+   * The window the pre-check cannot close: a message claims the chat between the live-turn read
+   * and the requeue write. Re-reading after its own write is what lets the retry see the rival at
+   * all, and the claim is given back so the chat is not left with two live turns — which the
+   * worker resolves by failing whichever job loses its in-process claim, not by refusing cleanly.
+   */
+  it('gives the claim back when another turn claims the chat during the requeue', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedFailedTurn(harness);
+    const { turns } = harness.doubles.repos;
+    const requeue = turns.requeue.bind(turns);
+    vi.spyOn(turns, 'requeue').mockImplementation(async (id) => {
+      await turns.create({ chatId, model: 'gpt-5.6-sol' });
+      return requeue(id);
+    });
+
+    const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: 'TURN_IN_PROGRESS' } });
+    expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({
+      status: 'FAILED',
+      error: CLAIM_RELEASED,
+    });
+    expect(harness.doubles.queues.chatTurns.added).toEqual([]);
+  });
+
+  /**
+   * The same window against the other racing operation: an archive commits its status write while
+   * the retry's turn is still `FAILED`, so the archive's own live-turn check cannot see it. The
+   * retry re-reads the status after its write and stands down, which is what stops a turn being
+   * dispatched into a chat whose workspace teardown is already queued.
+   */
+  it('gives the claim back when the chat is archived during the requeue', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedFailedTurn(harness);
+    const { chats, turns } = harness.doubles.repos;
+    const requeue = turns.requeue.bind(turns);
+    vi.spyOn(turns, 'requeue').mockImplementation(async (id) => {
+      await chats.setStatus(chatId, 'ARCHIVED');
+      return requeue(id);
+    });
+
+    const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: 'CHAT_ARCHIVED' } });
+    expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({ status: 'FAILED' });
+    expect(harness.doubles.queues.chatTurns.added).toEqual([]);
+  });
+
+  /**
+   * A chat deleted while the retry holds its claim is a 404 rather than a conflict: there is no
+   * chat left to run the turn against, so there is nothing for the caller to wait for either.
+   */
+  it('reports a chat deleted during the requeue as missing', async () => {
+    const harness = createTestContainer();
+    const { turnId } = await seedFailedTurn(harness);
+    const { chats, turns } = harness.doubles.repos;
+    const requeue = turns.requeue.bind(turns);
+    vi.spyOn(turns, 'requeue').mockImplementation(async (id) => {
+      const requeued = await requeue(id);
+      vi.spyOn(chats, 'getById').mockResolvedValue(null);
+      return requeued;
+    });
+
+    const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(404);
+    expect(harness.doubles.queues.chatTurns.added).toEqual([]);
+  });
+
+  /**
+   * Both the claim and its release failing is the case compensation cannot repair: the request
+   * still fails with the conflict that explains it rather than with the release's error, and the
+   * log line naming the chat and the turn is the only record that a queued turn has no job.
+   */
+  it('reports a retried claim it could not release', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedFailedTurn(harness);
+    const { turns } = harness.doubles.repos;
+    const requeue = turns.requeue.bind(turns);
+    vi.spyOn(turns, 'requeue').mockImplementation(async (id) => {
+      await turns.create({ chatId, model: 'gpt-5.6-sol' });
+      return requeue(id);
+    });
+    vi.spyOn(turns, 'finish').mockRejectedValue(new Error('database unreachable'));
+
+    const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: 'TURN_IN_PROGRESS' } });
+    expect(harness.doubles.logOutput()).toContain('could not release a retried turn claim');
     expect(harness.doubles.queues.chatTurns.added).toEqual([]);
   });
 

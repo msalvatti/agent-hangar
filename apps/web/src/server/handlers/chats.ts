@@ -86,7 +86,14 @@ import { assertSameOrigin } from '../same-origin';
 
 import { compensate } from './compensate';
 import { dispatchTurn } from './dispatch';
-import { isLive, NO_USAGE, requireNoLiveTurn, requireSecrets } from './guards';
+import {
+  CLAIM_RELEASED,
+  NO_USAGE,
+  requireNoLiveTurn,
+  requireSecrets,
+  requireSoleClaim,
+  requireStillActive,
+} from './guards';
 import { lastTurnStatus, toChatDetail, toChatSummary } from './mappers';
 
 /** Longest title derived from a prompt; the rest of the prompt is the first message. */
@@ -123,9 +130,6 @@ async function requireChat(container: ServerContainer, id: string): Promise<Chat
   return chat;
 }
 
-/** Error recorded on a turn whose claim on the chat was given back before any work started. */
-const CLAIM_RELEASED = 'Released: another message claimed the chat at the same moment';
-
 /**
  * Creates the turn row that claims the chat's single work slot.
  *
@@ -138,50 +142,6 @@ const CLAIM_RELEASED = 'Released: another message claimed the chat at the same m
  */
 function claimTurn(container: ServerContainer, chatId: string): Promise<Turn> {
   return container.repos.turns.create({ chatId, model: container.config.OPENAI_MODEL });
-}
-
-/**
- * Refuses to continue when the chat is no longer accepting work.
- *
- * Read after the caller has written its own claim, so it sees an archive that committed
- * concurrently: the archive's status write and this read are ordered the same way on both sides,
- * which is what stops a message and an archive from both proceeding.
- *
- * @param container - The server container.
- * @param chatId - Chat to re-read.
- * @throws ConflictError 409 `CHAT_ARCHIVED` when the chat was archived meanwhile.
- */
-async function requireStillActive(container: ServerContainer, chatId: string): Promise<void> {
-  const chat = await requireChat(container, chatId);
-  if (chat.status !== 'ACTIVE') {
-    throw new ConflictError('CHAT_ARCHIVED', 'The chat was archived while the message was sent');
-  }
-}
-
-/**
- * Refuses to continue when the chat carries a live turn other than the caller's own claim.
- *
- * Losing on sight rather than by comparing ids is what keeps the rule single-valued under every
- * interleaving: the request that never saw a rival is the only one that can win, so two requests
- * can both refuse but can never both proceed.
- *
- * @param container - The server container.
- * @param chatId - Chat the claim was made against.
- * @param turnId - The caller's own claim, excluded from the check.
- * @throws ConflictError 409 `TURN_IN_PROGRESS` when another live turn exists.
- */
-async function requireSoleClaim(
-  container: ServerContainer,
-  chatId: string,
-  turnId: string,
-): Promise<void> {
-  const turns = await container.repos.turns.listByChat(chatId);
-  if (turns.some((turn) => turn.id !== turnId && isLive(turn.status))) {
-    throw new ConflictError(
-      'TURN_IN_PROGRESS',
-      'Another message claimed this chat at the same moment; send it again',
-    );
-  }
 }
 
 /**
