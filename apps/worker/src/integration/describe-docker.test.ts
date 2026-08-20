@@ -23,6 +23,30 @@ const READY = {
   REDIS_URL: 'redis://127.0.0.1:3312',
 };
 
+/** Removes the given keys from `process.env`, whether or not they were set. */
+function clearEnv(...keys: string[]): void {
+  for (const key of keys) {
+    Reflect.deleteProperty(process.env, key);
+  }
+}
+
+/**
+ * Snapshots the given `process.env` keys and returns a function that puts back exactly what was
+ * there — present or absent — when called.
+ */
+function snapshotEnv(...keys: string[]): () => void {
+  const saved = keys.map((key) => [key, process.env[key]] as const);
+  return () => {
+    for (const [key, value] of saved) {
+      if (value === undefined) {
+        Reflect.deleteProperty(process.env, key);
+      } else {
+        process.env[key] = value;
+      }
+    }
+  };
+}
+
 describe('shouldRunDockerSuite', () => {
   /**
    * With the opt-in and both URLs the suite runs, and there is nothing to print.
@@ -93,28 +117,27 @@ registerDockerSuite({ run: false, reason: 'no daemon here' }, 'gate, declared un
   });
 });
 
-describe('describeDocker', () => {
-  // `describeDocker` reads `process.env` itself (it calls `shouldRunDockerSuite()` with no
-  // argument), so it cannot be probed by calling it once and reading a single outcome — that
-  // outcome would depend on whichever shell happens to collect this file, and in CI that shell
-  // has neither the opt-in nor the resources and does have `CI` set, which is exactly the
-  // condition `shouldRunDockerSuite` is required to throw on. The probes below pin
-  // `process.env` to a known shape around each registration instead, the same way
-  // `describeDb` is probed in `packages/core/src/persistence/testing/db.test.ts`. `describe`
-  // bodies run synchronously at collection time, so mutating `process.env` immediately before
-  // each `describeDocker` call and restoring it immediately after is enough to make both
-  // branches deterministic. `CI` is cleared for both probes: the throwing branch is already
-  // covered above by calling `shouldRunDockerSuite` directly with an explicit environment,
-  // never by letting collection itself depend on the real one.
-  const savedDockerAvailable = process.env[DOCKER_AVAILABLE_ENV];
-  const savedDatabaseUrl = process.env.DATABASE_URL;
-  const savedRedisUrl = process.env.REDIS_URL;
-  const savedCi = process.env.CI;
+// `describeDocker` reads `process.env` itself (it calls `shouldRunDockerSuite()` with no
+// argument), so it cannot be probed by calling it once and reading a single outcome — that
+// outcome would depend on whichever shell happens to collect this file, and in CI that shell has
+// neither the opt-in nor the resources and does have `CI` set, which is exactly the condition
+// `shouldRunDockerSuite` is required to throw on. The probes below pin `process.env` to a known
+// shape around each registration instead, the same way `describeDb` is probed in
+// `packages/core/src/persistence/testing/db.test.ts`. `describe` bodies run synchronously at
+// collection time, so mutating `process.env` immediately before each `describeDocker` call and
+// restoring it immediately after is enough to make both branches deterministic. `CI` is cleared
+// for both probes: the throwing branch is already covered above by calling `shouldRunDockerSuite`
+// directly with an explicit environment, never by letting collection itself depend on the real
+// one.
+const PINNED_ENV_KEYS = [DOCKER_AVAILABLE_ENV, 'DATABASE_URL', 'REDIS_URL', 'CI'];
 
+describe('describeDocker', () => {
+  const restoreEnv = snapshotEnv(...PINNED_ENV_KEYS);
+
+  clearEnv('CI');
   process.env[DOCKER_AVAILABLE_ENV] = READY[DOCKER_AVAILABLE_ENV];
   process.env.DATABASE_URL = READY.DATABASE_URL;
   process.env.REDIS_URL = READY.REDIS_URL;
-  Reflect.deleteProperty(process.env, 'CI');
   let ranWhenReady = false;
   describeDocker('probe suite (environment ready)', () => {
     /**
@@ -127,10 +150,7 @@ describe('describeDocker', () => {
     });
   });
 
-  Reflect.deleteProperty(process.env, DOCKER_AVAILABLE_ENV);
-  delete process.env.DATABASE_URL;
-  delete process.env.REDIS_URL;
-  Reflect.deleteProperty(process.env, 'CI');
+  clearEnv(...PINNED_ENV_KEYS);
   describeDocker('probe suite (environment not ready)', () => {
     /**
      * With nothing set and no `CI`, the wrapper skips locally instead of throwing; a skipped
@@ -141,26 +161,7 @@ describe('describeDocker', () => {
     });
   });
 
-  if (savedDockerAvailable === undefined) {
-    Reflect.deleteProperty(process.env, DOCKER_AVAILABLE_ENV);
-  } else {
-    process.env[DOCKER_AVAILABLE_ENV] = savedDockerAvailable;
-  }
-  if (savedDatabaseUrl === undefined) {
-    delete process.env.DATABASE_URL;
-  } else {
-    process.env.DATABASE_URL = savedDatabaseUrl;
-  }
-  if (savedRedisUrl === undefined) {
-    delete process.env.REDIS_URL;
-  } else {
-    process.env.REDIS_URL = savedRedisUrl;
-  }
-  if (savedCi === undefined) {
-    Reflect.deleteProperty(process.env, 'CI');
-  } else {
-    process.env.CI = savedCi;
-  }
+  restoreEnv();
 
   /**
    * The non-skipped probe above actually executed its `it`, proving the wrapper reads
