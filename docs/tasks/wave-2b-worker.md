@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W2-B 🐳 (parallel with W2-A, W2-C; the only Docker-integration lane running at a time) |
 | **Status** | 🟦 running |
-| **Progress** | 4/6 tasks |
+| **Progress** | 5/6 tasks |
 | **Branch** | `feat/w2b-worker` |
 | **Owned paths** | `apps/worker/src/**` (incl. `apps/worker/src/testing/**`), `apps/worker/vitest.config.ts`, `apps/worker/package.json` scripts only (`test:integration`) |
 | **Depends on** | W0, W1-A, W1-B, W1-C, W1-D, W1-E, W1-F merged to `main` |
@@ -46,7 +46,7 @@ This lane adds the BullMQ consumers: `run-turn` (flow a and b: ensure workspace 
 | 2B.2 | `processors/run-turn.ts` — ensure workspace, exec runtime, event → redact → publish → persist, failures, stalled recovery, cancel | ✅ | P0 | L | 2B.1 |
 | 2B.3 | `processors/run-scheduled-job.ts` + `scheduler-reconcile.ts` — overlap policy, JOB workspace, destroy in `finally`, boot reconcile | ✅ | P0 | L | 2B.2 |
 | 2B.4 | `processors/gc.ts` (reap-idle, destroy-chat-workspace, orphan reconcile) + `main.ts` wiring, image check, graceful shutdown | ✅ | P0 | M | 2B.3 |
-| 2B.5 | 🐳 Integration suite `@docker @db @redis` — full turn, GC idle + orphan, restore turn, scheduled run | 📋 | P0 | L | 2B.4 |
+| 2B.5 | 🐳 Integration suite `@docker @db @redis` — full turn, GC idle + orphan, restore turn, scheduled run | ✅ | P0 | L | 2B.4 |
 | 2B.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 2B.1–2B.5 |
 
 ---
@@ -412,18 +412,18 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2b-worker.md; 
 
 ## Task 2B.5 — 🐳 Integration suite `@docker @db @redis`
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 2B.4
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 2B.4
 
 **Description.** Prove the worker against real infrastructure: Postgres (W1-E repositories), Redis (BullMQ + Streams), Docker (W1-B runner, W1-D runtime image) with `AGENT_MODEL_PROVIDER=fake` inside the container. Four scenarios from spec 06 §3: a full turn (container created, runtime runs scripted tool calls, rows and stream entries appear, Turn SUCCEEDED), GC reaps idle and orphan containers, a restore turn clones `workBranch` (prepare events), and a scheduled run creates and destroys its container. Runs only with `DOCKER_AVAILABLE=1`; fails loudly in CI when Docker is missing.
 
 **Acceptance criteria**
-- [ ] `apps/worker/src/integration/worker.integration.test.ts` (`describe('@docker @db @redis worker', …)`) guarded by a `describeDocker` helper: `DOCKER_AVAILABLE=1` + `DATABASE_URL` + `REDIS_URL` → run; missing locally → `describe.skip` with a console warning naming the env vars; missing with `CI=1` → throw
-- [ ] Setup: real `createContainer` with `WORKSPACE_RUNNER=docker`, `AH_INSTANCE=<w2b-test>`, config from env; `truncateAll`; `FLUSHDB` on the test Redis; secrets stored through the real `SecretsService` with a temp master key (values = canaries); `afterAll`: destroy every container with label `ah.instance=<instance>`, close the container
-- [ ] Scenario 1 — full turn: seed Chat (repo `TEST_REPO_URL`, default `https://github.com/octocat/Hello-World.git`) + USER message + Turn; process via a real BullMQ `Worker` from `startWorker` (or the processor directly — prefer the real worker for the queue path); wait until Turn terminal (poll ≤ 120 s); asserts: Turn `SUCCEEDED`, Workspace `READY` with `runnerRef`, `runner.list({ 'ah.instance' })` has exactly one handle with labels `ah.chat`, ToolCallLog rows for the fake provider's scripted tools, Message rows `TOOL_SUMMARY`/`ASSISTANT`, `XRANGE events:turn:<id> - +` contains `turn.started`, `prepare.done`, `tool.call`, `turn.completed` in order, stream TTL set (`TTL` > 0), no canary anywhere (`assertNoCanary` on all rows and stream entries; the container env contains the canaries but events must not)
-- [ ] Scenario 2 — GC: set the workspace's `lastActiveAt` 2 h back; run `reap-idle` → Workspace `DESTROYED`, container gone (`runner.health` gone), SYSTEM note appended, `Chat.workBranch`/`lastPushedSha` hints updated when the snapshot reported `ahead 0` (assert presence of hint fields, not values); orphan: create a container with `ah.instance=<instance>` via `runner.create` for a workspaceId with no DB row → `reap-idle` destroys it
-- [ ] Scenario 3 — restore turn: a new USER message + Turn on the same chat → Turn SUCCEEDED, a NEW workspace id, stream contains `prepare.progress` (Cloning…) and `prepare.done`; the request sent had `prepare.clone true` (assert through the persisted SYSTEM note from GC + the events; the stdin itself is not observable here)
-- [ ] Scenario 4 — scheduled run: ScheduledJob (enabled, cron `* * * * *`) → `run-scheduled-job` with `trigger MANUAL` → JobRun `SUCCEEDED` with `output`, Workspace `kind JOB` `DESTROYED`, `runner.list` shows no handle with `ah.jobRun`; overlap: two concurrent deliveries → one SUCCEEDED, one FAILED `previous run still running`
-- [ ] `apps/worker/package.json` `test:integration` runs the suite with `DOCKER_AVAILABLE=1`; CI `integration` job (W0) picks it up through `pnpm test:integration`
+- [x] `apps/worker/src/integration/worker.integration.test.ts` (`describe('@docker @db @redis worker', …)`) guarded by a `describeDocker` helper: `DOCKER_AVAILABLE=1` + `DATABASE_URL` + `REDIS_URL` → run; missing locally → `describe.skip` with a console warning naming the env vars; missing with `CI=1` → throw
+- [x] Setup: real `createContainer` with `WORKSPACE_RUNNER=docker`, `AH_INSTANCE=<w2b-test>`, config from env; `truncateAll`; `FLUSHDB` on the test Redis; secrets stored through the real `SecretsService` with a temp master key (values = canaries); `afterAll`: destroy every container with label `ah.instance=<instance>`, close the container
+- [x] Scenario 1 — full turn: seed Chat (repo `TEST_REPO_URL`, default `https://github.com/octocat/Hello-World.git`) + USER message + Turn; process via a real BullMQ `Worker` from `startWorker` (or the processor directly — prefer the real worker for the queue path); wait until Turn terminal (poll ≤ 120 s); asserts: Turn `SUCCEEDED`, Workspace `READY` with `runnerRef`, `runner.list({ 'ah.instance' })` has exactly one handle with labels `ah.chat`, ToolCallLog rows for the fake provider's scripted tools, Message rows `TOOL_SUMMARY`/`ASSISTANT`, `XRANGE events:turn:<id> - +` contains `turn.started`, `prepare.done`, `tool.call`, `turn.completed` in order, stream TTL set (`TTL` > 0), no canary anywhere (`assertNoCanary` on all rows and stream entries; the container env contains the canaries but events must not)
+- [x] Scenario 2 — GC: set the workspace's `lastActiveAt` 2 h back; run `reap-idle` → Workspace `DESTROYED`, container gone (`runner.health` gone), SYSTEM note appended, `Chat.workBranch`/`lastPushedSha` hints updated when the snapshot reported `ahead 0` (assert presence of hint fields, not values); orphan: create a container with `ah.instance=<instance>` via `runner.create` for a workspaceId with no DB row → `reap-idle` destroys it
+- [x] Scenario 3 — restore turn: a new USER message + Turn on the same chat → Turn SUCCEEDED, a NEW workspace id, stream contains `prepare.progress` (Cloning…) and `prepare.done`; the request sent had `prepare.clone true` (assert through the persisted SYSTEM note from GC + the events; the stdin itself is not observable here)
+- [x] Scenario 4 — scheduled run: ScheduledJob (enabled, cron `* * * * *`) → `run-scheduled-job` with `trigger MANUAL` → JobRun `SUCCEEDED` with `output`, Workspace `kind JOB` `DESTROYED`, `runner.list` shows no handle with `ah.jobRun`; overlap: two concurrent deliveries → one SUCCEEDED, one FAILED `previous run still running`
+- [x] `apps/worker/package.json` `test:integration` runs the suite with `DOCKER_AVAILABLE=1`; CI `integration` job (W0) picks it up through `pnpm test:integration`
 
 **Files to create/modify**
 `apps/worker/src/integration/{worker.integration.test,describe-docker,describe-docker.test,harness}.ts`, `apps/worker/vitest.config.ts` (integration project), `apps/worker/package.json` (scripts only).
@@ -550,3 +550,4 @@ Completion Protocol: append `- 2B.6 ✅ <date> — PR #<n> opened`; commit `docs
 - 2B.2 ✅ 2026-08-19 — run-turn processor: workspace ensure and recovery, streaming redact/publish/persist, every failure path and cancellation
 - 2B.3 ✅ 2026-08-19 — scheduled-job processor with the overlap policy and destroy-in-finally, plus the boot-time scheduler reconciliation
 - 2B.4 ✅ 2026-08-19 — workspace collector with idle reaping and orphan reconciliation, plus the application wiring and graceful shutdown
+- 2B.5 ✅ 2026-08-19 — docker integration suite: a real turn, idle and orphan collection, a restored turn, a scheduled run and the overlap policy

@@ -7,11 +7,11 @@
  * root (real clients, process signals, `process.exit`) and is excluded — its logic lives in
  * `boot.ts`, `container.ts` and `app.ts`, which are fully tested with fakes.
  *
- * The `@docker @db @redis` suite lives in `src/integration` and is registered as a second project
- * only when `DOCKER_AVAILABLE=1`, which `pnpm --filter worker test:integration` sets. A plain
- * `vitest run` therefore never picks it up, so the unit gate stays runnable on a machine — or a CI
- * job — without a Docker daemon, while the suite itself still refuses to skip silently once it is
- * selected (see `src/integration/describe-docker.ts`).
+ * The `@docker @db @redis` suite lives in `src/integration` and is its own project. It collects
+ * files only when `DOCKER_AVAILABLE=1`, which `pnpm --filter worker test:integration` sets, so a
+ * plain `vitest run` never loads it and the unit gate stays runnable on a machine — or a CI job —
+ * without a Docker daemon. Once it is loaded it refuses to skip silently: see
+ * `src/integration/describe-docker.ts`.
  */
 import { defineConfig } from 'vitest/config';
 
@@ -29,12 +29,17 @@ const unitProject = {
   },
 };
 
-/** The integration project: real Docker, Postgres and Redis. */
+/**
+ * The integration project: real Docker, Postgres and Redis.
+ *
+ * Always registered so `--project integration` names something that exists, but it collects no
+ * files until the caller opts in.
+ */
 const integrationProject = {
   test: {
     name: 'integration',
     environment: 'node',
-    include: ['src/**/*.integration.test.ts'],
+    include: dockerSuiteRequested ? ['src/**/*.integration.test.ts'] : [],
     maxWorkers: 1,
     testTimeout: 180_000,
     hookTimeout: 180_000,
@@ -44,7 +49,7 @@ const integrationProject = {
 export default defineConfig({
   test: {
     maxWorkers: 3,
-    projects: dockerSuiteRequested ? [unitProject, integrationProject] : [unitProject],
+    projects: [unitProject, integrationProject],
     coverage: {
       enabled: true,
       provider: 'v8',
