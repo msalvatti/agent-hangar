@@ -3,14 +3,14 @@
 | | |
 |---|---|
 | **Lane** | W2-B 🐳 (parallel with W2-A, W2-C; the only Docker-integration lane running at a time) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 Merged |
 | **Progress** | 6/6 tasks |
 | **Branch** | `feat/w2b-worker` |
 | **Owned paths** | `apps/worker/src/**` (incl. `apps/worker/src/testing/**`), `apps/worker/vitest.config.ts`, `apps/worker/package.json` scripts only (`test:integration`) |
 | **Depends on** | W0, W1-A, W1-B, W1-C, W1-D, W1-E, W1-F merged to `main` |
 | **Unblocks** | W3-A (end-to-end wiring), W3-B (docs) |
 | **Source** | [docs/plan.md §7 W2-B](../plan.md) · spec [04](../spec/04-flows.md) (a)(b)(c) [03 §3 §5 §6](../spec/03-interfaces.md) [02 §3 §4](../spec/02-data-model.md) [06 §2 §3](../spec/06-testing.md) |
-| **Last updated** | 2026-08-19 |
+| **Last updated** | 2026-08-20 |
 
 ## Context
 

@@ -298,14 +298,13 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | | |
 |---|---|
 | Default branch | `main`; check its latest run with `gh run list --branch main --limit 1` rather than trusting a status recorded here, which ages the moment anything merges |
-| Lanes merged | **10 of 17** — the foundation lane and **all nine first-wave lanes**; the first wave is complete |
-| Lanes in review | **2** — the web API and the worker processors |
-| Lanes in progress | **1** — end-to-end authoring, started the moment its gate cleared |
+| Lanes merged | **12 of 17** — the foundation, all nine first-wave lanes, and both integration lanes: the web API and the worker |
+| Lanes in review | **1** — the end-to-end harness, which also unblocks the third wave |
 | Lanes not started | **4** — wiring and stabilisation, documentation, and both mutation-testing lanes |
-| Tasks merged | **57 of 94** |
-| Tasks written but not yet merged | **12** on the two open lane branches, so 69 of 94 exist as code |
+| Tasks merged | **69 of 94** |
+| Tasks written but not yet merged | **6** on the one open lane branch, so 75 of 94 exist as code |
 | Routed findings still open | **23**, in §14 below, each naming one lane |
-| Orchestrator fixes | **13 merged, 1 open** — defects found while shepherding, listed under the lane table |
+| Orchestrator fixes | **17 merged, 2 open** — defects found while shepherding, listed under the lane table |
 
 Three tables in this section describe the same build and are updated together, because one of them
 being stale is how a reader ends up with the wrong answer: the lane table, the orchestrator-fix
@@ -333,9 +332,9 @@ end-to-end lane proceeds alongside them rather than behind them.
 | W1-G | 🟩 merged | PR #19 | web 100 (all four metrics) | chats list, composer and streaming detail; Lighthouse accessibility 100 on both routes |
 | W1-H | 🟩 merged | PR #24 | web 100 (all four metrics) | 27 placeholder files removed and the screens adapted to the real modules; Lighthouse accessibility 100 on all three routes |
 | W1-I | 🟩 merged | PR #18 | scripts 100 (all four metrics) | run, doctor, archive, prune and the Conductor wiring; the two-instance walkthrough was executed against real Docker, not simulated |
-| W2-A | 🟨 PR open | PR #21 | web 100 · core 100 (all four metrics) | 19 routes and both SSE streams; found and fixed a path traversal in the forge slug pattern that would have sent the authorisation header to an unnamed path |
-| W2-B 🐳 | 🟨 PR open | PR #22 | worker 100 (all four metrics) | three consumers, cancel channel, scheduler reconcile and graceful shutdown; Docker suite ran green six consecutive times with no leftover containers |
-| W2-C | 🟦 running | `feat/w2c-e2e` | — | gate cleared: both interface lanes merged. Authors the Playwright harness and six specs in mock mode so the wiring lane only has to run and stabilise them |
+| W2-A | 🟩 merged | PR #21 | web 100 · core 100 (all four metrics) | 19 routes and both SSE streams; found and fixed a path traversal in the forge slug pattern that would have sent the authorisation header to an unnamed path |
+| W2-B 🐳 | 🟩 merged | PR #22 | worker 100 (all four metrics) | three consumers, cancel channel, scheduler reconcile and graceful shutdown; Docker suite ran green six consecutive times with no leftover containers |
+| W2-C | 🟨 PR open | PR #32 | web 100 (all four metrics) | Playwright harness, a local git server and the six critical-flow specs; real mode boots against the real API, database and git server, and two specs already pass end to end there |
 | W3-A 🐳 | ⬜ | — | — | success criteria S1–S6, S8 |
 | W3-B | ⬜ | — | — | |
 | W4-A | ⬜ | — | — | may slip — documented |
@@ -358,7 +357,12 @@ end-to-end lane proceeds alongside them rather than behind them.
 | #25 | 🟩 merged | A routed row stated a contract change as though it had landed, and named the wrong remedy for it |
 | #26 | 🟩 merged | `pnpm typecheck` emits without rewriting, so it leaves a `dist` whose declarations name files that do not exist |
 | #27 | 🟩 merged | The dashboard and the task index disagreed about which lanes were ready |
-| #28 | 🟨 PR open | The dashboard listed every lane's state but never what it added up to |
+| #28 | 🟩 merged | The dashboard listed every lane's state but never what it added up to |
+| #29 | 🟩 merged | A routed row stated a contract change as though it had landed, and named the wrong remedy for it |
+| #30 | 🟩 merged | The dashboard listed every lane's state but never what it added up to |
+| #31 | 🟩 merged | A finding was being carried as a limit when a third option closed it outright |
+| #33 | 🟨 PR open | The scripts suite failed under load from two independent causes: no timeout for its process trees, and workers colliding over the same port bases |
+| #34 | 🟨 PR open | The configuration offered a configurable forge while two validators refused everything but one hard-coded host, so end-to-end real mode could not start |
 
 Legend: ⬜ not started · 🟦 running (branch) · 🟨 PR open · 🟩 merged · 🟥 blocked.
 
@@ -378,14 +382,14 @@ number here is only as current as the last close-out that lane wrote.
 | W1-G | 7 | — | 7 |
 | W1-H | 6 | — | 6 |
 | W1-I | 6 | — | 6 |
-| W2-A | 0 | 6 | 6 |
-| W2-B | 0 | 6 | 6 |
-| W2-C | 0 | — | 6 |
+| W2-A | 6 | — | 6 |
+| W2-B | 6 | — | 6 |
+| W2-C | 0 | 6 | 6 |
 | W3-A | 0 | — | 6 |
 | W3-B | 0 | — | 5 |
 | W4-A | 0 | — | 4 |
 | W4-B | 0 | — | 4 |
-| **Total** | **57** | **12** | **94** |
+| **Total** | **69** | **6** | **94** |
 
 ## 13. Estimated complexity
 
