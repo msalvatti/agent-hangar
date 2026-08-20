@@ -3,11 +3,11 @@
 | | |
 |---|---|
 | **Lane** | W2-C (one agent; runs in parallel with W2-A and W2-B 🐳) |
-| **Status** | 🟩 merged (PR #32) |
+| **Status** | 🟩 merged (PR #32). The specs were authored against the UI and the mocked API; the last recorded real-mode figure is **7 of 9**, measured before PR #61 fixed the cause of both failures, and no real-mode run has been recorded since |
 | **Progress** | 6/6 tasks |
 | **Branch** | `feat/w2c-e2e` — merged and deleted |
 | **Owned paths** | `apps/web/e2e/**`, `infra/test/gitserver/**`, `apps/web/playwright.config.ts` (`webServer`, `globalSetup`/`globalTeardown`, projects) · plus, by explicit exception: `apps/web/package.json` (`scripts.test:e2e` only), `.github/workflows/ci.yml` (**body of the `e2e` job only**) |
-| **Depends on** | W0, W1-G (shell + chats UI, MSW), W1-H (scheduled + settings UI, MSW) — merged to `main`. W2-A/W2-B may still be in progress: specs are authored against the UI + mocked API and only fully executed in W3-A |
+| **Depends on** | W0, W1-G (shell + chats UI, MSW), W1-H (scheduled + settings UI, MSW) — merged to `main`. W2-A and W2-B have since merged as PR #21 and PR #22, so nothing here is pending |
 | **Unblocks** | W3-A (end-to-end wiring & stabilisation runs the suite for real) |
 | **Source** | [docs/plan.md §7 W2-C](../plan.md) · spec [06 §4](../spec/06-testing.md) [04 (a)(b)(c)(d)](../spec/04-flows.md) [10 §3–4](../spec/10-ui-design.md) [05 §3](../spec/05-local-dev.md) |
 | **Last updated** | 2026-08-20 |

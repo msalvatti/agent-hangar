@@ -3,11 +3,11 @@
 | | |
 |---|---|
 | **Lane** | W4-B (single agent; last wave, non-blocking — runs in parallel with W4-A; no Docker needed) |
-| **Status** | 🟥 Held — operator gate|
+| **Status** | 🟡 Deferred by decision (2026-08-20) — in the plan, scheduled later; **not blocked and not cancelled**. It needs the operator to say so, not a dependency to land. See [plan §9](../plan.md) and the lane table in [plan §12](../plan.md) and [README](README.md), which say the same thing |
 | **Progress** | 0/4 tasks |
 | **Branch** | `feat/w4b-stryker-runtime` |
 | **Owned paths** | `packages/agent-runtime/stryker.config.mjs`, `packages/agent-runtime/package.json` (scripts block only), tests and test-only helpers under `packages/agent-runtime/**`; source files under `packages/agent-runtime/src/**` **only** to remove an equivalent mutant by simplifying to the value that serves (no behaviour change); `.gitignore` (add `.stryker-tmp/` if missing — coordinate: W4-A adds the same line; whichever merges second rebases) |
-| **Depends on** | W3-A merged (code stable; mutants are meaningful only on stable code) |
+| **Depends on** | W3-A merged (code stable; mutants are meaningful only on stable code). W3-A being unmerged is **not** why this lane is idle — the deferral above is |
 | **Unblocks** | W4-C follow-up (orchestrator-owned `mutation` CI job + README badge — opened only when **both** W4-A and W4-B pass) |
 | **Source** | [docs/plan.md §9](../plan.md) (table row W4-B, rules) · spec [06 §5](../spec/06-testing.md) · [01 §5 S7](../spec/01-overview.md) |
 | **Notes** | may slip — documented in README "Known gaps" (plan §9: the product is complete without it) |

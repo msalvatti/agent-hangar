@@ -4,6 +4,8 @@ One file per lane. A lane is the unit of work one isolated subagent executes end
 
 Every task inside a lane file carries a self-contained English agent prompt: an agent dropped into a fresh session with only that prompt, `CLAUDE.md`, and the referenced spec sections can execute it without guessing.
 
+**Where the build stands (2026-08-20).** Every lane below is merged except three. W3-A, wiring and stabilisation, has not run, and nothing blocks it. The two mutation lanes are deferred by decision — in the plan, scheduled later, not blocked. The Status column below carries the same value as the lane table in [docs/plan.md §12](../plan.md), which is the authority the moment the two disagree; it also holds the counts, the fixes merged alongside the lanes and the findings routed to W3-A, so none of those is copied here to go stale. Where a lane file's own header disagrees with both, the merged state settles it.
+
 | Wave | Lane | File | Owned area | Depends on | Status |
 |---|---|---|---|---|---|
 | 0 | W0 | [wave-0-foundation.md](wave-0-foundation.md) | everything (monorepo, contracts, doubles, Prisma, infra base, app shells, CI) | — | 🟩 |
@@ -21,9 +23,9 @@ Every task inside a lane file carries a self-contained English agent prompt: an 
 | 2 | W2-C | [wave-2c-e2e.md](wave-2c-e2e.md) | `apps/web/e2e`, `infra/test/gitserver` | W1-G, W1-H | 🟩 |
 | 3 | W3-A 🐳 | [wave-3a-integration.md](wave-3a-integration.md) | any (single agent) | W2-A, W2-B, W2-C | 📋 |
 | 3 | W3-B | [wave-3b-docs.md](wave-3b-docs.md) | `README.md`, `docs/**` | W2-A, W2-B | 🟩 |
-| 4 | W4-A | [wave-4a-stryker-core.md](wave-4a-stryker-core.md) | `packages/core` tests + stryker config | W3-A | 🟡 |
-| 4 | W4-B | [wave-4b-stryker-runtime.md](wave-4b-stryker-runtime.md) | `packages/agent-runtime` tests + stryker config | W3-A | 🟡 |
+| 4 | W4-A | [wave-4a-stryker-core.md](wave-4a-stryker-core.md) | `packages/core` tests + stryker config | W3-A — but the deferral, not this dependency, is why it is idle | 🟡 |
+| 4 | W4-B | [wave-4b-stryker-runtime.md](wave-4b-stryker-runtime.md) | `packages/agent-runtime` tests + stryker config | W3-A — but the deferral, not this dependency, is why it is idle | 🟡 |
 
-Legend: 📋 ToDo · 🟦 running · 🟨 PR open · 🟩 merged · 🟥 blocked / held · 🟡 deferred by decision (in the plan, scheduled later — not blocked; see [plan §9](../plan.md)).
+Legend: 📋 ToDo · 🟦 running (branch) · 🟨 PR open · 🟩 merged · 🟥 blocked / held · 🟡 deferred by decision (in the plan, scheduled later — not blocked; see [plan §9](../plan.md)). These six symbols are the whole vocabulary: the same set is used by [plan §12](../plan.md) and by every lane file's own header, and no lane may carry a different one in two places.
 
 Scheduling reminders (from [docs/plan.md §3](../plan.md)): ≤ 5 concurrent subagents; ≤ 1 🐳 lane at a time; each subagent in its own worktree with `AH_INSTANCE=<lane>`; no dependency additions inside lanes; contracts frozen after W0 (additive change PRs only).

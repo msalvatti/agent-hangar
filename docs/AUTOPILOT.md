@@ -48,12 +48,17 @@
 | Definition of Done | the lane's **DONE** line in plan §5–§9 + every acceptance criterion of its close-out task |
 
 **Status legend — one vocabulary, the one the planning docs already use:**
-📋 ToDo · 🟦 running (worktree) · 🟨 PR open · 🟩 merged · 🟥 blocked.
-Mapping to the skill's generic legend: 📋=ToDo, 🟦=In Progress, 🟨=Review,
-🟩=Done, 🟥=Blocked. For the skill's "🟡 Partial" use **🟩 with a `partial:
-<outstanding item>` note in the Notes column** — the lane counts as merged
-but not Done until the note is cleared. `docs/plan.md` §12 initially shows
-⬜ for "not started" — treat ⬜ as 📋 and normalise to 📋 on first touch.
+📋 ToDo · 🟦 running (worktree) · 🟨 PR open · 🟩 merged · 🟥 blocked
+· 🟡 deferred by decision. Mapping to the skill's generic legend:
+📋=ToDo, 🟦=In Progress, 🟨=Review, 🟩=Done, 🟥=Blocked. **🟡 in this project
+means deferred by decision — in the plan, scheduled later, not blocked and
+not cancelled** (W4-A and W4-B carry it since 2026-08-20); it is *not* the
+skill's "Partial". For Partial use **🟩 with a `partial: <outstanding item>`
+note in the Notes column** — the lane counts as merged but not Done until
+the note is cleared. `docs/plan.md` §12 used to show ⬜ for "not started";
+it was normalised to 📋 on 2026-08-20 and ⬜ is no longer used as a status.
+The one ⬜ left in `docs/tasks/` sits inside a completed acceptance criterion
+of W3-B and is quoted as it was written; do not normalise that one.
 
 ## External preconditions
 
@@ -67,7 +72,7 @@ but not Done until the note is cleared. `docs/plan.md` §12 initially shows
 | launch | `gh api repos/bymaxone/agent-hangar/rules/branches/main --jq 'map(.type) \| index("pull_request")'` prints a number | informational — confirms `main` is PR-only (org ruleset `protect-default-branch`): **no direct pushes to `main` after the seed**, dashboard updates go through PRs (see Dashboard policy) |
 | every lane spawn | `git ls-remote --heads origin <lane branch>` prints **nothing** | a leftover branch from a dead run — investigate (open PR? merged?) before re-spawning; never spawn onto an existing remote branch blindly |
 | W3-A, task 3A.4 (real OpenAI smoke) | operator has entered a real OpenAI key + GitHub PAT in the Settings page of the W3-A instance (`http://127.0.0.1:3400/settings`, `AH_INSTANCE=w3a`) | **not blocking** — the task file itself says: implement + unit-test the script, mark the real run "pending" in the completion log and the PR. The orchestrator fires a `PushNotification` when W3-A is spawned so the operator can enter the keys while the lane runs; if the real run stays pending, W3-A merges, §12 gets `partial: real OpenAI smoke pending — run pnpm smoke:openai`, and the chain continues (W4 depends on the merge, not on the smoke). |
-| W4-C (orchestrator follow-up) | both W4-A and W4-B merged with `break: 80` met on a full run (numbers in their PRs) | skip W4-C; README "Known gaps" keeps the mutation rows (W3-B wrote them) |
+| W4-C (orchestrator follow-up) | both W4-A and W4-B merged with `break: 80` met on a full run (numbers in their PRs) | skip W4-C; README "Known gaps" keeps the mutation rows (W3-B wrote them). **Not reachable today:** W4-A and W4-B were deferred by decision on 2026-08-20 (plan §9), so this row waits on the operator and not on a check |
 
 No lane depends on an npm publication or any other external event the repo
 cannot influence — nothing to poll.
