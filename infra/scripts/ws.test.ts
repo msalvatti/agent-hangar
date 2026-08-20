@@ -156,6 +156,29 @@ describe('ws.sh instance resolution', () => {
   });
 
   /**
+   * The supported way to run a command against a SECOND instance from a checkout configured for a
+   * different one, and the one the refusal message names: give that instance an env file of its
+   * own and point AH_ENV_FILE at it. Nothing about this checkout's own env file changes, and the
+   * agreement check is satisfied rather than bypassed — an instance is its env file, so there is
+   * still exactly one rule.
+   */
+  it('acts on a second instance when AH_ENV_FILE names its env file', () => {
+    const { dir, log } = sandbox('feat-y');
+    const secondEnvFile = join(dir, '.env.second');
+    writeInstanceEnvFile(secondEnvFile, { instance: 'second-stack', portBase: 3400, home: dir });
+    const shimDir = createShimDir({ log, docker: { psNames: [] } });
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['list'],
+      env: { HOME: dir, AH_ENV_FILE: secondEnvFile, AH_SHIM_LOG: log },
+    });
+    expect(result.status).toBe(0);
+    const invocation = readShimLog(log).find((line) => line.startsWith('docker ps'));
+    expect(invocation).toContain('--filter label=ah.instance=second-stack');
+    expect(invocation).not.toContain('feat-y');
+  });
+
+  /**
    * A shell naming another instance stops the command instead of deciding for it.
    */
   it('refuses when the shell contradicts the checkout', () => {

@@ -27,7 +27,9 @@
 #                                        contradicts. Every command that acts on an already
 #                                        configured instance reads this mode; see
 #                                        ah_assert_agreement for why disagreement is refused
-#                                        rather than resolved
+#                                        rather than resolved, and for the AH_ENV_FILE path that
+#                                        runs a command against a second instance from a checkout
+#                                        configured for a different one
 #
 # Runs on macOS bash 3.2: no associative arrays, no mapfile.
 set -euo pipefail
@@ -183,6 +185,12 @@ ah_env_file_value() {
 #
 # Only what the shell actually sets is compared: a shell naming an instance but no port base is
 # not in conflict with a file that records a port base, it simply says nothing about ports.
+#
+# Running a command against a SECOND instance from a checkout configured for a different one stays
+# supported, and goes through AH_ENV_FILE rather than through the shell: an instance is its env
+# file, so the second one gets a file of its own (env.sh --force writes it) and AH_ENV_FILE names
+# it. That keeps one rule — the file decides — instead of a shell override that would be
+# indistinguishable from the stale variable this check exists to catch.
 ah_assert_agreement() {
   local target="$1" selected file_value conflict=0
   selected=$(ah_selected_instance)
@@ -205,7 +213,11 @@ ah_assert_agreement() {
   if [ "$conflict" -eq 0 ]; then
     return 0
   fi
-  echo "Refusing to guess which instance this command should act on. Unset AH_INSTANCE / AH_PORT_BASE (and CONDUCTOR_WORKSPACE_NAME / CONDUCTOR_PORT) to act on the instance this checkout was set up for; run \"pnpm setup --force\" to move this checkout to the instance the shell names; or set AH_ENV_FILE to that instance's own env file to act on it from here." >&2
+  echo "Refusing to guess which instance this command should act on. Three ways forward:" >&2
+  echo "  * unset AH_INSTANCE / AH_PORT_BASE (and CONDUCTOR_WORKSPACE_NAME / CONDUCTOR_PORT) to act on the instance this checkout was set up for;" >&2
+  echo "  * run \"pnpm setup --force\" to move this checkout to the instance the shell names;" >&2
+  echo "  * point AH_ENV_FILE at the env file of the other instance to act on it from here without disturbing this checkout. An instance that has none yet gets one with:" >&2
+  echo "      AH_ENV_FILE=<path> AH_INSTANCE=<name> AH_PORT_BASE=<base> bash infra/scripts/env.sh --force" >&2
   return 3
 }
 

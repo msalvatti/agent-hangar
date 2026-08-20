@@ -10,7 +10,9 @@
  * the derivation points at, and the helper shim standing in for `lib/*.main.ts`.
  *
  * This module is held to the same 100% coverage gate as the rest of `infra/scripts/testing/**`,
- * so it is written without branches a test would have to contrive to reach.
+ * so it is written without branches a test would have to contrive to reach; the one part that
+ * needs branches — claiming a port base against every other process on the machine — lives in
+ * `port-base.ts` and is driven directly by `port-base.test.ts`.
  */
 import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
@@ -19,6 +21,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { releasePortBases, reservePortBase } from './port-base.js';
 import { createShimDir, writeExtraShim } from './shims.js';
 import type { DockerShimOptions, PnpmShimOptions } from './shims.js';
 
@@ -39,37 +42,13 @@ export const scriptPath = fileURLToPath(new URL('../doctor.sh', import.meta.url)
 const GREEN_KEY = `${'0'.repeat(64)}\n`;
 
 /**
- * Where this process allocates port bases from, and how wide the range is.
- *
- * Bases are handed out from a private range rather than by binding port 0 and taking the
- * neighbour: a released ephemeral port is free only until the OS hands it to the next caller, and
- * the neighbour of an OS-assigned port may already be taken, which forces a retry loop with
- * branches no test can steer. The range sits below the ephemeral range both Linux (32768+) and
- * macOS (49152+) allocate from, and above the one `rotate-key-sandbox.ts` uses, so the two suites
- * cannot be handed the same block.
+ * The range this suite allocates from. It sits below the ephemeral range both Linux (32768+) and
+ * macOS (49152+) hand out, and above the one `rotate-key-sandbox.ts` uses, so the two suites have
+ * a head start on each other; what actually keeps two claimants off one base is the marker
+ * `port-base.ts` plants, which every suite on the machine shares.
  */
 const PORT_BASE_FLOOR = 31600;
 const PORT_BASE_SPAN = 1200;
-
-/** Ports consumed per instance (web, Postgres, Redis), so blocks never overlap. */
-const PORT_BASE_STRIDE = 3;
-
-/**
- * Where this process starts allocating. Seeding from the pid spreads concurrent Vitest workers
- * across the range instead of having them all start at the same base.
- */
-let nextPortBase = process.pid * PORT_BASE_STRIDE;
-
-/**
- * Reserves a port base no other suite in this run can be given.
- *
- * @returns The base; `+ 1` and `+ 2` are the Postgres and Redis ports derived from it.
- */
-function reservePortBase(): number {
-  const base = PORT_BASE_FLOOR + (nextPortBase % PORT_BASE_SPAN);
-  nextPortBase += PORT_BASE_STRIDE;
-  return base;
-}
 
 const dirs: string[] = [];
 const servers: Server[] = [];
@@ -129,7 +108,7 @@ export async function sandbox(): Promise<Sandbox> {
   const keyPath = join(dir, 'master.key');
   fsPort.writeFileSync(keyPath, GREEN_KEY);
   fsPort.chmodSync(keyPath, 0o600);
-  const portBase = reservePortBase();
+  const portBase = reservePortBase(PORT_BASE_FLOOR, PORT_BASE_SPAN);
   await listen(portBase + 1);
   await listen(portBase + 2);
   return { dir, log: join(dir, 'log'), keyPath, portBase, envFile: join(dir, '.env.local') };
@@ -141,7 +120,7 @@ export async function sandbox(): Promise<Sandbox> {
  * @returns A base whose `+ 1` and `+ 2` ports are free.
  */
 export function closedPortBase(): number {
-  return reservePortBase();
+  return reservePortBase(PORT_BASE_FLOOR, PORT_BASE_SPAN);
 }
 
 /**
@@ -239,8 +218,8 @@ export function greenShims(
 }
 
 /**
- * Releases every sandbox directory and listener this file handed out. Called from each suite's
- * `afterEach`; the loops are unconditional so the module keeps no branches of its own.
+ * Releases every sandbox directory, listener and port-base claim this file handed out. Called from
+ * each suite's `afterEach`; the loops are unconditional so the module keeps no branches of its own.
  */
 export function releaseSandboxes(): void {
   for (const server of servers) {
@@ -251,4 +230,5 @@ export function releaseSandboxes(): void {
     fsPort.rmSync(dir, { recursive: true, force: true });
   }
   dirs.length = 0;
+  releasePortBases();
 }

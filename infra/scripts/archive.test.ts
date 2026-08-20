@@ -126,6 +126,10 @@ describe('archive.sh instance resolution', () => {
     expect(result.stderr).toContain('"beta"');
     expect(result.stderr).toContain('"alpha"');
     expect(result.stderr).toContain('Refusing to guess');
+    // The way out has to be one that works. Telling an operator to point AH_ENV_FILE at "that
+    // instance's env file" is useless for a second stack that has none yet, so the message names
+    // the command that creates one.
+    expect(result.stderr).toContain('bash infra/scripts/env.sh --force');
     expect(readShimLog(log)).toEqual([]);
     expect(existsSync(envFile)).toBe(true);
   });

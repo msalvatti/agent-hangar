@@ -4,10 +4,12 @@
  * Layer: unit (spawns bash with PATH shims and real ephemeral TCP listeners; no real Docker,
  * Postgres or Redis).
  * Goal: the two rows report what the service answered, not merely that its port accepted a
- * socket. The listeners the sandbox binds answer nothing, which is exactly the case a bare TCP
- * check called healthy; here the shimmed probe supplies the verdict and the rows are checked
- * against it. The probe itself is proven against a real silent listener in
- * `infra/scripts/lib/service-probes.test.ts`.
+ * socket; they say only what the outcome vocabulary supports, never that the listener is a
+ * different service; and a probe that could not run at all is a third state with its own fix,
+ * not folded into the unhealthy-service branch. The listeners the sandbox binds answer nothing,
+ * which is exactly the case a bare TCP check called healthy; here the shimmed probe supplies the
+ * verdict and the rows are checked against it. The probe itself is proven against a real silent
+ * listener in `infra/scripts/lib/service-probes.test.ts`.
  * Mocks: docker/pnpm/openssl/node and the `AH_DOCTOR_HELPER_CMD` helper via
  * `infra/scripts/testing/{shims,doctor-sandbox}.ts`.
  */
@@ -57,8 +59,12 @@ describe('doctor.sh service probes', () => {
     }[];
     const postgres = rows.find((row) => row.check === 'Postgres');
     expect(postgres?.status).toBe('✗');
-    expect(postgres?.detail).toContain('listener is not agent_hangar_default');
+    // What was measured, and nothing more: a socket was accepted and the query went unanswered.
+    // A timeout, a refusal and a credential mismatch all arrive as this one outcome, so the row
+    // must not claim the listener is some other database.
+    expect(postgres?.detail).toContain('something is listening, but SELECT 1 went unanswered');
     expect(postgres?.detail).toContain('no-select-1');
+    expect(postgres?.detail).not.toContain('is not agent_hangar_default');
     expect(postgres?.fix).toContain(String(box.portBase + 1));
     expect(rows.find((row) => row.check === 'Redis')?.status).toBe('✓');
     expect(rows.find((row) => row.check === 'Migrations')?.detail).toBe('postgres down');
@@ -83,7 +89,8 @@ describe('doctor.sh service probes', () => {
     const rows = JSON.parse(result.stdout) as { check: string; status: string; detail: string }[];
     const redis = rows.find((row) => row.check === 'Redis');
     expect(redis?.status).toBe('✗');
-    expect(redis?.detail).toContain('did not answer PING');
+    expect(redis?.detail).toContain('something is listening, but PING went unanswered');
+    expect(redis?.detail).not.toContain('is not');
     expect(rows.find((row) => row.check === 'Postgres')?.status).toBe('✓');
   });
 
@@ -108,8 +115,10 @@ describe('doctor.sh service probes', () => {
   });
 
   /**
-   * A probe that cannot run at all is a different problem from an unhealthy service, and is
-   * reported as such rather than being quietly rendered as either verdict.
+   * A probe that cannot run at all is a different problem from an unhealthy service. Folded into
+   * the same branch, both rows claimed the listener was not the expected service and recommended
+   * bringing infrastructure up — two assertions about a service nobody managed to ask. The row now
+   * says the probe did not run, carries the helper's exit code, and its fix is about the probe.
    */
   it('reports a probe that could not run instead of guessing a verdict', async () => {
     const box = await sandbox();
@@ -121,11 +130,19 @@ describe('doctor.sh service probes', () => {
       env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper, AH_SHIM_PROBE_RC: '9' }),
     });
     expect(result.status).toBe(1);
-    const rows = JSON.parse(result.stdout) as { check: string; status: string; detail: string }[];
+    const rows = JSON.parse(result.stdout) as {
+      check: string;
+      status: string;
+      detail: string;
+      fix: string;
+    }[];
     for (const name of ['Postgres', 'Redis']) {
       const row = rows.find((entry) => entry.check === name);
       expect(row?.status).toBe('✗');
-      expect(row?.detail).toContain('probe-unavailable');
+      expect(row?.detail).toContain('not probed (helper exit 9)');
+      expect(row?.detail).not.toContain('unanswered');
+      expect(row?.fix).toContain('service-probes.main.ts');
+      expect(row?.fix).not.toContain('infra:up');
     }
   });
 
