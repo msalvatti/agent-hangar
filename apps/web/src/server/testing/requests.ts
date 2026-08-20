@@ -25,6 +25,23 @@ export function readRequest(path: string): Request {
 }
 
 /**
+ * Builds the read a hostile page would issue.
+ *
+ * A `no-cors` `GET` is fire-and-forget: the page cannot read the answer and does not need to, so
+ * these headers are what the browser attaches rather than anything the page chose. No `Origin` is
+ * sent, because a `no-cors` `GET` carries none — `Sec-Fetch-Site` is the whole of what labels it,
+ * which is precisely what the read guard has to work from.
+ *
+ * @param path - Path below the API root, query included.
+ * @returns The request.
+ */
+export function foreignReadRequest(path: string): Request {
+  return new Request(`${TEST_ORIGIN}${path}`, {
+    headers: { host: TEST_HOST, 'sec-fetch-site': 'cross-site' },
+  });
+}
+
+/**
  * Builds a state-changing request the same-origin guard accepts.
  *
  * @param path - Path below the API root.

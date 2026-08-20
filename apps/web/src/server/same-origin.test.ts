@@ -4,13 +4,14 @@
  *
  * Layer: unit.
  * Goal: a state-changing request is accepted only when it proves it came from this application,
- * across every combination of `Origin` and `Sec-Fetch-Site` a browser can send.
+ * and a forge-backed read is refused only when it proves it did not, across every combination of
+ * `Origin` and `Sec-Fetch-Site` a browser can send.
  * Mocks: none.
  */
 import { describe, expect, it } from 'vitest';
 
 import { ForbiddenOriginError } from './errors';
-import { assertSameOrigin } from './same-origin';
+import { assertNoForeignOrigin, assertSameOrigin } from './same-origin';
 
 /**
  * Builds a state-changing request with the given headers.
@@ -135,6 +136,69 @@ describe('assertSameOrigin', () => {
   it('rejects a request carrying neither header', () => {
     expect(() => {
       assertSameOrigin(stateChanging({}));
+    }).toThrow(ForbiddenOriginError);
+  });
+});
+
+describe('assertNoForeignOrigin', () => {
+  /**
+   * Builds a read with the given headers.
+   *
+   * @param headers - Headers to attach; `host` defaults to the URL's own authority.
+   * @returns The request.
+   */
+  function read(headers: Record<string, string>): Request {
+    const url = 'http://127.0.0.1:3280/api/repos';
+    return new Request(url, { headers: { host: new URL(url).host, ...headers } });
+  }
+
+  /**
+   * The difference from the write guard, and the reason this one exists: a same-origin `GET` is
+   * not obliged to send either header. Refusing the request that proves nothing would refuse the
+   * application's own picker, so absence of evidence is not evidence of another site.
+   */
+  it('accepts a read that carries neither header', () => {
+    expect(() => {
+      assertNoForeignOrigin(read({}));
+    }).not.toThrow();
+  });
+
+  /**
+   * A read the browser labels as its own is accepted on either signal, so the picker works whether
+   * the browser sends an `Origin`, a `Sec-Fetch-Site`, or both.
+   */
+  it('accepts a read labelled as this origin or this site', () => {
+    for (const headers of [
+      { origin: 'http://127.0.0.1:3280' },
+      { 'sec-fetch-site': 'same-origin' },
+      { 'sec-fetch-site': 'none' },
+      { origin: 'http://127.0.0.1:3280', 'sec-fetch-site': 'same-origin' },
+    ]) {
+      expect(() => {
+        assertNoForeignOrigin(read(headers));
+      }).not.toThrow();
+    }
+  });
+
+  /**
+   * The attack this closes: a page the user visits issuing a `no-cors` read to spend their forge
+   * rate limit. It cannot read the answer and never could — the spend was the point — and the
+   * browser labels the request either way, which is what makes it refusable.
+   */
+  it('rejects a read labelled as coming from another site', () => {
+    for (const site of ['cross-site', 'same-site']) {
+      expect(() => {
+        assertNoForeignOrigin(read({ 'sec-fetch-site': site }));
+      }).toThrow(ForbiddenOriginError);
+    }
+  });
+
+  /**
+   * An `Origin` naming somewhere else is refused on its own, without needing `Sec-Fetch-Site`.
+   */
+  it('rejects a read naming another origin', () => {
+    expect(() => {
+      assertNoForeignOrigin(read({ origin: 'http://evil.example' }));
     }).toThrow(ForbiddenOriginError);
   });
 });
