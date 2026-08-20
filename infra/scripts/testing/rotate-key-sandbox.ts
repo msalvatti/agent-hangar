@@ -147,7 +147,7 @@ export function sandbox(): Sandbox {
  * @param shimDir - Shim directory to write into.
  * @returns The absolute path of the shim.
  */
-export function helperShim(shimDir: string): string {
+function helperShim(shimDir: string): string {
   return writeExtraShim(
     shimDir,
     'helper.sh',

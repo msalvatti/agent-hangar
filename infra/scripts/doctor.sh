@@ -146,6 +146,35 @@ check_workspace_image() {
 # Number of hex characters a master key file holds; `MasterKeyFile` accepts nothing else.
 readonly MASTER_KEY_HEX_LENGTH=64
 
+# file_mode_of <path>: prints the permission bits as an octal string.
+#
+# GNU and BSD stat spell the format flag differently, and neither fails cleanly when handed the
+# other's: GNU reads -f as --file-system and treats the format string as a second file operand, so
+# it still prints a filesystem block on stdout for the real file while exiting non-zero. Asking for
+# the GNU form FIRST is what keeps the fallback honest — the BSD build rejects -c as an illegal
+# option and writes nothing to stdout, so only one of the two ever contributes output.
+file_mode_of() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1"
+}
+
+# master_key_content_problem: prints why the key file's content cannot be loaded, or nothing when
+# it can. Command substitution strips the trailing newline, so a well-formed file is exactly the
+# hex and nothing else, and the case pattern rejects any character outside the set — a newline
+# included, so a multi-line file cannot slip through the way a line-oriented grep would let it.
+master_key_content_problem() {
+  local content
+  content=$(cat "$MASTER_KEY_PATH")
+  case "$content" in
+    *[!0-9a-fA-F]*|'')
+      printf 'malformed'
+      return 0
+      ;;
+  esac
+  if [ "${#content}" -ne "$MASTER_KEY_HEX_LENGTH" ]; then
+    printf 'malformed (%s of %s hex characters)' "${#content}" "$MASTER_KEY_HEX_LENGTH"
+  fi
+}
+
 # Checks the key the way a reader does, not just that a file is there. A key that exists with the
 # right mode but cannot actually be loaded — a symlink, which `MasterKeyFile` refuses outright via
 # O_NOFOLLOW, or content that is not 64 hex characters — used to reach only the optional Secrets
@@ -162,12 +191,7 @@ check_master_key() {
     return 0
   fi
   local mode
-  # GNU and BSD stat spell the format flag differently, and neither fails cleanly when handed the
-  # other's: GNU reads -f as --file-system and treats the format string as a second file operand, so
-  # it still prints a filesystem block on stdout for the real file while exiting non-zero. Asking for
-  # the GNU form FIRST is what keeps the fallback honest — the BSD build rejects -c as an illegal
-  # option and writes nothing to stdout, so only one of the two ever contributes output.
-  mode=$(stat -c '%a' "$MASTER_KEY_PATH" 2>/dev/null || stat -f '%Lp' "$MASTER_KEY_PATH")
+  mode=$(file_mode_of "$MASTER_KEY_PATH")
   case "$mode" in
     600|400) ;;
     *)
@@ -175,20 +199,10 @@ check_master_key() {
       return 0
       ;;
   esac
-  # Command substitution strips the trailing newline, so a well-formed file is exactly the hex and
-  # nothing else. The case pattern rejects any character outside the set — a newline included, so a
-  # multi-line file cannot slip through the way a line-oriented grep would let it.
-  local content
-  content=$(cat "$MASTER_KEY_PATH")
-  case "$content" in
-    *[!0-9a-fA-F]*|'')
-      row_status="✗"; row_detail="malformed"
-      row_fix="Restore $MASTER_KEY_PATH from a .bak-* backup, or pnpm setup for a new key"
-      return 0
-      ;;
-  esac
-  if [ "${#content}" -ne "$MASTER_KEY_HEX_LENGTH" ]; then
-    row_status="✗"; row_detail="malformed (${#content} of $MASTER_KEY_HEX_LENGTH hex characters)"
+  local problem
+  problem=$(master_key_content_problem)
+  if [ -n "$problem" ]; then
+    row_status="✗"; row_detail="$problem"
     row_fix="Restore $MASTER_KEY_PATH from a .bak-* backup, or pnpm setup for a new key"
     return 0
   fi
