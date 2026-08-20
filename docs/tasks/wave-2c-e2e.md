@@ -604,4 +604,6 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   SUCCEEDED with output and one `run_shell` call]; settings-save-mask[masks survive a reload;
   `GET /api/settings` carries no plaintext; tool-call arguments stored redacted];
   settings-missing[`POST /api/chats` refused 409 SECRETS_MISSING].
-- 2C.6 ✅ 2026-08-20 — gates green, review resolved, PR opened.
+- 2C.6 ✅ 2026-08-20 — gates green; review resolved two findings (the git server published on
+  every interface, and a credential-shaped literal that was not a canary) plus three smaller ones;
+  PR #32 opened.
