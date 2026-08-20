@@ -113,7 +113,7 @@ describe('RunDrawer — terminal run', () => {
     });
   });
 
-  /*
+  /**
    * The header's own actions and the sheet's close button both want the top-right corner, and the
    * close button — painted last, absolutely positioned by the sheet — wins the click. Measured in
    * Chrome at 1280 px before the sheet reserved that corner: the close button spanned x=1240..1268

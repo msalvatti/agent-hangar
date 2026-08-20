@@ -30,7 +30,7 @@ function openSheet(showCloseButton: boolean) {
 }
 
 describe('Sheet', () => {
-  /*
+  /**
    * The close button is positioned absolutely over the popup's top-right corner, where a caller
    * cannot see it. The popup therefore says so on itself, which is what lets the header reserve
    * the corner without the caller having to know the button's offset or size.
@@ -44,7 +44,11 @@ describe('Sheet', () => {
     );
   });
 
-  // No close button, no corner to keep clear — the mark is absent so the header keeps its width.
+  /**
+   * No close button, no corner to keep clear. This is why the reservation is keyed on the mark
+   * rather than applied unconditionally: a header that always reserved would give up 44 px to a
+   * control that is not there.
+   */
   it('leaves the popup unmarked when the close button is suppressed', () => {
     render(openSheet(false));
     expect(screen.queryByRole('button', { name: 'Close' })).not.toBeInTheDocument();
@@ -53,7 +57,7 @@ describe('Sheet', () => {
     );
   });
 
-  /*
+  /**
    * The reservation itself. It is expressed as a variant keyed on the mark above, so the padding
    * appears only inside a marked popup — a `SheetHeader` used anywhere else keeps its own padding.
    * jsdom resolves no CSS and lays nothing out, so the pixels are not covered here; they were
