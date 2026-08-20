@@ -539,7 +539,7 @@ The full version, with the deployment diagram, is in [docs/spec/08-deployment-di
 
 Each is out of scope on purpose, and each already has the seam that makes adding it additive rather than a rewrite.
 
-- **Multi-user authentication** — the app runs locally for one developer. _Seam:_ route handlers take an explicit request context and repositories take it as a parameter, so a `Secret` keyed by `key` becomes `(userId, key)` in one migration.
+- **Multi-user authentication** — the app runs locally for one developer. _Seam:_ every route handler takes an explicit dependency container rather than reaching for globals, and `Secret` is keyed by `key` alone, so `(userId, key)` is one migration and one parameter.
 - **Cloud deployment** — local-only is the requirement; see the [deployment discussion](#-deployment-discussion) for what would change. _Seam:_ the `WorkspaceRunner` interface, the secrets key provider, and environment-driven configuration.
 - **Multiple LLM providers** — one provider keeps the agent loop, the tool schema and the streaming mapping simple and testable. _Seam:_ the `AgentModelProvider` interface, selected by `AGENT_MODEL_PROVIDER`; the `fake` provider already proves it works.
 - **Kubernetes** — heavy to run locally and unnecessary for per-workspace isolation. _Seam:_ the same runner interface, with compose today and a chart later if it is ever needed.
