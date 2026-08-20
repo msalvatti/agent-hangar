@@ -306,7 +306,10 @@ describeDocker('worker end-to-end', () => {
 
     const runs = await repos.jobRuns.listByJob(job.id);
     const skipped = runs.find((entry) => entry.id !== running.id);
-    expect(skipped).toMatchObject({ status: 'FAILED', error: 'previous run still running' });
+    expect(skipped).toMatchObject({
+      status: 'FAILED',
+      error: 'overlapping_run: previous run still running',
+    });
     expect(await repos.workspaces.listLive()).toHaveLength(before);
     expect(skipped?.workspaceId).toBeNull();
 
