@@ -244,6 +244,42 @@ describe('createRunScheduledJobProcessor', () => {
   });
 
   /**
+   * The early watch is opened on the delivery's own `runId`, but `openRun` mints a fresh row under
+   * a fresh id whenever that named run cannot be adopted (see
+   * `run-scheduled-job-deliveries.test.ts`'s "opens a fresh run..." case). A cancellation must
+   * follow the identity that is actually about to run, not the one the delivery happened to name:
+   * emitting it against the fresh row's id — never against the bogus one the early watch first
+   * opened on — is what a real Stop click would target, because that fresh id is the only one the
+   * UI ever learns about.
+   */
+  it('cancels the fresh run opened when the named run could not be adopted', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const setStatus = container.repos.jobRuns.setStatus.bind(container.repos.jobRuns);
+    vi.spyOn(container.repos.jobRuns, 'setStatus').mockImplementation(
+      async (id, status, update) => {
+        const row = await setStatus(id, status, update);
+        if (status === 'PREPARING') {
+          // `id` is the fresh row `openRun` minted for this delivery, not the bogus id the
+          // delivery named — reaching it here proves the operative watch tracked the identity
+          // that changed rather than the one the early subscription first opened on.
+          expect(container.commands.emitCancel(id)).toBe(true);
+        }
+        return row;
+      },
+    );
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: 'no-such-run' }));
+
+    const runs = await container.repos.jobRuns.listByJob(job.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe('CANCELLED');
+    expect(container.runner.calls).toHaveLength(0);
+    expect(container.commands.subscriptions).toBe(0);
+    vi.restoreAllMocks();
+  });
+
+  /**
    * A run cancelled while the runtime ignores the signal is still recorded as cancelled, and its
    * container is still destroyed.
    */

@@ -602,11 +602,18 @@ async function prepareAndRunJob(
  * it the moment that call returns is the earliest a subscriber could possibly matter, because
  * nothing could have named this run for cancellation any sooner than that.
  *
+ * `earlyWatch`, when present, is only good for the run it was opened for. `openRun` mints a fresh
+ * row, with a fresh id, whenever the run the delivery named cannot be adopted — and a watch left
+ * on that stale id would never see a cancellation aimed at the row this function is about to run,
+ * while reading as though the run were covered. `run.id` is compared against `payload.runId`
+ * (the only id `earlyWatch` could have been opened for) and a fresh watch is opened on `run.id`
+ * whenever they differ; `earlyWatch` itself is left for the caller to close, exactly as when it is
+ * reused, so it is never closed twice.
+ *
  * @param deps - The processor's collaborators.
  * @param payload - The parsed delivery.
  * @param delivery - The raw delivery, for its timestamp and stalled counter.
- * @param earlyWatch - The manual run's subscription, or `null` for a tick, whose own subscription
- *   this function opens and — unlike `earlyWatch`, which the caller owns — also closes.
+ * @param earlyWatch - The manual run's subscription, or `null` for a tick; owned by the caller.
  * @throws IneligibleRunError When the delivery names a run row it may not adopt.
  * @throws Error When the Docker daemon is unreachable, so BullMQ retries.
  */
@@ -634,7 +641,8 @@ async function runDelivery(
   // The run this delivery drives is either brand new or an adopted `QUEUED` row, and neither is
   // what `findRunningByJob` answers with, so the two can never be the same record.
   const run = await openRun(deps, job, payload, scheduledFor);
-  const watch = earlyWatch ?? (await openCancellationWatch(deps, run.id));
+  const canReuseEarlyWatch = earlyWatch !== null && run.id === payload.runId;
+  const watch = canReuseEarlyWatch ? earlyWatch : await openCancellationWatch(deps, run.id);
   try {
     const overlap = decideOverlap({ runningRun: running });
     if (overlap.action === 'skip') {
@@ -643,7 +651,7 @@ async function runDelivery(
     }
     await prepareAndRunJob(deps, job, run.id, watch);
   } finally {
-    if (earlyWatch === null) {
+    if (!canReuseEarlyWatch) {
       await watch.close();
     }
   }
