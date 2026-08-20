@@ -17,7 +17,7 @@ import type { CliIo } from './cli.js';
 import { createGitRunner, GitError } from './git.js';
 import type { GitRunner } from './git.js';
 import { runTurnLoop } from './loop.js';
-import { prepare, PrepareError, repositoryUrlPolicyFromEnv } from './prepare.js';
+import { prepare, PrepareError, repositoryUrlPolicyFromFile } from './prepare.js';
 import type { RepositoryUrlPolicy } from './prepare.js';
 import { createDiagnostics, createEventWriter, readTurnRequest } from './protocol.js';
 import type { EventWriter } from './protocol.js';
@@ -47,10 +47,12 @@ export interface TurnDeps {
   /** Overrides the git runner. */
   git?: GitRunner;
   /**
-   * Overrides the repository URL policy, which is otherwise read from the container environment;
+   * Overrides the repository URL policy, which is otherwise read from the file the host placed;
    * tests use `{ allow: 'any' }` for a local `file://` remote.
    */
   urlPolicy?: RepositoryUrlPolicy;
+  /** Overrides where the approved origin is read from; tests point it at a temporary file. */
+  originFile?: string;
 }
 
 /** What the turn command needs to report a failure. */
@@ -137,7 +139,7 @@ async function prepareAndRun(
     git: context.git,
     env: context.childEnv,
     emit,
-    urlPolicy: deps.urlPolicy ?? repositoryUrlPolicyFromEnv(deps.io.env),
+    urlPolicy: deps.urlPolicy ?? (await repositoryUrlPolicyFromFile(deps.originFile)),
   });
   await runTurnLoop({
     ...context,

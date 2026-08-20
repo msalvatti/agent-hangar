@@ -21,11 +21,11 @@ import { createChildEnv } from './child-env.js';
 import { createGitRunner } from './git.js';
 import type { GitArgs, GitRunOptions, GitRunner } from './git.js';
 import {
-  ALLOWED_ORIGIN_VAR,
+  ALLOWED_ORIGIN_FILE,
   assertBranchName,
   prepare,
   PrepareError,
-  repositoryUrlPolicyFromEnv,
+  repositoryUrlPolicyFromFile,
   resolveRepoUrl,
 } from './prepare.js';
 import type { PrepareDeps, RepositoryUrlPolicy } from './prepare.js';
@@ -192,33 +192,58 @@ describe('resolveRepoUrl', () => {
   });
 });
 
-describe('repositoryUrlPolicyFromEnv', () => {
-  it('reads the origin the workspace was created for', () => {
-    // This is the variable the worker sets from the repository URL it has just vetted.
-    expect(
-      repositoryUrlPolicyFromEnv({ [ALLOWED_ORIGIN_VAR]: 'https://github.com' }),
-    ).toStrictEqual(GITHUB);
+describe('repositoryUrlPolicyFromFile', () => {
+  /**
+   * Writes a candidate origin file and reads the policy back from it.
+   *
+   * @param content - Exactly what the file holds, including any trailing newline.
+   * @returns The resolved policy.
+   */
+  async function policyFrom(content: string): Promise<RepositoryUrlPolicy> {
+    const file = path.join(root, 'allowed-origin');
+    await writeFile(file, content, 'utf8');
+    return repositoryUrlPolicyFromFile(file);
+  }
+
+  it('reads the origin the workspace was created for', async () => {
+    // This is the file the worker writes from the repository URL it has just vetted, and the
+    // trailing newline it writes must not become part of the origin.
+    await expect(policyFrom('https://github.com\n')).resolves.toStrictEqual(GITHUB);
+  });
+
+  it('defaults to the path the runner writes to', () => {
+    // The path is the contract between the worker, this module and the askpass helper. Production
+    // passes nothing, and none of the three takes it from anything the workspace could name.
+    expect(ALLOWED_ORIGIN_FILE).toBe('/opt/agent-runtime/allowed-origin');
   });
 
   it.each([
-    ['absent', undefined],
     ['empty', ''],
+    ['blank', '  \n'],
     ['carrying a path', 'https://github.com/acme/widgets'],
     ['carrying a trailing slash', 'https://github.com/'],
     ['not a URL at all', 'github.com'],
     ['an opaque scheme with no origin', 'file:///srv/git'],
-  ])('refuses a value that is %s', (_name, value) => {
-    // A container nobody told an origin has no forge to fall back to: falling back to one would
-    // give a workspace whose origin was never decided a policy from somewhere else.
-    expect(() => repositoryUrlPolicyFromEnv({ [ALLOWED_ORIGIN_VAR]: value })).toThrow(ConfigError);
+    ['carrying a second line', 'https://github.com\nhttps://evil.test\n'],
+  ])('refuses a file that is %s', async (_name, content) => {
+    // A container nobody prepared has no forge to fall back to: falling back to one would give a
+    // workspace whose origin was never decided a policy from somewhere else.
+    await expect(policyFrom(content)).rejects.toThrow(ConfigError);
   });
 
-  it('accepts an origin with a non-default port', () => {
+  it('refuses a file that is not there at all', async () => {
+    // The failure direction of an unprepared container has to be refusal, never a default.
+    await expect(repositoryUrlPolicyFromFile(path.join(root, 'nothing-here'))).rejects.toThrow(
+      ConfigError,
+    );
+  });
+
+  it('accepts an origin with a non-default port', async () => {
     // The local forge is reached on a port, and the port is part of the origin rather than a
     // separate rule.
-    expect(
-      repositoryUrlPolicyFromEnv({ [ALLOWED_ORIGIN_VAR]: 'http://host.docker.internal:3907' }),
-    ).toStrictEqual(LOCAL_FORGE);
+    await expect(policyFrom('http://host.docker.internal:3907\n')).resolves.toStrictEqual(
+      LOCAL_FORGE,
+    );
   });
 });
 

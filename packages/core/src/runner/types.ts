@@ -22,6 +22,27 @@ export interface WorkspaceSpec {
   limits: WorkspaceLimits;
   /** Labels for discovery/GC (instance name, chat id, job run id). */
   labels: Readonly<Record<string, string>>;
+  /**
+   * Content placed inside the workspace before it starts, owned by root.
+   *
+   * The environment is the wrong channel for anything the workspace must not be able to restate.
+   * A container runs commands a language model chose after reading untrusted repository content,
+   * and a command may set any variable it likes for the process it starts — so a policy the
+   * workspace reads out of its own environment is a policy the workspace can rewrite. A file the
+   * runner places before the first process runs, owned by a user the workspace is not, cannot be.
+   *
+   * Secrets do not belong here: this is for values that must survive the workspace, not values
+   * that must be hidden from it. Credentials still travel in {@link WorkspaceSpec.env}.
+   */
+  files?: readonly WorkspaceFile[];
+}
+
+/** One file placed into a workspace before it starts. */
+export interface WorkspaceFile {
+  /** Absolute path inside the container; its parent directory must already exist. */
+  path: string;
+  /** UTF-8 content written to that path. */
+  content: string;
 }
 
 /** Resource ceilings applied to a workspace. */

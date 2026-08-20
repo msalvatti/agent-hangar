@@ -33,10 +33,15 @@
  *
  * That same check is what the container is bound to. It yields one origin, and the container is
  * told that origin and nothing else: the askpass helper releases the PAT only for it, and the
- * agent runtime clones only from it. Handing the container the allow-list instead would be a
- * wider grant than the workspace needs — both readers decide from a URL the agent can influence,
- * so a list would let a crafted URL pick any entry on it — and a wider grant than the workspace
- * had, since the allow-list is a policy about forges while a workspace exists for one repository.
+ * agent runtime clones only from it. Handing the container the allow-list instead would be a wider
+ * grant than the workspace needs, because both readers decide from a URL the agent can influence,
+ * so a list would let a crafted URL pick any entry on it.
+ *
+ * It travels as a file rather than as an environment entry. The workspace runs shell commands a
+ * model chose, and a command sets whatever variables it likes for the process it starts, so a
+ * policy read from the environment is a policy the workspace can rewrite — for the credential
+ * helper, that would mean choosing which origin the PAT is released to. The runner places the file
+ * root-owned before the container starts; see `WorkspaceSpec.files`.
  */
 import {
   describeClientFailure,
@@ -48,7 +53,7 @@ import type { Workspace, WorkspaceHandle, WorkspaceKind } from '@agent-hangar/co
 
 import { isTransportError } from '../errors.js';
 
-import { ALLOWED_ORIGIN_VAR, ASKPASS_PATH, LABELS, WORKSPACE_LIMITS } from './constants.js';
+import { ALLOWED_ORIGIN_PATH, ASKPASS_PATH, LABELS, WORKSPACE_LIMITS } from './constants.js';
 import type { ProcessorDeps } from './types.js';
 
 /** Why a workspace could not be provisioned. */
@@ -398,11 +403,11 @@ export async function provisionWorkspace(
         GIT_ASKPASS: ASKPASS_PATH,
         OPENAI_MODEL: deps.config.OPENAI_MODEL,
         AGENT_MODEL_PROVIDER: deps.config.AGENT_MODEL_PROVIDER,
-        [ALLOWED_ORIGIN_VAR]: decision.origin,
         ...(deps.config.OPENAI_BASE_URL === undefined
           ? {}
           : { OPENAI_BASE_URL: deps.config.OPENAI_BASE_URL }),
       },
+      files: [{ path: ALLOWED_ORIGIN_PATH, content: `${decision.origin}\n` }],
       limits: WORKSPACE_LIMITS,
       labels: labelsFor(deps, input, workspace.id),
     });

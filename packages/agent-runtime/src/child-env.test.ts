@@ -62,14 +62,6 @@ describe('createChildEnv', () => {
     expect(child).not.toHaveProperty('EMPTY');
   });
 
-  it('carries the approved origin through to the helper', () => {
-    // The helper runs as a child of git, which runs with this environment: a variable dropped here
-    // would leave it with no origin to compare against, and it releases nothing without one.
-    expect(
-      createChildEnv({ ...parentEnv, AH_GIT_ALLOWED_ORIGIN: 'https://github.com' }),
-    ).toMatchObject({ AH_GIT_ALLOWED_ORIGIN: 'https://github.com' });
-  });
-
   it('disables git terminal prompts', () => {
     // Without this a git command that needs credentials blocks until the tool timeout.
     expect(createChildEnv(parentEnv).GIT_TERMINAL_PROMPT).toBe('0');

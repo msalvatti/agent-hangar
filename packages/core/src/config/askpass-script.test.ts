@@ -2,29 +2,77 @@
  * Contract test for the workspace `GIT_ASKPASS` helper.
  *
  * Layer: integration (spawns sh; no Docker, no network).
- * Goal: the GitHub PAT is released only for the single origin the workspace was created for, and
- * only through the prompts git actually asks, and every refusal is silent on stdout and non-zero —
- * git must fail authentication rather than read an empty line as a valid password. The origin is
- * compared whole and exactly, so the suffix, userinfo, port and path-segment tricks that a
- * substring or host-only test would accept are all refused, while a forge the operator listed on
- * another host or another port is served. `https` is required of the approved origin itself, so a
- * cleartext workspace clones anonymously and is answered nothing.
+ * Goal: the GitHub PAT is released only for the single origin the workspace was created for, read
+ * from the root-owned file the host places and never from the environment, and only through the
+ * prompts git actually asks; every refusal is silent on stdout and non-zero — git must fail
+ * authentication rather than read an empty line as a valid password. The origin is compared whole
+ * and exactly, so the suffix, userinfo, port and path-segment tricks that a substring or host-only
+ * test would accept are all refused, while a forge the operator listed on another host or another
+ * port is served. `https` is required of the approved origin itself, so a cleartext workspace
+ * clones anonymously and is answered nothing.
+ *
+ * The script reads that file from a path it hard-codes, which no test can move, so every case here
+ * runs the script through a copy whose one constant points at a temporary file. What is under test
+ * is the decision, and the copy differs from the shipped script in exactly that one line — pinned
+ * below, so a rewrite that reintroduced an environment lookup could not slip past this suite.
  * Mocks: none — the real script runs under `sh` with a canary standing in for the PAT.
  *
  * Lives beside the other shell-script contract tests of this package.
  */
 import { spawnSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import { assertNoCanary, GITHUB_CANARY } from '../testing/canaries.ts';
 
-const scriptPath = fileURLToPath(
+const shippedScriptPath = fileURLToPath(
   new URL('../../../../infra/workspace/askpass.sh', import.meta.url),
 );
 const sh = existsSync('/bin/sh') ? '/bin/sh' : 'sh';
+
+/** The line of the shipped script that names where the approved origin is read from. */
+const SHIPPED_ORIGIN_FILE_LINE = 'ALLOWED_ORIGIN_FILE=/opt/agent-runtime/allowed-origin';
+
+let workDir: string;
+let scriptPath: string;
+let originFile: string;
+
+/**
+ * Rewrites the approved-origin file the script under test reads.
+ *
+ * @param content - Exactly what the file holds, or `null` to remove it.
+ */
+function setApprovedOrigin(content: string | null): void {
+  if (content === null) {
+    rmSync(originFile, { force: true });
+    return;
+  }
+  writeFileSync(originFile, content, 'utf8');
+}
+
+beforeAll(() => {
+  workDir = mkdtempSync(join(tmpdir(), 'ah-askpass-'));
+  scriptPath = join(workDir, 'askpass.sh');
+  originFile = join(workDir, 'allowed-origin');
+  const shipped = readFileSync(shippedScriptPath, 'utf8');
+  // The redirection is one line and it is asserted, so the copy cannot drift into testing a
+  // different script than the image ships.
+  expect(shipped).toContain(SHIPPED_ORIGIN_FILE_LINE);
+  writeFileSync(
+    scriptPath,
+    shipped.replace(SHIPPED_ORIGIN_FILE_LINE, `ALLOWED_ORIGIN_FILE=${originFile}`),
+    'utf8',
+  );
+  setApprovedOrigin(`${GITHUB_ORIGIN}\n`);
+});
+
+afterAll(() => {
+  rmSync(workDir, { recursive: true, force: true });
+});
 
 /** Origin the workspace under test was created for, unless a case names another. */
 const GITHUB_ORIGIN = 'https://github.com';
@@ -32,15 +80,16 @@ const GITHUB_ORIGIN = 'https://github.com';
 /**
  * Runs the helper with one git prompt, returning exactly what it produced.
  *
- * The environment stands in for a container the worker prepared: the token, and the one origin it
- * derived from the repository URL it had just measured against `ALLOWED_REPO_HOSTS`.
+ * The environment stands in for the one a workspace command runs with: the token, and nothing that
+ * decides policy. The approved origin is not in it — that is the point of the file.
+ *
+ * @param prompt - The prompt git would print.
+ * @param env - Environment for the run; defaults to the token alone.
+ * @returns Status, stdout and stderr.
  */
 function askpass(
   prompt: string,
-  env: Record<string, string> = {
-    GITHUB_TOKEN: GITHUB_CANARY,
-    AH_GIT_ALLOWED_ORIGIN: GITHUB_ORIGIN,
-  },
+  env: Record<string, string> = { GITHUB_TOKEN: GITHUB_CANARY },
 ): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(sh, [scriptPath, prompt], {
     env: { PATH: process.env.PATH ?? '', ...env },
@@ -50,9 +99,9 @@ function askpass(
 }
 
 /**
- * Runs the helper for a workspace created for the given origin.
+ * Runs the helper for a workspace created for the given origin, restoring the default afterwards.
  *
- * @param origin - What the worker put in `AH_GIT_ALLOWED_ORIGIN`.
+ * @param origin - What the host wrote into the approved-origin file.
  * @param prompt - The prompt git would print.
  * @returns What the helper produced.
  */
@@ -60,7 +109,12 @@ function askpassFor(
   origin: string,
   prompt: string,
 ): { status: number | null; stdout: string; stderr: string } {
-  return askpass(prompt, { GITHUB_TOKEN: GITHUB_CANARY, AH_GIT_ALLOWED_ORIGIN: origin });
+  try {
+    setApprovedOrigin(`${origin}\n`);
+    return askpass(prompt);
+  } finally {
+    setApprovedOrigin(`${GITHUB_ORIGIN}\n`);
+  }
 }
 
 const APPROVED = "Password for 'https://x-access-token@github.com': ";
@@ -135,8 +189,8 @@ describe('infra/workspace/askpass.sh', () => {
    * GitHub; failing closed says what is wrong instead.
    */
   it.each([
-    ['absent', { AH_GIT_ALLOWED_ORIGIN: GITHUB_ORIGIN }],
-    ['empty', { AH_GIT_ALLOWED_ORIGIN: GITHUB_ORIGIN, GITHUB_TOKEN: '' }],
+    ['absent', {}],
+    ['empty', { GITHUB_TOKEN: '' }],
   ])('fails closed when the token is %s', (_label, env) => {
     const result = askpass(APPROVED, env);
     expect(result.stdout).toBe('');
@@ -206,19 +260,68 @@ describe('infra/workspace/askpass.sh', () => {
   });
 
   /**
-   * A container nobody prepared has no forge to fall back to. The variable being absent used to
-   * mean github.com, which handed the PAT to the public forge from a workspace that was never
-   * bound to it; it now refuses, as an empty value already did.
+   * A container nobody prepared has no forge to fall back to. An absent file used to mean
+   * github.com — the variable's default — which handed the PAT to the public forge from a
+   * workspace that was never bound to it.
    */
   it.each([
-    ['absent', {}],
-    ['set and empty', { AH_GIT_ALLOWED_ORIGIN: '' }],
-  ])('fails closed when the approved origin is %s', (_label, env) => {
-    const result = askpass(APPROVED, { GITHUB_TOKEN: GITHUB_CANARY, ...env });
-    expect(result.stdout).toBe('');
-    expect(result.status).not.toBe(0);
-    expect(() => {
-      assertNoCanary(result.stdout + result.stderr);
-    }).not.toThrow();
+    ['missing', null],
+    ['empty', ''],
+    ['blank', '   \n'],
+  ])('fails closed when the approved-origin file is %s', (_label, content) => {
+    try {
+      setApprovedOrigin(content);
+      const result = askpass(APPROVED);
+      expect(result.stdout).toBe('');
+      expect(result.status).not.toBe(0);
+      expect(() => {
+        assertNoCanary(result.stdout + result.stderr);
+      }).not.toThrow();
+    } finally {
+      setApprovedOrigin(`${GITHUB_ORIGIN}\n`);
+    }
+  });
+
+  /**
+   * The defence the file exists for. `run_shell` hands the model's own command to `bash -lc` with
+   * the workspace environment, and a command may set any variable for the process it starts — so
+   * for as long as this policy lived in a variable, `AH_GIT_ALLOWED_ORIGIN=... git clone ...` let
+   * the model choose where its PAT was sent. Nothing in the environment is consulted now.
+   */
+  it.each([
+    ['AH_GIT_ALLOWED_ORIGIN', 'AH_GIT_ALLOWED_ORIGIN'],
+    ['ALLOWED_ORIGIN_FILE', 'ALLOWED_ORIGIN_FILE'],
+  ])('ignores %s in the environment', (_label, name) => {
+    const foreign = "Password for 'https://evil.test': ";
+
+    const refused = askpass(foreign, { GITHUB_TOKEN: GITHUB_CANARY, [name]: 'https://evil.test' });
+    const approved = askpass(APPROVED, {
+      GITHUB_TOKEN: GITHUB_CANARY,
+      [name]: 'https://evil.test',
+    });
+
+    expect(refused.stdout).toBe('');
+    expect(refused.status).not.toBe(0);
+    expect(approved.stdout).toBe(`${GITHUB_CANARY}\n`);
+  });
+
+  /**
+   * The shipped script names its own file and takes the path from nothing else, which is what
+   * stops a workspace pointing the helper at a file it authored. Asserted against the shipped text
+   * rather than the copy, because the copy is the one thing about this suite that is not shipped.
+   */
+  it('reads the approved origin from a hard-coded path and no variable', () => {
+    // Comment lines are dropped first: the header explains the attack in terms of the variable
+    // that used to carry this policy, and a text search that could not tell an explanation from a
+    // lookup would either fail on the explanation or have to stop looking for the lookup.
+    const code = readFileSync(shippedScriptPath, 'utf8')
+      .split('\n')
+      .filter((line) => !line.trimStart().startsWith('#'))
+      .join('\n');
+
+    expect(code).toContain(SHIPPED_ORIGIN_FILE_LINE);
+    expect(code).not.toContain('AH_GIT_ALLOWED_ORIGIN');
+    expect(code).not.toContain('${ALLOWED_ORIGIN_FILE-');
+    expect(code).not.toContain('${ALLOWED_ORIGIN_FILE:-');
   });
 });

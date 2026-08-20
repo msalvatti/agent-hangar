@@ -9,11 +9,11 @@ export { looksLikeGitPush, resolveGitHead } from './git-events.js';
 export { runTurnLoop } from './loop.js';
 export type { LoopDeps, LoopOutcome } from './loop.js';
 export {
-  ALLOWED_ORIGIN_VAR,
+  ALLOWED_ORIGIN_FILE,
   assertBranchName,
   prepare,
   PrepareError,
-  repositoryUrlPolicyFromEnv,
+  repositoryUrlPolicyFromFile,
   resolveRepoUrl,
 } from './prepare.js';
 export type { PrepareDeps, PrepareResult, RepositoryUrlPolicy } from './prepare.js';

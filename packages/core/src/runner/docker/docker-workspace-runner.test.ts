@@ -46,6 +46,57 @@ describe('DockerWorkspaceRunner.create', () => {
   });
 
   /**
+   * A file the workspace must not be able to restate has to be in place before the workspace has
+   * run anything at all. Placed after `start`, the first process would see whatever was there
+   * before — or nothing — and a policy read at that moment would be the wrong one.
+   */
+  it('places the spec files before the container is started', async () => {
+    const { runner, docker } = makeRunner();
+
+    await createWorkspace(runner, {
+      files: [{ path: '/opt/agent-runtime/allowed-origin', content: 'https://github.com\n' }],
+    });
+
+    const record = docker.containers.get('c1');
+    expect(record?.archives).toHaveLength(1);
+    expect(record?.archives[0]?.path).toBe('/opt/agent-runtime');
+    expect(record?.archivesAfterStart).toStrictEqual([false]);
+    expect(docker.calls).toContain('putArchive:c1:/opt/agent-runtime');
+  });
+
+  /**
+   * Nothing is uploaded for a spec that names no files, so the ordinary create makes exactly the
+   * daemon calls it always made.
+   */
+  it('uploads nothing when the spec names no files', async () => {
+    const { runner, docker } = makeRunner();
+
+    await createWorkspace(runner);
+
+    expect(docker.containers.get('c1')?.archives).toStrictEqual([]);
+    expect(docker.calls.some((call) => call.startsWith('putArchive:'))).toBe(false);
+  });
+
+  /**
+   * A file that cannot be placed leaves a container that must not be handed out: the workspace
+   * would run without the policy it is supposed to be bound by. It is discarded like any other
+   * failure between create and readiness, so the workspace name is free for the retry.
+   */
+  it('discards the container when a file cannot be placed', async () => {
+    const { runner, docker } = makeRunner();
+    docker.failures.containerPutArchive = dockerError(500, 'no such directory');
+
+    await expect(
+      createWorkspace(runner, {
+        files: [{ path: '/opt/agent-runtime/allowed-origin', content: 'https://github.com\n' }],
+      }),
+    ).rejects.toThrow('no such directory');
+
+    expect(docker.containers.has('c1')).toBe(false);
+    expect(docker.calls.some((call) => call.startsWith('start:'))).toBe(false);
+  });
+
+  /**
    * The image is never pulled or built implicitly, so a missing one must be a typed error naming
    * the exact command that fixes it — that message is shown verbatim in the UI.
    */
@@ -430,6 +481,8 @@ describe('DockerWorkspaceRunner.list', () => {
       oomKilled: false,
       exitCode: 0,
       execCommands: [],
+      archives: [],
+      archivesAfterStart: [],
     });
 
     await expect(runner.list({})).resolves.toEqual([]);
@@ -448,6 +501,8 @@ describe('DockerWorkspaceRunner.list', () => {
       oomKilled: false,
       exitCode: 0,
       execCommands: [],
+      archives: [],
+      archivesAfterStart: [],
     });
 
     await expect(runner.list({})).resolves.toEqual([]);

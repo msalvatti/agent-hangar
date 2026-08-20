@@ -74,6 +74,8 @@ export interface FakeDockerFailures {
   containerExec?: Error | undefined;
   /** Thrown by `container.kill`. */
   containerKill?: Error | undefined;
+  /** Thrown by `container.putArchive`. */
+  containerPutArchive?: Error | undefined;
 }
 
 /** State the fake keeps per created container. */
@@ -90,6 +92,10 @@ export interface FakeContainerRecord {
   exitCode?: number | undefined;
   /** Every command passed to `container.exec`, in order. */
   execCommands: string[][];
+  /** Every archive passed to `container.putArchive`, in order, with the directory it targeted. */
+  archives: { path: string; archive: Buffer }[];
+  /** Whether the container had already been started when each archive arrived. */
+  archivesAfterStart: boolean[];
 }
 
 /** Construction inputs of {@link FakeDockerApi}. */
@@ -244,6 +250,26 @@ class FakeContainer implements DockerContainerApi {
    */
   async start(): Promise<unknown> {
     this.#record().running = true;
+    return Promise.resolve(undefined);
+  }
+
+  /**
+   * Records an uploaded archive and the directory it targeted.
+   *
+   * Whether the container was already running is recorded too: a file that only lands after the
+   * first process has run is a file the workspace could have replaced first, so the ordering is
+   * part of what the runner has to get right.
+   *
+   * @param file - The tar archive.
+   * @param options - Directory the archive is extracted into.
+   * @returns Resolves once recorded.
+   */
+  async putArchive(file: Buffer, options: { path: string }): Promise<unknown> {
+    const record = this.#record();
+    this.#api.calls.push(`putArchive:${this.id}:${options.path}`);
+    this.#throwIf(this.#api.failures.containerPutArchive);
+    record.archives.push({ path: options.path, archive: file });
+    record.archivesAfterStart.push(record.running);
     return Promise.resolve(undefined);
   }
 
@@ -440,6 +466,8 @@ export class FakeDockerApi implements DockerApi {
       oomKilled: false,
       exitCode: 0,
       execCommands: [],
+      archives: [],
+      archivesAfterStart: [],
     });
     return Promise.resolve(new FakeContainer(this, id));
   }

@@ -23,7 +23,7 @@ import { FAKE_SCRIPT_ENV_KEY, fakeProviderScriptEnv } from '../fake-provider-scr
 import { createTestContainer, FakeSecretsService } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
-import { ALLOWED_ORIGIN_VAR } from './constants.js';
+import { ALLOWED_ORIGIN_PATH } from './constants.js';
 import {
   provisionWorkspace,
   REPO_URL_NOT_ALLOWED_REASON,
@@ -404,7 +404,9 @@ describe('provisionWorkspace', () => {
       branch: 'main',
     });
 
-    expect(createSpec(container).env[ALLOWED_ORIGIN_VAR]).toBe('https://github.com');
+    expect(createSpec(container).files).toStrictEqual([
+      { path: ALLOWED_ORIGIN_PATH, content: 'https://github.com\n' },
+    ]);
   });
 
   /**
@@ -427,16 +429,18 @@ describe('provisionWorkspace', () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(createSpec(container).env[ALLOWED_ORIGIN_VAR]).toBe('http://host.docker.internal:3907');
+    expect(createSpec(container).files?.[0]?.content).toBe('http://host.docker.internal:3907\n');
   });
 
   /**
-   * One origin, under one name, and nothing else: the environment of the only `create` in the
-   * application is enumerated so that an addition to it is a deliberate edit here rather than an
-   * unnoticed extra value travelling beside the credentials. Naming the keys is also what proves
-   * the addition cannot stand in for one of them.
+   * The origin travels as a file and NOT as an environment entry, which is the whole of the
+   * defence: the shell tool runs a command the model wrote, and a command may set any variable for
+   * the process it starts, so a policy in the environment is a policy the workspace picks. The
+   * environment of the only `create` in the application is therefore enumerated — an addition to
+   * it becomes a deliberate edit here, and naming the keys is also what proves nothing added can
+   * stand in for a credential.
    */
-  it('adds exactly one variable, and shadows none of the credentials', async () => {
+  it('places the origin outside the environment, shadowing no credential', async () => {
     const container = createTestContainer();
 
     await provisionWorkspace(container, {
@@ -449,7 +453,6 @@ describe('provisionWorkspace', () => {
     const spec = createSpec(container);
     expect(Object.keys(spec.env).toSorted()).toStrictEqual([
       'AGENT_MODEL_PROVIDER',
-      ALLOWED_ORIGIN_VAR,
       'GITHUB_TOKEN',
       'GIT_ASKPASS',
       'OPENAI_API_KEY',
@@ -460,6 +463,7 @@ describe('provisionWorkspace', () => {
       OPENAI_API_KEY: OPENAI_CANARY,
       AGENT_MODEL_PROVIDER: 'fake',
     });
+    expect(spec.files).toHaveLength(1);
   });
 
   /**

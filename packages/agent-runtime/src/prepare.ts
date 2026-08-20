@@ -9,20 +9,25 @@
  * well as in the askpass helper, because two independent checks are what keeps a change to either
  * one honest.
  *
- * That origin arrives as `AH_GIT_ALLOWED_ORIGIN`, one value, already measured against the
- * operator's `ALLOWED_REPO_HOSTS` by the host process before this container existed. The
- * allow-list itself is deliberately not handed to the container: this process is driven by a model
- * that reads untrusted repository content, so a policy naming several origins would let a crafted
- * URL pick whichever of them it liked, and the credential helper answers whatever git dials. One
- * origin cannot be steered, and it is narrower than a forge-wide rule — a workspace opened for one
- * repository will not clone a different repository on the same forge either.
+ * That origin arrives in a root-owned file the runner places before the container starts, already
+ * measured against the operator's `ALLOWED_REPO_HOSTS` by the host process. It is read from that
+ * file and not from the environment for the same reason the askpass helper reads it from there:
+ * this container runs shell commands the model chooses, and a command may set any variable for the
+ * process it starts, so an environment entry is a policy the workspace can restate. The allow-list
+ * itself is not handed to the container either — a policy naming several origins would let a
+ * crafted URL pick whichever of them it liked.
+ *
+ * The binding is origin-level: scheme, host and port. A different repository on the same origin is
+ * still accepted, because the origin is what the credential boundary is drawn around; narrowing to
+ * one repository would be a different rule with different consequences for the agent's own git
+ * commands, and it is not the rule stated here.
  *
  * The scheme is not judged here. Which transports may be cloned over is the operator's decision,
  * expressed by the allow-list entry this origin came from; whether a credential may cross that
  * transport is a separate question, answered independently by the helper, which releases nothing
  * over cleartext. A workspace created for an `http` origin therefore clones anonymously.
  */
-import { mkdir } from 'node:fs/promises';
+import { mkdir, readFile } from 'node:fs/promises';
 
 import { ConfigError } from '@agent-hangar/core';
 import type { AgentEvent, TurnRequest } from '@agent-hangar/core';
@@ -35,13 +40,14 @@ import type { GitRunner } from './git.js';
 const SHORT_SHA_LENGTH = 7;
 
 /**
- * Container variable naming the one origin this workspace may clone from.
+ * File naming the one origin this workspace may clone from.
  *
- * Spelled here, in the worker that sets it and in `askpass.sh` that also reads it, because the
+ * Spelled here, in the worker that writes it and in `askpass.sh` that also reads it, because the
  * three live on opposite sides of a container boundary and share no module — the same reason the
- * askpass path itself is spelled in each of them.
+ * askpass path itself is spelled in each of them. Root-owned in a root-owned directory, so the
+ * workspace user can read it and cannot author it.
  */
-export const ALLOWED_ORIGIN_VAR = 'AH_GIT_ALLOWED_ORIGIN';
+export const ALLOWED_ORIGIN_FILE = '/opt/agent-runtime/allowed-origin';
 
 /** Owner and repository name, with an optional `.git` suffix and nothing else. */
 const REPOSITORY_PATH = /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?$/;
@@ -92,23 +98,24 @@ const allowedOriginSchema = z.string().refine((value) => URL.parse(value)?.origi
 });
 
 /**
- * Reads the origin this workspace was created for out of the container environment.
+ * Reads the origin this workspace was created for from the file the host placed.
  *
- * An absent or malformed value is a container no host prepared, and it fails closed: there is no
- * forge to fall back to, because falling back to one would mean a workspace whose origin was never
- * decided still gets a repository policy from somewhere.
+ * A missing, unreadable or malformed file is a container no host prepared, and it fails closed:
+ * there is no forge to fall back to, because falling back to one would mean a workspace whose
+ * origin was never decided still gets a repository policy from somewhere.
  *
- * @param env - Container environment.
+ * @param file - Path of the file; defaults to {@link ALLOWED_ORIGIN_FILE}.
  * @returns The policy the turn runs under.
- * @throws ConfigError when the variable is absent or is not a bare origin.
+ * @throws ConfigError when the file cannot be read or does not hold a bare origin.
  */
-export function repositoryUrlPolicyFromEnv(
-  env: Readonly<Record<string, string | undefined>>,
-): RepositoryUrlPolicy {
-  const parsed = allowedOriginSchema.safeParse(env[ALLOWED_ORIGIN_VAR]);
+export async function repositoryUrlPolicyFromFile(
+  file: string = ALLOWED_ORIGIN_FILE,
+): Promise<RepositoryUrlPolicy> {
+  const content = await readFile(file, 'utf8').catch(() => null);
+  const parsed = allowedOriginSchema.safeParse(content?.trim());
   if (!parsed.success) {
     throw new ConfigError(
-      `${ALLOWED_ORIGIN_VAR} must name the origin this workspace was created for, as <scheme>://<host>[:<port>]`,
+      `${file} must hold the origin this workspace was created for, as <scheme>://<host>[:<port>]`,
     );
   }
   return { allow: 'origin', origin: parsed.data };
@@ -149,8 +156,9 @@ export interface PrepareResult {
  *
  * The origin comparison is whole-origin equality, so scheme, host and port are decided by one
  * test: `github.com.evil.test`, `github.com@evil.test` and `github.com:8443` are each simply a
- * different origin. Everything else here is a place a credential hides, and holds whatever the
- * origin is.
+ * different origin. The path is not compared, only shaped — a different repository on the same
+ * origin passes. Everything else here is a place a credential hides, and holds whatever the origin
+ * is.
  *
  * @param parsed - The parsed repository URL.
  * @param origin - The origin this workspace was created for.
