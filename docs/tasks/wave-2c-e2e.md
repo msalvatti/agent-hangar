@@ -664,3 +664,14 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   matched the IPv4 pattern and would have published the anonymously writable git server on every
   interface, defeating the invariant added two rounds earlier; a wildcard is now refused outright
   rather than quietly mapped to loopback, since it was asked for explicitly.
+- 2C.12 ✅ 2026-08-20 — the reset's job half had the same hole as its chat half, and a worse one:
+  deleting a chat with a live turn is refused, but deleting a job with a live run is *allowed*, so
+  the run row cascades away while the worker still owns the workspace and the truncation and
+  container reap that follow pull the ground from under a processor still writing. Both halves now
+  go through one settle-then-delete helper.
+  · Found while chasing that: **stopping a scheduled run cannot work against the real API.** The
+  interface cancels a run with `POST /api/turns/:id/cancel` (`scheduled-api.ts` `cancelRun`, used
+  by the job detail screen's Stop control), and that handler resolves its parameter with
+  `repos.turns.get`, a `Turn` lookup — a `JobRun` id is not a `Turn` id, so it answers 404. The
+  mock hides it because its handler accepts either kind of id, which is exactly why only a real
+  run would have shown it.

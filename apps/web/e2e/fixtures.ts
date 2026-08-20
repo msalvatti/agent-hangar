@@ -28,6 +28,7 @@ import {
   chatDetail,
   listChatsResponse,
   listJobsResponse,
+  listRunsResponse,
   putSecretResponse,
 } from '@agent-hangar/core';
 import { GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
@@ -36,7 +37,7 @@ import type { APIRequestContext } from '@playwright/test';
 
 import { createApi } from './support/api';
 import type { E2eApi, E2eFetcher } from './support/api';
-import { TURN_SETTLE_TIMEOUT_MS } from './support/constants';
+import { JOB_RUN_TIMEOUT_MS, TURN_SETTLE_TIMEOUT_MS } from './support/constants';
 import { resetDatabase } from './support/db';
 import { reapWorkspaces } from './support/docker';
 import { resolveE2eEnv } from './support/env';
@@ -69,8 +70,47 @@ function playwrightFetcher(request: APIRequestContext, origin: string): E2eFetch
   };
 }
 
+/** Turn and run statuses that mean work is under way. */
+const LIVE_STATUSES: readonly string[] = ['QUEUED', 'PREPARING', 'RUNNING'];
+
 /**
- * Removes every scheduled job through the API before the database is truncated.
+ * Cancels whatever is still running and waits for it to settle.
+ *
+ * Without this the reset cannot recover from the state it exists to clear, and the two ways it
+ * fails are different. A chat with a live turn is refused outright — `DELETE /api/chats/:id`
+ * answers `409 TURN_IN_PROGRESS` — so the reset would throw and take every later test down with
+ * it. A job with a live run is worse, because deleting it is *allowed*: the run row cascades away
+ * while the worker still owns the workspace, and the truncation and container reap that follow
+ * pull the ground from under a processor that is still writing.
+ *
+ * The cancel is best-effort: something that settled on its own between the read and the request is
+ * exactly the state being aimed at, and the API is entitled to refuse a second cancellation. The
+ * wait is what carries the guarantee, and it fails by name.
+ *
+ * @param api - Client for the running API.
+ * @param options - How to read what is still live, what to call it, and how long to allow.
+ */
+async function settleLive(
+  api: E2eApi,
+  options: { readLive: () => Promise<string[]>; describe: string; timeoutMs: number },
+): Promise<void> {
+  const live = await options.readLive();
+  if (live.length === 0) {
+    return;
+  }
+  for (const id of live) {
+    await api.raw(`/api/turns/${id}/cancel`, { method: 'POST' });
+  }
+  await baseExpect
+    .poll(async () => (await options.readLive()).length, {
+      timeout: options.timeoutMs,
+      message: `${options.describe} stayed live after being cancelled`,
+    })
+    .toBe(0);
+}
+
+/**
+ * Removes every scheduled job through the API, settling anything still running first.
  *
  * Deleting the rows underneath the API would leave the BullMQ repeatable schedulers in Redis with
  * nothing to run, and the next spec would then see runs appear for a job it never created. The
@@ -81,54 +121,20 @@ function playwrightFetcher(request: APIRequestContext, origin: string): E2eFetch
 async function deleteAllJobsViaApi(api: E2eApi): Promise<void> {
   const { jobs } = await api.get('/api/jobs', listJobsResponse);
   for (const job of jobs) {
+    await settleLive(api, {
+      describe: `a run of job ${job.id}`,
+      timeoutMs: JOB_RUN_TIMEOUT_MS,
+      readLive: async () => {
+        const { runs } = await api.get(`/api/jobs/${job.id}/runs`, listRunsResponse);
+        return runs.filter((run) => LIVE_STATUSES.includes(run.status)).map((run) => run.id);
+      },
+    });
     await api.del(`/api/jobs/${job.id}`);
   }
 }
 
-/** Turn statuses that mean work is under way, and that a chat cannot be deleted through. */
-const LIVE_TURN_STATUSES: readonly string[] = ['QUEUED', 'PREPARING', 'RUNNING'];
-
 /**
- * Cancels any live turn of a chat and waits for it to settle.
- *
- * Without this the reset cannot recover from the state it exists to clear. A spec that dies part
- * way through a turn — a timeout is enough — leaves it live, and `DELETE /api/chats/:id` refuses a
- * chat in that state with `409 TURN_IN_PROGRESS`; the reset would then throw and take every later
- * test in the run down with it, all reporting the same unrelated-looking failure.
- *
- * The cancel itself is best-effort: a turn that settled on its own between the read and the
- * request is exactly the state being aimed at, and the API is entitled to refuse a second
- * cancellation. What guarantees the outcome is the wait below, which fails by name if anything is
- * still live.
- *
- * @param api - Client for the running API.
- * @param chatId - Chat to settle.
- */
-async function settleLiveTurns(api: E2eApi, chatId: string): Promise<void> {
-  const detail = await api.get(`/api/chats/${chatId}`, chatDetail);
-  const live = detail.turns.filter((turn) => LIVE_TURN_STATUSES.includes(turn.status));
-  if (live.length === 0) {
-    return;
-  }
-  for (const turn of live) {
-    await api.raw(`/api/turns/${turn.id}/cancel`, { method: 'POST' });
-  }
-  await baseExpect
-    .poll(
-      async () => {
-        const current = await api.get(`/api/chats/${chatId}`, chatDetail);
-        return current.turns.some((turn) => LIVE_TURN_STATUSES.includes(turn.status));
-      },
-      {
-        timeout: TURN_SETTLE_TIMEOUT_MS,
-        message: `a turn of chat ${chatId} stayed live after being cancelled`,
-      },
-    )
-    .toBe(false);
-}
-
-/**
- * Removes every chat through the API, cancelling anything still running first, so the worker sees
+ * Removes every chat through the API, settling anything still running first, so the worker sees
  * the cancellations and tears down the workspaces it owns instead of having its rows pulled from
  * under it.
  *
@@ -138,7 +144,16 @@ async function deleteAllChatsViaApi(api: E2eApi): Promise<void> {
   for (const status of ['ACTIVE', 'ARCHIVED'] as const) {
     const { chats } = await api.get(`/api/chats?status=${status}`, listChatsResponse);
     for (const chat of chats) {
-      await settleLiveTurns(api, chat.id);
+      await settleLive(api, {
+        describe: `a turn of chat ${chat.id}`,
+        timeoutMs: TURN_SETTLE_TIMEOUT_MS,
+        readLive: async () => {
+          const detail = await api.get(`/api/chats/${chat.id}`, chatDetail);
+          return detail.turns
+            .filter((turn) => LIVE_STATUSES.includes(turn.status))
+            .map((t) => t.id);
+        },
+      });
       await api.del(`/api/chats/${chat.id}`);
     }
   }
