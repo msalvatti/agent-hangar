@@ -638,3 +638,8 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   though the mock API implements all four. Each guard moved below those steps, and each was proved
   to run by breaking the control it drives. `chat-create-run` now also observes a non-terminal
   status pill before Done, so a turn that jumped straight to Done would fail.
+- 2C.9 ✅ 2026-08-20 — the per-test reset could not recover from the state it exists to clear: a
+  spec that died part way through a turn left it live, and `DELETE /api/chats/:id` refuses a chat
+  in that state with `409 TURN_IN_PROGRESS`, so the reset threw and every later test in the run
+  failed for a reason that looked unrelated. It now cancels any live turn and waits for it to
+  settle before deleting, with the wait — not the cancel — carrying the guarantee.

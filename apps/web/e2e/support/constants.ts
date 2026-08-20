@@ -20,6 +20,9 @@ export const HEALTH_POLL_MS = 500;
 /** Budget for the worker to report a heartbeat the web server can see. */
 export const WORKER_READY_TIMEOUT_MS = 60_000;
 
+/** Budget for a cancelled turn to reach a terminal state during the per-test reset. */
+export const TURN_SETTLE_TIMEOUT_MS = 30_000;
+
 /** Budget for a workspace to disappear after its chat is archived. */
 export const WORKSPACE_GONE_TIMEOUT_MS = 60_000;
 
