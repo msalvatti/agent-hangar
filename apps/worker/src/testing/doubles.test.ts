@@ -13,6 +13,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { createFakeQueues, FakeQueue } from './fake-queues.js';
 import { FakeSecretsService } from './fake-secrets.js';
+import { createFakeWorkerFactory } from './fake-worker-factory.js';
 import { InMemoryCommandListener } from './in-memory-commands.js';
 import { InMemoryTurnEventPublisher } from './in-memory-publisher.js';
 import { createTestContainer } from './test-container.js';
@@ -148,6 +149,45 @@ describe('FakeQueue', () => {
     await queues.workspaceGc.add('reap-idle', {});
 
     expect(queues.workspaceGc.jobs).toEqual([{ name: 'reap-idle', data: {}, opts: undefined }]);
+  });
+});
+
+describe('createFakeWorkerFactory', () => {
+  /**
+   * By default a graceful close resolves at once, which is the behaviour every test that is not
+   * about the shutdown grace period wants.
+   */
+  it('closes without blocking by default', async () => {
+    const factory = createFakeWorkerFactory();
+    const worker = factory.createWorker('chat-turns', () => Promise.resolve(), {
+      connection: null,
+      concurrency: 1,
+      lockDuration: 1,
+      stalledInterval: 1,
+      maxStalledCount: 1,
+    });
+
+    await worker.close();
+
+    expect(factory.workers[0]?.closes).toEqual([false]);
+  });
+
+  /**
+   * An event nobody subscribed to is dropped rather than throwing.
+   */
+  it('drops an event with no listener', () => {
+    const factory = createFakeWorkerFactory();
+    factory.createWorker('chat-turns', () => Promise.resolve(), {
+      connection: null,
+      concurrency: 1,
+      lockDuration: 1,
+      stalledInterval: 1,
+      maxStalledCount: 1,
+    });
+
+    expect(() => {
+      factory.workers[0]?.emit('failed');
+    }).not.toThrow();
   });
 });
 

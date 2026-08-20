@@ -6,40 +6,37 @@
 import {
   assertDatabaseReachable,
   createPrismaClient,
+  createQueueConnection,
   createRedactor,
   loadConfig,
 } from '@agent-hangar/core';
-import { Redis } from 'ioredis';
 
+import { defaultWorkerFactories, startWorker } from './app.js';
 import { boot } from './boot.js';
+import { createContainer, factoriesFor } from './container.js';
 import { createLogger } from './logger.js';
 
-const logger = createLogger({
-  level: process.env.LOG_LEVEL ?? 'info',
-  redactor: createRedactor(),
-});
+const redactor = createRedactor();
+const logger = createLogger({ level: process.env.LOG_LEVEL ?? 'info', redactor });
 
 try {
-  const booted = await boot({
+  const { config, prisma, redis } = await boot({
     loadConfig,
     createPrismaClient,
     assertDatabaseReachable,
-    createRedis: (url) => new Redis(url, { maxRetriesPerRequest: 1, lazyConnect: false }),
+    createRedis: createQueueConnection,
     logger,
   });
-  logger.info(
-    { instance: booted.config.AH_INSTANCE, webPort: booted.config.WEB_PORT },
-    `worker ready (instance=${booted.config.AH_INSTANCE}, web port ${String(booted.config.WEB_PORT)})`,
-  );
-  const stop = (signal: string) => {
+  const container = await createContainer({
+    config,
+    factories: factoriesFor({ prisma, redis, redactor, logger }),
+  });
+  const app = await startWorker(container, defaultWorkerFactories);
+  const stop = (signal: string): void => {
     logger.info({ signal }, 'signal received');
-    booted.shutdown().then(
-      () => process.exit(0),
-      (error: unknown) => {
-        logger.error({ err: error }, 'shutdown failed');
-        process.exit(1);
-      },
-    );
+    void app.shutdown().then(() => {
+      process.exit(0);
+    });
   };
   process.once('SIGINT', () => {
     stop('SIGINT');

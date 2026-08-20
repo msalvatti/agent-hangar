@@ -14,6 +14,7 @@ import {
   FakeClock,
   FakeWorkspaceRunner,
 } from '@agent-hangar/core/testing';
+import type { Redis } from 'ioredis';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -21,8 +22,14 @@ import {
   createSecrets,
   createWorkspaceRunner,
   defaultContainerFactories,
+  factoriesFor,
 } from './container.js';
-import type { ContainerDatabase, ContainerFactories, WorkerRedisClient } from './container.js';
+import type {
+  ContainerDatabase,
+  ContainerFactories,
+  WorkerPrismaClient,
+  WorkerRedisClient,
+} from './container.js';
 import type { EventStreamTransaction } from './events.js';
 import { createLogger } from './logger.js';
 import { createFakeQueues, FakeSecretsService, TEST_ENV } from './testing/index.js';
@@ -292,6 +299,37 @@ describe('createSecrets', () => {
       GITHUB_PAT: { set: false },
       OPENAI_API_KEY: { set: false },
     });
+  });
+});
+
+describe('factoriesFor', () => {
+  /**
+   * The boot sequence proves Postgres and Redis answer by connecting to them; the container must
+   * adopt those clients rather than opening a second pool and a second producer connection.
+   */
+  it('adopts the clients and collaborators the boot already built', async () => {
+    const { config, factories } = harness();
+    const prisma = new FakeDatabase();
+    const redis = new FakeRedis('boot', () => undefined);
+    const redactor = createRedactor();
+    const logger = createLogger({ level: 'silent', redactor });
+    const booted = factoriesFor({
+      prisma: prisma as unknown as WorkerPrismaClient,
+      redis: redis as unknown as Redis,
+      redactor,
+      logger,
+    });
+
+    const container = await createContainer({
+      config,
+      env: {},
+      factories: { ...booted, createQueues: factories.createQueues } as unknown as typeof booted,
+    });
+
+    expect(container.prisma).toBe(prisma);
+    expect(container.redis.queue).toBe(redis);
+    expect(container.redactor).toBe(redactor);
+    expect(container.logger).toBe(logger);
   });
 });
 

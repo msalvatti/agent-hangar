@@ -179,6 +179,38 @@ export const defaultContainerFactories: ContainerFactories<WorkerPrismaClient, R
   clock: systemClock,
 };
 
+/** Clients and collaborators the process built before the container existed. */
+export interface BootedRuntime {
+  /** Prisma client the boot already proved reachable. */
+  prisma: WorkerPrismaClient;
+  /** Producer connection the boot already pinged. */
+  redis: Redis;
+  /** The process's redactor; the same one the boot logger writes through. */
+  redactor: Redactor;
+  /** The process's logger. */
+  logger: Logger;
+}
+
+/**
+ * Builds the production factories over clients the boot sequence already opened.
+ *
+ * The boot proves Postgres and Redis answer before anything else runs, and it can only do that by
+ * connecting. Handing those clients to the container is what keeps the process on one pool and one
+ * producer connection instead of two of each.
+ *
+ * @param booted - What the boot sequence produced.
+ * @returns The real factories, with the already-open clients wired in.
+ */
+export function factoriesFor(booted: BootedRuntime): ContainerFactories<WorkerPrismaClient, Redis> {
+  return {
+    ...defaultContainerFactories,
+    createPrismaClient: () => booted.prisma,
+    createQueueConnection: () => booted.redis,
+    createRedactor: () => booted.redactor,
+    createLogger: () => booted.logger,
+  };
+}
+
 /** Inputs of {@link createContainer}. */
 export interface CreateContainerOptions<
   TDatabase extends ContainerDatabase,

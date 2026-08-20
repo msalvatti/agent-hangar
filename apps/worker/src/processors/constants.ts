@@ -66,6 +66,20 @@ export const TOOL_OUTPUT_HEAD_BYTES = 8 * KIB;
 /** Longest a shutdown waits for in-flight jobs before workers are closed the hard way. */
 export const SHUTDOWN_GRACE_MS = 30 * SECOND_MS;
 
+/**
+ * Stalled-job settings every consumer runs with.
+ *
+ * A turn holds its job for minutes, far longer than BullMQ's default lock, so the lock is renewed
+ * over a full minute and the scan runs twice within it. One recovery is allowed: a job that
+ * stalled twice is a job whose worker keeps dying on it, and replaying it a third time would only
+ * build another container.
+ */
+export const WORKER_RELIABILITY = {
+  lockDuration: 60 * SECOND_MS,
+  stalledInterval: 30 * SECOND_MS,
+  maxStalledCount: 1,
+} as const;
+
 /** `Workspace.failureReason` written when a turn's predecessor was found still holding it. */
 export const STALLED_RECOVERY_REASON = 'stalled turn recovery';
 

@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W2-B 🐳 (parallel with W2-A, W2-C; the only Docker-integration lane running at a time) |
 | **Status** | 🟦 running |
-| **Progress** | 3/6 tasks |
+| **Progress** | 4/6 tasks |
 | **Branch** | `feat/w2b-worker` |
 | **Owned paths** | `apps/worker/src/**` (incl. `apps/worker/src/testing/**`), `apps/worker/vitest.config.ts`, `apps/worker/package.json` scripts only (`test:integration`) |
 | **Depends on** | W0, W1-A, W1-B, W1-C, W1-D, W1-E, W1-F merged to `main` |
@@ -45,7 +45,7 @@ This lane adds the BullMQ consumers: `run-turn` (flow a and b: ensure workspace 
 | 2B.1 | DI container, worker env, events publisher (XADD), cancel command listener, worker test utilities (`scriptedRuntime`) | ✅ | P0 | M | — |
 | 2B.2 | `processors/run-turn.ts` — ensure workspace, exec runtime, event → redact → publish → persist, failures, stalled recovery, cancel | ✅ | P0 | L | 2B.1 |
 | 2B.3 | `processors/run-scheduled-job.ts` + `scheduler-reconcile.ts` — overlap policy, JOB workspace, destroy in `finally`, boot reconcile | ✅ | P0 | L | 2B.2 |
-| 2B.4 | `processors/gc.ts` (reap-idle, destroy-chat-workspace, orphan reconcile) + `main.ts` wiring, image check, graceful shutdown | 📋 | P0 | M | 2B.3 |
+| 2B.4 | `processors/gc.ts` (reap-idle, destroy-chat-workspace, orphan reconcile) + `main.ts` wiring, image check, graceful shutdown | ✅ | P0 | M | 2B.3 |
 | 2B.5 | 🐳 Integration suite `@docker @db @redis` — full turn, GC idle + orphan, restore turn, scheduled run | 📋 | P0 | L | 2B.4 |
 | 2B.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 2B.1–2B.5 |
 
@@ -331,18 +331,18 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2b-worker.md; 
 
 ## Task 2B.4 — `processors/gc.ts` + `main.ts` wiring, image check, graceful shutdown
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 2B.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 2B.3
 
 **Description.** Implement the `workspace-gc` consumer (`reap-idle`: idle READY chat workspaces past `WORKSPACE_IDLE_TTL_MIN` are snapshotted → restore hints + SYSTEM note → destroyed; `destroy-chat-workspace`: immediate teardown on archive; orphan reconcile via `runner.list({ 'ah.instance' })` vs DB live rows, and DB-live-but-container-gone rows), and the `main.ts` wiring: boot → container → image-present check (actionable log, keep running) → reconcile schedulers → three BullMQ Workers → graceful shutdown closing workers then the container.
 
 **Acceptance criteria**
-- [ ] `createGcProcessor(deps)` dispatches on `job.name`: `reap-idle` (`{}`) and `destroy-chat-workspace` (`{ chatId }`); unknown name → warn + return
-- [ ] reap-idle: `cutoff = now − WORKSPACE_IDLE_TTL_MIN`; for each `workspaces.listIdle(cutoff)` (READY only): `teardownWorkspace(deps, ws, { reason: 'idle', note })`; then orphan reconcile: `handles = runner.list({ 'ah.instance': config.AH_INSTANCE })`, `live = workspaces.listLive()`; handles whose `workspaceId` is not live → `runner.destroy` (log `orphan destroyed`); live rows whose `runner.health` is `gone` → `setStatus(DESTROYED, { failureReason: 'container missing' })` (BUSY rows are left alone — the turn processor handles stalled recovery); returns `{ reaped, orphansDestroyed, goneMarked }`
-- [ ] `teardownWorkspace`: `setStatus(STOPPING)` → `snapshot` (errors → skip hints, keep going) → for CHAT workspaces: if `snapshot.git.ahead === 0 && headSha && branch` → `chats.updateRestoreHints({ workBranch: branch, lastPushedSha: headSha })`; `messages.append(chatId, 'SYSTEM', note)` where note is `"Workspace reclaimed after <N> min idle; <M> uncommitted change(s) discarded"` or `"Workspace archived; <M> uncommitted changes discarded"` (M from `snapshot.summary` lines or `dirty ? 'some' : 0` — use core's helper if W1-F exposes one) → `runner.destroy` → `setStatus(DESTROYED)`; errors in destroy → `FAILED` with reason, never throws out of the loop (one bad workspace must not block the others)
-- [ ] destroy-chat-workspace: `findLiveByChat(chatId)`; none → return; else `teardownWorkspace(... reason 'archive')`
-- [ ] `src/app.ts`: `startWorker(container, factories): Promise<{ shutdown(): Promise<void> }>` — image check (`runner.imageExists?.(config.WORKSPACE_IMAGE)` if W1-B exposes it, else `assertWorkspaceImage` helper from W1-B; on missing → `logger.error` with `pnpm infra:image` and continue — the UI shows the banner from `/api/health`), `reconcileSchedulers`, create three BullMQ `Worker`s via W1-F factory (`chat-turns` concurrency `WORKER_TURN_CONCURRENCY`, `scheduled-jobs` 1, `workspace-gc` 1; `lockDuration 60_000`, `stalledInterval 30_000`, `maxStalledCount 1`; `connection` = the worker Redis), log `worker ready (instance=…, runner=…, concurrency=…)`; `shutdown()` closes workers (`close()` with a `SHUTDOWN_GRACE_MS = 30_000` race then `close(true)`), then `container.close()`
-- [ ] `src/main.ts` ≤ 15 lines: `boot` (W0) → `createContainer` → `startWorker` → SIGINT/SIGTERM → `shutdown` → exit 0; boot/start failure → log + exit 1
-- [ ] Unit tests 100 %: gc (idle selection honours cutoff and READY-only, hints only when `ahead === 0`, SYSTEM note text for idle/archive, destroy failure isolates, orphan destroy by label, gone-marking skips BUSY, unknown job name), app (image missing logs error and still starts; workers created with the right names/concurrency/options via an injected `createWorker`; shutdown order and forced close after grace with fake timers)
+- [x] `createGcProcessor(deps)` dispatches on `job.name`: `reap-idle` (`{}`) and `destroy-chat-workspace` (`{ chatId }`); unknown name → warn + return
+- [x] reap-idle: `cutoff = now − WORKSPACE_IDLE_TTL_MIN`; for each `workspaces.listIdle(cutoff)` (READY only): `teardownWorkspace(deps, ws, { reason: 'idle', note })`; then orphan reconcile: `handles = runner.list({ 'ah.instance': config.AH_INSTANCE })`, `live = workspaces.listLive()`; handles whose `workspaceId` is not live → `runner.destroy` (log `orphan destroyed`); live rows whose `runner.health` is `gone` → `setStatus(DESTROYED, { failureReason: 'container missing' })` (BUSY rows are left alone — the turn processor handles stalled recovery); returns `{ reaped, orphansDestroyed, goneMarked }`
+- [x] `teardownWorkspace`: `setStatus(STOPPING)` → `snapshot` (errors → skip hints, keep going) → for CHAT workspaces: if `snapshot.git.ahead === 0 && headSha && branch` → `chats.updateRestoreHints({ workBranch: branch, lastPushedSha: headSha })`; `messages.append(chatId, 'SYSTEM', note)` where note is `"Workspace reclaimed after <N> min idle; <M> uncommitted change(s) discarded"` or `"Workspace archived; <M> uncommitted changes discarded"` (M from `snapshot.summary` lines or `dirty ? 'some' : 0` — use core's helper if W1-F exposes one) → `runner.destroy` → `setStatus(DESTROYED)`; errors in destroy → `FAILED` with reason, never throws out of the loop (one bad workspace must not block the others)
+- [x] destroy-chat-workspace: `findLiveByChat(chatId)`; none → return; else `teardownWorkspace(... reason 'archive')`
+- [x] `src/app.ts`: `startWorker(container, factories): Promise<{ shutdown(): Promise<void> }>` — image check (`runner.imageExists?.(config.WORKSPACE_IMAGE)` if W1-B exposes it, else `assertWorkspaceImage` helper from W1-B; on missing → `logger.error` with `pnpm infra:image` and continue — the UI shows the banner from `/api/health`), `reconcileSchedulers`, create three BullMQ `Worker`s via W1-F factory (`chat-turns` concurrency `WORKER_TURN_CONCURRENCY`, `scheduled-jobs` 1, `workspace-gc` 1; `lockDuration 60_000`, `stalledInterval 30_000`, `maxStalledCount 1`; `connection` = the worker Redis), log `worker ready (instance=…, runner=…, concurrency=…)`; `shutdown()` closes workers (`close()` with a `SHUTDOWN_GRACE_MS = 30_000` race then `close(true)`), then `container.close()`
+- [x] `src/main.ts` ≤ 15 lines: `boot` (W0) → `createContainer` → `startWorker` → SIGINT/SIGTERM → `shutdown` → exit 0; boot/start failure → log + exit 1
+- [x] Unit tests 100 %: gc (idle selection honours cutoff and READY-only, hints only when `ahead === 0`, SYSTEM note text for idle/archive, destroy failure isolates, orphan destroy by label, gone-marking skips BUSY, unknown job name), app (image missing logs error and still starts; workers created with the right names/concurrency/options via an injected `createWorker`; shutdown order and forced close after grace with fake timers)
 
 **Files to create/modify**
 `apps/worker/src/processors/{gc,gc.test,teardown-workspace,teardown-workspace.test}.ts`, `apps/worker/src/{app,app.test,main}.ts`, `apps/worker/src/testing/fake-worker-factory.ts`.
@@ -549,3 +549,4 @@ Completion Protocol: append `- 2B.6 ✅ <date> — PR #<n> opened`; commit `docs
 - 2B.1 ✅ 2026-08-19 — worker container, worker env, Redis Streams publisher, cancel listener and the in-memory test doubles
 - 2B.2 ✅ 2026-08-19 — run-turn processor: workspace ensure and recovery, streaming redact/publish/persist, every failure path and cancellation
 - 2B.3 ✅ 2026-08-19 — scheduled-job processor with the overlap policy and destroy-in-finally, plus the boot-time scheduler reconciliation
+- 2B.4 ✅ 2026-08-19 — workspace collector with idle reaping and orphan reconciliation, plus the application wiring and graceful shutdown
