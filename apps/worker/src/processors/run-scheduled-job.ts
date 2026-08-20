@@ -22,6 +22,8 @@ import {
 import type { AgentEvent, JobRun, ScheduledJob, WorkspaceHandle } from '@agent-hangar/core';
 import { z } from 'zod';
 
+import { openCancellationWatch } from './cancellation.js';
+import type { CancellationWatch } from './cancellation.js';
 import { NO_USAGE, WORKER_ERROR_PREFIX } from './constants.js';
 import { buildTurnInstructions } from './instructions.js';
 import { provisionWorkspace } from './provision-workspace.js';
@@ -50,6 +52,18 @@ export type ScheduledDelivery = z.infer<typeof scheduledDeliveryPayload>;
 
 /** Failure code recorded on a tick dropped because the previous run was still executing. */
 export const OVERLAP_SKIP_CODE = 'overlapping_run';
+
+/** Failure code recorded on a manual run whose job no longer exists. */
+export const JOB_MISSING_CODE = 'job_not_found';
+
+/** What the user is told when the job was deleted between the request and the run. */
+export const JOB_MISSING_MESSAGE = 'This scheduled job no longer exists.';
+
+/** Failure code recorded on a manual run whose job was disabled before it started. */
+export const JOB_DISABLED_CODE = 'job_disabled';
+
+/** What the user is told when the job was disabled between the request and the run. */
+export const JOB_DISABLED_MESSAGE = 'This scheduled job is disabled; enable it and run it again.';
 
 /**
  * Raised when a delivery names a run row it is not entitled to drive.
@@ -99,6 +113,17 @@ async function failRun(
 }
 
 /**
+ * Records a run as cancelled and ends its event stream.
+ *
+ * @param deps - Publisher and repositories.
+ * @param runId - The run.
+ */
+async function cancelRun(deps: ProcessorDeps, runId: string): Promise<void> {
+  await publishCancellation(deps, runId);
+  await deps.repos.jobRuns.finish(runId, { status: 'CANCELLED', usage: NO_USAGE });
+}
+
+/**
  * Writes the outcome for a run whose runtime never reported one.
  *
  * @param deps - Publisher and repositories.
@@ -111,8 +136,7 @@ async function closeOutRun(
   outcome: UnreportedOutcome,
 ): Promise<void> {
   if (outcome.terminal === 'cancelled') {
-    await publishCancellation(deps, runId);
-    await deps.repos.jobRuns.finish(runId, { status: 'CANCELLED', usage: NO_USAGE });
+    await cancelRun(deps, runId);
     return;
   }
   await failRun(deps, runId, outcome.error.code, outcome.error.message);
@@ -295,11 +319,44 @@ async function recordSkippedTick(
  * off it.
  *
  * @param run - The row the delivery named.
- * @param job - The job the delivery belongs to.
+ * @param jobId - The job the delivery belongs to.
  * @returns `true` when the row is this delivery's to drive.
  */
-function mayAdopt(run: JobRun, job: ScheduledJob): boolean {
-  return run.jobId === job.id && run.trigger === 'MANUAL' && run.status === 'QUEUED';
+function mayAdopt(run: JobRun, jobId: string): boolean {
+  return run.jobId === jobId && run.trigger === 'MANUAL' && run.status === 'QUEUED';
+}
+
+/**
+ * Closes the manual run a delivery already owns when its job cannot be run.
+ *
+ * A manual run has a row before the worker ever sees the delivery, and a browser watching that
+ * row's stream. Returning without touching it — because the job was disabled or deleted in the
+ * meantime — would leave a `QUEUED` run nothing will ever finish and a page waiting for an event
+ * nobody is going to send. A scheduled tick carries no row and needs none: there is nothing to
+ * close and nothing watching.
+ *
+ * The same eligibility rule as adoption applies, so a stale delivery cannot terminalise a row that
+ * belongs to another job or to a run that has already started.
+ *
+ * @param deps - Publisher and repositories.
+ * @param payload - The delivery.
+ * @param code - Machine-readable failure code.
+ * @param message - What the user is told.
+ */
+async function closeUnrunnableRun(
+  deps: ProcessorDeps,
+  payload: ScheduledDelivery,
+  code: string,
+  message: string,
+): Promise<void> {
+  if (payload.runId === undefined) {
+    return;
+  }
+  const run = await deps.repos.jobRuns.get(payload.runId);
+  if (run === null || !mayAdopt(run, payload.jobId)) {
+    return;
+  }
+  await failRun(deps, run.id, code, message);
 }
 
 /**
@@ -326,7 +383,7 @@ async function openRun(
   if (payload.runId !== undefined) {
     const adopted = await deps.repos.jobRuns.get(payload.runId);
     if (adopted !== null) {
-      if (!mayAdopt(adopted, job)) {
+      if (!mayAdopt(adopted, job.id)) {
         deps.logger.error(
           { jobId: job.id, runId: payload.runId },
           'delivery names a run it may not adopt',
@@ -354,16 +411,18 @@ async function openRun(
  *
  * @param deps - The processor's collaborators.
  * @param job - The job definition.
- * @param runId - The run.
- * @param teardown - Filled in as the workspace appears, so the `finally` can tear it down.
+ * @param teardown - Filled in as the workspace appears, so the `finally` can tear it down; also
+ *   names the run.
+ * @param watch - The cancellation subscription opened before the workspace was provisioned.
  * @throws Error When the Docker daemon is unreachable, so BullMQ retries.
  */
 async function runInFreshWorkspace(
   deps: ProcessorDeps,
   job: ScheduledJob,
-  runId: string,
   teardown: Teardown,
+  watch: CancellationWatch,
 ): Promise<void> {
+  const { runId } = teardown;
   const provisioned = await provisionWorkspace(deps, {
     kind: 'JOB',
     jobRunId: runId,
@@ -397,13 +456,63 @@ async function runInFreshWorkspace(
     handle: provisioned.handle,
     request,
     sink: makeJobRunSink(deps, runId, recorder),
-    cancelKey: runId,
+    watch,
   });
   if (!outcome.reportedByRuntime) {
     await closeOutRun(deps, runId, outcome);
   }
   if (outcome.terminal === 'transport-error') {
     throw new Error('the workspace runner is unreachable');
+  }
+}
+
+/**
+ * Prepares the run, executes it and tears its workspace down whatever happened.
+ *
+ * @param deps - The processor's collaborators.
+ * @param job - The job definition.
+ * @param runId - The run this delivery drives.
+ * @param watch - The cancellation subscription, open since before preparation started.
+ * @throws Error When the Docker daemon is unreachable, so BullMQ retries.
+ */
+async function prepareAndRunJob(
+  deps: ProcessorDeps,
+  job: ScheduledJob,
+  runId: string,
+  watch: CancellationWatch,
+): Promise<void> {
+  await deps.repos.jobRuns.setStatus(runId, 'PREPARING');
+  const teardown: Teardown = { runId, handle: null, workspaceId: null, job };
+  try {
+    if (watch.requested()) {
+      await cancelRun(deps, runId);
+      return;
+    }
+    await runInFreshWorkspace(deps, job, teardown, watch);
+  } finally {
+    await teardownRun(deps, teardown);
+  }
+}
+
+/**
+ * Listens for a cancellation, then runs the job.
+ *
+ * The subscription is taken before the workspace exists. A manual run is watched by a browser from
+ * the moment the API answered with its id, cancellation travels over Redis pub/sub, and pub/sub
+ * keeps nothing for a subscriber that has not arrived yet — so a Stop pressed while the container
+ * is being created must find somebody already listening.
+ *
+ * @param deps - The processor's collaborators.
+ * @param job - The job definition.
+ * @param runId - The run this delivery drives.
+ * @throws Error When the Docker daemon is unreachable, so BullMQ retries.
+ */
+async function runWatchedJob(deps: ProcessorDeps, job: ScheduledJob, runId: string): Promise<void> {
+  const watch = await openCancellationWatch(deps, runId);
+  try {
+    await prepareAndRunJob(deps, job, runId, watch);
+  } finally {
+    await watch.close();
   }
 }
 
@@ -421,10 +530,12 @@ export function createRunScheduledJobProcessor(
     const job = await deps.repos.scheduledJobs.get(payload.jobId);
     if (job === null) {
       deps.logger.warn({ jobId: payload.jobId }, 'scheduled job is gone');
+      await closeUnrunnableRun(deps, payload, JOB_MISSING_CODE, JOB_MISSING_MESSAGE);
       return;
     }
     if (!job.enabled) {
       deps.logger.info({ jobId: job.id }, 'scheduled job is disabled');
+      await closeUnrunnableRun(deps, payload, JOB_DISABLED_CODE, JOB_DISABLED_MESSAGE);
       return;
     }
     const scheduledFor =
@@ -439,12 +550,6 @@ export function createRunScheduledJobProcessor(
       await recordSkippedTick(deps, job, run, overlap.reason);
       return;
     }
-    await deps.repos.jobRuns.setStatus(run.id, 'PREPARING');
-    const teardown: Teardown = { runId: run.id, handle: null, workspaceId: null, job };
-    try {
-      await runInFreshWorkspace(deps, job, run.id, teardown);
-    } finally {
-      await teardownRun(deps, teardown);
-    }
+    await runWatchedJob(deps, job, run.id);
   };
 }

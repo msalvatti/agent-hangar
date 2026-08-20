@@ -8,7 +8,7 @@
  * Mocks: the shared processor fixtures over in-memory repositories, the fake runner and the real
  * redactor.
  */
-import { DEFAULT_CHAT_TURN_LIMITS } from '@agent-hangar/core';
+import { DEFAULT_CHAT_TURN_LIMITS, isTerminalRunStatus } from '@agent-hangar/core';
 import { GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -331,6 +331,37 @@ describe('createRunTurnProcessor, two turns of one chat', () => {
     expect(refused?.error).toContain(WORKSPACE_CONFLICT_CODE);
     expect(container.publisher.eventsFor(second.id).at(-1)).toMatchObject({ type: 'turn.failed' });
     expect([...container.repos.store.workspaces.values()]).toHaveLength(1);
+    expect(container.runner.calls.filter((call) => call.method === 'exec')).toHaveLength(1);
+
+    container.commands.emitCancel(turn.id);
+    await first;
+    expect((await container.repos.turns.get(turn.id))?.status).toBe('CANCELLED');
+  });
+});
+
+describe('createRunTurnProcessor, one job delivered twice', () => {
+  /**
+   * Stalled-job recovery can deliver a job again while the first delivery is still executing it
+   * here. The second copy is not a competing turn — it is the same turn — so it must leave the
+   * execution alone: failing it as a workspace conflict would terminalise the row and end the
+   * stream of a turn that is still running and still writing to both.
+   */
+  it('leaves the running turn alone when its own job is redelivered', async () => {
+    const container = setupProcessorContainer({ script: heldTurnScript() });
+    const { turn } = await seedChatWithTurn(container);
+    const busy = whenWorkspaceIsBusy(container);
+
+    const first = runTurnOn(container, turn.id);
+    await busy;
+    await runTurnOn(container, turn.id, 1);
+
+    const during = await container.repos.turns.get(turn.id);
+    expect(during === null ? true : isTerminalRunStatus(during.status)).toBe(false);
+    expect(during?.error).toBeNull();
+    expect(
+      container.publisher.eventsFor(turn.id).some((event) => event.type === 'turn.failed'),
+    ).toBe(false);
+    expect(container.logs.join('')).toContain('this turn is already running here');
     expect(container.runner.calls.filter((call) => call.method === 'exec')).toHaveLength(1);
 
     container.commands.emitCancel(turn.id);

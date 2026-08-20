@@ -33,8 +33,10 @@ import type {
   WorkspaceHandle,
 } from '@agent-hangar/core';
 
-import { chatClaimKey } from '../claims.js';
+import { chatClaimKey, turnClaimKey } from '../claims.js';
 
+import { openCancellationWatch } from './cancellation.js';
+import type { CancellationWatch } from './cancellation.js';
 import {
   NO_USAGE,
   STALLED_RECOVERY_NOTE,
@@ -56,6 +58,14 @@ export const WORKSPACE_CONFLICT_CODE = 'workspace_conflict';
 /** What the user is told when that happens. */
 export const WORKSPACE_CONFLICT_MESSAGE =
   'The workspace of this chat is busy with another operation; send the message again in a moment.';
+
+/** What one delivery of the job carries into preparation. */
+interface TurnDelivery {
+  turnId: string;
+  chat: Chat;
+  /** How many times BullMQ already delivered this job. */
+  attemptsMade: number;
+}
 
 /** Everything one turn carries from preparation into execution. */
 interface TurnContext {
@@ -405,13 +415,31 @@ async function settleTurn(deps: ProcessorDeps, turnId: string, workspaceId: stri
 }
 
 /**
+ * Records a turn the user stopped before its exec began.
+ *
+ * The workspace is left as it is: nothing ran in it, so the next message reuses it.
+ *
+ * @param deps - Publisher and repositories.
+ * @param turnId - The turn.
+ */
+async function cancelBeforeStart(deps: ProcessorDeps, turnId: string): Promise<void> {
+  await publishCancellation(deps, turnId);
+  await deps.repos.turns.finish(turnId, 'CANCELLED', NO_USAGE);
+}
+
+/**
  * Runs the prepared turn to completion.
  *
  * @param deps - The processor's collaborators.
  * @param context - The turn being run.
+ * @param watch - The cancellation subscription opened before preparation.
  * @throws Error When the Docker daemon is unreachable.
  */
-async function runPreparedTurn(deps: ProcessorDeps, context: TurnContext): Promise<void> {
+async function runPreparedTurn(
+  deps: ProcessorDeps,
+  context: TurnContext,
+  watch: CancellationWatch,
+): Promise<void> {
   await deps.repos.workspaces.setStatus(context.workspace.id, 'BUSY');
   // The branch the prompt names and the branch the request carries are the same string, derived
   // by the same function the request builder uses. Naming the base branch here instead would tell
@@ -437,7 +465,7 @@ async function runPreparedTurn(deps: ProcessorDeps, context: TurnContext): Promi
     handle: context.handle,
     request,
     sink: makeTurnSink(deps, context, recorder),
-    cancelKey: context.turnId,
+    watch,
   });
   await finalizeTurn(deps, context, outcome);
   if (outcome.terminal === 'transport-error') {
@@ -446,26 +474,25 @@ async function runPreparedTurn(deps: ProcessorDeps, context: TurnContext): Promi
 }
 
 /**
- * Prepares and runs one turn, with the chat's workspace already claimed.
+ * Prepares and runs one turn, with the chat's workspace and the cancellation channel both held.
  *
  * The history is read after the stalled recovery, not before: the recovery appends the SYSTEM note
  * that tells the model its previous filesystem is gone, and a history read ahead of it would hand
  * the model everything except the one message explaining what happened.
  *
  * @param deps - The processor's collaborators.
- * @param turnId - The turn.
- * @param chat - The chat it belongs to.
- * @param attemptsMade - How many times BullMQ already delivered this job.
+ * @param delivery - The turn, its chat and how often it was delivered.
+ * @param watch - The cancellation subscription, open since before preparation started.
  * @throws Error When the Docker daemon is unreachable, so BullMQ can redeliver the job.
  */
-async function prepareAndRunTurn(
+async function runWatchedTurn(
   deps: ProcessorDeps,
-  turnId: string,
-  chat: Chat,
-  attemptsMade: number,
+  delivery: TurnDelivery,
+  watch: CancellationWatch,
 ): Promise<void> {
+  const { turnId, chat } = delivery;
   await deps.repos.turns.setStatus(turnId, 'PREPARING');
-  await recoverStalledWorkspace(deps, chat, attemptsMade);
+  await recoverStalledWorkspace(deps, chat, delivery.attemptsMade);
 
   const messages = await deps.repos.messages.listByChat(chat.id);
   const ensured = await ensureWorkspace(deps, chat, messages);
@@ -474,6 +501,10 @@ async function prepareAndRunTurn(
     return;
   }
   await deps.repos.turns.setStatus(turnId, 'PREPARING', { workspaceId: ensured.workspace.id });
+  if (watch.requested()) {
+    await cancelBeforeStart(deps, turnId);
+    return;
+  }
 
   const context: TurnContext = {
     turnId,
@@ -484,9 +515,70 @@ async function prepareAndRunTurn(
     messages,
   };
   try {
-    await runPreparedTurn(deps, context);
+    await runPreparedTurn(deps, context, watch);
   } finally {
     await settleTurn(deps, turnId, context.workspace.id);
+  }
+}
+
+/**
+ * Listens for a cancellation, then prepares and runs the turn.
+ *
+ * The subscription is taken before anything else happens to the turn. Stop is offered from the
+ * moment the message is sent, the request travels over Redis pub/sub, and pub/sub keeps nothing for
+ * a subscriber that has not arrived yet — so a cancellation sent while the container is being
+ * created would be dropped by a worker that only starts listening once the exec does.
+ *
+ * @param deps - The processor's collaborators.
+ * @param delivery - The turn, its chat and how often it was delivered.
+ * @throws Error When the Docker daemon is unreachable, so BullMQ can redeliver the job.
+ */
+async function prepareAndRunTurn(deps: ProcessorDeps, delivery: TurnDelivery): Promise<void> {
+  const watch = await openCancellationWatch(deps, delivery.turnId);
+  try {
+    await runWatchedTurn(deps, delivery, watch);
+  } finally {
+    await watch.close();
+  }
+}
+
+/**
+ * Runs one delivery of a turn whose execution this process now owns.
+ *
+ * @param deps - The processor's collaborators.
+ * @param turnId - The turn named by the delivery.
+ * @param attemptsMade - How many times BullMQ already delivered this job.
+ * @throws Error When the Docker daemon is unreachable, so BullMQ can redeliver the job.
+ */
+async function runDeliveredTurn(
+  deps: ProcessorDeps,
+  turnId: string,
+  attemptsMade: number,
+): Promise<void> {
+  const turn = await deps.repos.turns.get(turnId);
+  if (turn === null || isTerminalRunStatus(turn.status)) {
+    deps.logger.warn({ turnId }, 'run-turn skipped: the turn is gone or already finished');
+    return;
+  }
+  const chat = await deps.repos.chats.getById(turn.chatId);
+  if (chat === null) {
+    await failTurn(
+      deps,
+      turnId,
+      'chat_not_found',
+      'the chat this turn belongs to no longer exists',
+    );
+    return;
+  }
+  const claimKey = chatClaimKey(chat.id);
+  if (!deps.claims.claim(claimKey)) {
+    await failTurn(deps, turnId, WORKSPACE_CONFLICT_CODE, WORKSPACE_CONFLICT_MESSAGE);
+    return;
+  }
+  try {
+    await prepareAndRunTurn(deps, { turnId, chat, attemptsMade });
+  } finally {
+    deps.claims.release(claimKey);
   }
 }
 
@@ -498,6 +590,12 @@ async function prepareAndRunTurn(
  * owns the container until it is done, and the others report a conflict rather than running in a
  * filesystem somebody else is writing to.
  *
+ * The turn itself is claimed too, and first. Stalled-job recovery can deliver a job a second time
+ * while the first delivery is still executing it here, and that copy would otherwise lose the chat
+ * claim to its own original and fail the very turn that is running — terminalising a row and a
+ * stream the first delivery goes on writing to. A redelivery of a turn already in flight is
+ * therefore acknowledged and left alone; only a different turn of the chat is refused.
+ *
  * @param deps - The processor's collaborators.
  * @returns A BullMQ processor for the `chat-turns` queue.
  */
@@ -506,30 +604,15 @@ export function createRunTurnProcessor(
 ): (job: ProcessorJob<RunTurnPayload>) => Promise<void> {
   return async (job: ProcessorJob<RunTurnPayload>): Promise<void> => {
     const { turnId } = runTurnPayload.parse(job.data);
-    const turn = await deps.repos.turns.get(turnId);
-    if (turn === null || isTerminalRunStatus(turn.status)) {
-      deps.logger.warn({ turnId }, 'run-turn skipped: the turn is gone or already finished');
-      return;
-    }
-    const chat = await deps.repos.chats.getById(turn.chatId);
-    if (chat === null) {
-      await failTurn(
-        deps,
-        turnId,
-        'chat_not_found',
-        'the chat this turn belongs to no longer exists',
-      );
-      return;
-    }
-    const claimKey = chatClaimKey(chat.id);
-    if (!deps.claims.claim(claimKey)) {
-      await failTurn(deps, turnId, WORKSPACE_CONFLICT_CODE, WORKSPACE_CONFLICT_MESSAGE);
+    const turnKey = turnClaimKey(turnId);
+    if (!deps.claims.claim(turnKey)) {
+      deps.logger.warn({ turnId }, 'run-turn skipped: this turn is already running here');
       return;
     }
     try {
-      await prepareAndRunTurn(deps, turnId, chat, job.attemptsMade);
+      await runDeliveredTurn(deps, turnId, job.attemptsMade);
     } finally {
-      deps.claims.release(claimKey);
+      deps.claims.release(turnKey);
     }
   };
 }

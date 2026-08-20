@@ -231,6 +231,41 @@ describe('teardownWorkspace', () => {
   });
 
   /**
+   * The chat's record is written before the row moves to `STOPPING`, because the lifecycle lets
+   * `STOPPING` lead only to `DESTROYED` or `FAILED`. A repository that refuses the note therefore
+   * leaves the row exactly as it was — still `READY`, still idle, its container still running — so
+   * a later pass tears the workspace down instead of finding a row nothing can ever finish and a
+   * container no reconciliation will ever reclaim.
+   */
+  it('leaves the row untouched when the chat record cannot be written', async () => {
+    const container = createTestContainer();
+    const { workspace } = await seedChatWorkspace(container);
+    const append = vi
+      .spyOn(container.repos.messages, 'append')
+      .mockRejectedValue(new Error('database is down'));
+
+    const outcome = await teardownWorkspace(container, workspace, {
+      reason: 'idle',
+      idleMinutes: 30,
+    });
+
+    expect(outcome).toBe('failed');
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('READY');
+    expect(container.runner.calls.some((call) => call.method === 'destroy')).toBe(false);
+    expect(container.logs.join('')).toContain('recording what a chat needs');
+
+    append.mockRestore();
+    const retried = await teardownWorkspace(container, workspace, {
+      reason: 'idle',
+      idleMinutes: 30,
+    });
+
+    expect(retried).toBe('destroyed');
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('DESTROYED');
+    vi.restoreAllMocks();
+  });
+
+  /**
    * A scheduled run's workspace belongs to no chat, so there is nobody to write hints or a note
    * for; it is simply destroyed.
    */

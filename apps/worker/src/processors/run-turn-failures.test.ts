@@ -180,6 +180,31 @@ describe('createRunTurnProcessor, failing a turn', () => {
   });
 
   /**
+   * Stop is offered from the moment a message is sent, and creating the container and cloning the
+   * repository is the slow part the user watches. A cancellation published during it reaches a
+   * worker that is already listening, and the turn ends without ever starting the runtime.
+   */
+  it('cancels a turn stopped while its workspace was being prepared', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
+    const { chat, turn } = await seedChatWithTurn(container);
+    const create = container.runner.create.bind(container.runner);
+    vi.spyOn(container.runner, 'create').mockImplementation(async (spec) => {
+      const handle = await create(spec);
+      container.commands.emitCancel(turn.id);
+      return handle;
+    });
+
+    await runTurnOn(container, turn.id);
+
+    expect((await container.repos.turns.get(turn.id))?.status).toBe('CANCELLED');
+    expect(container.publisher.eventsFor(turn.id).at(-1)).toEqual({ type: 'turn.cancelled' });
+    expect(container.runner.calls.some((call) => call.method === 'exec')).toBe(false);
+    expect((await container.repos.workspaces.findLiveByChat(chat.id))?.status).toBe('READY');
+    expect(container.commands.subscriptions).toBe(0);
+    vi.restoreAllMocks();
+  });
+
+  /**
    * A runtime that answers the signal reports the cancellation itself, and the worker records it
    * once rather than twice.
    */

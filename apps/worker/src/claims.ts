@@ -1,5 +1,5 @@
 /**
- * Exclusive ownership of the workspace a piece of work is about to act on.
+ * Exclusive ownership of what a piece of work is about to act on: a workspace, or a turn.
  *
  * Layer: utility.
  *
@@ -26,7 +26,10 @@ const CHAT_KEY_PREFIX = 'chat:';
 /** A workspace no chat owns — a scheduled run's, or one whose chat was deleted. */
 const WORKSPACE_KEY_PREFIX = 'workspace:';
 
-/** What a claim identifies: the workspace, or the chat whose single workspace it is. */
+/** One execution of one turn, which its own redelivery must not join. */
+const TURN_KEY_PREFIX = 'turn:';
+
+/** What a claim identifies: a workspace, the chat whose single workspace it is, or a turn. */
 export type ClaimKey = string;
 
 /** Exclusive, non-blocking ownership of workspaces within one worker process. */
@@ -54,6 +57,21 @@ export interface WorkspaceClaims {
  */
 export function chatClaimKey(chatId: string): ClaimKey {
   return `${CHAT_KEY_PREFIX}${chatId}`;
+}
+
+/**
+ * The key of one turn's execution.
+ *
+ * Stalled-job recovery redelivers a job whose first delivery may still be running here, and the
+ * second delivery must leave that execution alone rather than reporting a conflict against the very
+ * turn it is a copy of. Keying the execution — not the workspace it will use — is what tells
+ * "another turn of this chat" apart from "this turn, delivered twice".
+ *
+ * @param turnId - `Turn.id`.
+ * @returns The claim key.
+ */
+export function turnClaimKey(turnId: string): ClaimKey {
+  return `${TURN_KEY_PREFIX}${turnId}`;
 }
 
 /**

@@ -24,7 +24,12 @@ import {
 } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
-import { createRunScheduledJobProcessor, IneligibleRunError } from './run-scheduled-job.js';
+import {
+  createRunScheduledJobProcessor,
+  IneligibleRunError,
+  JOB_DISABLED_CODE,
+  JOB_MISSING_CODE,
+} from './run-scheduled-job.js';
 import type { ScheduledDelivery } from './run-scheduled-job.js';
 import type { ProcessorJob } from './types.js';
 
@@ -390,6 +395,77 @@ describe('createRunScheduledJobProcessor', () => {
   });
 
   /**
+   * A manual run already owns a row and a browser is watching its stream. If the job is disabled
+   * between the request and the delivery, returning without touching that row would leave it
+   * `QUEUED` for good and the page waiting for a terminal event nobody will send.
+   */
+  it('fails the manual run of a job that was disabled meanwhile', async () => {
+    const container = setupProcessorContainer();
+    const job = await seedJob(container, { enabled: false });
+    const manual = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: manual.id }));
+
+    const closed = await container.repos.jobRuns.get(manual.id);
+    expect(closed?.status).toBe('FAILED');
+    expect(closed?.error).toContain(JOB_DISABLED_CODE);
+    expect(container.publisher.eventsFor(manual.id).at(-1)).toMatchObject({ type: 'turn.failed' });
+    expect(container.runner.calls).toHaveLength(0);
+  });
+
+  /**
+   * The same holds when the job was deleted rather than disabled: the run it left behind is closed
+   * out instead of watched forever.
+   */
+  it('fails the manual run of a job that is gone', async () => {
+    const container = setupProcessorContainer();
+    const job = await seedJob(container);
+    const manual = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+    container.repos.store.scheduledJobs.delete(job.id);
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: manual.id }));
+
+    const closed = await container.repos.jobRuns.get(manual.id);
+    expect(closed?.status).toBe('FAILED');
+    expect(closed?.error).toContain(JOB_MISSING_CODE);
+    expect(container.publisher.eventsFor(manual.id).at(-1)).toMatchObject({ type: 'turn.failed' });
+  });
+
+  /**
+   * Closing an unrunnable run obeys the same eligibility rule as adopting one. A row that belongs
+   * to another job, or one this delivery never opened, is somebody else's record: a stale delivery
+   * naming it must not terminalise it, and a delivery naming a row that no longer exists has
+   * nothing to close.
+   */
+  it('leaves a run it may not adopt alone when the job is unavailable', async () => {
+    const container = setupProcessorContainer();
+    const disabled = await seedJob(container, { enabled: false });
+    const other = await seedJob(container);
+    const foreign = await container.repos.jobRuns.create({
+      jobId: other.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+
+    await run(container, delivery(disabled.id, 'MANUAL', { runId: foreign.id }));
+    await run(container, delivery(disabled.id, 'MANUAL', { runId: 'no-such-run' }));
+
+    expect((await container.repos.jobRuns.get(foreign.id))?.status).toBe('QUEUED');
+    expect(container.publisher.records).toHaveLength(0);
+  });
+
+  /**
    * A failure the runtime reported is recorded on the run, and the container is destroyed anyway.
    */
   it('records a reported failure and still destroys the workspace', async () => {
@@ -424,6 +500,40 @@ describe('createRunScheduledJobProcessor', () => {
 
     expect((await container.repos.jobRuns.listByJob(job.id))[0]?.status).toBe('CANCELLED');
     expect([...container.repos.store.workspaces.values()][0]?.status).toBe('DESTROYED');
+  });
+
+  /**
+   * A manual run can be stopped while its container is still being built, and that request reaches
+   * a worker that is already listening. Nothing is executed, the run is recorded as cancelled, and
+   * the workspace that was created for it is destroyed like any other.
+   */
+  it('cancels a run stopped while its workspace was being prepared', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const manual = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+    const setStatus = container.repos.jobRuns.setStatus.bind(container.repos.jobRuns);
+    vi.spyOn(container.repos.jobRuns, 'setStatus').mockImplementation(
+      async (id, status, update) => {
+        const row = await setStatus(id, status, update);
+        if (status === 'PREPARING') {
+          container.commands.emitCancel(id);
+        }
+        return row;
+      },
+    );
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: manual.id }));
+
+    expect((await container.repos.jobRuns.get(manual.id))?.status).toBe('CANCELLED');
+    expect(container.publisher.eventsFor(manual.id).at(-1)).toEqual({ type: 'turn.cancelled' });
+    expect(container.runner.calls).toHaveLength(0);
+    expect(container.commands.subscriptions).toBe(0);
+    vi.restoreAllMocks();
   });
 
   /**

@@ -155,6 +155,11 @@ function delay(ms: number): Promise<boolean> {
  * the process would hang past the grace period it advertises. A `pause` that fails is treated as a
  * drain that did not happen, which is the side that still lets the process exit.
  *
+ * The container is released in a `finally`, because a `close` that rejects — a Redis connection
+ * that dropped while it was being shut down — would otherwise leave the Prisma client and every
+ * owned connection open in a process that is on its way out. The rejection is still propagated:
+ * the entry point reports it and exits nonzero.
+ *
  * @param workers - The consumers to stop.
  * @param heartbeat - Stopped before anything else, so a dying worker stops advertising itself.
  * @param container - Released once the consumers are stopped.
@@ -180,8 +185,11 @@ function createShutdown(
     if (force) {
       container.logger.warn('workers did not stop in time; abandoning jobs still in flight');
     }
-    await Promise.all(workers.map((worker) => worker.close(force)));
-    await container.close();
+    try {
+      await Promise.all(workers.map((worker) => worker.close(force)));
+    } finally {
+      await container.close();
+    }
   };
   return (): Promise<void> => (inFlight ??= run());
 }

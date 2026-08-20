@@ -266,6 +266,24 @@ describe('startWorker', () => {
   });
 
   /**
+   * A close that rejects — a connection that dropped while the consumer was being shut down — must
+   * not take the container's clients with it: a process on its way out would keep a Prisma pool
+   * and every owned connection open. They are released in a `finally`, and the failure is still
+   * propagated so the entry point can report it and exit nonzero.
+   */
+  it('releases the container even when a close rejects', async () => {
+    const { factory, closed, app } = await start();
+    for (const worker of factory.workers) {
+      vi.spyOn(worker, 'close').mockRejectedValue(new Error('connection is already gone'));
+    }
+
+    await expect(app.shutdown()).rejects.toThrow('connection is already gone');
+
+    expect(closed).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
+
+  /**
    * Without an injected probe the application uses the default one, which asks the runner rather
    * than assuming the daemon is there.
    */

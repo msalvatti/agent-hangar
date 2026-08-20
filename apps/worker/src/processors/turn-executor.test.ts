@@ -3,8 +3,10 @@
  *
  * Layer: unit.
  * Goal: the ordering guarantee (redact, publish, then persist), the cancellation escalation from
- * `SIGINT` to `SIGKILL`, the release of the command subscription whatever happens, redacted stderr
- * diagnostics, and the refusal to publish a redacted event that no longer satisfies the protocol.
+ * `SIGINT` to `SIGKILL`, a cancellation that arrived before the exec did, redacted stderr
+ * diagnostics, the refusal to publish a redacted event that no longer satisfies the protocol, an
+ * outcome the runtime reported surviving a stream that breaks afterwards, and a publisher or sink
+ * failure described by classification rather than by its message.
  * Mocks: a runner whose exec is driven by hand, so a turn can be held open across fake timers.
  */
 import { DEFAULT_CHAT_TURN_LIMITS, encodeLine, turnRequestSchema } from '@agent-hangar/core';
@@ -19,11 +21,12 @@ import type {
 import { FakeWorkspaceRunner, GITHUB_CANARY } from '@agent-hangar/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { createTestContainer } from '../testing/index.js';
+import { connectionRefused, createTestContainer } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
+import { openCancellationWatch } from './cancellation.js';
 import { CANCEL_GRACE_MS } from './constants.js';
-import { executeRuntimeTurn, redactAgentEvent } from './turn-executor.js';
+import { CLIENT_ERROR_CODE, executeRuntimeTurn, redactAgentEvent } from './turn-executor.js';
 import type { TurnSink } from './turn-executor.js';
 
 const HANDLE: WorkspaceHandle = { workspaceId: 'ws-1', runnerRef: 'ref-1' };
@@ -128,6 +131,23 @@ class ScriptedExecRunner extends FakeWorkspaceRunner {
   }
 }
 
+/** A runner whose exec stream breaks after the events the test gave it. */
+class BreakingRunner extends FakeWorkspaceRunner {
+  constructor(
+    private readonly events: readonly ExecEvent[],
+    private readonly failure: unknown,
+  ) {
+    super();
+  }
+
+  override async *exec(): AsyncIterable<ExecEvent> {
+    for (const event of this.events) {
+      yield await Promise.resolve(event);
+    }
+    throw this.failure;
+  }
+}
+
 /** A runner whose exec cannot be started, rejecting with whatever the test supplies. */
 class RejectingRunner extends FakeWorkspaceRunner {
   constructor(private readonly failure: unknown) {
@@ -154,14 +174,20 @@ function recordingSink(): { sink: TurnSink; seen: AgentEvent[] } {
   };
 }
 
-/** Runs the executor with the container's collaborators. */
-function execute(container: TestContainer, sink: TurnSink): ReturnType<typeof executeRuntimeTurn> {
-  return executeRuntimeTurn(container, {
-    handle: HANDLE,
-    request: REQUEST,
-    sink,
-    cancelKey: REQUEST.turnId,
-  });
+/**
+ * Runs the executor with the container's collaborators, opening and closing the watch around it
+ * exactly as a processor does.
+ */
+async function execute(
+  container: TestContainer,
+  sink: TurnSink,
+): Promise<Awaited<ReturnType<typeof executeRuntimeTurn>>> {
+  const watch = await openCancellationWatch(container, REQUEST.turnId);
+  try {
+    return await executeRuntimeTurn(container, { handle: HANDLE, request: REQUEST, sink, watch });
+  } finally {
+    await watch.close();
+  }
 }
 
 afterEach(() => {
@@ -378,10 +404,11 @@ describe('executeRuntimeTurn', () => {
   });
 
   /**
-   * A sink that throws must not leave the command channel subscribed; the connection is shared by
-   * every concurrent turn.
+   * A sink that throws is the database failing, not the runner. It is classified as a client
+   * failure and described without repeating a message a driver built from its connection string,
+   * and the command subscription is released either way.
    */
-  it('releases the command subscription when the sink throws', async () => {
+  it('reports a failure to persist without repeating its message', async () => {
     const event: AgentEvent = { type: 'prepare.progress', message: 'Cloning…' };
     const container = createTestContainer({
       runner: new ScriptedExecRunner([
@@ -395,8 +422,101 @@ describe('executeRuntimeTurn', () => {
       onEvent: () => Promise.reject(new Error('database is down')),
     });
 
-    expect(outcome.terminal).toBe('runner-error');
+    expect(outcome).toMatchObject({
+      terminal: 'client-error',
+      reportedByRuntime: false,
+      error: { code: CLIENT_ERROR_CODE, message: 'unknown' },
+    });
+    expect(JSON.stringify(outcome)).not.toContain('database is down');
     expect(container.commands.subscriptions).toBe(0);
+  });
+
+  /**
+   * A publisher that cannot reach Redis is a client failure too, and never the daemon's: reporting
+   * it as a transport error would fail the workspace and reject the job for something the runner
+   * had no part in. What is recorded is the driver's classification, never its message, which
+   * carries the connection string with its password.
+   */
+  it('reports a failure to publish by classification, not as a runner failure', async () => {
+    const event: AgentEvent = { type: 'prepare.progress', message: 'Cloning…' };
+    const container = createTestContainer({
+      runner: new ScriptedExecRunner([
+        { type: 'started', execRef: 'exec-1' },
+        { type: 'stdout', data: new TextEncoder().encode(encodeLine(event)) },
+        { type: 'exit', code: 0 },
+      ]),
+    });
+    vi.spyOn(container.publisher, 'publish').mockRejectedValue(
+      Object.assign(new Error('connect ECONNREFUSED redis://ah:hunter2@cache:6379'), {
+        code: 'ECONNREFUSED',
+      }),
+    );
+    const { sink } = recordingSink();
+
+    const outcome = await execute(container, sink);
+
+    expect(outcome).toMatchObject({
+      terminal: 'client-error',
+      error: { code: CLIENT_ERROR_CODE, message: 'ECONNREFUSED' },
+    });
+    expect(JSON.stringify(outcome)).not.toContain('hunter2');
+  });
+
+  /**
+   * A stream that breaks after the runtime has already reported how the turn went does not undo
+   * it: the terminal event was published and persisted, and returning an unreported failure would
+   * have the caller write `turn.failed` over a run that succeeded.
+   */
+  it('keeps an outcome the runtime reported when the stream then breaks', async () => {
+    const completed: AgentEvent = {
+      type: 'turn.completed',
+      usage: { inputTokens: 1, outputTokens: 2 },
+      steps: 1,
+      finalMessage: 'done',
+    };
+    const container = createTestContainer({
+      runner: new BreakingRunner(
+        [
+          { type: 'started', execRef: 'exec-1' },
+          { type: 'stdout', data: new TextEncoder().encode(encodeLine(completed)) },
+        ],
+        connectionRefused(),
+      ),
+    });
+    const { sink, seen } = recordingSink();
+
+    const outcome = await execute(container, sink);
+
+    expect(outcome).toMatchObject({ terminal: 'completed', reportedByRuntime: true });
+    expect(seen).toEqual([completed]);
+    expect(container.logs.join('')).toContain('after the turn had reported its outcome');
+  });
+
+  /**
+   * Stop is offered while a turn is still preparing, and the request is published to whoever is
+   * listening at that moment. A cancellation the watch caught before the exec existed is therefore
+   * delivered as soon as there is a process to signal, instead of being lost with the preparation.
+   */
+  it('signals a cancellation that arrived before the exec started', async () => {
+    const runner = new DrivenRunner();
+    const container = createTestContainer({ runner });
+    const watch = await openCancellationWatch(container, REQUEST.turnId);
+    container.commands.emitCancel(REQUEST.turnId);
+    const { sink } = recordingSink();
+
+    const pending = executeRuntimeTurn(container, {
+      handle: HANDLE,
+      request: REQUEST,
+      sink,
+      watch,
+    });
+    runner.end();
+    const outcome = await pending;
+    await watch.close();
+
+    expect(watch.requested()).toBe(true);
+    expect(runner.signals).toEqual(['INT']);
+    expect(outcome.terminal).toBe('cancelled');
   });
 });
 

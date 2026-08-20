@@ -3,15 +3,21 @@
  *
  * Layer: service.
  *
- * The order is what matters: snapshot first, then the hints, then the note, then the container.
- * Destroying before reading would throw away the only record of where the agent's work ended up,
- * and the chat would come back on the base branch with the pushed commits invisible.
+ * The order is what matters: snapshot first, then the hints, then the note, then `STOPPING`, then
+ * the container. Destroying before reading would throw away the only record of where the agent's
+ * work ended up, and the chat would come back on the base branch with the pushed commits
+ * invisible. `STOPPING` is written last of the row updates because the lifecycle lets it lead only
+ * to `DESTROYED` or `FAILED`: a row parked there by bookkeeping that failed could never be walked
+ * back, and the collector — which reclaims `READY` rows and reconciles only rows whose container
+ * has gone — would leave that workspace and its live container alone forever. Everything before
+ * the destroy therefore happens while the row still says what it did before, so a pass that fails
+ * there changes nothing and the next pass starts over.
  *
- * Nothing here throws. The collector tears down many workspaces in one pass, and one container the
- * daemon refuses to remove must not stop the rest — that one is recorded as `FAILED` and left for
- * the next reconciliation.
+ * A failure is reported, not thrown. The collector tears down many workspaces in one pass, and one
+ * container the daemon refuses to remove — or one chat record the database refuses to write — must
+ * not stop the rest.
  */
-import { archivedNotice } from '@agent-hangar/core';
+import { archivedNotice, describeClientFailure } from '@agent-hangar/core';
 import type { Workspace, WorkspaceSnapshot } from '@agent-hangar/core';
 
 import type { ProcessorDeps } from './types.js';
@@ -123,6 +129,38 @@ async function recordForChat(
 }
 
 /**
+ * Reads the workspace and writes what its chat needs, before anything is torn down.
+ *
+ * @param deps - Runner, repositories and logger.
+ * @param workspace - The workspace being torn down.
+ * @param options - Why it is going away.
+ * @returns `true` when the teardown may go on to destroy the container; `false` when the record
+ *   could not be written, in which case nothing has changed and a later pass can start over.
+ */
+async function recordBeforeTeardown(
+  deps: ProcessorDeps,
+  workspace: Workspace,
+  options: TeardownOptions,
+): Promise<boolean> {
+  const snapshot = await snapshotOrNull(deps, workspace);
+  if (workspace.kind !== 'CHAT' || workspace.chatId === null) {
+    return true;
+  }
+  try {
+    await recordForChat(deps, workspace.chatId, snapshot, options);
+    return true;
+  } catch (error) {
+    // The repository's error is described rather than logged: a driver builds its message from
+    // the connection string it was configured with, password included.
+    deps.logger.error(
+      { failure: describeClientFailure(error), workspaceId: workspace.id },
+      'recording what a chat needs before its workspace is destroyed failed',
+    );
+    return false;
+  }
+}
+
+/**
  * Destroys a workspace, keeping what its chat needs to come back.
  *
  * @param deps - Runner, repositories and logger.
@@ -135,11 +173,10 @@ export async function teardownWorkspace(
   workspace: Workspace,
   options: TeardownOptions,
 ): Promise<TeardownOutcome> {
-  await deps.repos.workspaces.setStatus(workspace.id, 'STOPPING');
-  const snapshot = await snapshotOrNull(deps, workspace);
-  if (workspace.kind === 'CHAT' && workspace.chatId !== null) {
-    await recordForChat(deps, workspace.chatId, snapshot, options);
+  if (!(await recordBeforeTeardown(deps, workspace, options))) {
+    return 'failed';
   }
+  await deps.repos.workspaces.setStatus(workspace.id, 'STOPPING');
   try {
     await deps.runner.destroy({
       workspaceId: workspace.id,

@@ -10,12 +10,21 @@
  *
  * Security: the bytes fed to the parser are produced by a process whose environment holds the
  * GitHub PAT and the OpenAI key. Nothing derived from them leaves this function unredacted — not
- * the events, not the stderr diagnostics, and not the message of a transport failure.
+ * the events, not the stderr diagnostics, and not the message of a transport failure. A failure of
+ * the publisher or of the repositories is reported by classification and never by message: its
+ * text belongs to a driver that was configured with a connection string.
  */
-import { agentEventSchema, createNdjsonParser, encodeLine } from '@agent-hangar/core';
+import {
+  agentEventSchema,
+  createNdjsonParser,
+  describeClientFailure,
+  encodeLine,
+} from '@agent-hangar/core';
 import type {
   AgentEvent,
   AgentEventType,
+  ExecEvent,
+  NdjsonParser,
   Redactor,
   TurnRequest,
   WorkspaceHandle,
@@ -24,6 +33,7 @@ import type {
 
 import { isTransportError } from '../errors.js';
 
+import type { CancellationWatch } from './cancellation.js';
 import { CANCEL_GRACE_MS, EXEC_GRACE_MS, RUNTIME_CMD } from './constants.js';
 import type { ProcessorDeps } from './types.js';
 
@@ -47,7 +57,9 @@ export type TurnTerminal =
   /** The workspace runner itself failed in a way that is worth retrying (daemon unreachable). */
   | 'transport-error'
   /** The workspace runner itself failed in a way a retry would repeat. */
-  | 'runner-error';
+  | 'runner-error'
+  /** Publishing or persisting an event failed; the runner and the runtime were both fine. */
+  | 'client-error';
 
 /** What every outcome carries. */
 interface OutcomeBase {
@@ -92,8 +104,11 @@ export interface ExecuteRuntimeTurnInput {
   request: TurnRequest;
   /** Persistence of each redacted event. */
   sink: TurnSink;
-  /** Id whose command channel is subscribed and whose event stream is published to. */
-  cancelKey: string;
+  /**
+   * The cancellation subscription of this turn, opened by the caller before it prepared the
+   * workspace, and closed by the caller once the outcome is written.
+   */
+  watch: CancellationWatch;
 }
 
 /** Failure codes the executor synthesises when the runtime described no failure itself. */
@@ -107,6 +122,27 @@ export const TRANSPORT_CODE = 'transport';
 
 /** Failure code used when the runner failed for a reason a retry would reproduce. */
 export const RUNNER_ERROR_CODE = 'runner_error';
+
+/** Failure code used when the event stream could not be published or persisted. */
+export const CLIENT_ERROR_CODE = 'client_error';
+
+/**
+ * Raised when publishing or persisting an event failed, as opposed to the exec stream itself.
+ *
+ * Security: the two are told apart so their messages can be. A Redis or Postgres driver builds its
+ * message from the connection string it was configured with, password included, and the redactor
+ * knows only the GitHub and OpenAI credentials — so a client failure is reported by classification
+ * and never by message, while a runner failure, whose text is the daemon's, is redacted and kept.
+ */
+class EventDeliveryFailure extends Error {
+  /**
+   * @param cause - What the publisher or the sink rejected with.
+   */
+  constructor(cause: unknown) {
+    super('publishing or persisting a turn event failed', { cause });
+    this.name = 'EventDeliveryFailure';
+  }
+}
 
 /** Signal the runner reports when it enforced `timeoutMs`. */
 const TIMEOUT_SIGNAL = 'TIMEOUT';
@@ -140,6 +176,8 @@ export function redactAgentEvent(redactor: Redactor, event: AgentEvent): AgentEv
 
 /** Mutable state of one execution. */
 interface ExecState {
+  /** Incremental reader of the runtime's stdout; one per stream, as its contract requires. */
+  parser: NdjsonParser<AgentEvent>;
   execRef: string | undefined;
   cancelRequested: boolean;
   terminal: ReportedOutcome['terminal'] | undefined;
@@ -247,6 +285,28 @@ function beginCancellation(deps: ProcessorDeps, handle: WorkspaceHandle, state: 
 }
 
 /**
+ * Publishes one redacted event and persists it, in that order.
+ *
+ * @param deps - Publisher.
+ * @param input - The execution inputs, for the sink and the stream key.
+ * @param safe - The event, already redacted.
+ * @throws EventDeliveryFailure When either half failed, so the caller can tell a client outage
+ *   apart from a runner one.
+ */
+async function deliverEvent(
+  deps: ProcessorDeps,
+  input: ExecuteRuntimeTurnInput,
+  safe: AgentEvent,
+): Promise<void> {
+  try {
+    await deps.publisher.publish(input.watch.key, safe);
+    await input.sink.onEvent(safe);
+  } catch (error) {
+    throw new EventDeliveryFailure(error);
+  }
+}
+
+/**
  * Redacts, publishes and persists one parsed event.
  *
  * @param deps - Redactor, publisher and logger.
@@ -268,8 +328,7 @@ async function handleEvent(
       'runtime produced an invalid line',
     );
   }
-  await deps.publisher.publish(input.cancelKey, safe);
-  await input.sink.onEvent(safe);
+  await deliverEvent(deps, input, safe);
   const terminal = terminalOf(safe);
   if (terminal !== undefined) {
     state.terminal = terminal;
@@ -280,20 +339,120 @@ async function handleEvent(
 }
 
 /**
- * Runs the turn and streams its events.
+ * Applies one event of the exec stream.
  *
- * @param deps - The processor's collaborators.
- * @param input - Workspace, request, sink and cancellation key.
- * @returns How the turn ended.
+ * @param deps - Redactor, publisher and logger.
+ * @param input - The execution inputs, for the sink and the stream key.
+ * @param state - Execution state, updated in place.
+ * @param event - What the runner reported.
  */
-export async function executeRuntimeTurn(
+async function consumeExecEvent(
   deps: ProcessorDeps,
   input: ExecuteRuntimeTurnInput,
-): Promise<ExecOutcome> {
-  const parser = createNdjsonParser(agentEventSchema);
-  const state: ExecState = {
+  state: ExecState,
+  event: ExecEvent,
+): Promise<void> {
+  switch (event.type) {
+    case 'started':
+      state.execRef = event.execRef;
+      if (state.cancelRequested) {
+        // The cancellation arrived before the runner handed out a reference, so there was nothing
+        // to signal then; this is the retry.
+        beginCancellation(deps, input.handle, state);
+      }
+      break;
+    case 'stdout':
+      for (const parsed of state.parser.push(event.data)) {
+        await handleEvent(deps, input, state, parsed);
+      }
+      break;
+    case 'stderr':
+      deps.logger.debug(
+        { line: deps.redactor.redact(decoder.decode(event.data)) },
+        'runtime stderr',
+      );
+      break;
+    case 'exit':
+      state.exitCode = event.code;
+      state.exitSignal = event.signal;
+      break;
+  }
+}
+
+/**
+ * Builds the outcome of a turn the runtime described itself.
+ *
+ * @param state - What the loop observed.
+ * @param terminal - The terminal event it reported.
+ * @returns The reported outcome.
+ */
+function reportedOutcome(state: ExecState, terminal: ReportedOutcome['terminal']): ReportedOutcome {
+  return {
+    terminal,
+    reportedByRuntime: true,
+    exitCode: state.exitCode,
+    ...(state.error === undefined ? {} : { error: state.error }),
+    protocolErrors: state.protocolErrors,
+  };
+}
+
+/**
+ * Classifies a failure of the exec loop.
+ *
+ * A stream that breaks after the runtime has already reported its outcome does not undo it: the
+ * event was published and persisted, the caller would otherwise write a failure over a finished
+ * turn, and what actually failed — the socket, the driver — says nothing about how the turn went.
+ *
+ * @param deps - Logger, for the failure that is being kept out of the turn's record.
+ * @param state - What the loop observed before it broke.
+ * @param error - What it broke with.
+ * @returns The outcome the caller records.
+ */
+function failedOutcome(deps: ProcessorDeps, state: ExecState, error: unknown): ExecOutcome {
+  const reported = state.terminal;
+  if (reported !== undefined) {
+    // Described rather than logged whole: what broke may be the publisher or a repository, whose
+    // error carries the connection string it was configured with.
+    deps.logger.warn(
+      { failure: describeClientFailure(error) },
+      'the exec stream failed after the turn had reported its outcome',
+    );
+    return reportedOutcome(state, reported);
+  }
+  if (error instanceof EventDeliveryFailure) {
+    return {
+      terminal: 'client-error',
+      reportedByRuntime: false,
+      exitCode: null,
+      error: { code: CLIENT_ERROR_CODE, message: describeClientFailure(error.cause) },
+      protocolErrors: state.protocolErrors,
+    };
+  }
+  const retryable = isTransportError(error);
+  return {
+    terminal: retryable ? 'transport-error' : 'runner-error',
+    reportedByRuntime: false,
+    exitCode: null,
+    error: {
+      code: retryable ? TRANSPORT_CODE : RUNNER_ERROR_CODE,
+      message: describeExecFailure(deps.redactor, error),
+    },
+    protocolErrors: state.protocolErrors,
+  };
+}
+
+/**
+ * Builds the state one execution mutates as it goes.
+ *
+ * @param watch - The cancellation subscription the caller opened before preparing the workspace.
+ * @returns Fresh state, already carrying a cancellation that arrived during that preparation: it
+ *   is honoured as soon as the runner hands out something to signal, rather than being lost.
+ */
+function newExecState(watch: CancellationWatch): ExecState {
+  return {
+    parser: createNdjsonParser(agentEventSchema),
     execRef: undefined,
-    cancelRequested: false,
+    cancelRequested: watch.requested(),
     terminal: undefined,
     error: undefined,
     protocolErrors: 0,
@@ -301,12 +460,24 @@ export async function executeRuntimeTurn(
     exitSignal: undefined,
     killTimer: undefined,
   };
+}
 
-  const unsubscribe = await deps.commands.subscribe(input.cancelKey, {
-    onCancel: () => {
-      state.cancelRequested = true;
-      beginCancellation(deps, input.handle, state);
-    },
+/**
+ * Runs the turn and streams its events.
+ *
+ * @param deps - The processor's collaborators.
+ * @param input - Workspace, request, sink and the cancellation watch the caller opened.
+ * @returns How the turn ended.
+ */
+export async function executeRuntimeTurn(
+  deps: ProcessorDeps,
+  input: ExecuteRuntimeTurnInput,
+): Promise<ExecOutcome> {
+  const state = newExecState(input.watch);
+
+  input.watch.onCancel(() => {
+    state.cancelRequested = true;
+    beginCancellation(deps, input.handle, state);
   });
 
   try {
@@ -315,63 +486,22 @@ export async function executeRuntimeTurn(
       stdin: encodeLine(input.request),
       timeoutMs: input.request.limits.maxTurnMs + EXEC_GRACE_MS,
     })) {
-      switch (event.type) {
-        case 'started':
-          state.execRef = event.execRef;
-          if (state.cancelRequested) {
-            // The cancellation arrived between `subscribe` and the runner handing out a reference,
-            // so there was nothing to signal then; this is the retry.
-            beginCancellation(deps, input.handle, state);
-          }
-          break;
-        case 'stdout':
-          for (const parsed of parser.push(event.data)) {
-            await handleEvent(deps, input, state, parsed);
-          }
-          break;
-        case 'stderr':
-          deps.logger.debug(
-            { line: deps.redactor.redact(decoder.decode(event.data)) },
-            'runtime stderr',
-          );
-          break;
-        case 'exit':
-          state.exitCode = event.code;
-          state.exitSignal = event.signal;
-          break;
-      }
+      await consumeExecEvent(deps, input, state, event);
     }
-    for (const parsed of parser.flush()) {
+    for (const parsed of state.parser.flush()) {
       await handleEvent(deps, input, state, parsed);
     }
   } catch (error) {
-    const retryable = isTransportError(error);
-    return {
-      terminal: retryable ? 'transport-error' : 'runner-error',
-      reportedByRuntime: false,
-      exitCode: null,
-      error: {
-        code: retryable ? TRANSPORT_CODE : RUNNER_ERROR_CODE,
-        message: describeExecFailure(deps.redactor, error),
-      },
-      protocolErrors: state.protocolErrors,
-    };
+    return failedOutcome(deps, state, error);
   } finally {
     if (state.killTimer !== undefined) {
       clearTimeout(state.killTimer);
     }
-    await unsubscribe();
   }
 
   const reported = state.terminal;
-  if (reported === 'completed' || reported === 'failed' || reported === 'cancelled') {
-    return {
-      terminal: reported,
-      reportedByRuntime: true,
-      exitCode: state.exitCode,
-      ...(state.error === undefined ? {} : { error: state.error }),
-      protocolErrors: state.protocolErrors,
-    };
+  if (reported !== undefined) {
+    return reportedOutcome(state, reported);
   }
   const silent = classifySilentExit(state);
   return {
