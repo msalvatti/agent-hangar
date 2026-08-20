@@ -32,8 +32,15 @@ export interface RecordedScheduler {
   template: { name: string; data: unknown };
 }
 
-/** BullMQ job states the cancel path branches on. */
-export type FakeJobState = 'waiting' | 'delayed' | 'prioritized' | 'active' | 'completed';
+/**
+ * BullMQ job states the cancel and re-dispatch paths branch on.
+ *
+ * Both terminal states are here because retention keeps a job in either one, and a job in either
+ * one still holds its id against the next `add` — so a double that could only express `completed`
+ * would leave half of the re-dispatch rule untestable.
+ */
+export type FakeJobState =
+  'waiting' | 'delayed' | 'prioritized' | 'active' | 'completed' | 'failed';
 
 /** A job held by a {@link FakeQueue}. */
 export class FakeJob {
@@ -104,20 +111,30 @@ export class FakeQueue {
   }
 
   /**
-   * Records an enqueue.
+   * Records an enqueue, or declines it when the id is already taken.
+   *
+   * BullMQ answers an `add` for a `jobId` it still holds by returning the existing job instead of
+   * enqueuing a new one — silently, without throwing — and retention keeps a `completed` or
+   * `failed` job holding its id long after it ran. Modelling that is the whole point of this
+   * method: a double that overwrote instead would report a re-dispatch as successful when the real
+   * queue would run nothing at all, which is the one thing a caller most needs to be told.
    *
    * @param name - Job name.
    * @param data - Job payload.
    * @param opts - Job options, including the deterministic `jobId` when the producer sets one.
-   * @returns The stored job.
+   * @returns The stored job, or the existing one when its id was already held.
    * @throws Error When {@link FakeQueue.addFailure} is set.
    */
   add(name: string, data: unknown, opts?: JobOptions): Promise<FakeJob> {
     if (this.addFailure !== null) {
       return Promise.reject(this.addFailure);
     }
-    this.added.push({ name, data, opts });
     const id = opts?.jobId ?? `generated-${name}`;
+    const held = this.jobs.get(id);
+    if (held !== undefined) {
+      return Promise.resolve(held);
+    }
+    this.added.push({ name, data, opts });
     const job = new FakeJob(id, this.jobState, this);
     this.jobs.set(id, job);
     return Promise.resolve(job);

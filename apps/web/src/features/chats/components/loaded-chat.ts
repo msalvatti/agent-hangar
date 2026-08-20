@@ -11,5 +11,7 @@ import type { MappedChat } from '../lib/map-chat-detail';
 export interface LoadedChat {
   chat: ChatSummary;
   mapped: MappedChat;
+  /** Newest persisted turn, which is the one a failure loaded from history belongs to. */
+  lastTurnId: string | null;
   refetch: () => Promise<void>;
 }

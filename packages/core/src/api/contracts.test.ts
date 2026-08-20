@@ -201,6 +201,31 @@ describe('no-content operations', () => {
     expect(apiOperations.getJob.path).toBe(routes.job);
     expect(apiOperations.getJob.response).toBe(jobSummary);
   });
+
+  /**
+   * Retrying is a second action on the turn resource, and it declares no body. That absence is
+   * the contract-level statement of what a retry is: the prompt is the one already attached to
+   * the turn, so re-running it can never send a different one. It also sits on its own path, so
+   * a client cannot reach it by varying the method on the cancel route.
+   */
+  it('gives the turn retry its own bodiless route, distinct from the turn cancel', () => {
+    expect(apiOperations.retryTurn.method).toBe('POST');
+    expect(apiOperations.retryTurn.path).toBe(routes.turnRetry);
+    expect(apiOperations.retryTurn.path).not.toBe(apiOperations.cancelTurn.path);
+    expect(apiOperations.retryTurn.body).toBeUndefined();
+    expect(apiOperations.retryTurn.response.safeParse({ ok: true }).success).toBe(true);
+  });
+
+  /**
+   * The retry path is built from the turn id like every other `:id` template, and nothing else in
+   * the route table answers to it — a duplicate template would make two operations indistinguishable
+   * to any consumer that dispatches on the path alone.
+   */
+  it('builds the retry path from the turn id and keeps the template unique', () => {
+    expect(buildPath(routes.turnRetry, { id: 'turn-7' })).toBe('/api/turns/turn-7/retry');
+    const templates = Object.values(routes);
+    expect(templates.filter((template) => template === routes.turnRetry)).toHaveLength(1);
+  });
 });
 
 describe('chat schemas', () => {

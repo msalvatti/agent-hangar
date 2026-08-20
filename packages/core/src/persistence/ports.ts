@@ -108,6 +108,21 @@ export interface TurnRepository {
   get(id: string): Promise<Turn | null>;
   /** Sets a terminal status, usage and `finishedAt`; `error` is redacted on write. */
   finish(id: string, status: TerminalStatus, usage: UsageTotals, error?: string): Promise<Turn>;
+  /**
+   * Moves a `FAILED` turn back to `QUEUED` so it can be dispatched again, erasing the record of
+   * the attempt that failed: `error`, `startedAt`, `finishedAt` and the usage totals are all
+   * cleared. Only `FAILED` is a legal source — every other status either has work behind it or
+   * describes an outcome nobody asked to undo.
+   *
+   * The condition is part of the write rather than a check the caller makes first, so two
+   * concurrent retries of one turn cannot both see `FAILED` and both proceed.
+   *
+   * @param id - Turn to requeue.
+   * @returns The requeued turn, or `null` when it was not requeued — because no such row exists,
+   *   or because the row is not `FAILED`. Callers that have already resolved the turn can only
+   *   see the second reason.
+   */
+  requeue(id: string): Promise<Turn | null>;
   /** Turns of a chat, oldest first. */
   listByChat(chatId: string): Promise<Turn[]>;
 }

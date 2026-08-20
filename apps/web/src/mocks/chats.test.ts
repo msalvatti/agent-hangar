@@ -292,3 +292,35 @@ describe('POST /api/turns/:id/cancel', () => {
     expect(response.status).toBe(404);
   });
 });
+
+describe('POST /api/turns/:id/retry', () => {
+  // Retrying re-queues the failed turn itself and adds nothing to the chat's history, which is
+  // the behaviour the screen is tested against.
+  it('re-queues a failed turn without touching its messages', async () => {
+    const before = chatDetail.parse(await (await fetch('/api/chats/chat-failed')).json());
+
+    const response = await fetch('/api/turns/turn-failed-1/retry', { method: 'POST' });
+
+    expect(response.status).toBe(200);
+    expect(okResponse.parse(await response.json()).ok).toBe(true);
+    const after = chatDetail.parse(await (await fetch('/api/chats/chat-failed')).json());
+    expect(after.messages).toEqual(before.messages);
+    expect(after.turns).toHaveLength(1);
+    expect(after.turns[0]).toMatchObject({ id: 'turn-failed-1', status: 'QUEUED', error: null });
+    expect(after.chat.lastTurnStatus).toBe('QUEUED');
+  });
+
+  // A turn that did not fail is refused, exactly as the route refuses it.
+  it('409s for a turn that has not failed', async () => {
+    const response = await fetch('/api/turns/turn-finished-1/retry', { method: 'POST' });
+    expect(response.status).toBe(409);
+    expect((await errorBody(response)).error.code).toBe('TURN_NOT_RETRYABLE');
+  });
+
+  // An unknown turn id is a 404, so a client naming the wrong row learns it rather than silently
+  // succeeding against nothing.
+  it('404s for an unknown turn', async () => {
+    const response = await fetch('/api/turns/does-not-exist/retry', { method: 'POST' });
+    expect(response.status).toBe(404);
+  });
+});

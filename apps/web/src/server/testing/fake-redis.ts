@@ -104,6 +104,22 @@ export class FakeRedis implements RedisCommands {
   }
 
   /**
+   * Deletes a key or a whole stream, as `DEL` does.
+   *
+   * @param key - Key to delete.
+   * @returns `1` when something was removed, `0` when the key did not exist.
+   */
+  del(key: string): Promise<number> {
+    return this.guard(() => {
+      // Both stores are consulted, never short-circuited: `DEL` removes the key whatever its type
+      // is, and a double that stopped at the first hit would leave the other behind.
+      const keyRemoved = this.store.keys.delete(key);
+      const streamRemoved = this.store.streams.delete(key);
+      return keyRemoved || streamRemoved ? 1 : 0;
+    });
+  }
+
+  /**
    * @param channel - Channel name.
    * @param message - Payload.
    * @returns The number of subscribers, always `0` here.

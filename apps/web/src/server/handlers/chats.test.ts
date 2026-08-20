@@ -25,6 +25,7 @@ import {
   TITLE_LENGTH,
   titleFromPrompt,
 } from './chats';
+import { ENQUEUE_FAILED } from './dispatch';
 
 vi.mock('bullmq', () => import('../testing/fake-queue'));
 
@@ -135,7 +136,7 @@ describe('createChat', () => {
     expect(response.status).toBe(500);
     const [chat] = await harness.doubles.repos.chats.list();
     const turns = await harness.doubles.repos.turns.listByChat(chat!.id);
-    expect(turns[0]).toMatchObject({ status: 'FAILED', error: 'Could not enqueue the turn' });
+    expect(turns[0]).toMatchObject({ status: 'FAILED', error: ENQUEUE_FAILED });
   });
 
   /**

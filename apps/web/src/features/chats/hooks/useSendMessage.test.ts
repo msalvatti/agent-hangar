@@ -1,5 +1,5 @@
 /**
- * Tests for `useSendMessage`: posting follow-ups and retrying the last one.
+ * Tests for `useSendMessage`: posting follow-ups and reporting what the API answered.
  */
 import { act, renderHook } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
@@ -31,14 +31,9 @@ describe('useSendMessage', () => {
     expect(result.current.busy).toBe(false);
   });
 
-  // Retry re-sends the prompt of the turn that failed, seeded from the persisted history.
-  it('retries the seeded prompt', async () => {
+  // The prompt seeded from persisted history is reported before anything is sent through the hook.
+  it('starts from the prompt seeded out of history', () => {
     const { result } = renderHook(() => useSendMessage('chat-finished', 'original prompt'));
-    let turnId: string | null = null;
-    await act(async () => {
-      turnId = await result.current.retryLast();
-    });
-    expect(turnId).not.toBeNull();
     expect(result.current.lastPrompt).toBe('original prompt');
   });
 
@@ -55,15 +50,5 @@ describe('useSendMessage', () => {
     } finally {
       globalThis.fetch = original;
     }
-  });
-
-  // With nothing ever sent there is nothing to retry.
-  it('does nothing when there is no prompt to retry', async () => {
-    const { result } = renderHook(() => useSendMessage('chat-finished', null));
-    let turnId: string | null = 'unset';
-    await act(async () => {
-      turnId = await result.current.retryLast();
-    });
-    expect(turnId).toBeNull();
   });
 });

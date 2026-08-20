@@ -268,6 +268,66 @@ describe('TurnRepository', () => {
     );
     await expect(repos.turns.setStatus('missing', 'RUNNING')).rejects.toThrow(NotFoundError);
   });
+
+  /**
+   * `requeue` is the only backwards transition: a FAILED turn returns to QUEUED with every trace
+   * of the failed attempt erased, so nothing about the previous run is rendered under a turn that
+   * is waiting to run again.
+   */
+  it('requeues a failed turn and clears the failed attempt', async () => {
+    const chat = await seedChat();
+    const turn = await repos.turns.create({ chatId: chat.id, model: 'gpt' });
+    await repos.turns.setStatus(turn.id, 'PREPARING');
+    clock.advance(1000);
+    await repos.turns.finish(
+      turn.id,
+      'FAILED',
+      { inputTokens: 9, outputTokens: 4, stepCount: 3 },
+      'boom',
+    );
+
+    const requeued = await repos.turns.requeue(turn.id);
+
+    expect(requeued).toMatchObject({
+      id: turn.id,
+      status: 'QUEUED',
+      error: null,
+      startedAt: null,
+      finishedAt: null,
+      inputTokens: null,
+      outputTokens: null,
+      stepCount: 0,
+    });
+    expect(await repos.turns.get(turn.id)).toMatchObject({ status: 'QUEUED', error: null });
+  });
+
+  /**
+   * Every other status answers `null` rather than moving: a turn that never failed has either
+   * work behind it or an outcome nobody asked to undo, and a missing row is not a turn at all.
+   * Answering instead of throwing is what lets the route turn "no" into a 409.
+   */
+  it('refuses to requeue a turn that is not failed, and an unknown turn', async () => {
+    const chat = await seedChat();
+    const turn = await repos.turns.create({ chatId: chat.id, model: 'gpt' });
+
+    expect(await repos.turns.requeue(turn.id)).toBeNull();
+
+    await repos.turns.finish(turn.id, 'CANCELLED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    expect(await repos.turns.requeue(turn.id)).toBeNull();
+
+    await repos.turns.finish(turn.id, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    expect(await repos.turns.requeue(turn.id)).toBeNull();
+
+    expect(await repos.turns.requeue('missing')).toBeNull();
+  });
 });
 
 describe('WorkspaceRepository', () => {

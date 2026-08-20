@@ -23,6 +23,8 @@ export interface RedisCommands {
   get(key: string): Promise<string | null>;
   /** Whether a key exists; `1` when it does. */
   exists(key: string): Promise<number>;
+  /** Deletes a key or stream; returns how many keys were removed. */
+  del(key: string): Promise<number>;
   /** Publishes a command on a pub/sub channel (turn cancellation). */
   publish(channel: string, message: string): Promise<number>;
   /** Reads a bounded range of a stream; `start` may be `(id` for an exclusive lower bound. */

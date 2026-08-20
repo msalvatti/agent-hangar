@@ -7,6 +7,7 @@
 
 import type { RefObject } from 'react';
 
+import { ErrorCard } from '@/shared/feedback';
 import { Transcript } from '@/shared/transcript';
 import type { TranscriptItem, TurnPhase } from '@/shared/transcript';
 
@@ -20,13 +21,24 @@ export interface ChatBodyProps {
   /** `true` for an archived chat: the transcript is read-only and the composer is locked. */
   archived: boolean;
   onRetry: () => void;
+  /** `true` while a retry request is in flight, which disables the Retry button. */
+  retrying: boolean;
   /** Lets the header scroll the failure card into view. */
   errorRef: RefObject<HTMLDivElement | null>;
   draft: string;
   onDraftChange: (draft: string) => void;
   onSubmit: () => void;
-  /** `true` while the follow-up is being posted. */
+  /** `true` while the follow-up is being posted, or the retry request is in flight. */
   sending: boolean;
+  /**
+   * Why the last send or retry request itself was refused, or `undefined` when none was.
+   *
+   * Distinct from an `error` row of the transcript, which reports a turn that ran and failed. This
+   * one is the request never having been accepted, so there is no turn to attach it to and nothing
+   * else on screen would change — without it, pressing Send or Retry against a missing credential
+   * would look like nothing at all had happened.
+   */
+  actionError: string | undefined;
   /** `true` while a turn is still producing events, which locks the composer. */
   turnLive: boolean;
   /** Model id shown in the composer; `undefined` renders a skeleton. */
@@ -47,11 +59,13 @@ export function ChatBody({
   phase,
   archived,
   onRetry,
+  retrying,
   errorRef,
   draft,
   onDraftChange,
   onSubmit,
   sending,
+  actionError,
   turnLive,
   model,
 }: ChatBodyProps) {
@@ -64,11 +78,19 @@ export function ChatBody({
         className="min-h-0 flex-1"
         renderError={(item) => (
           <div ref={errorRef}>
-            <TurnErrorCard error={item} onRetry={onRetry} />
+            <TurnErrorCard error={item} onRetry={onRetry} busy={retrying} />
           </div>
         )}
       />
       <div className="px-6 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
+        {actionError !== undefined && (
+          <ErrorCard
+            title="Could not start the turn"
+            message={actionError}
+            variant="compact"
+            className="mb-2"
+          />
+        )}
         <Composer
           mode="followup"
           value={draft}

@@ -41,6 +41,21 @@ function renderStream(): { loader: ReturnType<typeof vi.fn>; instances: FakeEven
   return { loader, instances };
 }
 
+/**
+ * Drives the hook alone and hands back its result, so a test can call `followTurn`.
+ *
+ * @returns The hook result and the sources it opened.
+ */
+function renderFollowable(): {
+  result: { current: ReturnType<typeof useChatStream> };
+  instances: FakeEventSource[];
+} {
+  const { factory, instances } = createFakeEventSourceFactory();
+  const refetch = vi.fn().mockResolvedValue(undefined);
+  const { result } = renderHook(() => useChatStream('chat-1', RUNNING, refetch, factory));
+  return { result, instances };
+}
+
 describe('useChatStream', () => {
   // The chat lists render each row's dot from the persisted last-turn status, which no terminal
   // stream event updates on its own — so a finished turn would keep its running dot forever.
@@ -103,5 +118,46 @@ describe('useChatStream', () => {
     });
     await new Promise((resolve) => setTimeout(resolve, 50));
     expect(loader).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('useChatStream.followTurn', () => {
+  /**
+   * A follow-up message queues a turn with a new id while the stream is still attached to the one
+   * that just finished. The SSE route is per chat, so the url does not change and only an explicit
+   * reopen moves the stream onto the new turn.
+   */
+  it('reopens the stream when a different turn is followed', async () => {
+    const { result, instances } = renderFollowable();
+    await waitFor(() => {
+      expect(instances).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.followTurn('turn-2');
+    });
+
+    await waitFor(() => {
+      expect(instances).toHaveLength(2);
+    });
+    expect(result.current.activeTurnId).toBe('turn-2');
+  });
+
+  /**
+   * Following the turn that is already followed changes nothing, which is exactly why a retry —
+   * which re-runs the same turn row — has to ask for the reconnection itself.
+   */
+  it('does not reopen the stream when the same turn is followed again', async () => {
+    const { result, instances } = renderFollowable();
+    await waitFor(() => {
+      expect(instances).toHaveLength(1);
+    });
+
+    act(() => {
+      result.current.followTurn('turn-1');
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(instances).toHaveLength(1);
   });
 });

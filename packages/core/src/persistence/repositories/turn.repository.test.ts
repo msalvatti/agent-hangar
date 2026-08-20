@@ -5,8 +5,9 @@
  * Goal: `create` starts a turn QUEUED; `setStatus` stamps `startedAt` only on PREPARING and only
  * via the guarded `updateMany` (never touching an already-set `startedAt`), applies each optional
  * field only when present, redacts a non-null `error` and passes a null `error` through unchanged;
- * `finish` sets usage/finishedAt and redacts `error` only when provided; failures translate
- * through `translatePrismaError`.
+ * `finish` sets usage/finishedAt and redacts `error` only when provided; `requeue` moves a FAILED
+ * turn back to QUEUED through a conditional `updateMany` and answers null when nothing matched;
+ * failures translate through `translatePrismaError`.
  * Mocks: a Prisma client double exposing only `turn.*` — no database.
  */
 import { describe, expect, it, vi } from 'vitest';
@@ -218,6 +219,45 @@ describe('PrismaTurnRepository', () => {
     await expect(
       repo.finish('missing', 'SUCCEEDED', { inputTokens: 0, outputTokens: 0, stepCount: 0 }),
     ).rejects.toBeInstanceOf(NotFoundError);
+  });
+
+  /**
+   * requeue() names FAILED in the `where` clause, so Postgres and not the caller decides whether
+   * the transition is legal, and it clears every field the failed attempt left behind — an error
+   * still on the row would be rendered under a turn that is queued again.
+   */
+  it('requeue() moves a FAILED turn back to QUEUED and clears the failed attempt', async () => {
+    const { client, turn } = fakePrisma();
+    const repo = new PrismaTurnRepository(client, fakeRedactor);
+
+    const requeued = await repo.requeue('turn-1');
+
+    expect(turn.updateMany).toHaveBeenCalledWith({
+      where: { id: 'turn-1', status: 'FAILED' },
+      data: {
+        status: 'QUEUED',
+        error: null,
+        startedAt: null,
+        finishedAt: null,
+        inputTokens: null,
+        outputTokens: null,
+        stepCount: 0,
+      },
+    });
+    expect(turn.findUnique).toHaveBeenCalledWith({ where: { id: 'turn-1' } });
+    expect(requeued?.id).toBe('turn-1');
+  });
+
+  /**
+   * A row the conditional update did not match answers `null` rather than raising: "this turn is
+   * not retryable" is an ordinary answer the route turns into a 409, not a failure of the store.
+   */
+  it('requeue() answers null when no row matched the FAILED condition', async () => {
+    const { client, turn } = fakePrisma({ updateMany: vi.fn(() => Promise.resolve({ count: 0 })) });
+    const repo = new PrismaTurnRepository(client, fakeRedactor);
+
+    expect(await repo.requeue('turn-1')).toBeNull();
+    expect(turn.findUnique).not.toHaveBeenCalled();
   });
 
   /** listByChat() orders by queuedAt asc. */
