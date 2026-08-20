@@ -22,8 +22,16 @@ const jetBrainsMono = JetBrains_Mono({
   display: 'swap',
 });
 
-/** Applies `.dark` before hydration from the stored preference or the system setting. */
-const THEME_BOOTSTRAP = `(function(){try{var s=localStorage.getItem('theme');var d=s==='dark'||((s===null||s==='system')&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d);}catch(e){}})();`;
+/**
+ * Applies `.dark` before hydration from the stored preference or the system setting.
+ *
+ * Only `dark` and `light` are preferences; every other stored value — nothing yet, `system`, or a
+ * leftover this app no longer writes — means "follow the system", which is exactly how `useTheme`
+ * reads the same key once the app is running. Spelling the two out and treating the rest as
+ * unrecognised would leave the two readings disagreeing, and the page would be painted light
+ * before hydration and turned dark by the first system change after it.
+ */
+const THEME_BOOTSTRAP = `(function(){try{var s=localStorage.getItem('theme');var d=s==='dark'||(s!=='light'&&window.matchMedia('(prefers-color-scheme: dark)').matches);document.documentElement.classList.toggle('dark',d);}catch(e){}})();`;
 
 export const metadata: Metadata = {
   title: { default: 'Agent Hangar', template: '%s · Agent Hangar' },
