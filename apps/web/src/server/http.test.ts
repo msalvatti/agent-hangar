@@ -235,6 +235,29 @@ describe('withErrorHandling', () => {
   });
 
   /**
+   * Canary regression on the whole rejection path: a body carrying a credential in a field the
+   * contract refuses must produce a response that does not contain it.
+   *
+   * Zod 4 does not put the received value in its messages, so today this holds twice over — but
+   * that is a library's behaviour, not a guarantee this repository owns, and a message built from
+   * a parser's own text is exactly how input gets reflected back. The redactor is the control, and
+   * this test is what would notice if a future version started quoting the value.
+   */
+  it('keeps a credential out of the response that rejected it', async () => {
+    const { container } = createTestContainer();
+    const request = new Request('http://127.0.0.1:3000/api/chats?status=' + GITHUB_CANARY);
+    const response = await withErrorHandling(container, () =>
+      Promise.resolve(
+        json(parseQuery(request.url, z.object({ status: z.enum(['ACTIVE', 'ARCHIVED']) }))),
+      ),
+    );
+    expect(response.status).toBe(400);
+    const body = await response.text();
+    expect(body).not.toContain(GITHUB_CANARY);
+    expect(body).not.toContain('TESTCANARY');
+  });
+
+  /**
    * Canary regression: a domain message that quotes request input — an invalid cron is the real
    * case — is redacted on the way out, so a credential pasted into a form field cannot be
    * reflected back by the error that rejected it.
