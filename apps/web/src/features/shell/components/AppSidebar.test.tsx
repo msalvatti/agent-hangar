@@ -1,7 +1,7 @@
 /**
  * Tests for `AppSidebar`: the three responsive shapes and the global shortcuts.
  */
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -59,6 +59,35 @@ describe('AppSidebar', () => {
     expect(screen.queryByTestId('sidebar-slot')).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
     expect(await screen.findByRole('link', { name: 'Agent Hangar home' })).toBeInTheDocument();
+  });
+
+  // Dismissing the drawer itself (Escape, the close button, the backdrop) closes it without any
+  // navigation happening.
+  it('closes the drawer when it is dismissed', async () => {
+    media = stubMatchMedia([]);
+    render(<AppSidebar />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    expect(await screen.findByRole('link', { name: 'Agent Hangar home' })).toBeInTheDocument();
+
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() => {
+      expect(screen.queryByRole('link', { name: 'Agent Hangar home' })).not.toBeInTheDocument();
+    });
+  });
+
+  // The app layout persists across routes, so a drawer left open would cover the page the
+  // operator just navigated to.
+  it('closes the drawer once the path changes', async () => {
+    media = stubMatchMedia([]);
+    const { rerender } = render(<AppSidebar />);
+    await userEvent.click(screen.getByRole('button', { name: 'Open navigation' }));
+    expect(await screen.findByRole('link', { name: 'Agent Hangar home' })).toBeInTheDocument();
+
+    pathname.mockReturnValue('/chats/chat-running');
+    rerender(<AppSidebar />);
+    await waitFor(() => {
+      expect(screen.queryByRole('link', { name: 'Agent Hangar home' })).not.toBeInTheDocument();
+    });
   });
 
   // ⌘K opens the search palette from anywhere in the app.

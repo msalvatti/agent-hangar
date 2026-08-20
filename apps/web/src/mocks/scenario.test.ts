@@ -4,7 +4,7 @@
  */
 import { beforeEach, describe, expect, it } from 'vitest';
 
-import { clearScenarioOverride, getScenario, setScenario } from './scenario';
+import { clearScenarioOverride, getScenario, initializeScenario, setScenario } from './scenario';
 import { resetStore, store } from './store';
 
 // A beforeEach (not afterEach) guarantees a clean slate regardless of hook execution order: the
@@ -78,6 +78,31 @@ describe('getScenario', () => {
     clearScenarioOverride();
     process.env.NEXT_PUBLIC_API_MOCK_SCENARIO = 'failing-turn';
     expect(getScenario()).toBe('failing-turn');
+  });
+});
+
+describe('initializeScenario', () => {
+  // Reading a scenario back from localStorage after a reload has to shape the store the same way
+  // choosing it did: without this the documented reload flow leaves the store at its defaults and
+  // the scenario has no visible effect at all.
+  it('applies the store effects of a scenario read from localStorage', () => {
+    localStorage.setItem('ah-mock-scenario', 'missing-settings');
+    expect(initializeScenario()).toBe('missing-settings');
+    expect(store.secrets).toEqual({});
+  });
+
+  // The environment variable is the other reload-surviving source and behaves identically.
+  it('applies the store effects of a scenario read from the env var', () => {
+    process.env.NEXT_PUBLIC_API_MOCK_SCENARIO = 'infra-down';
+    expect(initializeScenario()).toBe('infra-down');
+    expect(store.health.checks.docker.ok).toBe(false);
+  });
+
+  // With nothing selected anywhere the store is left exactly as seeded.
+  it('leaves the store untouched for the default scenario', () => {
+    expect(initializeScenario()).toBe('default');
+    expect(store.health.ok).toBe(true);
+    expect(Object.keys(store.secrets)).toHaveLength(2);
   });
 });
 

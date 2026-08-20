@@ -7,7 +7,7 @@
 export { handlers } from './handlers';
 export { server } from './server';
 export { store, resetStore } from './store';
-export { setScenario } from './scenario';
+export { initializeScenario, setScenario } from './scenario';
 export type { MockScenario } from './scenario';
 export { createSseResponse, scriptedTurnFrames } from './events';
 export type { CreateSseResponseOptions, ScriptedTurnOptions, SseScriptFrame } from './events';

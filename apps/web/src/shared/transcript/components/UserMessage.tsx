@@ -5,16 +5,22 @@
  */
 import { cn } from '@/shared/lib/cn';
 
+import { maskSecretShapes } from '../lib/redact-display';
+
 /** Props of {@link UserMessage}. */
 export interface UserMessageProps {
-  /** Message text, rendered verbatim (whitespace preserved). */
+  /** Message text, masked for secret shapes and rendered with whitespace preserved. */
   text: string;
   /** ISO timestamp, currently unused visually but accepted for future display. */
   at?: string;
   className?: string;
 }
 
-/** A `--muted` bubble, left-aligned, labelled "You" (spec 10 §4.2). */
+/**
+ * A `--muted` bubble, left-aligned, labelled "You" (spec 10 §4.2). `text` is masked for secret
+ * shapes like every other transcript row: a prompt is operator-typed, so a pasted token would
+ * otherwise stay on screen for the whole session.
+ */
 export function UserMessage({ text, at, className }: UserMessageProps) {
   return (
     <div className={cn('max-w-full', className)} data-item-kind="user" title={at}>
@@ -22,7 +28,7 @@ export function UserMessage({ text, at, className }: UserMessageProps) {
         You
       </div>
       <div className="bg-muted w-fit max-w-full rounded-[10px] px-4 py-3 text-[15px] leading-[1.6] whitespace-pre-wrap">
-        {text}
+        {maskSecretShapes(text)}
       </div>
     </div>
   );

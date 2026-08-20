@@ -38,7 +38,12 @@ export function ArchivedBanner({ onRestore, busy = false }: ArchivedBannerProps)
           onClick={onRestore}
           className="cursor-pointer"
         >
-          {busy && <Loader2 aria-hidden="true" className="size-3.5 animate-spin" />}
+          {busy && (
+            <Loader2
+              aria-hidden="true"
+              className="size-3.5 animate-spin motion-reduce:animate-none"
+            />
+          )}
           Restore
         </Button>
       </CardContent>

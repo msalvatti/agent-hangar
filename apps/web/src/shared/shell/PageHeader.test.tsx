@@ -43,6 +43,15 @@ describe('PageHeader', () => {
     expect(grid?.children[0]).toBeEmptyDOMElement();
   });
 
+  // `title` takes any node and callers pass a heading. Phrasing content may not contain flow
+  // content, so the wrapper must not be a `span`: `<span><h1>` is invalid markup and the server
+  // and client renderers can repair it differently.
+  it('wraps the title in flow content so a heading is valid', () => {
+    render(<PageHeader title={<h1>Fix flaky auth test</h1>} />);
+    const heading = screen.getByRole('heading', { name: 'Fix flaky auth test' });
+    expect(heading.parentElement?.tagName).toBe('DIV');
+  });
+
   // The header lives inside the HeaderSlot landmark.
   it('renders inside the HeaderSlot landmark', () => {
     render(<PageHeader title="Chats" />);

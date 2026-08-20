@@ -143,7 +143,12 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
     setDraft('');
     stream.dispatch({
       type: 'reset',
-      items: [...stream.state.items, { kind: 'user', id: `pending-${turnId}`, text: prompt }],
+      // The new turn supersedes any failure already on screen: a reloaded chat only ever shows the
+      // newest turn's error, so the live transcript must not accumulate the older ones either.
+      items: [
+        ...stream.state.items.filter((item) => item.kind !== 'error'),
+        { kind: 'user', id: `pending-${turnId}`, text: prompt },
+      ],
       phase: 'queued',
     });
     stream.followTurn(turnId);
@@ -179,7 +184,6 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
         items={stream.state.items}
         phase={phase}
         archived={archived}
-        error={stream.state.error}
         onRetry={retry}
         errorRef={errorRef}
         draft={draft}

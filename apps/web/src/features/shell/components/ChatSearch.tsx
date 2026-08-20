@@ -8,6 +8,7 @@
 import type { ChatSummary } from '@agent-hangar/core';
 import { useRouter } from 'next/navigation';
 
+import { maskSecretShapes } from '@/shared/transcript';
 import {
   Command,
   CommandDialog,
@@ -29,7 +30,8 @@ export interface ChatSearchProps {
 /**
  * A searchable list of every chat; choosing one navigates to it and closes the palette.
  *
- * Filtering is left to `cmdk`, which matches on each item's value — the chat title.
+ * Filtering is left to `cmdk`, which matches on each item's value — the chat title, masked for
+ * secret shapes so neither the rendered label nor the `data-value` attribute can carry one.
  *
  * @param props - Open state and its setter.
  */
@@ -58,12 +60,12 @@ export function ChatSearch({ open, onOpenChange }: ChatSearchProps) {
               {active.map((chat) => (
                 <CommandItem
                   key={chat.id}
-                  value={chat.title}
+                  value={maskSecretShapes(chat.title)}
                   onSelect={() => {
                     choose(chat);
                   }}
                 >
-                  {chat.title}
+                  {maskSecretShapes(chat.title)}
                 </CommandItem>
               ))}
             </CommandGroup>
@@ -73,12 +75,12 @@ export function ChatSearch({ open, onOpenChange }: ChatSearchProps) {
               {archived.map((chat) => (
                 <CommandItem
                   key={chat.id}
-                  value={chat.title}
+                  value={maskSecretShapes(chat.title)}
                   onSelect={() => {
                     choose(chat);
                   }}
                 >
-                  {chat.title}
+                  {maskSecretShapes(chat.title)}
                 </CommandItem>
               ))}
             </CommandGroup>

@@ -142,6 +142,41 @@ describe('ChatView', () => {
     });
   });
 
+  // The reducer already appends the failure as a transcript row, so rendering a second card for
+  // the same failure would show the operator two error surfaces for one event.
+  it('shows exactly one card for a failure', async () => {
+    const { instances } = renderChat('chat-running');
+    const source = await firstSource(instances);
+    act(() => {
+      source.open();
+      source.emit(
+        'turn.failed',
+        { type: 'turn.failed', error: { code: 'auth', message: 'OpenAI rejected the API key' } },
+        '9-0',
+      );
+    });
+    expect(await screen.findByText('OpenAI rejected the key')).toBeInTheDocument();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1);
+  });
+
+  // A failed turn reloaded from persistence is as actionable as a live one: without the retry the
+  // only way out of a failed chat that was reopened would be to start a new one.
+  it('offers Retry for a failure loaded from history', async () => {
+    renderChat('chat-failed');
+    expect(await screen.findByText('The turn failed')).toBeInTheDocument();
+    const retry = screen.getByRole('button', { name: 'Retry' });
+    await userEvent.click(retry);
+    await waitFor(() => {
+      expect(
+        screen.getAllByText(/Walk me through how the caching layer invalidates stale entries\./),
+      ).toHaveLength(2);
+    });
+    // The retried failure is superseded, not stacked: a second attempt must not leave two error
+    // cards — and two Retry buttons — on the screen.
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   // An archived chat is read-only until it is restored.
   it('offers to restore an archived chat', async () => {
     renderChat('chat-archived');

@@ -1,6 +1,7 @@
 /**
  * Tests for `ChatTitle`: the in-place rename in the chat header.
  */
+import { OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
@@ -83,6 +84,32 @@ describe('ChatTitle', () => {
   it('shows a spinner while renaming', () => {
     const { container } = render(<ChatTitle title="Fix auth" editable busy onRename={vi.fn()} />);
     expect(container.querySelector('.animate-spin')).not.toBeNull();
+  });
+
+  // The title is derived from the opening prompt, so it is masked wherever it is shown — the
+  // read-only heading included.
+  it('masks a secret shape in a read-only title', () => {
+    render(<ChatTitle title={`key ${OPENAI_CANARY}`} editable={false} onRename={vi.fn()} />);
+    expect(screen.getByRole('heading', { name: 'key [REDACTED]' })).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(OPENAI_CANARY);
+  });
+
+  // Editing must not reveal what the display masked: the draft starts from the masked text, and
+  // committing it unchanged is therefore not a rename.
+  it('edits the masked title without revealing or renaming', async () => {
+    const onRename = vi.fn();
+    render(<ChatTitle title={`key ${OPENAI_CANARY}`} editable onRename={onRename} />);
+    await userEvent.click(screen.getByRole('button', { name: 'key [REDACTED]' }));
+    expect(screen.getByLabelText<HTMLInputElement>('Chat title').value).toBe('key [REDACTED]');
+    await userEvent.keyboard('{Enter}');
+    expect(onRename).not.toHaveBeenCalled();
+    expect(document.body.textContent).not.toContain(OPENAI_CANARY);
+  });
+
+  // The spinner honours a reduced-motion preference like every other animated indicator.
+  it('stops the rename spinner under reduced motion', () => {
+    const { container } = render(<ChatTitle title="Fix auth" editable busy onRename={vi.fn()} />);
+    expect(container.querySelector('.animate-spin')).toHaveClass('motion-reduce:animate-none');
   });
 
   // Typing another key while focused must not open the editor.

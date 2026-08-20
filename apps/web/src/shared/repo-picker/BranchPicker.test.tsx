@@ -38,9 +38,10 @@ describe('BranchPicker', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
-  // A re-render for the same repo (e.g. a new onChange identity) does not auto-select again: the
-  // effect's own ref guard, not just the `value !== null` check, stops the second pass.
-  it('does not auto-select a second time for the same repo', async () => {
+  // Choosing the same repository again clears the branch back to null, and that selection has to
+  // be defaulted a second time. Remembering that this repo was already defaulted once leaves the
+  // caller with no branch and no way to get one, which keeps the composer disabled.
+  it('auto-selects again after the value is cleared for the same repo', async () => {
     const firstOnChange = vi.fn();
     const { rerender } = render(
       <BranchPicker repo="acme/api" value={null} onChange={firstOnChange} />,
@@ -51,8 +52,9 @@ describe('BranchPicker', () => {
 
     const secondOnChange = vi.fn();
     rerender(<BranchPicker repo="acme/api" value={null} onChange={secondOnChange} />);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-    expect(secondOnChange).not.toHaveBeenCalled();
+    await waitFor(() => {
+      expect(secondOnChange).toHaveBeenCalledWith('main');
+    });
   });
 
   // Selecting another branch from the list calls onChange with it.

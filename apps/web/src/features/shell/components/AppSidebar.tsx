@@ -47,7 +47,11 @@ export function AppSidebar() {
   const router = useRouter();
   const pathname = usePathname();
   const [searchOpen, setSearchOpen] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
+  // The drawer records the path it was opened on and is only open while the app is still there.
+  // The layout persists across routes, so an open drawer would otherwise survive the navigation it
+  // triggered and cover the page it just opened.
+  const [drawer, setDrawer] = useState<{ open: boolean; at: string }>({ open: false, at: '' });
+  const drawerOpen = drawer.open && drawer.at === pathname;
   // Desktop is the design target (spec 10 §9), so the pre-hydration shape is the full column.
   const isFull = useMediaQuery(FULL_QUERY, true);
   const isRail = useMediaQuery(RAIL_QUERY, true);
@@ -92,10 +96,15 @@ export function AppSidebar() {
     <>
       <MobileNavTrigger
         onOpen={() => {
-          setDrawerOpen(true);
+          setDrawer({ open: true, at: pathname });
         }}
       />
-      <Sheet open={drawerOpen} onOpenChange={setDrawerOpen}>
+      <Sheet
+        open={drawerOpen}
+        onOpenChange={(open) => {
+          setDrawer({ open, at: pathname });
+        }}
+      >
         <SheetContent side="left" className="bg-sidebar w-65 p-0">
           <SheetHeader className="sr-only">
             <SheetTitle>Sidebar</SheetTitle>

@@ -7,6 +7,7 @@ import type { ChatSummary } from '@agent-hangar/core';
 import Link from 'next/link';
 
 import { cn } from '@/shared/lib/cn';
+import { maskSecretShapes } from '@/shared/transcript';
 
 /** How the trailing dot renders per last-turn status. */
 const DOT_BY_STATUS = {
@@ -43,7 +44,8 @@ export interface ChatListItemProps {
 }
 
 /**
- * A 36 px row: the truncated title plus a status dot with text for assistive technology.
+ * A 36 px row: the truncated title plus a status dot with text for assistive technology. The title
+ * is derived from the opening prompt, so it is masked for secret shapes like the transcript rows.
  *
  * @param props - The chat, whether it is open, and the roving tabindex wiring.
  */
@@ -61,7 +63,7 @@ export function ChatListItem({ chat, active, tabIndex, onFocus }: ChatListItemPr
           active ? 'bg-muted' : 'hover:bg-muted/60',
         )}
       >
-        <span className="min-w-0 flex-1 truncate">{chat.title}</span>
+        <span className="min-w-0 flex-1 truncate">{maskSecretShapes(chat.title)}</span>
         {dot !== null && (
           <>
             <span

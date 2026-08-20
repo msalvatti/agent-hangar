@@ -11,10 +11,18 @@
 import { buildPath, routes } from '@agent-hangar/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
+import { invalidateQueries } from '@/shared/api/use-api-query';
 import { useTurnEvents } from '@/shared/transcript';
-import type { CreateEventSource, UseTurnEventsResult } from '@/shared/transcript';
+import type { CreateEventSource, TurnPhase, UseTurnEventsResult } from '@/shared/transcript';
 
 import type { MappedChat } from '../lib/map-chat-detail';
+
+/** Phases after which the stream has nothing left to deliver for the turn it follows. */
+const TERMINAL_PHASES: ReadonlySet<TurnPhase> = new Set<TurnPhase>([
+  'succeeded',
+  'failed',
+  'cancelled',
+]);
 
 /** Result of {@link useChatStream}. */
 export interface UseChatStreamResult extends UseTurnEventsResult {
@@ -71,6 +79,25 @@ export function useChatStream(
     dispatch({ type: 'reset', items: mapped.items, phase: mapped.phase });
     setActiveTurnId(mapped.activeTurnId);
   }, [mapped, dispatch]);
+
+  // A terminal event reaches the transcript only. The chat lists render each row's dot from the
+  // persisted last-turn status, so without this they keep showing a finished turn as still running.
+  //
+  // Only the lists are invalidated, never this chat's own detail: reloading it would reseed the
+  // reducer from persistence and could momentarily undo the terminal state the stream just
+  // delivered. The live transcript is the fresher record of the turn that is on screen.
+  const reconciledTurnRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (
+      activeTurnId === null ||
+      !TERMINAL_PHASES.has(state.phase) ||
+      reconciledTurnRef.current === activeTurnId
+    ) {
+      return;
+    }
+    reconciledTurnRef.current = activeTurnId;
+    invalidateQueries(['chats']);
+  }, [activeTurnId, state.phase]);
 
   const expiredRef = useRef(false);
   useEffect(() => {

@@ -30,4 +30,10 @@ describe('ArchivedBanner', () => {
     expect(screen.getByRole('button', { name: 'Restore' })).toBeDisabled();
     expect(container.querySelector('.animate-spin')).not.toBeNull();
   });
+
+  // The restore spinner honours a reduced-motion preference like every other indicator.
+  it('stops the restore spinner under reduced motion', () => {
+    const { container } = render(<ArchivedBanner busy onRestore={vi.fn()} />);
+    expect(container.querySelector('.animate-spin')).toHaveClass('motion-reduce:animate-none');
+  });
 });

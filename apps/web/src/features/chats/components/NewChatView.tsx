@@ -29,6 +29,11 @@ export interface NewChatViewProps {
 /**
  * Composes the `/chats/new` screen and owns the draft prompt, repository and branch.
  *
+ * The screen scrolls: the shell's main column clips its overflow, and on a narrow viewport the
+ * suggestions plus the composer are taller than it. `m-auto` centres the column while it fits and
+ * yields to the scroll box when it does not, which `justify-center` would not do — that clips the
+ * overflowing top instead of letting it be reached.
+ *
  * @param props - Optional nav trigger for the page header.
  */
 export function NewChatView({ navTrigger }: NewChatViewProps) {
@@ -66,8 +71,11 @@ export function NewChatView({ navTrigger }: NewChatViewProps) {
   return (
     <>
       <PageHeader title="New chat" navTrigger={navTrigger} />
-      <div className="flex min-h-[calc(100dvh-48px)] items-center justify-center px-6 py-10">
-        <div className="flex w-full max-w-[840px] flex-col items-center gap-8">
+      <div
+        data-testid="new-chat-scroll"
+        className="flex min-h-0 flex-1 flex-col overflow-y-auto px-6 py-10"
+      >
+        <div className="m-auto flex w-full max-w-[840px] flex-col items-center gap-8">
           <LogoMark />
           <h1 className="text-center text-[28px] font-semibold tracking-tight">
             What should we build?

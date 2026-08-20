@@ -9,13 +9,14 @@
  */
 'use client';
 
-import { memo, useLayoutEffect, useRef, useState } from 'react';
+import { Fragment, memo, useLayoutEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 
 import { ErrorCard } from '@/shared/feedback';
 import { cn } from '@/shared/lib/cn';
 
 import { assertPresent } from '../lib/assert';
-import type { TranscriptItem, TurnPhase } from '../types';
+import type { ErrorTranscriptItem, TranscriptItem, TurnPhase } from '../types';
 
 import { AssistantMarkdown } from './AssistantMarkdown';
 import { JumpToLatest } from './JumpToLatest';
@@ -37,6 +38,11 @@ export interface TranscriptProps {
   onStopTool?: (callId: string) => void;
   /** Shown when `items` is empty and `phase` is `idle` (default: "No messages yet."). */
   emptyText?: string;
+  /**
+   * Replaces the default presentation of an `error` row, so a caller that has an action to offer
+   * (a retry, a link to Settings) renders the failure once, with its buttons attached.
+   */
+  renderError?: (item: ErrorTranscriptItem) => ReactNode;
   className?: string;
 }
 
@@ -104,6 +110,7 @@ export function Transcript({
   readOnly = false,
   onStopTool,
   emptyText = 'No messages yet.',
+  renderError,
   className,
 }: TranscriptProps) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -153,9 +160,21 @@ export function Transcript({
         {isEmpty && phase === 'idle' ? (
           <p className="text-muted-foreground py-12 text-center text-sm">{emptyText}</p>
         ) : (
-          items.map((item) => (
-            <TranscriptRow key={item.id} item={item} readOnly={readOnly} onStopTool={onStopTool} />
-          ))
+          items.map((item) =>
+            // Handled here rather than inside the memoized row so a caller-supplied renderer, whose
+            // closure changes identity every render, cannot defeat the memoization of every other
+            // row in the list.
+            item.kind === 'error' && renderError !== undefined ? (
+              <Fragment key={item.id}>{renderError(item)}</Fragment>
+            ) : (
+              <TranscriptRow
+                key={item.id}
+                item={item}
+                readOnly={readOnly}
+                onStopTool={onStopTool}
+              />
+            ),
+          )
         )}
         {showBareCursor && <StreamCursor />}
       </div>

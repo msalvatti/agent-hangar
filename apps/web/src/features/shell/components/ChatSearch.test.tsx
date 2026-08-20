@@ -1,12 +1,14 @@
 /**
  * Tests for `ChatSearch`: the ⌘K palette over the chat titles.
  */
+import { GITHUB_CANARY } from '@agent-hangar/core/testing';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { http, HttpResponse } from 'msw';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { server } from '@/mocks/server';
+import { store } from '@/mocks/store';
 
 import { ChatSearch } from './ChatSearch';
 
@@ -56,6 +58,20 @@ describe('ChatSearch', () => {
       await screen.findByRole('option', { name: /Refactor the queue consumer/ }),
     );
     expect(push).toHaveBeenCalledWith('/chats/chat-archived');
+  });
+
+  // Titles come from the opening prompt, and `cmdk` copies an item's value into a `data-value`
+  // attribute, so both the label and the value are masked.
+  it('masks a secret shape in a title', async () => {
+    const entry = store.chats[0];
+    if (entry === undefined) {
+      throw new Error('The mock store seeds at least one chat');
+    }
+    entry.chat = { ...entry.chat, title: `clone with ${GITHUB_CANARY}` };
+    render(<ChatSearch open onOpenChange={vi.fn()} />);
+    const option = await screen.findByRole('option', { name: 'clone with [REDACTED]' });
+    expect(option).toHaveAttribute('data-value', 'clone with [REDACTED]');
+    expect(document.body.textContent).not.toContain(GITHUB_CANARY);
   });
 
   // With no chats at all the palette says so instead of showing an empty box.

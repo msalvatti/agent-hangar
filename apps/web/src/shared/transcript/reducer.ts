@@ -136,9 +136,14 @@ function appendToolOutput(
     return item;
   }
   const encoder = new TextEncoder();
+  // Streaming mode: cutting the encoded text at a byte boundary can split a multibyte character,
+  // and a one-shot decode would turn that partial sequence into U+FFFD — three bytes, more than
+  // the fragment it replaced, pushing the item past the display cap. A streaming decoder holds an
+  // incomplete trailing sequence back instead of substituting it, and it is never flushed.
   const decoder = new TextDecoder();
   const encoded = encoder.encode(text);
-  const kept = encoded.length <= budget ? text : decoder.decode(encoded.slice(0, budget));
+  const kept =
+    encoded.length <= budget ? text : decoder.decode(encoded.slice(0, budget), { stream: true });
   const keptBytes = byteLength(kept);
   return {
     ...item,

@@ -2,6 +2,7 @@
  * Tests for `ChatListItem`: the row's title, status dot and current-page marking.
  */
 import type { ChatSummary } from '@agent-hangar/core';
+import { GITHUB_CANARY } from '@agent-hangar/core/testing';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -56,6 +57,15 @@ describe('ChatListItem', () => {
       <ChatListItem chat={chatWith(status)} active={false} tabIndex={0} onFocus={vi.fn()} />,
     );
     expect(container.querySelector('.rounded-full')).toBeNull();
+  });
+
+  // The title is the opening prompt's first line, so a pasted credential would otherwise sit in
+  // the sidebar for every page of the session.
+  it('masks a secret shape in the title', () => {
+    const chat = { ...chatWith(null), title: `deploy with ${GITHUB_CANARY}` };
+    render(<ChatListItem chat={chat} active={false} tabIndex={0} onFocus={vi.fn()} />);
+    expect(screen.getByText('deploy with [REDACTED]')).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain(GITHUB_CANARY);
   });
 
   // The open chat is marked as the current page, not merely styled.

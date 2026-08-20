@@ -81,8 +81,14 @@ export function useChatActions(id: string): UseChatActionsResult {
       rename: (title: string) => run('rename', () => renameChat(id, title), 'Chat renamed'),
       cancel: (turnId: string) => run('cancel', () => cancelTurn(turnId), 'Turn stopped'),
       copyId: async () => {
-        await navigator.clipboard.writeText(id);
-        toast.success('Chat id copied');
+        // Callers discard this promise (each action reports through its own toast), so a denied
+        // clipboard permission would otherwise surface as an unhandled rejection and no feedback.
+        try {
+          await navigator.clipboard.writeText(id);
+          toast.success('Chat id copied');
+        } catch {
+          toast.error('Copy failed');
+        }
       },
       busy,
     }),

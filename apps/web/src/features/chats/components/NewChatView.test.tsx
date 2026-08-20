@@ -29,6 +29,17 @@ describe('NewChatView', () => {
     localStorage.clear();
   });
 
+  // The shell's main column clips its overflow, so on a narrow viewport the suggestions plus the
+  // composer are taller than the screen and the lower controls would be unreachable. jsdom does no
+  // layout, so the scroll box itself is what the test can pin.
+  it('makes the screen scroll instead of clipping the lower controls', () => {
+    render(<NewChatView />);
+    const scroller = screen.getByTestId('new-chat-scroll');
+    expect(scroller).toHaveClass('overflow-y-auto');
+    expect(scroller).toHaveClass('min-h-0');
+    expect(scroller).toHaveClass('flex-1');
+  });
+
   // The reference composition is the headline plus the four starter cards.
   it('renders the headline and the four suggestion cards', async () => {
     render(<NewChatView />);

@@ -107,6 +107,12 @@ describe('Composer', () => {
     expect(container.querySelector('.animate-spin')).not.toBeNull();
   });
 
+  // The Send spinner honours a reduced-motion preference like every other indicator.
+  it('stops the Send spinner under reduced motion', () => {
+    const { container } = renderNew({ busy: true });
+    expect(container.querySelector('.animate-spin')).toHaveClass('motion-reduce:animate-none');
+  });
+
   // An archived chat locks the composer without any request being in flight.
   it('locks when disabled', () => {
     renderNew({ disabled: true });

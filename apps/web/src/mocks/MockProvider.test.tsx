@@ -47,6 +47,54 @@ describe('MockProvider', () => {
     expect(startMock).toHaveBeenCalledWith({ onUnhandledRequest: 'bypass', quiet: true });
   });
 
+  // A worker that cannot start (missing service-worker asset, blocked registration) must say so:
+  // an unhandled rejection would leave the app as an empty placeholder for the whole session, and
+  // rendering the children anyway would let every request escape to a backend that is not there.
+  it('reports a worker that fails to start', async () => {
+    startMock.mockRejectedValue(new Error('Failed to register a ServiceWorker'));
+    vi.stubEnv('NEXT_PUBLIC_API_MOCK', '1');
+    vi.resetModules();
+    const { MockProvider } = await import('./MockProvider');
+    render(
+      <MockProvider>
+        <span>content</span>
+      </MockProvider>,
+    );
+    expect(await screen.findByRole('alert')).toHaveTextContent('The mock API could not start.');
+    expect(screen.queryByText('content')).toBeNull();
+    expect(screen.queryByTestId('mock-booting')).toBeNull();
+  });
+
+  // The failure path takes the same `cancelled` guard as the success path: a provider unmounted
+  // while the worker is still starting must not set state when the start later rejects.
+  it('does not report a failure after unmounting', async () => {
+    let rejectStart: (reason: Error) => void = () => {
+      throw new Error('rejectStart called before assignment');
+    };
+    startMock.mockImplementation(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectStart = reject;
+        }),
+    );
+    vi.stubEnv('NEXT_PUBLIC_API_MOCK', '1');
+    vi.resetModules();
+    const { MockProvider } = await import('./MockProvider');
+    const { unmount } = render(
+      <MockProvider>
+        <span>content</span>
+      </MockProvider>,
+    );
+    await waitFor(() => {
+      expect(startMock).toHaveBeenCalled();
+    });
+
+    unmount();
+    rejectStart(new Error('Failed to register a ServiceWorker'));
+    await Promise.resolve();
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   // Unmounting before the worker resolves must not call `setState` on the unmounted component:
   // the effect's `cancelled` flag guards the post-resolution `setReady(true)`.
   it('does not update state after unmounting while the worker is still starting', async () => {

@@ -8,6 +8,7 @@
 import { Loader2 } from 'lucide-react';
 import { useState } from 'react';
 
+import { maskSecretShapes } from '@/shared/transcript';
 import { Input } from '@/shared/ui/input';
 
 /** Longest title the contract accepts. */
@@ -29,27 +30,33 @@ export interface ChatTitleProps {
  * Enter saves a trimmed, non-empty title; Escape restores the original; blurring saves too, so a
  * click elsewhere does not silently discard the edit.
  *
+ * The title is derived from the opening prompt, so it is masked for secret shapes before it is
+ * shown — and the edit draft starts from the masked text too, so the raw value never reaches the
+ * input either. Committing therefore compares against the masked title: retyping what is on screen
+ * is not a rename.
+ *
  * @param props - Title, whether it can be edited, the rename handler and its busy flag.
  */
 export function ChatTitle({ title, editable, onRename, busy = false }: ChatTitleProps) {
+  const shown = maskSecretShapes(title);
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(title);
+  const [draft, setDraft] = useState(shown);
 
   function startEditing(): void {
-    setDraft(title);
+    setDraft(shown);
     setEditing(true);
   }
 
   function commit(): void {
     const next = draft.trim();
     setEditing(false);
-    if (next.length > 0 && next !== title) {
+    if (next.length > 0 && next !== shown) {
       void onRename(next);
     }
   }
 
   if (!editable) {
-    return <h1 className="truncate text-[15px] font-semibold">{title}</h1>;
+    return <h1 className="truncate text-[15px] font-semibold">{shown}</h1>;
   }
 
   if (editing) {
@@ -89,10 +96,13 @@ export function ChatTitle({ title, editable, onRename, busy = false }: ChatTitle
         }}
         className="hover:bg-muted focus-visible:ring-ring cursor-pointer truncate rounded px-1 transition-colors duration-150 focus-visible:ring-2 focus-visible:outline-none"
       >
-        {title}
+        {shown}
       </button>
       {busy && (
-        <Loader2 aria-hidden="true" className="text-muted-foreground size-3.5 animate-spin" />
+        <Loader2
+          aria-hidden="true"
+          className="text-muted-foreground size-3.5 animate-spin motion-reduce:animate-none"
+        />
       )}
     </h1>
   );

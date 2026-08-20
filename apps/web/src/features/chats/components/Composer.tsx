@@ -174,7 +174,10 @@ export function Composer(props: ComposerProps) {
           className="size-10 cursor-pointer rounded-full"
         >
           {busy ? (
-            <Loader2 aria-hidden="true" className="size-4 animate-spin" />
+            <Loader2
+              aria-hidden="true"
+              className="size-4 animate-spin motion-reduce:animate-none"
+            />
           ) : (
             <ArrowUp aria-hidden="true" className="size-4" />
           )}

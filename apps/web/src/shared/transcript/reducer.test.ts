@@ -280,6 +280,40 @@ describe('tool.call / tool.output.delta / tool.result', () => {
     );
   });
 
+  // Cutting the encoded delta at a byte boundary can split a multibyte character. Decoding that
+  // partial sequence one-shot substitutes U+FFFD, which is three bytes — more than the fragment it
+  // replaced — so the row would end up over the cap it was truncated to respect.
+  it('never exceeds the display limit when the cut splits a multibyte character', () => {
+    const nearCap: ToolTranscriptItem = {
+      kind: 'tool',
+      id: 'tool-c1',
+      callId: 'c1',
+      name: 'run_shell',
+      args: {},
+      seq: 0,
+      status: 'running',
+      stdout: '',
+      stderr: '',
+      shownBytes: TOOL_OUTPUT_DISPLAY_LIMIT_BYTES - 3,
+      totalBytes: null,
+      exitCode: null,
+      durationMs: null,
+      startedAt: 0,
+    };
+    let state: TranscriptState = { ...createInitialState(), items: [nearCap] };
+    // 'a' is one byte and 'é' is two, so a three-byte budget ends inside the first 'é'.
+    state = dispatchEvent(state, {
+      type: 'tool.output.delta',
+      callId: 'c1',
+      stream: 'stdout',
+      text: 'aaéé',
+    });
+    const tool = state.items[0] as ToolTranscriptItem;
+    expect(tool.stdout).toBe('aa');
+    expect(tool.stdout).not.toContain('\uFFFD');
+    expect(tool.shownBytes).toBeLessThanOrEqual(TOOL_OUTPUT_DISPLAY_LIMIT_BYTES);
+  });
+
   // tool.result records status/exitCode/durationMs/totalBytes for each terminal status.
   it.each([
     ['SUCCEEDED', 'succeeded'],

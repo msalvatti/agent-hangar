@@ -7,7 +7,7 @@
 'use client';
 
 import { Check, ChevronDown, GitBranch } from 'lucide-react';
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 
 import { cn } from '@/shared/lib/cn';
 import { assertPresent, maskSecretShapes } from '@/shared/transcript';
@@ -36,8 +36,8 @@ export interface BranchPickerProps {
 
 /**
  * Command-palette branch picker for `repo`. Disabled (with a native tooltip explaining why) until
- * a repository is chosen; once branches load, auto-selects the repository's default branch if
- * nothing is chosen yet.
+ * a repository is chosen; whenever branches are loaded and no branch is chosen, auto-selects the
+ * repository's default branch.
  *
  * @param props - Repo, value, change handler, disabled, className.
  */
@@ -56,9 +56,11 @@ export function BranchPicker({
   const branches = useMemo(() => data?.branches ?? [], [data]);
   const isDisabled = disabled || repo === null;
 
-  const autoSelectedForRepo = useRef<string | null>(null);
+  // The condition is "a repository is chosen, no branch is, and branches are loaded" — not "this
+  // repository has never been defaulted". Choosing the same repository again clears the branch, and
+  // that selection has to be defaulted too or the composer stays disabled with no branch to send.
   useEffect(() => {
-    if (repo === null || value !== null || autoSelectedForRepo.current === repo) {
+    if (repo === null || value !== null) {
       return;
     }
     // `noUncheckedIndexedAccess` types this access as possibly `undefined` regardless of a prior
@@ -68,7 +70,6 @@ export function BranchPicker({
     if (defaultBranch === undefined) {
       return;
     }
-    autoSelectedForRepo.current = repo;
     onChange(defaultBranch.name);
   }, [repo, branches, value, onChange]);
 

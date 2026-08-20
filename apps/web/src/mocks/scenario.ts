@@ -73,6 +73,19 @@ export function getScenario(): MockScenario {
 }
 
 /**
+ * Resolves the active scenario and applies its store-level effects, so a scenario chosen through
+ * the environment or `localStorage` shapes the store the same way an explicit {@link setScenario}
+ * call does. Called once while the mock API boots; {@link getScenario} stays a pure read.
+ *
+ * @returns The scenario that was applied.
+ */
+export function initializeScenario(): MockScenario {
+  const scenario = getScenario();
+  applyScenarioEffects(scenario);
+  return scenario;
+}
+
+/**
  * Sets the active scenario (overrides env/localStorage) and applies its store-level effects.
  *
  * @param scenario - The scenario to activate.

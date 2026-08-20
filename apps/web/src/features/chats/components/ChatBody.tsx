@@ -8,7 +8,7 @@
 import type { RefObject } from 'react';
 
 import { Transcript } from '@/shared/transcript';
-import type { TranscriptError, TranscriptItem, TurnPhase } from '@/shared/transcript';
+import type { TranscriptItem, TurnPhase } from '@/shared/transcript';
 
 import { Composer } from './Composer';
 import { TurnErrorCard } from './TurnErrorCard';
@@ -19,8 +19,6 @@ export interface ChatBodyProps {
   phase: TurnPhase;
   /** `true` for an archived chat: the transcript is read-only and the composer is locked. */
   archived: boolean;
-  /** Failure of the newest turn, or `null`. */
-  error: TranscriptError | null;
   onRetry: () => void;
   /** Lets the header scroll the failure card into view. */
   errorRef: RefObject<HTMLDivElement | null>;
@@ -38,13 +36,16 @@ export interface ChatBodyProps {
 /**
  * Renders the scrolling transcript, any turn failure, and the composer that continues the chat.
  *
- * @param props - The transcript, the failure, the draft and the lock state.
+ * A failure is one row of the transcript, live or reloaded from history, so it is rendered there
+ * and nowhere else — with the retry and the code-specific next step attached, which is what makes
+ * a failed turn actionable again after a reload.
+ *
+ * @param props - The transcript, the draft and the lock state.
  */
 export function ChatBody({
   items,
   phase,
   archived,
-  error,
   onRetry,
   errorRef,
   draft,
@@ -56,12 +57,17 @@ export function ChatBody({
 }: ChatBodyProps) {
   return (
     <>
-      <Transcript items={items} phase={phase} readOnly={archived} className="min-h-0 flex-1" />
-      {error !== null && (
-        <div ref={errorRef}>
-          <TurnErrorCard error={error} onRetry={onRetry} />
-        </div>
-      )}
+      <Transcript
+        items={items}
+        phase={phase}
+        readOnly={archived}
+        className="min-h-0 flex-1"
+        renderError={(item) => (
+          <div ref={errorRef}>
+            <TurnErrorCard error={item} onRetry={onRetry} />
+          </div>
+        )}
+      />
       <div className="px-6 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         <Composer
           mode="followup"

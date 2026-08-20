@@ -91,6 +91,19 @@ describe('useChatActions', () => {
     expect(success).toHaveBeenCalledWith('Chat id copied');
   });
 
+  // Callers discard the promise this action returns, so a denied clipboard permission has to be
+  // handled here: otherwise it becomes an unhandled rejection and the operator sees nothing.
+  it('reports a refused clipboard instead of rejecting', async () => {
+    const error = vi.spyOn(toast, 'error').mockImplementation(() => '');
+    const writeText = vi.fn().mockRejectedValue(new Error('Write permission denied'));
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: { writeText } });
+    const { result } = renderHook(() => useChatActions('chat-finished'));
+    await act(async () => {
+      await expect(result.current.copyId()).resolves.toBeUndefined();
+    });
+    expect(error).toHaveBeenCalledWith('Copy failed');
+  });
+
   // A failing action explains itself instead of failing silently.
   it('reports a failure as an error toast', async () => {
     const error = vi.spyOn(toast, 'error').mockImplementation(() => '');

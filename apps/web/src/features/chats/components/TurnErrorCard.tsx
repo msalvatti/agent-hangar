@@ -56,7 +56,6 @@ export function TurnErrorCard({ error, onRetry }: TurnErrorCardProps) {
       title={described.title}
       message={described.message}
       code={error.code}
-      className="mx-6"
       actions={
         <>
           <Button type="button" variant="outline" size="sm" onClick={onRetry}>
