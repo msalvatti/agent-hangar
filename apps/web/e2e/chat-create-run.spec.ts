@@ -65,7 +65,11 @@ test('a new chat runs the scripted task and streams the transcript', async ({
 test('send stays disabled until a repository, a branch and a prompt are set', async ({
   page,
   mode,
+  seedSettings,
 }) => {
+  // The composer is only rendered once both credentials are stored; without this the screen shows
+  // the credentials notice instead and every assertion below would fail on a missing element.
+  await seedSettings();
   const sidebar = new SidebarPage(page);
   const composer = new ComposerPage(page);
   const target = chatTarget(mode);

@@ -73,8 +73,12 @@ describe('routeGithubRequest', () => {
 
   /** A token that is not a GitHub personal access token is refused too. */
   it('refuses a token of the wrong shape', () => {
-    expect(routeGithubRequest('GET', '/user/repos', 'Bearer nope', fixtures).status).toBe(401);
-    expect(routeGithubRequest('GET', '/user/repos', 'token ghp_abc', fixtures).status).toBe(401);
+    expect(routeGithubRequest('GET', '/user/repos', 'Bearer not-a-token', fixtures).status).toBe(
+      401,
+    );
+    expect(
+      routeGithubRequest('GET', '/user/repos', `token ${GITHUB_CANARY}`, fixtures).status,
+    ).toBe(401);
   });
 
   /** The repository list is what the picker renders. */

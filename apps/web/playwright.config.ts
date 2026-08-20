@@ -19,7 +19,7 @@
  */
 import { defineConfig, devices } from '@playwright/test';
 
-import { resolveE2eEnv, serverEnv, webRoot, repoRoot } from './e2e/support/env';
+import { resolveE2eEnv, serverEnv, webRoot } from './e2e/support/env';
 import type { E2eEnv } from './e2e/support/env';
 
 const e2e = resolveE2eEnv();
@@ -34,15 +34,13 @@ const EXPECT_TIMEOUT_MS = 10_000;
 /** Budget for `next dev` to compile and answer. */
 const WEB_BOOT_TIMEOUT_MS = 180_000;
 
-/** Budget for the worker to register a heartbeat the web health endpoint can see. */
-const WORKER_BOOT_TIMEOUT_MS = 180_000;
-
 /**
- * The servers Playwright manages when `E2E_MANAGED_SERVER=1`; otherwise the developer is running
- * them and Playwright only connects.
+ * The web server Playwright manages when `E2E_MANAGED_SERVER=1`; otherwise the developer is
+ * running it and Playwright only connects.
  *
- * The worker's readiness is observed through the web server, because the worker exposes no port:
- * `GET /api/health?require=worker` is expected to answer 503 until a worker heartbeat exists.
+ * The worker is not listed here on purpose — see `e2e/support/worker.ts`. It owns no port, a
+ * `webServer` entry can only wait on an HTTP status, and an entry pointed at the web server's own
+ * health route is considered already running and never starts anything.
  */
 function managedServers(env: E2eEnv) {
   const start = env.mode === 'mock' ? 'start' : 'dev';
@@ -58,19 +56,7 @@ function managedServers(env: E2eEnv) {
   if (env.mode === 'mock') {
     return [{ ...web, url: `${env.baseURL}/chats/new` }];
   }
-  return [
-    { ...web, url: `${env.baseURL}/api/health` },
-    {
-      command: 'pnpm --filter worker dev',
-      cwd: repoRoot(),
-      env: serverEnv(env),
-      url: `${env.baseURL}/api/health?require=worker`,
-      reuseExistingServer: !isCi,
-      timeout: WORKER_BOOT_TIMEOUT_MS,
-      stdout: 'pipe' as const,
-      stderr: 'pipe' as const,
-    },
-  ];
+  return [{ ...web, url: `${env.baseURL}/api/health` }];
 }
 
 export default defineConfig({

@@ -42,11 +42,7 @@ export default defineConfig({
             './src/mocks/vitest.ts',
             './src/shared/repo-picker/testing/setup.ts',
           ],
-          include: [
-            'src/**/*.test.{ts,tsx}',
-            'app/**/*.test.{ts,tsx}',
-            'e2e/**/*.test.ts',
-          ],
+          include: ['src/**/*.test.{ts,tsx}', 'app/**/*.test.{ts,tsx}', 'e2e/**/*.test.ts'],
           exclude: [
             'src/**/*.integration.test.{ts,tsx}',
             'e2e/**/*.spec.ts',

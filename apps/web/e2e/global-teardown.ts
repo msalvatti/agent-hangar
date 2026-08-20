@@ -1,5 +1,6 @@
 /**
- * Global teardown: stops the GitHub stub and, unless the stack is being kept, the git server.
+ * Global teardown: stops the GitHub stub and, unless the stack is being kept, the worker and the
+ * git server.
  *
  * Layer: test support (Playwright global hook).
  *
@@ -10,6 +11,7 @@ import { resolveE2eEnv } from './support/env';
 import { stopGitServer } from './support/gitserver';
 import { clearActiveGithubStub, takeActiveGithubStub } from './support/stack';
 import { readStackState } from './support/stack-state';
+import { stopWorker } from './support/worker';
 
 export default async function globalTeardown(): Promise<void> {
   const env = resolveE2eEnv();
@@ -21,7 +23,10 @@ export default async function globalTeardown(): Promise<void> {
   if (env.mode === 'mock' || process.env.E2E_KEEP_STACK === '1') {
     return;
   }
-  const { gitServer } = readStackState(env);
+  const { gitServer, workerPid } = readStackState(env);
+  if (workerPid !== undefined) {
+    stopWorker(workerPid);
+  }
   if (gitServer !== undefined) {
     await stopGitServer(gitServer);
   }

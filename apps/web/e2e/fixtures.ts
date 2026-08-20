@@ -24,7 +24,7 @@
  * - `settings-missing` — `POST /api/chats` is refused with `409 SECRETS_MISSING` while no
  *   credentials are stored.
  */
-import { listChatsResponse, listJobsResponse } from '@agent-hangar/core';
+import { listChatsResponse, listJobsResponse, putSecretResponse } from '@agent-hangar/core';
 import { GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { test as base } from '@playwright/test';
 import type { APIRequestContext } from '@playwright/test';
@@ -39,11 +39,24 @@ import { createHealthHelper } from './support/health';
 import type { HealthHelper } from './support/health';
 import type { E2eMode } from './support/mode';
 
-/** Wraps Playwright's request context as the transport the API client expects. */
-function playwrightFetcher(request: APIRequestContext): E2eFetcher {
+/**
+ * Wraps Playwright's request context as the transport the API client expects.
+ *
+ * Every request carries an `Origin` naming the application's own origin. The API refuses a
+ * state-changing request that cannot be shown to come from itself — it has no session and no
+ * login, so "same origin" is the whole of its authorisation — and a non-browser client sends no
+ * `Origin` unless it is told to. Without this every write is answered 403, which is the API
+ * behaving correctly and the suite asking wrongly.
+ *
+ * @param request - Playwright's request context.
+ * @param origin - The application's origin, which is also its base URL.
+ * @returns The transport.
+ */
+function playwrightFetcher(request: APIRequestContext, origin: string): E2eFetcher {
   return async (url, init) => {
     const response = await request.fetch(url, {
       method: init.method,
+      headers: { origin },
       ...(init.body === undefined ? {} : { data: init.body }),
     });
     return { status: response.status(), text: await response.text() };
@@ -117,7 +130,7 @@ export const test = base.extend<E2eFixtures>({
     await provide(env.mode);
   },
   api: async ({ request, env }, provide) => {
-    await provide(createApi(playwrightFetcher(request), env.baseURL));
+    await provide(createApi(playwrightFetcher(request, env.baseURL), env.baseURL));
   },
   health: async ({ api }, provide) => {
     await provide(createHealthHelper(api));
@@ -130,11 +143,10 @@ export const test = base.extend<E2eFixtures>({
       if (mode === 'mock') {
         return;
       }
-      await api.raw('/api/settings/GITHUB_PAT', { method: 'PUT', body: { value: GITHUB_CANARY } });
-      await api.raw('/api/settings/OPENAI_API_KEY', {
-        method: 'PUT',
-        body: { value: OPENAI_CANARY },
-      });
+      // `put`, not `raw`: a refused write must fail the test that depended on it. Swallowing the
+      // status here would leave the credentials unset and blame whatever assertion noticed first.
+      await api.put('/api/settings/GITHUB_PAT', { value: GITHUB_CANARY }, putSecretResponse);
+      await api.put('/api/settings/OPENAI_API_KEY', { value: OPENAI_CANARY }, putSecretResponse);
     });
   },
   resetDb: [

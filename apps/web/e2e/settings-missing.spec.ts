@@ -50,6 +50,10 @@ test('the new chat screen refuses to compose without credentials', async ({ page
 /**
  * Proves the API refuses `POST /api/chats` with `409 SECRETS_MISSING` while no credential is
  * stored, and that its refusal carries no credential material.
+ *
+ * The body is validated before the credentials are checked, so this only reaches the refusal it is
+ * about once the request schema accepts a repository on the configured host. Until then it fails
+ * on the status, naming 400 against the expected 409.
  */
 test('the API refuses to create a chat without credentials', async ({ api, gitServer, mode }) => {
   skipUnlessReal(test, mode, 'the mock build serves no API routes');

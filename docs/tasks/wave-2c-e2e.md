@@ -607,3 +607,21 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
 - 2C.6 ✅ 2026-08-20 — gates green; review resolved two findings (the git server published on
   every interface, and a credential-shaped literal that was not a canary) plus three smaller ones;
   PR #32 opened.
+
+- 2C.7 ✅ 2026-08-20 — rebased onto the merged HTTP API and re-attempted the real stack, which
+  found five things the mock suite could not. Fixed here: the API client sent no `Origin`, so every
+  write was refused 403 by the same-origin guard; the master key directory was created group- and
+  world-readable, so the secrets module refused it and `PUT /api/settings/:key` answered 500;
+  `seedSettings` used `raw` and swallowed both refusals, leaving the credentials unset and blaming
+  whatever assertion noticed first; the send-disabled test never seeded credentials, so in real
+  mode the screen showed the credentials notice instead of the composer; and the worker was never
+  started at all, because a Playwright `webServer` entry pointed at the web server's own health
+  route is considered already running — the worker now starts with the rest of the stack, and the
+  global setup refuses to begin until it reports through `GET /api/health`.
+  · Real-mode results with those fixes: `settings-save-mask` (credential lifecycle, reload
+  persistence, no plaintext in `GET /api/settings`) and `settings-missing` (composer withheld,
+  notice, recovery) both pass against the real API, database and git server. Remaining blockers, in
+  the order a run meets them: `GITHUB_API_BASE_URL` is `https`-only so the loopback stub cannot be
+  configured; `POST /api/chats` answers 400 rather than 409 because the request schema rejects a
+  repository outside github.com before it checks credentials; and the worker still writes no
+  heartbeat, since `apps/worker/src` is the skeleton.
