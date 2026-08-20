@@ -74,13 +74,22 @@ const PALETTE_TEST_TIMEOUT_MS = 20_000;
  * Fills every field of the create form. Repository and branch are command palettes, not text
  * inputs: the repository is chosen from the list, and the branch picker then defaults itself to
  * the repository's default branch, which is the interaction a user actually performs.
+ *
+ * @param user - The `userEvent` session driving the form.
+ * @param repo - The repository row to choose and the branch its picker settles on.
  */
-async function fillCreateForm(user: ReturnType<typeof userEvent.setup>) {
+async function fillCreateForm(
+  user: ReturnType<typeof userEvent.setup>,
+  repo: { fullName: string; defaultBranch: string } = {
+    fullName: 'acme/api',
+    defaultBranch: 'main',
+  },
+) {
   await user.type(screen.getByLabelText('Name'), 'Weekly report');
   await user.click(screen.getByRole('button', { name: /Choose repository/i }));
-  await user.click(await screen.findByText('acme/api'));
+  await user.click(await screen.findByText(repo.fullName));
   await waitFor(() => {
-    expect(screen.getByRole('group', { name: 'Branch' })).toHaveTextContent('main');
+    expect(screen.getByRole('group', { name: 'Branch' })).toHaveTextContent(repo.defaultBranch);
   });
   await user.type(screen.getByLabelText('Cron'), '0 8 * * 1');
   await user.type(screen.getByLabelText('Prompt'), 'Summarize the week.');
@@ -122,6 +131,42 @@ describe('JobDialog create mode', () => {
         expect(onSaved).toHaveBeenCalledWith(expect.objectContaining({ name: 'Weekly report' }));
       });
       expect(onOpenChange.mock.calls[0]?.[0]).toBe(false);
+    },
+    PALETTE_TEST_TIMEOUT_MS,
+  );
+
+  /**
+   * Rule this protects: the job records the URL the listing reported. The form kept only
+   * `owner/name` and rebuilt the URL against a hard-coded github.com on save, so a job on any
+   * other forge the operator allowed could not be created from the dialog at all.
+   */
+  it(
+    'posts the URL of a repository on a self-hosted forge',
+    async () => {
+      const bodies: unknown[] = [];
+      server.use(
+        http.post('/api/jobs', async ({ request }) => {
+          bodies.push(await request.clone().json());
+          return undefined;
+        }),
+      );
+      const user = userEvent.setup();
+      const onSaved = vi.fn();
+      render(<JobDialog open onOpenChange={vi.fn()} onSaved={onSaved} />);
+      await fillCreateForm(user, { fullName: 'acme/infra', defaultBranch: 'trunk' });
+      await waitFor(() => {
+        expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled();
+      });
+      await user.click(screen.getByRole('button', { name: 'Save' }));
+      await waitFor(() => {
+        expect(onSaved).toHaveBeenCalledTimes(1);
+      });
+      expect(bodies).toEqual([
+        expect.objectContaining({
+          repoUrl: 'https://git.acme.test/acme/infra',
+          branch: 'trunk',
+        }),
+      ]);
     },
     PALETTE_TEST_TIMEOUT_MS,
   );
@@ -202,6 +247,35 @@ describe('JobDialog edit mode', () => {
     expect(screen.getByText('Edit job')).toBeInTheDocument();
     expect(screen.getByLabelText('Name')).toHaveValue('Dep audit');
     expect(screen.getByLabelText('Cron')).toHaveValue('0 9 * * 1');
+  });
+
+  /**
+   * Rule this protects: editing an unrelated field never moves the job to another forge. The
+   * form used to reduce the job to `owner/name` on load and rebuild the URL against a hard-coded
+   * github.com on save, rewriting the repository of a job hosted anywhere else.
+   */
+  it('keeps a self-hosted repository URL when another field is edited', async () => {
+    const bodies: unknown[] = [];
+    server.use(
+      http.patch('/api/jobs/:id', async ({ request }) => {
+        bodies.push(await request.clone().json());
+        return undefined;
+      }),
+    );
+    const selfHosted: JobSummary = { ...job, repoUrl: 'https://git.acme.test/acme/infra' };
+    const user = userEvent.setup();
+    const onSaved = vi.fn();
+    render(<JobDialog open job={selfHosted} onOpenChange={vi.fn()} onSaved={onSaved} />);
+    const nameInput = screen.getByLabelText('Name');
+    await user.clear(nameInput);
+    await user.type(nameInput, 'Infra audit');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => {
+      expect(onSaved).toHaveBeenCalledTimes(1);
+    });
+    expect(bodies).toEqual([
+      expect.objectContaining({ repoUrl: 'https://git.acme.test/acme/infra' }),
+    ]);
   });
 
   /** Submitting patches the existing job. */

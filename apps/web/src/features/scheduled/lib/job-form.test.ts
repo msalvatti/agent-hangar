@@ -2,8 +2,8 @@
  * Unit tests for the job form model.
  *
  * Layer: unit.
- * Goal: `emptyJobForm`/`jobToForm` construct the right values, `repoFullName` reduces a picked
- * repository to the stored field, `formToRequest` maps to the contract shape, and
+ * Goal: `emptyJobForm`/`jobToForm` construct the right values, `pickedRepoUrl`/`repoDisplayName`
+ * keep the URL and its label in step, `formToRequest` maps to the contract shape, and
  * `validateJobForm` covers every validation rule plus the schema fallback.
  * Mocks: none.
  */
@@ -15,7 +15,8 @@ import {
   formFieldForIssue,
   formToRequest,
   jobToForm,
-  repoFullName,
+  pickedRepoUrl,
+  repoDisplayName,
   validateJobForm,
 } from './job-form';
 import type { JobFormValues } from './job-form';
@@ -39,7 +40,7 @@ const job: JobSummary = {
 function validForm(): JobFormValues {
   return {
     name: 'Nightly tests',
-    repo: 'acme/api',
+    repoUrl: 'https://github.com/acme/api',
     branch: 'main',
     cron: '0 2 * * *',
     timezone: 'UTC',
@@ -54,25 +55,30 @@ describe('emptyJobForm', () => {
     const form = emptyJobForm();
     expect(form.enabled).toBe(true);
     expect(form.name).toBe('');
-    expect(form.repo).toBeNull();
+    expect(form.repoUrl).toBeNull();
     expect(form.timezone.length).toBeGreaterThan(0);
   });
 });
 
 describe('jobToForm', () => {
-  /** Prefills every field from the job, deriving `repo` from the repo URL. */
+  /** Prefills every field from the job, keeping the stored repository URL verbatim. */
   it('prefills from a job', () => {
     const form = jobToForm(job);
-    expect(form.repo).toBe('acme/api');
+    expect(form.repoUrl).toBe('https://github.com/acme/api');
     expect(form.branch).toBe('main');
     expect(form.cron).toBe(job.cron);
     expect(form.enabled).toBe(true);
   });
 
-  /** A repo URL that does not match the expected shape falls back to the raw URL. */
-  it('falls back to the raw URL when it does not match the expected shape', () => {
-    const form = jobToForm({ ...job, repoUrl: 'not-a-github-url' });
-    expect(form.repo).toBe('not-a-github-url');
+  /**
+   * Rule this protects: editing a job never rewrites which forge it runs against. The form used
+   * to keep only `owner/name` and rebuild the URL against a hard-coded github.com on save, which
+   * silently moved a job on any other forge.
+   */
+  it('keeps the repository URL of a job on any origin', () => {
+    const form = jobToForm({ ...job, repoUrl: 'https://git.acme.test/acme/infra' });
+    expect(form.repoUrl).toBe('https://git.acme.test/acme/infra');
+    expect(formToRequest(form).repoUrl).toBe('https://git.acme.test/acme/infra');
   });
 });
 
@@ -91,10 +97,10 @@ describe('formToRequest', () => {
     });
   });
 
-  /** A null repo/branch maps to an empty string (the schema/field checks catch it as invalid). */
-  it('maps a null repo and branch to empty strings', () => {
-    const request = formToRequest({ ...validForm(), repo: null, branch: null });
-    expect(request.repoUrl).toBe('https://github.com/');
+  /** A null repository/branch maps to an empty string (the field checks catch it as invalid). */
+  it('maps a null repository URL and branch to empty strings', () => {
+    const request = formToRequest({ ...validForm(), repoUrl: null, branch: null });
+    expect(request.repoUrl).toBe('');
     expect(request.branch).toBe('');
   });
 });
@@ -115,9 +121,20 @@ describe('validateJobForm', () => {
     expect(validateJobForm({ ...validForm(), name: 'x'.repeat(81) }).name).toBeDefined();
   });
 
-  /** A missing repo is rejected. */
-  it('rejects a missing repo', () => {
-    expect(validateJobForm({ ...validForm(), repo: null }).repo).toBeDefined();
+  /** A missing repository is rejected. */
+  it('rejects a missing repository', () => {
+    expect(validateJobForm({ ...validForm(), repoUrl: null }).repoUrl).toBeDefined();
+  });
+
+  /**
+   * Rule this protects: the form does not second-guess the operator's forge list. A repository on
+   * another origin is as valid here as one on github.com; a host outside `ALLOWED_REPO_HOSTS` is
+   * refused by the server, which is the only side that knows the list.
+   */
+  it('accepts a repository on any origin', () => {
+    expect(
+      validateJobForm({ ...validForm(), repoUrl: 'https://git.acme.test/acme/infra' }),
+    ).toEqual({});
   });
 
   /** A missing branch is rejected. */
@@ -146,42 +163,60 @@ describe('validateJobForm', () => {
   });
 
   /**
-   * A repo string that passes the "non-empty" field check but produces a `repoUrl` the shared
-   * schema rejects (e.g. spaces) falls through to the schema-level error — reported under the
-   * repository field, which is the input the user can act on, not under whichever field is last.
+   * A repository URL that passes the "chosen" field check but that the shared schema rejects
+   * (more than owner and repository, say) falls through to the schema-level error — reported
+   * under the repository field, which is the input the user can act on, not under whichever
+   * field happens to be last.
    */
   it('reports a schema rejection under the field it belongs to', () => {
-    const errors = validateJobForm({ ...validForm(), repo: 'not a valid repo' });
-    expect(errors.repo).toBeDefined();
+    const errors = validateJobForm({
+      ...validForm(),
+      repoUrl: 'https://github.com/acme/api/tree/main',
+    });
+    expect(errors.repoUrl).toBeDefined();
     expect(errors.prompt).toBeUndefined();
   });
 });
 
-describe('repoFullName', () => {
-  /** A picked repository is stored as its `owner/name`, which is what the request URL is built
-   * from. */
-  it('reduces a picked repository to its full name', () => {
+describe('pickedRepoUrl', () => {
+  /**
+   * Rule this protects: what the form stores is the repository's own URL, so a repository on a
+   * self-hosted forge is saved where it actually lives rather than under a rebuilt github URL.
+   */
+  it('stores the URL a picked repository reported', () => {
     expect(
-      repoFullName({
-        fullName: 'acme/api',
-        url: 'https://github.com/acme/api',
-        defaultBranch: 'main',
+      pickedRepoUrl({
+        fullName: 'acme/infra',
+        url: 'https://git.acme.test/acme/infra',
+        defaultBranch: 'trunk',
         private: false,
         description: null,
       }),
-    ).toBe('acme/api');
+    ).toBe('https://git.acme.test/acme/infra');
   });
 
   /** Clearing the choice clears the field, so validation reports the repository as required. */
   it('maps a cleared choice to null', () => {
-    expect(repoFullName(null)).toBeNull();
+    expect(pickedRepoUrl(null)).toBeNull();
+  });
+});
+
+describe('repoDisplayName', () => {
+  /** The pickers work in `owner/name`, derived from the stored URL on whatever origin it names. */
+  it('derives the short form from the stored URL', () => {
+    expect(repoDisplayName('https://git.acme.test/acme/infra')).toBe('acme/infra');
+  });
+
+  /** No repository chosen yet leaves the pickers empty rather than showing a placeholder name. */
+  it('maps no repository to null', () => {
+    expect(repoDisplayName(null)).toBeNull();
   });
 });
 
 describe('formFieldForIssue', () => {
   /** A request field the form renders under a different name still points at its own input. */
   it('maps a request field to the form field that renders it', () => {
-    expect(formFieldForIssue(['repoUrl'])).toBe('repo');
+    expect(formFieldForIssue(['repoUrl'])).toBe('repoUrl');
     expect(formFieldForIssue(['cron'])).toBe('cron');
   });
 

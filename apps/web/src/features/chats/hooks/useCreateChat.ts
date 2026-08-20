@@ -5,19 +5,23 @@
  */
 'use client';
 
+import type { RepoSummary } from '@agent-hangar/core';
 import { useRouter } from 'next/navigation';
 import { useCallback, useState } from 'react';
 
 import { invalidateQueries } from '@/shared/api/use-api-query';
 import { pushRecentRepo } from '@/shared/repo-picker';
 
-import { toRepoUrl } from '../lib/repo-url';
 import { createChat } from '../services/chats-api';
 
 /** Input of {@link UseCreateChatResult.create}. */
 export interface CreateChatInput {
-  /** Repository in `owner/name` form. */
-  repo: string;
+  /**
+   * The repository as the picker reported it. The chat records `url` verbatim rather than a URL
+   * rebuilt from `fullName`: which forge a repository lives on is the listing's answer, and a
+   * rebuilt URL would silently point every chat at one hard-coded origin.
+   */
+  repo: RepoSummary;
   /** Branch the workspace is cloned from. */
   branch: string;
   /** The first prompt of the chat. */
@@ -51,11 +55,11 @@ export function useCreateChat(): UseCreateChatResult {
       setError(undefined);
       try {
         const { chatId } = await createChat({
-          repoUrl: toRepoUrl(repo),
+          repoUrl: repo.url,
           baseBranch: branch,
           prompt,
         });
-        pushRecentRepo(repo);
+        pushRecentRepo(repo.fullName);
         invalidateQueries(['chats']);
         router.push(`/chats/${chatId}`);
       } catch (reason) {

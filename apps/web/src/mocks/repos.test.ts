@@ -13,6 +13,19 @@ describe('GET /api/repos', () => {
     expect(body.repos.map((repo) => repo.fullName)).toContain('acme/api');
   });
 
+  /**
+   * Rule this protects: the fixture set must span more than one forge. Which origins the listing
+   * may report is the operator's `ALLOWED_REPO_HOSTS`, so a mock that only ever answers with
+   * github.com URLs cannot catch a client that rebuilds the clone URL against a hard-coded host.
+   */
+  it('reports a repository hosted somewhere other than github.com', async () => {
+    const response = await fetch('/api/repos');
+    const body = listReposResponse.parse(await response.json());
+    const origins = new Set(body.repos.map((repo) => new URL(repo.url).origin));
+    expect(origins.size).toBeGreaterThan(1);
+    expect(body.repos.map((repo) => repo.url)).toContain('https://git.acme.test/acme/infra');
+  });
+
   // A query filters repos by a case-insensitive substring of fullName.
   it('filters by a case-insensitive substring of the query', async () => {
     const response = await fetch('/api/repos?query=WEB');

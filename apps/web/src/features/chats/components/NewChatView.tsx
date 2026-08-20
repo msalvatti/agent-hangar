@@ -62,7 +62,7 @@ export function NewChatView({ navTrigger }: NewChatViewProps) {
    */
   function submit(): void {
     void create({
-      repo: assertPresent(repo, 'A repository must be chosen before sending').fullName,
+      repo: assertPresent(repo, 'A repository must be chosen before sending'),
       branch: assertPresent(branch, 'A branch must be chosen before sending'),
       prompt,
     });

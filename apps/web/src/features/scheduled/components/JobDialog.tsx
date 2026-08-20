@@ -26,7 +26,7 @@ import { Textarea } from '@/shared/ui/textarea';
 
 import { useJobForm } from '../hooks/useJobForm';
 import { useJobMutations } from '../hooks/useJobMutations';
-import { repoFullName } from '../lib/job-form';
+import { pickedRepoUrl, repoDisplayName } from '../lib/job-form';
 
 import { CronField } from './CronField';
 import { FormField } from './FormField';
@@ -64,7 +64,7 @@ export function JobDialog({ open, onOpenChange, job, onSaved }: JobDialogProps) 
     // valid form; touching every field keeps their errors visible if validity changes afterwards
     // (e.g. the server rejects a value the client-side rules missed).
     touch('name');
-    touch('repo');
+    touch('repoUrl');
     touch('branch');
     touch('cron');
     touch('timezone');
@@ -77,6 +77,9 @@ export function JobDialog({ open, onOpenChange, job, onSaved }: JobDialogProps) 
   };
 
   const showError = (field: keyof typeof errors) => (touched[field] ? errors[field] : undefined);
+  // The pickers work in `owner/name`; the form stores the URL the listing reported, so the short
+  // form is derived here rather than kept as a second, divergeable field.
+  const repoName = repoDisplayName(values.repoUrl);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -105,12 +108,12 @@ export function JobDialog({ open, onOpenChange, job, onSaved }: JobDialogProps) 
             )}
           </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <FormField id="job-repo" label="Repository" composite error={showError('repo')}>
+            <FormField id="job-repo" label="Repository" composite error={showError('repoUrl')}>
               {() => (
                 <RepoPicker
-                  value={values.repo}
+                  value={repoName}
                   onChange={(selected) => {
-                    setField('repo', repoFullName(selected));
+                    setField('repoUrl', pickedRepoUrl(selected));
                     setField('branch', null);
                   }}
                 />
@@ -119,7 +122,7 @@ export function JobDialog({ open, onOpenChange, job, onSaved }: JobDialogProps) 
             <FormField id="job-branch" label="Branch" composite error={showError('branch')}>
               {() => (
                 <BranchPicker
-                  repo={values.repo}
+                  repo={repoName}
                   value={values.branch}
                   onChange={(value) => {
                     setField('branch', value);
