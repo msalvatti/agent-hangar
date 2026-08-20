@@ -6,8 +6,8 @@
  * failure the runtime can name arrives as a `turn.failed` with the right code; the exit code is
  * non-zero only when no event could describe what happened; and neither credential ever reaches
  * stdout, even when the agent deliberately prints the token file.
- * Mocks: in-memory streams for the process pipes, the shared fake provider for the model, and a
- * local bare repository for GitHub.
+ * Mocks: in-memory streams for the process pipes, the shared fake provider for the model, provider
+ * factories that refuse to build a real one, and a local bare repository for GitHub.
  */
 import { rm, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -16,12 +16,13 @@ import { Writable } from 'node:stream';
 import { agentEventSchema } from '@agent-hangar/core';
 import type { AgentEvent, TurnRequest } from '@agent-hangar/core';
 import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, expectTypeOf, it } from 'vitest';
 
 import { EXIT } from './cli.js';
-import type { CliIo } from './cli.js';
+import type { CliDeps, CliIo, CliOverrides } from './cli.js';
 import { createGitRunner } from './git.js';
 import type { GitRunner } from './git.js';
+import type { ProviderFactories } from './provider.js';
 import { REDACTED } from './redact.js';
 import { createBareRepoWithSeed } from './testing/bare-repo.js';
 import type { BareRepo } from './testing/bare-repo.js';
@@ -47,6 +48,20 @@ let sigintHandlers: (() => void)[];
  * changes only where `origin` lives.
  */
 const REMOTE_URL = 'https://github.com/agent-hangar/fixture.git';
+
+/**
+ * Wiring every turn here is run with, and none of them may use.
+ *
+ * The environment {@link io} builds names the fake provider, so these turns never construct a real
+ * one — and the turn that asks for `openai` is there to be refused for a missing key, before any
+ * factory is consulted. Refusing to build says which provider the suite is running against, where
+ * a stub would let a turn that quietly reached the real SDK look like an ordinary pass.
+ */
+const NO_REAL_PROVIDER: ProviderFactories = {
+  openai: () => {
+    throw new Error('this suite runs against the fake provider; no real one may be built');
+  },
+};
 
 /**
  * Real git, with {@link REMOTE_URL} pointing at the seeded bare repository.
@@ -151,6 +166,7 @@ async function runTurn(
 ): Promise<number> {
   return runTurnCommand({
     io: io(stdinText, env),
+    providerFactories: NO_REAL_PROVIDER,
     workspaceRoot: root,
     runtimeDir,
     originFile,
@@ -199,6 +215,18 @@ afterEach(async () => {
   await repo.cleanup();
   await removeTempDir(root);
   await removeTempDir(runtimeDir);
+});
+
+describe('what runTurnCommand asks to be given', () => {
+  it('will not accept process resources and overrides alone, without the provider wiring', () => {
+    // Every turn builds a provider, and which one the environment names is not knowable when the
+    // dependencies are assembled — so a turn assembled without the wiring is a turn that may have
+    // nothing to run against. It takes what the dispatcher was given rather than restating it,
+    // which is what keeps the two from disagreeing again. Checked by the compiler, not at run
+    // time: these are what fail if the field goes back to optional.
+    expectTypeOf<{ io: CliIo } & CliOverrides>().not.toExtend<TurnDeps>();
+    expectTypeOf<TurnDeps>().toExtend<CliDeps>();
+  });
 });
 
 describe('runTurnCommand on the happy path', () => {
@@ -294,7 +322,9 @@ describe('runTurnCommand and failures it can name', () => {
   });
 
   it('reports a provider that is not configured', async () => {
-    // The UI links the operator to Settings from this event.
+    // The UI links the operator to Settings from this event, so the message has to be the one
+    // about the missing key. A runtime whose wiring was left out reports a different configuration
+    // failure with the same code, and only the message tells an operator's problem from a build's.
     const exit = await runTurn(
       `${JSON.stringify(request('hello'))}\n`,
       {},
@@ -302,6 +332,7 @@ describe('runTurnCommand and failures it can name', () => {
     );
     expect(exit).toBe(EXIT.ok);
     expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'config' } });
+    expect(lastFailureMessage()).toBe('OPENAI_API_KEY is not set in the workspace environment');
   });
 
   it('reports a repository that could not be prepared', async () => {
@@ -315,14 +346,16 @@ describe('runTurnCommand and failures it can name', () => {
   });
 
   it('applies the placed URL policy and the container paths when none are chosen', async () => {
-    // Production passes no overrides at all, so the policy comes from the file at its default
-    // path, which does not exist here. Nothing touches `/workspace` or `/tmp` and nothing reaches
-    // the network: a container nobody prepared is a configuration failure before anything clones.
+    // Production overrides nothing beyond the wiring it must supply, so the policy comes from the
+    // file at its default path, which does not exist here. Nothing touches `/workspace` or `/tmp`
+    // and nothing reaches the network: a container nobody prepared is a configuration failure
+    // before anything clones.
     const turn = request('hello');
     const exit = await runTurnCommand({
       io: io(
         `${JSON.stringify({ ...turn, repo: { ...turn.repo, url: 'http://github.com/acme/demo' } })}\n`,
       ),
+      providerFactories: NO_REAL_PROVIDER,
     });
     expect(exit).toBe(EXIT.ok);
     expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'config' } });

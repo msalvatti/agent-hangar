@@ -4,9 +4,8 @@
  * Layer: unit.
  * Goal: the runtime that ships really can build the OpenAI provider — the key from the container
  * environment reaches the wire, the endpoint the environment names is honoured, and a whole turn
- * runs from stdin to `turn.completed` against the real SDK client; while the same turn composed
- * without the factories fails with the configuration error, so an unwired build can never pass
- * for a wired one.
+ * runs from stdin to `turn.completed` against the real SDK client; and the dispatcher underneath
+ * streams from the factories its caller handed it rather than from any provider of its own.
  * Mocks: a local HTTP server replaying a recorded Responses stream stands in for the API, and a
  * local bare repository stands in for GitHub. The OpenAI SDK, its client, the provider and the
  * mapping layer are all the real ones.
@@ -27,6 +26,7 @@ import type { CliIo, CliOverrides } from './cli.js';
 import { PRODUCTION_PROVIDER_FACTORIES, runProductionCli } from './composition.js';
 import { createGitRunner } from './git.js';
 import type { GitRunner } from './git.js';
+import type { ProviderFactoryOptions } from './provider.js';
 import { createBareRepoWithSeed } from './testing/bare-repo.js';
 import type { BareRepo } from './testing/bare-repo.js';
 import { makeTempDir, removeTempDir } from './testing/temp-dir.js';
@@ -51,16 +51,6 @@ const RESPONSE_ID = 'resp_6f2a1c9b47e8d05a3b12c4d7';
 
 /** Usage of the recorded response, as the mapping layer normalises it. */
 const RECORDED_USAGE = { inputTokens: 120, outputTokens: 18 };
-
-/** Exactly what a runtime composed without the factories reports instead of running the turn. */
-const UNWIRED_FAILURE: AgentEvent = {
-  type: 'turn.failed',
-  error: {
-    code: 'config',
-    message:
-      'the openai provider is not wired into this build; see packages/agent-runtime/src/composition.ts',
-  },
-};
 
 /** A stub Responses API listening on the loopback interface. */
 interface StubApi {
@@ -326,14 +316,27 @@ describe('runProductionCli', () => {
   });
 });
 
-describe('the same turn composed without the factories', () => {
-  it('fails as a configuration error instead of reaching the model', async () => {
-    // This is the build that shipped. It stays reproducible so the difference the composition
-    // makes is measured rather than assumed, and it is deliberately the only way to get here.
-    const exit = await runCli(['turn'], io(`${JSON.stringify(request())}\n`), localWorkspace());
+describe('the dispatcher underneath the composition', () => {
+  it('streams from the factories it was handed, with the credentials the environment carries', async () => {
+    // The build that shipped reached no provider at all, and the type that let it say so has been
+    // closed: a turn is now exactly as wired as its caller made it. This one hands over factories
+    // of its own, so what the turn streams from is observable — and what it was built with is the
+    // key and the endpoint the container environment carries, not a default from anywhere else.
+    const seen: ProviderFactoryOptions[] = [];
+
+    const exit = await runCli(['turn'], io(`${JSON.stringify(request())}\n`), {
+      ...localWorkspace(),
+      providerFactories: {
+        openai: (options) => {
+          seen.push(options);
+          return PRODUCTION_PROVIDER_FACTORIES.openai(options);
+        },
+      },
+    });
 
     expect(exit).toBe(EXIT.ok);
-    expect(emitted()).toContainEqual(UNWIRED_FAILURE);
-    expect(api.authorizations).toStrictEqual([]);
+    expect(seen).toStrictEqual([{ apiKey: OPENAI_CANARY, baseURL: api.baseURL }]);
+    expect(emitted()).toContainEqual({ type: 'assistant.message', text: ANSWER });
+    expect(api.authorizations).toStrictEqual([`Bearer ${OPENAI_CANARY}`]);
   });
 });

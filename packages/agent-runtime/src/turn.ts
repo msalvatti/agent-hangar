@@ -13,16 +13,14 @@ import type { AgentEvent, TurnRequest } from '@agent-hangar/core';
 
 import { createChildEnv, materializeGitToken, removeGitToken } from './child-env.js';
 import { EXIT } from './cli.js';
-import type { CliIo } from './cli.js';
+import type { CliDeps, CliIo } from './cli.js';
 import { createGitRunner, GitError } from './git.js';
 import type { GitRunner } from './git.js';
 import { runTurnLoop } from './loop.js';
 import { prepare, PrepareError, repositoryUrlPolicyFromFile } from './prepare.js';
-import type { RepositoryUrlPolicy } from './prepare.js';
 import { createDiagnostics, createEventWriter, readTurnRequest } from './protocol.js';
 import type { EventWriter } from './protocol.js';
 import { createProvider, resolveProviderName } from './provider.js';
-import type { ProviderFactories } from './provider.js';
 import { createRuntimeRedactor } from './redact.js';
 import type { RuntimeRedactor } from './redact.js';
 import { createToolExecutor, TOOL_DEFINITIONS } from './tools/index.js';
@@ -34,25 +32,16 @@ export const DEFAULT_WORKSPACE_ROOT = '/workspace';
 /** Private directory the git token file lives in; tmpfs in the container. */
 export const DEFAULT_RUNTIME_DIR = '/tmp/ah-runtime';
 
-/** Everything the turn command needs. */
-export interface TurnDeps {
+/**
+ * Everything the turn command needs.
+ *
+ * It extends what the dispatcher was handed rather than restating it, so the provider wiring
+ * cannot end up required in one of the two types and optional in the other: a seam that is
+ * skippable through the laxer of the two is a seam that is not closed at all.
+ */
+export interface TurnDeps extends CliDeps {
   /** Process resources. */
   io: CliIo;
-  /** Factories for providers this build cannot construct on its own. */
-  providerFactories?: ProviderFactories;
-  /** Overrides the workspace root; tests point it at a temporary directory. */
-  workspaceRoot?: string;
-  /** Overrides the private runtime directory. */
-  runtimeDir?: string;
-  /** Overrides the git runner. */
-  git?: GitRunner;
-  /**
-   * Overrides the repository URL policy, which is otherwise read from the file the host placed;
-   * tests use `{ allow: 'any' }` for a local `file://` remote.
-   */
-  urlPolicy?: RepositoryUrlPolicy;
-  /** Overrides where the approved origin is read from; tests point it at a temporary file. */
-  originFile?: string;
 }
 
 /** What the turn command needs to report a failure. */

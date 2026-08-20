@@ -35,9 +35,9 @@ export const PRODUCTION_PROVIDER_FACTORIES: ProviderFactories = {
 /**
  * Runs one command with the production providers wired in.
  *
- * The overrides are the same seams {@link runCli} exposes, and they are applied over the wiring
- * rather than under it, so a test can point the runtime at a local repository or a local endpoint
- * without giving up the real provider it is there to exercise.
+ * The overrides are the seams {@link runCli} exposes, and the provider wiring is not among them:
+ * a test can point the runtime at a local repository or a local endpoint, and cannot give up the
+ * real provider it is there to exercise while doing so.
  *
  * @param argv - Arguments after the script name.
  * @param io - Process resources.

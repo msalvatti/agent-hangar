@@ -57,24 +57,39 @@ export const EXIT = {
 const USAGE = 'usage: cli.js turn | --version';
 
 /**
- * Seams the `turn` command exposes for tests and for whoever composes the runtime.
+ * Seams the `turn` command exposes to whoever runs it.
  *
- * Production passes none of these: the container's own paths and the real git runner are the
- * defaults, and the OpenAI factory is wired in by the composition that ships it.
+ * Every member is genuinely optional, and production replaces none of them: the container's own
+ * paths and the real git runner are the defaults. Tests point them at a temporary directory, a
+ * local `file://` remote and a git runner of their own.
  */
 export interface CliOverrides {
-  /** Factories for providers this build cannot construct on its own. */
-  providerFactories?: ProviderFactories;
-  /** Overrides the workspace root. */
+  /** Overrides the workspace root; tests point it at a temporary directory. */
   workspaceRoot?: string;
   /** Overrides the private runtime directory. */
   runtimeDir?: string;
   /** Overrides the git runner. */
   git?: GitRunner;
-  /** Overrides the repository URL policy, which is otherwise read from the file the host placed. */
+  /**
+   * Overrides the repository URL policy, which is otherwise read from the file the host placed;
+   * tests use `{ allow: 'any' }` for a local `file://` remote.
+   */
   urlPolicy?: RepositoryUrlPolicy;
-  /** Overrides where the approved origin is read from. */
+  /** Overrides where the approved origin is read from; tests point it at a temporary file. */
   originFile?: string;
+}
+
+/**
+ * Everything {@link runCli} runs a command against: the build's wiring, plus any overrides.
+ *
+ * The factories are required and have no default. A dispatcher is handed the process arguments,
+ * so it cannot know whether the command it is about to run needs a model — which makes "no
+ * provider" a state no caller may be left holding by accident. A build that wires none once
+ * shipped, type-checked, and failed on the operator's first real turn; it no longer compiles.
+ */
+export interface CliDeps extends CliOverrides {
+  /** Factories for providers the runtime cannot construct on its own. */
+  providerFactories: ProviderFactories;
 }
 
 /**
@@ -82,21 +97,17 @@ export interface CliOverrides {
  *
  * @param argv - Arguments after the script name.
  * @param io - Process resources.
- * @param overrides - Seams for tests and for the composition that wires a real provider.
+ * @param deps - The build's provider wiring, plus the seams a caller chooses to replace.
  * @returns The process exit code.
  */
-export function runCli(
-  argv: readonly string[],
-  io: CliIo,
-  overrides: CliOverrides = {},
-): Promise<number> {
+export function runCli(argv: readonly string[], io: CliIo, deps: CliDeps): Promise<number> {
   const command = argv[0];
   if (command === '--version' || command === '-v') {
     io.stdout.write(`${RUNTIME_VERSION}\n`);
     return Promise.resolve(EXIT.ok);
   }
   if (command === 'turn') {
-    return runTurnCommand({ io, ...overrides });
+    return runTurnCommand({ io, ...deps });
   }
   io.stderr.write(`${USAGE}\n`);
   return Promise.resolve(EXIT.usage);
