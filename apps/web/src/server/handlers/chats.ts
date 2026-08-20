@@ -61,7 +61,6 @@ import {
   createChatRequest,
   createChatResponse,
   enqueueDestroyChatWorkspace,
-  enqueueRunTurn,
   listChatsQuery,
   listChatsResponse,
   postMessageRequest,
@@ -86,6 +85,7 @@ import { allowedRepoHosts, assertRepoUrlAllowed } from '../repo-url';
 import { assertSameOrigin } from '../same-origin';
 
 import { compensate } from './compensate';
+import { dispatchTurn } from './dispatch';
 import { isLive, NO_USAGE, requireNoLiveTurn, requireSecrets } from './guards';
 import { lastTurnStatus, toChatDetail, toChatSummary } from './mappers';
 
@@ -182,30 +182,6 @@ async function requireSoleClaim(
       'Another message claimed this chat at the same moment; send it again',
     );
   }
-}
-
-/**
- * Hands an already-claimed turn to the worker.
- *
- * The turn's `queueJobId` is set to its own id, which is also the BullMQ job id, so a retried
- * request enqueues the same work once. If the enqueue fails the turn is marked `FAILED` before the
- * error propagates: a `QUEUED` turn no worker will ever see would spin the UI forever, and would
- * hold the chat's work slot against every later message.
- *
- * @param container - The server container.
- * @param turn - The claimed turn.
- * @returns The same turn.
- * @throws Error Whatever the queue rejected with, after the turn was failed.
- */
-async function dispatchTurn(container: ServerContainer, turn: Turn): Promise<Turn> {
-  await container.repos.turns.setStatus(turn.id, 'QUEUED', { queueJobId: turn.id });
-  try {
-    await enqueueRunTurn(container.queues.chatTurns, { turnId: turn.id });
-  } catch (error) {
-    await container.repos.turns.finish(turn.id, 'FAILED', NO_USAGE, 'Could not enqueue the turn');
-    throw error;
-  }
-  return turn;
 }
 
 /**

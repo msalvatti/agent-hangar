@@ -1,5 +1,5 @@
 /**
- * Turn cancellation.
+ * Turn cancellation and turn retry.
  *
  * Layer: service (server).
  *
@@ -28,6 +28,15 @@
  * This route answers for chat turns only. Its parameter is resolved through the turn repository,
  * so a `JobRun.id` is a 404 here rather than a cancellation of the wrong kind of work; stopping a
  * scheduled run is `handlers/runs.ts`'s `cancelRun`.
+ *
+ * Retrying is the other direction and shares the same resolution. It re-dispatches the turn row
+ * that failed rather than opening a new one, and it appends no message: the prompt the turn ran on
+ * is already persisted and already points at this turn, so re-running it is the only reading of
+ * "try that again" that leaves the transcript agreeing with the database. Opening a second turn
+ * would need a second prompt to hang it from — the transcript pairs a turn's tool calls with the
+ * USER message whose `turnId` matches — which is precisely the duplicate this route exists to
+ * avoid. The cost is that the row keeps no history of its attempts: the failure that preceded the
+ * retry survives only in the log, and Postgres cannot answer how often a turn was run.
  */
 import { enqueueRunTurn, okResponse, turnCommand, turnCommandChannel } from '@agent-hangar/core';
 
@@ -38,12 +47,16 @@ import { assertSameOrigin } from '../same-origin';
 
 import { CANCEL_REQUESTED_STATUS, removeQueuedJob } from './cancel';
 import { compensate } from './compensate';
-import { NO_USAGE } from './guards';
+import { dispatchTurn } from './dispatch';
+import { NO_USAGE, requireNoLiveTurn, requireSecrets } from './guards';
+
+/** Why a turn that did not fail is not run again; one sentence for both ways of reaching it. */
+const RETRY_REFUSED = 'Only a failed turn can be retried; send the prompt again to start a new one';
 
 /** Statuses a turn can no longer leave. */
 const TERMINAL_STATUSES: readonly string[] = ['SUCCEEDED', 'FAILED', 'CANCELLED'];
 
-/** Path parameters of the cancel route. */
+/** Path parameters of the turn routes. */
 export interface TurnParams {
   id: string;
 }
@@ -91,5 +104,67 @@ export function cancelTurn(
       JSON.stringify(turnCommand.parse({ type: 'cancel' })),
     );
     return jsonResponse(okResponse, { ok: true }, { status: CANCEL_REQUESTED_STATUS });
+  });
+}
+
+/**
+ * `POST /api/turns/:id/retry` — runs a failed turn again, against the prompt already attached to
+ * it.
+ *
+ * `FAILED` is the only status this accepts, and the two near misses are refused on purpose.
+ * `CANCELLED` is a decision the user made — Stop was pressed — and re-running it silently would
+ * undo that decision rather than recover from an accident; the way to run a cancelled prompt again
+ * is to send it, which records a new intent where the transcript can show it. `SUCCEEDED` would
+ * hang a second answer off a prompt that already has one, leaving a transcript no reader can
+ * account for. Both answer `TURN_NOT_RETRYABLE`, so "no" is a stated outcome the UI can render
+ * rather than the absence of an effect.
+ *
+ * The order of the checks decides which "no" a caller hears, and it is chosen for what the caller
+ * can do next. A turn that is still live is reported as `TURN_IN_PROGRESS` by the same guard the
+ * message route uses — "wait for it or cancel it" is actionable, where "not retryable" would only
+ * be true for the moment. Credentials are checked before anything is written, so a chat is never
+ * left with a queued turn that could not have run.
+ *
+ * The state change and its precondition are one write: `requeue` names `FAILED` in its own `where`
+ * clause, so two retries of the same turn arriving together cannot both find it failed and both
+ * proceed. The loser is answered `TURN_NOT_RETRYABLE`, which is what its turn now is.
+ *
+ * @param container - The server container.
+ * @param request - The incoming request.
+ * @param params - Resolved path parameters.
+ * @returns `200` with `{ ok: true }` once the turn is back on the queue.
+ * @throws Error Whatever the queue rejected with; the turn is marked `FAILED` again first, so it
+ *   is left exactly as retryable as it was before the request.
+ */
+export function retryTurn(
+  container: ServerContainer,
+  request: Request,
+  params: TurnParams,
+): Promise<Response> {
+  return withErrorHandling(container, async () => {
+    assertSameOrigin(request);
+    const turn = await container.repos.turns.get(params.id);
+    if (turn === null) {
+      throw new ResourceNotFoundError('Turn not found');
+    }
+    const chat = await container.repos.chats.getById(turn.chatId);
+    if (chat === null) {
+      throw new ResourceNotFoundError('Chat not found');
+    }
+    if (chat.status !== 'ACTIVE') {
+      throw new ConflictError('CHAT_ARCHIVED', 'Restore the chat before retrying the turn');
+    }
+    await requireNoLiveTurn(container, turn.chatId);
+    if (turn.status !== 'FAILED') {
+      throw new ConflictError('TURN_NOT_RETRYABLE', RETRY_REFUSED);
+    }
+    await requireSecrets(container);
+    const requeued = await container.repos.turns.requeue(turn.id);
+    if (requeued === null) {
+      throw new ConflictError('TURN_NOT_RETRYABLE', RETRY_REFUSED);
+    }
+    await container.repos.chats.touch(turn.chatId);
+    await dispatchTurn(container, requeued);
+    return jsonResponse(okResponse, { ok: true });
   });
 }

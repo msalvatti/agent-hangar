@@ -1,6 +1,6 @@
 /**
  * MSW handlers for the chat routes: list, create, detail, rename, post-message, archive/restore,
- * delete, and turn cancel.
+ * delete, and turn cancel and retry.
  *
  * Layer: mock (handler).
  */
@@ -245,6 +245,42 @@ const cancelTurn = http.post(routes.turnCancel, ({ params }) => {
   return notFound('Unknown turn');
 });
 
+/**
+ * `POST /api/turns/:id/retry` — re-queues the failed turn itself, adding no message.
+ *
+ * Writing no message is the whole behaviour under test on the client, so the mock has to be as
+ * strict about it as the route is: a turn that did not fail is refused rather than quietly
+ * re-queued.
+ */
+const retryTurn = http.post(routes.turnRetry, ({ params }) => {
+  const id = String(params.id);
+  for (const entry of store.chats) {
+    const turn = entry.turns.find((candidate) => candidate.id === id);
+    if (turn === undefined) {
+      continue;
+    }
+    if (turn.status !== 'FAILED') {
+      return HttpResponse.json(
+        apiError.parse({
+          error: { code: 'TURN_NOT_RETRYABLE', message: 'Only a failed turn can be retried' },
+        }),
+        { status: 409 },
+      );
+    }
+    const now = nowIso();
+    Object.assign(turn, {
+      status: 'QUEUED',
+      error: null,
+      startedAt: null,
+      finishedAt: null,
+      usage: { inputTokens: null, outputTokens: null, stepCount: 0 },
+    });
+    entry.chat = { ...entry.chat, lastTurnStatus: 'QUEUED', updatedAt: now };
+    return HttpResponse.json(okResponse.parse({ ok: true }));
+  }
+  return notFound('Unknown turn');
+});
+
 /** Handlers for every chat and turn route. */
 export const chatHandlers = [
   listChats,
@@ -256,4 +292,5 @@ export const chatHandlers = [
   archiveChat,
   restoreChat,
   cancelTurn,
+  retryTurn,
 ];

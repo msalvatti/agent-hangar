@@ -248,14 +248,29 @@ describe('settings and health routes', () => {
 
 describe('turn routes', () => {
   /**
-   * Cancel is the one route under `/api/turns`, and it reaches the handler that decides between
-   * removing a queued job and publishing a command.
+   * Cancel reaches the handler that decides between removing a queued job and publishing a
+   * command.
    */
   it('wires the cancel action', async () => {
     const route = await import('./turns/[id]/cancel/route');
     expect(route.dynamic).toBe('force-dynamic');
     const response = await route.POST(
       request('/api/turns/missing/cancel', 'POST'),
+      context({ id: 'missing' }),
+    );
+    expect(response.status).toBe(404);
+  });
+
+  /**
+   * Retry is the second route under `/api/turns`, and it resolves its id through the same turn
+   * repository the cancel does — so an id nothing owns is a 404 here too rather than a dispatch
+   * of the wrong work.
+   */
+  it('wires the retry action', async () => {
+    const route = await import('./turns/[id]/retry/route');
+    expect(route.dynamic).toBe('force-dynamic');
+    const response = await route.POST(
+      request('/api/turns/missing/retry', 'POST'),
       context({ id: 'missing' }),
     );
     expect(response.status).toBe(404);

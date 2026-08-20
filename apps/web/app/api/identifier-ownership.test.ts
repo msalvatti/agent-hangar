@@ -250,6 +250,7 @@ const OWNER_BY_ROUTE: Readonly<Record<string, string>> = {
   '/api/chats/[id]/restore': 'chat',
   '/api/chats/[id]/events': 'chat',
   '/api/turns/[id]/cancel': 'turn',
+  '/api/turns/[id]/retry': 'turn',
   '/api/jobs/[id]': 'job',
   '/api/jobs/[id]/run': 'job',
   '/api/jobs/[id]/runs': 'job',
