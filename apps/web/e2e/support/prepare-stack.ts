@@ -27,6 +27,7 @@ import { imageExists } from './docker';
 import { repoRoot, resolveE2eEnv, webRoot } from './env';
 import type { E2eEnv } from './env';
 import { startGitServer } from './gitserver';
+import { clearWorkerHeartbeat } from './heartbeat';
 import { exec } from './process';
 import { readStackState, writeStackState } from './stack-state';
 import { startWorker, stopWorker, workerLogPath } from './worker';
@@ -141,6 +142,11 @@ export async function prepareStack(
   if (previous.worker !== undefined) {
     await stopWorker(previous.worker);
   }
+  // The heartbeat outlives the worker that wrote it by its own time-to-live, which is longer than
+  // the readiness gate waits. Left in place, the gate would pass on the previous run's heartbeat
+  // and start the specs against a worker that may never have come up — the exact vacuous pass the
+  // gate exists to prevent. Cleared before the replacement is spawned, so only a fresh one counts.
+  await clearWorkerHeartbeat(env);
   const worker = await startWorker(env);
   writeStackState(env, { ...previous, gitServer, worker });
   process.stdout.write(

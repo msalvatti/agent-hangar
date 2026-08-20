@@ -10,6 +10,7 @@ import {
   DEFAULT_GITSERVER_HOST,
   DEFAULT_WORKSPACE_IMAGE,
   gitServerBindAddress,
+  instanceForPortBase,
   repoRoot,
   resolveE2eEnv,
   serverEnv,
@@ -98,6 +99,46 @@ describe('resolveE2eEnv', () => {
     expect(env.fakeScriptPath.endsWith('/e2e/fake-provider/script.json')).toBe(true);
     expect(env.masterKeyPath.endsWith('/e2e/.tmp/master.key')).toBe(true);
     expect(env.tmpDir.endsWith('/e2e/.tmp')).toBe(true);
+  });
+});
+
+describe('instanceForPortBase', () => {
+  /** The ordinary run keeps the plain instance name everything else in the project expects. */
+  it('keeps the plain name on the default port block', () => {
+    expect(instanceForPortBase(DEFAULT_PORT_BASE)).toBe(TEST_INSTANCE);
+  });
+
+  /**
+   * Moving the port block has to move everything named after the instance with it — database,
+   * compose project, workspace prefix, git-server container — or two runs on different ports still
+   * reset and reap each other.
+   */
+  it('takes an instance of its own on any other port block', () => {
+    expect(instanceForPortBase(4100)).toBe('test-4100');
+  });
+
+  /**
+   * The destructive database helpers refuse anything whose instance does not carry `test` as a
+   * whole underscore-delimited word, so a derived name has to keep that property.
+   */
+  it('keeps a name the destructive helpers accept', () => {
+    const { postgresDb } = resolveE2eEnv({ E2E_MODE: 'real', E2E_PORT_BASE: '4100' });
+    expect(postgresDb).toBe('agent_hangar_test_4100');
+    expect(postgresDb.replace('agent_hangar_', '').split('_')).toContain('test');
+  });
+
+  /**
+   * Everything a concurrent run could collide on has to differ, not just the ports. This is the
+   * claim the port-base knob makes, and it was false while the instance stayed fixed.
+   */
+  it('isolates every named resource when only the port base moves', () => {
+    const one = resolveE2eEnv({ E2E_MODE: 'real' });
+    const other = resolveE2eEnv({ E2E_MODE: 'real', E2E_PORT_BASE: '4100' });
+    expect(other.instance).not.toBe(one.instance);
+    expect(other.postgresDb).not.toBe(one.postgresDb);
+    expect(other.composeProjectName).not.toBe(one.composeProjectName);
+    expect(other.workspaceNamePrefix).not.toBe(one.workspaceNamePrefix);
+    expect(other.tmpDir).toBe(one.tmpDir);
   });
 });
 

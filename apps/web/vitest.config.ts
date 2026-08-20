@@ -81,12 +81,12 @@ export default defineConfig({
         'app/api/**',
         'src/server/**',
         // End-to-end harness, pure modules only. `gitserver.ts`, `docker.ts`, `db.ts`,
-        // `process.ts`, `worker.ts`, `prepare-stack.ts`, `stack.ts`, `stack-state.ts`, the page
-        // objects and the Playwright hooks spawn processes, signal them, open sockets or drive a
-        // browser, so the end-to-end run is what exercises them. Where one of those modules holds
-        // a pure decision worth pinning — `worker.ts`'s command-line matcher, which decides
-        // whether a recorded process id may be signalled — it carries its own unit test without
-        // the whole module being measured.
+        // `process.ts`, `worker.ts`, `heartbeat.ts`, `prepare-stack.ts`, `stack.ts`,
+        // `stack-state.ts`, the page objects and the Playwright hooks spawn processes, signal
+        // them, open sockets or drive a browser, so the end-to-end run is what exercises them.
+        // Where one of those modules holds a pure decision worth pinning — `worker.ts`'s
+        // command-line matcher, which decides whether a recorded process id may be signalled — it
+        // carries its own unit test without the whole module being measured.
         'e2e/support/{api,constants,env,github-stub,health,mode,selectors}.ts',
         'e2e/fake-provider/script.ts',
       ],

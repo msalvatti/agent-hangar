@@ -82,9 +82,10 @@ test('a scheduled job runs on demand and reports its output', async ({
   expect(await detail.rawOutputText()).toContain('printed above');
 
   const { runs } = await api.get(`/api/jobs/${jobId}/runs`, listRunsResponse);
-  // At least one, not exactly one: the job is eligible every minute, so the schedule may have
-  // produced a second run alongside the one this test triggered.
-  const succeeded = runs.filter((run) => run.status === 'SUCCEEDED');
+  // Manual, not merely succeeded: the job is eligible every minute, so the schedule can produce a
+  // succeeded run of its own — which would satisfy a status-only assertion even if Run now were
+  // broken. At least one rather than exactly one, because that scheduled run may also be here.
+  const succeeded = runs.filter((run) => run.status === 'SUCCEEDED' && run.trigger === 'MANUAL');
   expect(succeeded.length).toBeGreaterThanOrEqual(1);
   const first = succeeded[0];
   if (first === undefined) {

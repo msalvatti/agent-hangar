@@ -686,3 +686,22 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   old flat path answers 404, and `/../etc/passwd.git`, `/../../repos/e2e/sample.git` and
   `/./sample.git` all answer 404 — the owner pattern admits `.` and `..` as segments, so they are
   refused explicitly. Seed SHAs are unchanged, so the branch fixtures still match.
+- 2C.14 ✅ 2026-08-20 — four more reviewer findings, all real, all of them assertions or guards that
+  could pass without proving anything. The readiness gate could be satisfied by the *previous*
+  run's heartbeat, whose key outlives its writer by longer than the gate waits, so the key is now
+  cleared before the replacement is spawned and only a fresh heartbeat counts. `scheduled-job-run`
+  asked for a succeeded run when the job is eligible every minute, so the schedule could satisfy it
+  while Run now was broken; it now requires the `MANUAL` trigger. `settings-save-mask` parsed the
+  settings response with the contract schema before checking it for plaintext, and parsing strips
+  whatever the schema does not declare — the untouched text is checked first now, and by name for
+  the replacement value, which is not a registered canary. And `E2E_PORT_BASE` did not isolate
+  anything on its own: the instance stayed `test`, so two runs shared the database, compose
+  project, workspace prefix and git-server container whatever their ports; a non-default port base
+  now takes an instance of its own, keeping `test` as a whole word so the destructive helpers still
+  accept it.
+  · Residual, stated rather than fixed: `chat-create-run` asserts the pill shows a non-terminal
+  phase before Done, which catches a mislabelled phase and a turn that skipped straight to Done,
+  but does not assert Preparing and Running separately. Which of the two is showing when the
+  assertion first looks depends on how long the clone takes, and this lane cannot run the real
+  stack to measure it; asserting the order would be a timing bet, and a flaky spec is worse than a
+  narrower one.

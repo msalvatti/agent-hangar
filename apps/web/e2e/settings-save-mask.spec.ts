@@ -59,8 +59,14 @@ test('credentials are saved, masked, replaced and removed', async ({ page, api, 
   await expect(settings.mask('GITHUB_PAT')).toBeVisible();
   await expect(settings.mask('OPENAI_API_KEY')).toBeVisible();
 
-  const status = await api.get('/api/settings', settingsStatus);
-  assertNoCanary(JSON.stringify(status));
+  // The untouched text first: parsing with the contract schema strips whatever the schema does not
+  // declare, so a plaintext field nobody expected would be gone before the leak check could see
+  // it. The replacement value is checked by name too — it is not one of the registered canaries,
+  // so `assertNoCanary` alone would not notice it coming back.
+  const raw = await api.raw('/api/settings', { method: 'GET' });
+  assertNoCanary(raw.text);
+  expect(raw.text).not.toContain(REPLACED_GITHUB_CANARY);
+  const status = settingsStatus.parse(JSON.parse(raw.text));
   expect(status.githubPat.last4).toBe('ZZZZ');
   expect(status.openaiKey.last4).toBe(OPENAI_CANARY.slice(-4));
 });

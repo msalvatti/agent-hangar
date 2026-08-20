@@ -158,6 +158,22 @@ export function gitServerBindAddress(gitServerHost: string): string {
   return IPV4.test(gitServerHost) ? gitServerHost : LOOPBACK;
 }
 
+/**
+ * Instance name for a port base.
+ *
+ * Moving the port block alone does not isolate anything: the instance name is what the database,
+ * the compose project, the workspace-container prefix and the git-server container are all named
+ * after, so two runs on different ports would still reset and reap each other's resources. A
+ * non-default port base therefore takes an instance of its own. `test` stays a whole word of it,
+ * which is what the destructive database helpers require before they will erase anything.
+ *
+ * @param portBase - Base of the port block.
+ * @returns The instance name to derive everything else from.
+ */
+export function instanceForPortBase(portBase: number): string {
+  return portBase === DEFAULT_PORT_BASE ? TEST_INSTANCE : `${TEST_INSTANCE}-${String(portBase)}`;
+}
+
 function readOverride(env: E2eProcessEnv, key: string, fallback: string): string {
   const raw = env[key];
   return raw === undefined || raw.trim().length === 0 ? fallback : raw.trim();
@@ -172,8 +188,8 @@ function readOverride(env: E2eProcessEnv, key: string, fallback: string): string
  */
 export function resolveE2eEnv(processEnv: E2eProcessEnv = process.env): E2eEnv {
   const mode = readMode(processEnv);
-  const instance = readOverride(processEnv, 'E2E_INSTANCE', TEST_INSTANCE);
   const portBase = readPortBase(processEnv);
+  const instance = readOverride(processEnv, 'E2E_INSTANCE', instanceForPortBase(portBase));
   const derived = resolveInstance({
     env: { AH_INSTANCE: instance, AH_PORT_BASE: String(portBase) },
   });
