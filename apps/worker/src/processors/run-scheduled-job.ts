@@ -9,6 +9,14 @@
  * recorded as a failed run rather than queued, because queueing would let a slow job accumulate
  * exactly those containers.
  *
+ * The run takes its own workspace with a conditional write, from `READY` and nothing else. A job
+ * workspace is created for one run and destroyed with it, so it is never legitimately free — but
+ * the idle collector cannot see that: its clock is `lastActiveAt`, which is stamped when the row is
+ * inserted and never bumped for a job workspace, so provisioning that outlives the TTL leaves the
+ * row eligible the moment it turns `READY`. The collector runs on its own queue and can therefore
+ * take it inside this process, not merely across workers. Losing that write ends the run with a
+ * reason of its own rather than an exec into a container somebody else is removing.
+ *
  * The second guarantee is about a live predecessor, not a dead one, and the difference decides
  * whether a crash is survivable. A worker that dies mid-run leaves its `JobRun` in `RUNNING` and
  * its workspace in `BUSY`, and nothing else in the system reclaims either — the collector
@@ -76,6 +84,13 @@ export const STALLED_RUN_CODE = 'stalled_run';
 /** What the user is told about a run no worker is driving any more. */
 export const STALLED_RUN_MESSAGE =
   'The worker stopped while this run was executing; its workspace has been reclaimed.';
+
+/** Failure code recorded on a run whose workspace was taken before it could be used. */
+export const WORKSPACE_RECLAIMED_CODE = 'workspace_reclaimed';
+
+/** What the user is told when the collector took the run's workspace before the run started. */
+export const WORKSPACE_RECLAIMED_MESSAGE =
+  'This run lost its workspace before it could start; the next tick creates a fresh one.';
 
 /** Failure code recorded on a manual run whose job no longer exists. */
 export const JOB_MISSING_CODE = 'job_not_found';
@@ -321,6 +336,11 @@ async function updateRunTimes(deps: ProcessorDeps, job: ScheduledJob): Promise<v
 /**
  * Destroys the run's workspace and leaves nothing half-written, whatever happened above.
  *
+ * The status write is unconditional, and that is not an oversight. `teardown.workspaceId` is
+ * filled only once the run has taken the row `BUSY`, and `BUSY` is a status no other writer acts
+ * on: the idle selector and a teardown take only `READY`, the reconciliation takes `READY` or
+ * `STOPPING`, and boot recovery takes only `STOPPING`. There is nobody to lose a race to.
+ *
  * @param deps - Runner, repositories and logger.
  * @param teardown - The run, its container and the job it belongs to.
  */
@@ -443,6 +463,10 @@ async function closeUnrunnableRun(
  * The row is re-read rather than trusted from the run: a workspace already closed out — by a
  * teardown that got far enough, or by an earlier recovery — must not be destroyed twice or walked
  * back out of a terminal status the lifecycle forbids leaving.
+ *
+ * Past that re-read the write is unconditional, and safely so: a run records its `workspaceId`
+ * only after taking the row `BUSY`, so a row named here is `BUSY` or already terminal, and the
+ * early return covers terminal. Nothing else writes a `BUSY` row.
  *
  * @param deps - Runner, repositories and logger.
  * @param workspaceId - The workspace the abandoned run was using.
@@ -593,10 +617,33 @@ async function runInFreshWorkspace(
     await endUnstartedRun(deps, runId, watch, provisioned.reason, provisioned.message);
     return;
   }
+  // Taking the workspace is a conditional write for the same reason it is on the chat path, and
+  // this run is more exposed than a turn is: a job workspace's idle clock is stamped when the row
+  // is inserted and never bumped again — only a chat turn calls `markActive` — so provisioning
+  // that outlives the TTL leaves the row idle-eligible the instant it turns `READY`. The collector
+  // can then take it in the gap before this line, on its own queue, in this very process. Writing
+  // `BUSY` unconditionally would put the row back over a teardown that had already committed to
+  // destroying the container, and the run would exec into a container being removed underneath it.
+  const busy = await deps.repos.workspaces.claimStatus(provisioned.workspace.id, 'READY', 'BUSY');
+  if (busy === null) {
+    // The teardown that won owns the container and the row; racing it with this run's own teardown
+    // would destroy the same container twice, so `teardown` is deliberately left unfilled.
+    deps.logger.warn(
+      { runId, workspaceId: provisioned.workspace.id },
+      'the workspace this run provisioned was reclaimed before it could be used',
+    );
+    await endUnstartedRun(
+      deps,
+      runId,
+      watch,
+      WORKSPACE_RECLAIMED_CODE,
+      WORKSPACE_RECLAIMED_MESSAGE,
+    );
+    return;
+  }
   teardown.handle = provisioned.handle;
   teardown.workspaceId = provisioned.workspace.id;
   await deps.repos.jobRuns.setStatus(runId, 'RUNNING', { workspaceId: provisioned.workspace.id });
-  await deps.repos.workspaces.setStatus(provisioned.workspace.id, 'BUSY');
 
   const request = buildJobTurnRequest({
     runId,

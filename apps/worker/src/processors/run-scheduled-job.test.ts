@@ -8,7 +8,7 @@
  * entitled to drive is the subject of `run-scheduled-job-deliveries.test.ts`.
  * Mocks: the shared processor fixtures over in-memory repositories and the fake runner.
  */
-import { DEFAULT_JOB_TURN_LIMITS, nextRunAt } from '@agent-hangar/core';
+import { DEFAULT_JOB_TURN_LIMITS, JOB_NAMES, nextRunAt } from '@agent-hangar/core';
 import type { WorkspaceSpec } from '@agent-hangar/core';
 import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { describe, expect, it, vi } from 'vitest';
@@ -28,7 +28,70 @@ import {
   UnreachableRunner,
 } from '../testing/index.js';
 
+import { createGcProcessor } from './gc.js';
+import { WORKSPACE_RECLAIMED_CODE } from './run-scheduled-job.js';
+
 describe('createRunScheduledJobProcessor', () => {
+  /**
+   * A job workspace's idle clock is stamped when its row is inserted and never bumped — only a
+   * chat turn calls `markActive` — so provisioning that outlives the TTL leaves the row eligible
+   * the instant it turns `READY`, which is the gap this test puts the collector into. Ageing the
+   * row is how that precondition is expressed without waiting out the TTL; the collector runs on
+   * its own queue, so this is a race inside one process rather than one that needs two workers.
+   *
+   * What is asserted is the outcome: nothing is executed in a container somebody else is removing,
+   * and the run says which of the two things happened rather than becoming a generic failure.
+   */
+  it('ends the run rather than executing in a workspace the collector reclaimed', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const setStatus = container.repos.workspaces.setStatus.bind(container.repos.workspaces);
+    vi.spyOn(container.repos.workspaces, 'setStatus').mockImplementation(
+      async (id, status, update) => {
+        const row = await setStatus(id, status, update);
+        if (status === 'READY') {
+          const stored = container.repos.store.workspaces.get(id);
+          if (stored !== undefined) {
+            stored.lastActiveAt = new Date(container.clock.now().getTime() - 60 * 60_000);
+          }
+          await createGcProcessor(container)({
+            id: 'gc-1',
+            name: JOB_NAMES.reapIdle,
+            data: {},
+            attemptsMade: 0,
+          });
+        }
+        return row;
+      },
+    );
+
+    await run(container, delivery(job.id));
+    vi.restoreAllMocks();
+
+    expect(container.runner.calls.some((call) => call.method === 'exec')).toBe(false);
+    const runs = await container.repos.jobRuns.listByJob(job.id);
+    expect(runs[0]?.status).toBe('FAILED');
+    expect(runs[0]?.error).toContain(WORKSPACE_RECLAIMED_CODE);
+    expect(runs[0]?.workspaceId).toBeNull();
+    expect(container.logs.join('')).toContain('was reclaimed before it could be used');
+  });
+
+  /**
+   * The other half: the conditional write must not change an ordinary tick. Nothing takes the
+   * workspace, so the run takes it, executes, and records the workspace it used.
+   */
+  it('takes its own workspace and records it when nothing else wants it', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+
+    await run(container, delivery(job.id));
+
+    const runs = await container.repos.jobRuns.listByJob(job.id);
+    expect(runs[0]?.status).toBe('SUCCEEDED');
+    expect(runs[0]?.workspaceId).not.toBeNull();
+    expect(container.runner.calls.some((call) => call.method === 'exec')).toBe(true);
+  });
+
   /**
    * The whole flow: a fresh `JOB` workspace labelled with the run, a request carrying only the
    * job's prompt, the run's own tool log, the final answer as the run's output, and the container
