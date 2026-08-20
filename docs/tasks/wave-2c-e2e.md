@@ -643,3 +643,13 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   in that state with `409 TURN_IN_PROGRESS`, so the reset threw and every later test in the run
   failed for a reason that looked unrelated. It now cancels any live turn and waits for it to
   settle before deleting, with the wait — not the cancel — carrying the guarantee.
+- 2C.10 ✅ 2026-08-20 — rebased onto the merged worker and re-attempted the real stack. It stops
+  in the same place and for the same reason as before, with one fact the earlier attempt could not
+  show: `GITHUB_API_BASE_URL` being `https`-only stops the **worker** as well as the web server —
+  it loads the same schema and dies at boot with `the worker could not start: Invalid
+  configuration: - GITHUB_API_BASE_URL: Invalid URL`. So that one validator blocks both processes,
+  not just the API, and the readiness gate cannot yet be confirmed against a live heartbeat.
+  · Verified in passing, against a real orphan rather than a synthetic one: a run that aborts at
+  the managed web server never reaches the global teardown, so its worker is left behind. The next
+  run's pre-step found the recorded id, confirmed it was still the worker, stopped its whole group
+  and recorded the replacement — the old process and its child were gone afterwards.
