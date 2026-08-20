@@ -143,7 +143,20 @@ check_workspace_image() {
   fi
 }
 
+# Number of hex characters a master key file holds; `MasterKeyFile` accepts nothing else.
+readonly MASTER_KEY_HEX_LENGTH=64
+
+# Checks the key the way a reader does, not just that a file is there. A key that exists with the
+# right mode but cannot actually be loaded — a symlink, which `MasterKeyFile` refuses outright via
+# O_NOFOLLOW, or content that is not 64 hex characters — used to reach only the optional Secrets
+# row, where it rendered as a skip and left the run exiting 0 on a machine whose credentials were
+# unreadable. A required dependency that fails must fail a required row.
 check_master_key() {
+  if [ -L "$MASTER_KEY_PATH" ]; then
+    row_status="✗"; row_detail="symlink"
+    row_fix="Replace $MASTER_KEY_PATH with a regular file (the loader refuses to follow links)"
+    return 0
+  fi
   if [ ! -f "$MASTER_KEY_PATH" ]; then
     row_status="✗"; row_detail="missing"; row_fix="pnpm setup"
     return 0
@@ -156,13 +169,30 @@ check_master_key() {
   # option and writes nothing to stdout, so only one of the two ever contributes output.
   mode=$(stat -c '%a' "$MASTER_KEY_PATH" 2>/dev/null || stat -f '%Lp' "$MASTER_KEY_PATH")
   case "$mode" in
-    600|400)
-      row_status="✓"; row_detail="$MASTER_KEY_PATH (mode $mode)"; row_fix=""
-      ;;
+    600|400) ;;
     *)
       row_status="✗"; row_detail="mode $mode"; row_fix="chmod 600 \"$MASTER_KEY_PATH\""
+      return 0
       ;;
   esac
+  # Command substitution strips the trailing newline, so a well-formed file is exactly the hex and
+  # nothing else. The case pattern rejects any character outside the set — a newline included, so a
+  # multi-line file cannot slip through the way a line-oriented grep would let it.
+  local content
+  content=$(cat "$MASTER_KEY_PATH")
+  case "$content" in
+    *[!0-9a-fA-F]*|'')
+      row_status="✗"; row_detail="malformed"
+      row_fix="Restore $MASTER_KEY_PATH from a .bak-* backup, or pnpm setup for a new key"
+      return 0
+      ;;
+  esac
+  if [ "${#content}" -ne "$MASTER_KEY_HEX_LENGTH" ]; then
+    row_status="✗"; row_detail="malformed (${#content} of $MASTER_KEY_HEX_LENGTH hex characters)"
+    row_fix="Restore $MASTER_KEY_PATH from a .bak-* backup, or pnpm setup for a new key"
+    return 0
+  fi
+  row_status="✓"; row_detail="$MASTER_KEY_PATH (mode $mode)"; row_fix=""
 }
 
 secrets_openai_set=0

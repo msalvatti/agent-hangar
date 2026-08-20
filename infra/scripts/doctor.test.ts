@@ -12,7 +12,7 @@
  * `node:net` listeners standing in for Postgres/Redis reachability — bound on the ports `env.sh`
  * derives from AH_PORT_BASE, because the derivation deliberately ignores POSTGRES_PORT/REDIS_PORT.
  */
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:net';
 import type { Server } from 'node:net';
 import { tmpdir } from 'node:os';
@@ -440,6 +440,78 @@ describe('doctor.sh — required failures', () => {
       detail: 'pending',
       fix: 'pnpm db:migrate',
     });
+  });
+});
+
+describe('doctor.sh master key validation', () => {
+  /**
+   * The diagnostic used to check only that the key file existed with the right mode, so a file
+   * that no reader can actually load — content that is not 64 hex characters — failed further
+   * down, in the OPTIONAL secrets row, where it rendered as a skip and left the whole run exiting
+   * 0. A required dependency that fails must fail a required row.
+   */
+  it('fails the required key row on a malformed key', async () => {
+    const sandbox = await greenSandbox();
+    writeFileSync(sandbox.keyPath, 'not-a-key\n');
+    chmodSync(sandbox.keyPath, 0o600);
+    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const helper = helperShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+    });
+
+    expect(result.status).toBe(1);
+    const rows = JSON.parse(result.stdout) as { check: string; status: string; detail: string }[];
+    const key = rows.find((row) => row.check === 'Master key');
+    expect(key?.status).toBe('✗');
+    expect(key?.detail).toContain('malformed');
+  });
+
+  /**
+   * Right length, right characters, wrong count still cannot be loaded.
+   */
+  it('fails the required key row on a key of the wrong length', async () => {
+    const sandbox = await greenSandbox();
+    writeFileSync(sandbox.keyPath, `${'0'.repeat(63)}\n`);
+    chmodSync(sandbox.keyPath, 0o600);
+    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const helper = helperShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+    });
+
+    expect(result.status).toBe(1);
+    const rows = JSON.parse(result.stdout) as { check: string; status: string; detail: string }[];
+    expect(rows.find((row) => row.check === 'Master key')?.detail).toContain('63 of 64');
+  });
+
+  /**
+   * `MasterKeyFile` opens the key with O_NOFOLLOW and refuses a symbolic link outright, so a link
+   * pointing at a perfectly good key is still a key the app cannot load. The check follows the
+   * loader rather than the filesystem.
+   */
+  it('fails the required key row on a symlinked key', async () => {
+    const sandbox = await greenSandbox();
+    const target = `${sandbox.keyPath}.real`;
+    renameSync(sandbox.keyPath, target);
+    symlinkSync(target, sandbox.keyPath);
+    const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
+    const helper = helperShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(sandbox, { AH_DOCTOR_HELPER_CMD: helper.path }),
+    });
+
+    expect(result.status).toBe(1);
+    const rows = JSON.parse(result.stdout) as { check: string; status: string; fix: string }[];
+    const key = rows.find((row) => row.check === 'Master key');
+    expect(key?.status).toBe('✗');
+    expect(key?.fix).toContain('regular file');
   });
 });
 
