@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W3-A 🐳 (single agent, sequential — touches many paths; the only Docker-integration lane running) |
-| **Status** | 📋 ToDo |
-| **Progress** | 2/6 tasks |
+| **Status** | 🔄 In Progress |
+| **Progress** | 3/6 tasks |
 | **Branch** | `feat/w3a-integration` |
 | **Owned paths** | any path (single agent; nothing else runs in `apps/**` concurrently — W3-B owns `README.md` and `docs/**` in parallel and only its own lines of `docs/plan.md` §12 / `docs/tasks/README.md` are touched here) |
 | **Depends on** | W2-A, W2-B, W2-C merged (hence every Wave 1 lane and W0) |
@@ -44,7 +44,7 @@ Quality bar unchanged from W0: TypeScript strict, zero `any`, zero suppression c
 
 | ID | Task | Status | Priority | Size | Depends on |
 |---|---|---|---|---|---|
-| 3A.1 | Widen `coverage.include` to `src/**` in every package; close coverage gaps | 📋 | P0 | M | — |
+| 3A.1 | Widen `coverage.include` to `src/**` in every package; close coverage gaps | ✅ | P0 | M | — |
 | 3A.2 | Wire remaining seams: health banner + env pill, cancel, restore notice, settings gate, repo hosts, worker heartbeat | ✅ | P0 | L | 3A.1 |
 | 3A.3 | Playwright suite green 3× consecutively on the real stack; fix flakiness at the root | 📋 | P0 | L | 3A.2 |
 | 3A.4 | Real OpenAI smoke: `pnpm smoke:openai` (one turn with `gpt-5.6-sol`, list files + write a file) | ✅ | P0 | S | 3A.3 |
