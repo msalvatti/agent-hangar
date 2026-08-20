@@ -5,8 +5,12 @@
  *
  * Two projects: `unit` (default `pnpm test`) and `integration` (`*.integration.test.ts`, needs the
  * compose Postgres/Redis; `pnpm test:integration`). Coverage is collected over the unit project
- * with 100 % thresholds on every path listed in `coverage.include`; each lane appends its own
- * paths, one line per lane, at the end of the list.
+ * with 100 % thresholds.
+ *
+ * Measurement covers `src/**` as a whole rather than an enumerated list of paths: a list has to be
+ * extended by whoever adds a folder, and a folder nobody adds to it is a folder the thresholds say
+ * nothing about. Every exclusion below therefore has to argue that the path is not code this
+ * repository authors — "it is hard to test" is not that argument.
  */
 import { defineConfig } from 'vitest/config';
 
@@ -40,32 +44,15 @@ export default defineConfig({
       provider: 'v8',
       reporter: ['text', 'html', 'json-summary'],
       reportsDirectory: './coverage',
-      include: [
-        'src/agent-protocol/**',
-        'src/config/**',
-        'src/errors.ts',
-        'src/api/**',
-        'src/queues/**',
-        'src/testing/**',
-        'src/persistence/client.ts',
-        'src/persistence/testing/**',
-        'src/persistence/repositories/**',
-        'src/repo-url.ts',
-        'src/secrets/**',
-        'src/redaction/**',
-        'src/logging/**',
-        'src/model/openai/**',
-        'src/model/registry.ts',
-        'src/runner/docker/**',
-        'src/scheduling/**',
-        'src/workspace/**',
-        'src/restore/**',
-      ],
+      include: ['src/**'],
       exclude: [
+        // The tests themselves: they are the measurement, not the thing measured.
         '**/*.test.ts',
-        '**/*.integration-helper.ts',
-        'src/**/types.ts',
-        'src/index.ts',
+        // Prisma client output. `prisma generate` writes it, `.gitignore` keeps it out of the
+        // repository, and every schema change rewrites it wholesale — nothing here authors a line
+        // of it. Measuring it would also make the gate depend on whether a checkout happens to
+        // have run `pnpm db:generate` yet, so the same tree would pass or fail for reasons that
+        // have nothing to do with the tests.
         'src/persistence/generated/**',
       ],
       thresholds: {
