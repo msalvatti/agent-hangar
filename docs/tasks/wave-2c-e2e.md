@@ -903,3 +903,36 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   block is unaffected, and a mock run is too: it starts no container, so the image it would have
   used is not a fact about it. This is the workaround from the last two measurements turned into a
   rule, so the next reading cannot quietly be taken against a tag another lane owns.
+- 2C.22 ✅ 2026-08-20 — rebased onto the wired provider and remeasured real mode on an image built
+  from this checkout, tagged `agent-hangar/workspace:w2c`, with the runtime bundle and the shipped
+  `askpass.sh` both checked against the tree by digest. The bundle's digest changed with the
+  provider wiring, which is how the image was confirmed to be this tree's rather than a cached one.
+  · **Seven of the nine critical-flow tests pass in real mode**, from a stack brought up clean:
+  `chat-create-run` (both), `scheduled-job-run`, `settings-save-mask` (both) and `settings-missing`
+  (both). Two fail, and neither is a wall in front of the others.
+  · The wall is gone, and what is behind it is a tool that does not run. In a **chat** workspace
+  `list_dir` is recorded `FAILED` in 1 ms with no exit code and no output, and so is `run_shell`:
+  `sleep 60` returns in 2 ms and the turn reaches `SUCCEEDED` in 408 ms. In a **job** workspace the
+  same `run_shell` executes and its output arrives — which is why `scheduled-job-run` passes. Only
+  `write_file` succeeds on the chat side. The split is reproducible and belongs to the runtime, not
+  to this lane.
+  · That single defect explains both failures. `cancel-turn` cannot find its Stop button because
+  the turn it was written to catch mid-flight is over before the assertion looks — `sleep 60` did
+  not sleep. And the earlier reading where the status pill was already `Done` has the same cause,
+  so the reviewer thread about the status progression should be read against this, not against the
+  clone speed.
+  · `chat-create-run` passes **while its `list_dir` fails**, because the assertion compares tool
+  names and never their status. That is the same shape as the findings this lane has already
+  closed twice: an assertion that holds without proving what it describes. Adding the status to it
+  would turn the spec red against a defect outside this lane, which is a decision for the triage
+  now under way rather than one to take unilaterally.
+  · `chat-archive-restore` fails on a mock-only wording. The spec waits for a notice matching
+  `/restored/i`; the mock writes "This chat was restored…", while the product's normative notice
+  (`RESTORATION_NOTICE_PREFIX`, spec 02 §4) reads "Workspace recreated from history at …" and is
+  written when the next turn recreates the workspace, not when Restore is pressed. Both the wording
+  and the moment differ, so the assertion tracks the double rather than the system. Correcting it
+  needs the mock and the spec to move together, and the mock is not this lane's.
+  · Observed while recovering from an aborted run, and worth a look: a chat left with a `QUEUED`
+  turn whose queue job is gone cannot be cleared by the per-test reset. `settleLive` cancels it and
+  waits, but nothing is processing it to observe the cancellation, so the wait times out and every
+  later test in the run fails on the reset rather than on itself.
