@@ -17,6 +17,7 @@
  */
 import { spawn, spawnSync } from 'node:child_process';
 import type { ChildProcess } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import {
   chmodSync,
   mkdirSync,
@@ -169,7 +170,7 @@ function isRaceLossError(error: unknown, code: 'EEXIST' | 'ENOENT'): boolean {
  * @param marker - Marker path to inspect.
  */
 function reclaimIfStale(marker: string): void {
-  const held = `${marker}.reclaim-${String(process.pid)}-${String(Math.random()).slice(2)}`;
+  const held = `${marker}.reclaim-${randomUUID()}`;
   try {
     fsPort.renameSync(marker, held);
   } catch (error) {
