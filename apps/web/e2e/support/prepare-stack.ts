@@ -20,31 +20,15 @@
  * whoever already started them — that is how CI runs, with both as job services.
  * `E2E_SKIP_BUILD=1` reuses the build already in `.next`, for a developer iterating on one spec.
  */
-import { randomBytes } from 'node:crypto';
-import { chmodSync, mkdirSync, writeFileSync } from 'node:fs';
-
 import { imageExists } from './docker';
 import { repoRoot, resolveE2eEnv, webRoot } from './env';
 import type { E2eEnv } from './env';
 import { startGitServer } from './gitserver';
 import { clearWorkerHeartbeat } from './heartbeat';
+import { writeMasterKey } from './master-key';
 import { exec } from './process';
 import { readStackState, writeStackState } from './stack-state';
 import { startWorker, stopWorker, workerLogPath } from './worker';
-
-/** Bytes of the master key; the secrets module expects a 32-byte hex key. */
-const MASTER_KEY_BYTES = 32;
-
-/** Permissions of the master key file: readable by its owner only. */
-const MASTER_KEY_MODE = 0o600;
-
-/**
- * Permissions of the directory holding it. The secrets module refuses a key whose directory group
- * or others can reach — write access to the directory is enough to replace the key — so `mkdir`
- * alone is not sufficient: the mode it applies is filtered by the umask, and a directory that
- * already exists keeps whatever permissions it had.
- */
-const MASTER_KEY_DIR_MODE = 0o700;
 
 /** Path of the compose file, relative to the repository root. */
 const COMPOSE_FILE = 'infra/docker-compose.yml';
@@ -57,15 +41,6 @@ function skipBuild(processEnv: NodeJS.ProcessEnv): boolean {
 /** Whether compose should be skipped because the services are already provided. */
 function skipCompose(processEnv: NodeJS.ProcessEnv): boolean {
   return processEnv.E2E_SKIP_COMPOSE === '1';
-}
-
-/** Writes a fresh master key for this run, in the shape and with the permissions it demands. */
-function writeMasterKey(env: E2eEnv): void {
-  mkdirSync(env.tmpDir, { recursive: true, mode: MASTER_KEY_DIR_MODE });
-  chmodSync(env.tmpDir, MASTER_KEY_DIR_MODE);
-  writeFileSync(env.masterKeyPath, `${randomBytes(MASTER_KEY_BYTES).toString('hex')}\n`, {
-    mode: MASTER_KEY_MODE,
-  });
 }
 
 /** Starts Postgres and Redis for the test instance. */

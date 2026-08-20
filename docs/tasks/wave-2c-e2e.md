@@ -801,3 +801,33 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   does go away. Treating that 409 as success belongs in `DockerWorkspaceRunner.#destroyContainer`
   (`packages/core/src/runner/docker/docker-workspace-runner.ts:565`), which is not this lane's
   path. The reap stays: a crashed spec is exactly why it exists.
+- 2C.18 ✅ 2026-08-20 — rebased onto the merged provider-script forwarding and closed the last
+  reviewer finding that was this lane's to close. The rebase invalidated a verdict: the previous
+  pass reported `FAKE_PROVIDER_SCRIPT_PATH` as an open blocker, and it is now read, validated and
+  forwarded — `apps/worker/src/env.ts` declares it, `container.ts` resolves it at boot through
+  `fakeProviderScriptEnv`, and `provision-workspace.ts` spreads the result into the container as
+  `AGENT_FAKE_SCRIPT_JSON`. Three comment blocks on this side said the opposite and have been
+  rewritten to describe what the system does: the `serverEnv` header, which also still claimed
+  `ALLOWED_REPO_HOSTS` and `GITHUB_API_BASE_URL` were undeclared, and the header of
+  `e2e/fake-provider/script.ts`.
+  · The master key file kept whatever permissions it already had: `writeFileSync` honours its
+  `mode` only on the `O_CREAT` that makes the file, so a `master.key` left behind world-readable
+  stayed that way, exposing the fresh key and making the secrets module refuse it at boot. The
+  write now chmods the file, as it already did the directory. `writeMasterKey` moved out of
+  `prepare-stack.ts` into `support/master-key.ts` to be testable at all — the former runs the whole
+  preparation on import — and the test runs against a real temporary directory rather than an
+  injected file system, because what is being pinned is the behaviour of the operating system's own
+  calls and a double that recorded the mode it was handed would pass in exactly the failing case.
+  · Real mode, measured rather than predicted: the stack boots, the worker reports ready, the
+  repository picker answers from the stub, the chat is created and the turn is queued and started —
+  and the turn fails in 0.6 s inside the workspace container with `config:
+  /opt/agent-runtime/allowed-origin must hold the origin this workspace was created for`. Nothing
+  in this tree writes that file; it is the worker-side half of the origin work, still unmerged. So
+  the URL policy is still the first wall, one step later than 2C.17 found it: the runtime no longer
+  hard-codes `github.com`, it now demands an origin it is not being given.
+  · Noted while measuring, neither of them this lane's to fix. The workspace image tag
+  `agent-hangar/workspace:dev` is machine-global: it was rebuilt by a concurrent lane a minute into
+  a run, so what the containers executed changed underneath the suite. And `state.json`, the
+  master key and the worker log all live at a fixed `e2e/.tmp`, not under the instance — harmless
+  across checkouts, which have their own, but two runs of one checkout on different port bases
+  would still clobber each other.
