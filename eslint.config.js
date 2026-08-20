@@ -17,6 +17,8 @@ import tseslint from 'typescript-eslint';
 /** Folders that are generated, vendored or emitted and therefore never linted. */
 const IGNORED_GLOBS = [
   '**/dist/**',
+  // Staged into the image build context by `pnpm infra:image`; a built bundle, never source.
+  'infra/workspace/runtime/**',
   '**/.next/**',
   '**/coverage/**',
   '**/reports/**',
