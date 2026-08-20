@@ -109,7 +109,7 @@ export function AppSidebar() {
           <SheetHeader className="sr-only">
             <SheetTitle>Sidebar</SheetTitle>
           </SheetHeader>
-          <SidebarBody compact={false} activeId={activeId} onOpenSearch={onSearch} />
+          <SidebarBody compact={false} activeId={activeId} onOpenSearch={onSearch} headerInset />
         </SheetContent>
       </Sheet>
       {search}

@@ -91,6 +91,27 @@ export function pickedRepoUrl(repo: RepoSummary | null): string | null {
 }
 
 /**
+ * What the listing said about the repository the operator picked, kept with the URL it is about.
+ */
+export interface PickedRepoDefault {
+  repoUrl: string;
+  defaultBranch: string;
+}
+
+/**
+ * Reduces a repository picked in the palette to the branch default the form seeds from.
+ *
+ * The URL travels with the branch name so a default read for one repository can never seed
+ * another: a consumer compares the pair against the repository the form currently holds.
+ *
+ * @param repo - The chosen repository, or `null` when the choice was cleared.
+ * @returns The repository's URL and default branch, or `null`.
+ */
+export function pickedRepoDefault(repo: RepoSummary | null): PickedRepoDefault | null {
+  return repo === null ? null : { repoUrl: repo.url, defaultBranch: repo.defaultBranch };
+}
+
+/**
  * The `owner/name` the repository and branch pickers work in, derived from the stored URL.
  *
  * @param repoUrl - The form's repository URL, or `null` while none is chosen.

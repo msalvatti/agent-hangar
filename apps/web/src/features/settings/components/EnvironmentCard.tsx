@@ -33,7 +33,7 @@ export function EnvironmentCard({ summary, loading, error, refetch }: Environmen
       <CardHeader>
         <CardTitle>Environment</CardTitle>
         <CardDescription>
-          Read-only summary of this instance. Run <code>pnpm doctor</code> for details.
+          Read-only summary of this instance. Run <code>pnpm infra:doctor</code> for details.
         </CardDescription>
       </CardHeader>
       <CardContent>

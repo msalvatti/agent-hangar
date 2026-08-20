@@ -84,7 +84,13 @@ function ComposerTargets({
   return (
     <div className="border-border flex flex-wrap items-center gap-2 border-b px-3 py-2">
       <RepoPicker value={fullName} disabled={disabled} onChange={onRepoChange} />
-      <BranchPicker repo={fullName} value={branch} disabled={disabled} onChange={onBranchChange} />
+      <BranchPicker
+        repo={fullName}
+        defaultBranch={repo?.defaultBranch ?? null}
+        value={branch}
+        disabled={disabled}
+        onChange={onBranchChange}
+      />
     </div>
   );
 }
@@ -200,14 +206,26 @@ export function Composer(props: ComposerProps) {
         value={value}
         disabled={locked}
         placeholder={placeholder ?? PLACEHOLDER[props.mode]}
+        // Announced with the field, so the key that sends is discoverable without seeing the Send
+        // button's tooltip.
+        aria-keyshortcuts="Enter"
         onChange={(event) => {
           onChange(event.target.value);
         }}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
-            event.preventDefault();
-            submit();
+          // Enter sends and Shift+Enter inserts a newline, which is the arrangement of every chat
+          // this one is read as. ⌘/Ctrl+Enter keeps working: it is the combination the Send
+          // button's own tooltip taught, and a shortcut that is withdrawn without notice is worse
+          // than one that is merely no longer the shortest path.
+          //
+          // `isComposing` is what keeps this usable with an input method: while a candidate is
+          // being chosen, Enter commits the candidate and nothing else, so acting on it here would
+          // send half a word in every language that needs an IME to type.
+          if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) {
+            return;
           }
+          event.preventDefault();
+          submit();
         }}
         className="min-h-0 resize-none border-0 bg-transparent px-3 py-2.5 shadow-none focus-visible:ring-0 dark:bg-transparent"
       />
@@ -234,7 +252,7 @@ export function Composer(props: ComposerProps) {
           type="button"
           size="icon"
           aria-label="Send"
-          title="Send (⌘↵)"
+          title="Send (↵)"
           aria-describedby={blockedReason === null ? undefined : hintId}
           disabled={!canSubmit}
           onClick={submit}

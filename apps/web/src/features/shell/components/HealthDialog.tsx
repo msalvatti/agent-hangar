@@ -57,7 +57,9 @@ export function HealthDialog({ open, onOpenChange, health, onRetry }: HealthDial
         {health !== undefined && (
           <p className="text-muted-foreground font-mono text-xs">instance {health.instance}</p>
         )}
-        <p className="text-muted-foreground font-mono text-xs">Run `pnpm doctor` for details.</p>
+        <p className="text-muted-foreground font-mono text-xs">
+          Run `pnpm infra:doctor` for details.
+        </p>
         <Button type="button" variant="outline" size="sm" className="self-start" onClick={onRetry}>
           Retry
         </Button>

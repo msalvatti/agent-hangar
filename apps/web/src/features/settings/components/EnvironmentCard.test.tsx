@@ -3,7 +3,8 @@
  *
  * Layer: unit.
  * Goal: shows a skeleton while loading or before data arrives, renders the summary once loaded,
- * and shows an error card with a Retry action on failure.
+ * shows an error card with a Retry action on failure, and names a diagnostic command that this
+ * project's own package manager does not shadow.
  * Mocks: none — callbacks are `vi.fn()`.
  */
 import { render, screen } from '@testing-library/react';
@@ -41,6 +42,19 @@ describe('EnvironmentCard', () => {
       <EnvironmentCard summary={healthy} loading={false} error={undefined} refetch={vi.fn()} />,
     );
     expect(screen.getByText('Instance default')).toBeInTheDocument();
+  });
+
+  /*
+   * The card teaches a command, so the command has to be the one that works: `pnpm doctor` reaches
+   * pnpm's own built-in `doctor`, which reports on the pnpm installation and exits 0 whatever
+   * state this project's environment is in. `infra:doctor` is the name pnpm does not claim.
+   */
+  it('names the diagnostic command pnpm does not shadow', () => {
+    render(
+      <EnvironmentCard summary={healthy} loading={false} error={undefined} refetch={vi.fn()} />,
+    );
+    expect(screen.getByText('pnpm infra:doctor')).toBeInTheDocument();
+    expect(screen.queryByText('pnpm doctor')).toBeNull();
   });
 
   /** Shows an error card with a Retry action calling refetch. */

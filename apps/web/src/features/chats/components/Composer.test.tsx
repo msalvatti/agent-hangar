@@ -2,9 +2,12 @@
  * Tests for `Composer`: submission rules, keyboard shortcuts, lock state and the model label.
  */
 import type { RepoSummary } from '@agent-hangar/core';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { http, HttpResponse } from 'msw';
 import { describe, expect, it, vi } from 'vitest';
+
+import { server } from '@/mocks/server';
 
 import type { ComposerProps } from './Composer';
 import { Composer } from './Composer';
@@ -46,6 +49,32 @@ describe('Composer', () => {
     expect(screen.getByRole('button', { name: /main/ })).toBeInTheDocument();
   });
 
+  /*
+   * The chat screen was picking the wrong branch for the same reason the job dialog was: the
+   * branch picker defaulted to the first entry of the listing, and a forge orders branches its own
+   * way. What the composer knows and the picker did not is the repository's own default, so it
+   * hands it over. The listing is stated here rather than seeded, because the seeded one sorts the
+   * default first and would pass either way.
+   */
+  it('starts the chat on the repository default, not the first branch listed', async () => {
+    server.use(
+      http.get('/api/repos/branches', () =>
+        HttpResponse.json({
+          branches: [
+            { name: 'agent/cmt1qscc', sha: 'aaa1bbb2ccc3', protected: false },
+            { name: 'main', sha: 'ccc3ddd4eee5', protected: true },
+          ],
+        }),
+      ),
+    );
+    const onBranchChange = vi.fn();
+    renderNew({ branch: null, onBranchChange });
+    await waitFor(() => {
+      expect(onBranchChange).toHaveBeenCalledWith('main');
+    });
+    expect(onBranchChange).toHaveBeenCalledTimes(1);
+  });
+
   // A follow-up inherits the chat's repository, so the pickers would be noise.
   it('hides the pickers in followup mode', () => {
     render(
@@ -78,8 +107,33 @@ describe('Composer', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
   });
 
-  // ⌘Enter and Ctrl+Enter both send; plain Enter must keep inserting a newline.
-  it('submits on meta+Enter and ctrl+Enter but not on Enter alone', async () => {
+  /*
+   * Enter sends. This reverses what the composer used to do — Enter inserted a newline and only
+   * ⌘/Ctrl+Enter sent — because the product this implements sends on Enter, and a chat box that
+   * swallows Enter is read as broken rather than as different. The newline moves to Shift+Enter,
+   * pinned by the test below, so nothing is lost.
+   */
+  it('submits on Enter', async () => {
+    const onSubmit = vi.fn();
+    renderNew({ onSubmit });
+    await userEvent.type(screen.getByLabelText('Prompt'), '{Enter}');
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  // Shift+Enter is the newline: the keystroke reaches the field instead of being swallowed, and
+  // nothing is sent.
+  it('inserts a newline on shift+Enter without sending', async () => {
+    const onSubmit = vi.fn();
+    const onChange = vi.fn();
+    renderNew({ onSubmit, onChange, value: 'Do the thing' });
+    await userEvent.type(screen.getByLabelText('Prompt'), '{Shift>}{Enter}{/Shift}');
+    expect(onSubmit).not.toHaveBeenCalled();
+    expect(onChange).toHaveBeenCalledWith('Do the thing\n');
+  });
+
+  // ⌘Enter and Ctrl+Enter still send. They are no longer the shortest path, but they are what the
+  // interface taught, and a shortcut withdrawn without notice is its own defect.
+  it('still submits on meta+Enter and ctrl+Enter', async () => {
     const onSubmit = vi.fn();
     renderNew({ onSubmit });
     const textarea = screen.getByLabelText('Prompt');
@@ -87,8 +141,21 @@ describe('Composer', () => {
     expect(onSubmit).toHaveBeenCalledTimes(1);
     await userEvent.type(textarea, '{Control>}{Enter}{/Control}');
     expect(onSubmit).toHaveBeenCalledTimes(2);
-    await userEvent.type(textarea, '{Enter}');
-    expect(onSubmit).toHaveBeenCalledTimes(2);
+  });
+
+  // While an input method is composing, Enter commits the candidate being chosen and means
+  // nothing else. Sending there would cut every word that needs an IME to type in half.
+  it('does not submit while an input method is composing', () => {
+    const onSubmit = vi.fn();
+    renderNew({ onSubmit });
+    fireEvent.keyDown(screen.getByLabelText('Prompt'), { key: 'Enter', isComposing: true });
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  // The key that sends is announced with the field, not only drawn in the button's tooltip.
+  it('announces the send key on the field', () => {
+    renderNew();
+    expect(screen.getByLabelText('Prompt')).toHaveAttribute('aria-keyshortcuts', 'Enter');
   });
 
   // A shortcut must not fire while the composer is not submittable.

@@ -296,6 +296,44 @@ describe('JobDialog edit mode', () => {
   });
 });
 
+describe('JobDialog branch default', () => {
+  /*
+   * What the operator hit: choosing a repository seeded the schedule with `agent/cmt1qscc`, an
+   * agent work branch a chat had published minutes earlier, because the picker took the first
+   * entry of the listing and a forge orders branches its own way. A schedule pinned to a throwaway
+   * branch is worse than one pinned to `main`, because the field is never re-read afterwards.
+   *
+   * The listing is stated rather than seeded: the seeded mocks sort the repository default first,
+   * which is why this survived every test the dialog already had.
+   */
+  it(
+    'seeds a new job with the repository default, not the first branch listed',
+    async () => {
+      server.use(
+        http.get('/api/repos/branches', () =>
+          HttpResponse.json({
+            branches: [
+              { name: 'agent/cmt1qscc', sha: 'aaa1bbb2ccc3', protected: false },
+              { name: 'main', sha: 'ccc3ddd4eee5', protected: true },
+            ],
+          }),
+        ),
+      );
+      const user = userEvent.setup();
+      render(<JobDialog open onOpenChange={vi.fn()} />);
+
+      await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+      await user.click(await screen.findByText('acme/api'));
+
+      await waitFor(() => {
+        expect(screen.getByRole('group', { name: 'Branch' })).toHaveTextContent('main');
+      });
+      expect(screen.getByRole('group', { name: 'Branch' })).not.toHaveTextContent('agent/cmt1qscc');
+    },
+    PALETTE_TEST_TIMEOUT_MS,
+  );
+});
+
 describe('JobDialog repository row', () => {
   /*
    * The reported case: an `owner/repository` long enough to overrun its half of the two-column

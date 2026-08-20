@@ -38,6 +38,21 @@ describe('NewChatView', () => {
     localStorage.clear();
   });
 
+  /*
+   * Below `md` the shell's drawer trigger occupies this corner and the header words beside it only
+   * crowd the hamburger, so the page name is hidden there and shown from `md` up. Hiding it is
+   * `sr-only`, never `hidden`: the words are the page's name, and someone who is not reading the
+   * headline has nothing else to tell them which screen they are on. jsdom applies no stylesheet,
+   * so the presence of the text is the behaviour and the breakpoint is the declaration.
+   */
+  it('keeps the page name for assistive technology while hiding it on a narrow viewport', () => {
+    render(<NewChatView />);
+    const title = screen.getByText('New chat');
+    expect(title).toBeInTheDocument();
+    expect(title).toHaveClass('sr-only');
+    expect(title).toHaveClass('md:not-sr-only');
+  });
+
   // The shell's main column clips its overflow, so on a narrow viewport the suggestions plus the
   // composer are taller than the screen and the lower controls would be unreachable. jsdom does no
   // layout, so the scroll box itself is what the test can pin.
