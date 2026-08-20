@@ -164,15 +164,28 @@ function fileMode(path: string): string {
 }
 
 /**
+ * Lists the backup files the sandbox holds, oldest name first.
+ *
+ * @param box - The sandbox.
+ * @returns Their absolute paths.
+ */
+function backupPaths(box: Sandbox): string[] {
+  return readdirSync(box.dir)
+    .filter((name) => name.startsWith('master.key.bak-'))
+    .sort()
+    .map((name) => join(box.dir, name));
+}
+
+/**
  * Finds the single backup file the sandbox holds.
  *
  * @param box - The sandbox.
  * @returns The absolute path of the backup.
  */
 function backupPath(box: Sandbox): string {
-  const backups = readdirSync(box.dir).filter((name) => name.startsWith('master.key.bak-'));
+  const backups = backupPaths(box);
   expect(backups).toHaveLength(1);
-  return join(box.dir, backups[0] ?? '');
+  return backups[0] ?? '';
 }
 
 describe('rotate-key.sh without --yes', () => {
@@ -232,6 +245,26 @@ describe('rotate-key.sh --yes success', () => {
     expect(
       log.some((line) => line.startsWith('helper strict') && line.includes('rotate-key')),
     ).toBe(true);
+  });
+
+  /**
+   * The backup name carries a one-second timestamp, so two rotations of a small store can compute
+   * the same one. Reusing it would overwrite a backup that is still the only copy of the key it
+   * holds, so a name already taken is stepped past instead.
+   */
+  it('never reuses a backup name two rotations computed in the same second', () => {
+    const box = sandbox();
+    const shimDir = createShimDir({ log: box.log });
+    // A frozen clock is what makes the collision certain rather than occasional.
+    writeExtraShim(shimDir, 'date', "printf '%s\\n' '20260819000000'");
+
+    expect(run(box, ['--yes'], {}, shimDir).status).toBe(0);
+    expect(run(box, ['--yes'], {}, shimDir).status).toBe(0);
+
+    const backups = backupPaths(box);
+    expect(backups).toHaveLength(2);
+    expect(readFileSync(backups[0] ?? '', 'utf8')).toBe(OLD_KEY);
+    expect(readFileSync(backups[1] ?? '', 'utf8')).toBe(GENERATED_KEY);
   });
 
   /**
@@ -387,6 +420,23 @@ describe('rotate-key.sh --resume', () => {
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('Nothing to resume');
     expect(readShimLog(box.log)).toEqual([]);
+  });
+
+  /**
+   * A rotation needs the key it rotates away from: the helper decrypts with it and the backup is
+   * a copy of it. Without the file the run stops at once and names both ways back, rather than
+   * re-encrypting first and then failing to copy a file that is not there.
+   */
+  it('refuses to run without a current master key', () => {
+    const box = sandbox();
+    rmSync(box.keyPath);
+    writeFileSync(box.newKeyPath, PENDING_KEY);
+    const result = run(box, ['--yes', '--resume']);
+
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('No master key at');
+    expect(readShimLog(box.log)).toEqual([]);
+    expect(readFileSync(box.newKeyPath, 'utf8')).toBe(PENDING_KEY);
   });
 
   /**

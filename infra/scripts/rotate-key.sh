@@ -90,6 +90,21 @@ write_state() {
   chmod 600 "$state"
 }
 
+# free_backup_path: prints a backup path no file occupies yet. The timestamp has a one-second
+# resolution, so two rotations of a small store can land on the same name; reusing it would replace
+# a backup that is still the only copy of the key it holds.
+free_backup_path() {
+  local stamp candidate suffix
+  stamp="$(date +%Y%m%d%H%M%S)"
+  candidate="$key.bak-$stamp"
+  suffix=1
+  while [ -e "$candidate" ]; do
+    candidate="$key.bak-$stamp.$suffix"
+    suffix=$((suffix + 1))
+  done
+  printf '%s' "$candidate"
+}
+
 # put_key_in_place <backup path>: keeps the current key under <backup path> and makes "<key>.new"
 # the current key. Idempotent — a crash anywhere inside it is finished by running it again — and it
 # leaves no instant in which "<key>" is missing.
@@ -125,6 +140,14 @@ if [ $confirmed -ne 1 ]; then
 fi
 
 umask 077
+
+# Nothing below can run without the key it rotates away from: the helper decrypts with it and the
+# backup is a copy of it. Saying so here beats failing halfway with a bare `cp` error, and it is
+# also the state an operator lands in after restoring only part of a rotation by hand.
+if [ ! -f "$key" ]; then
+  echo "No master key at $key. Create one with pnpm setup, or restore it from a $key.bak-* backup, before rotating." >&2
+  exit 1
+fi
 
 phase="$(read_state phase)"
 backup="$(read_state backup)"
@@ -187,7 +210,7 @@ else
     exit "$rc"
   fi
 
-  backup="$key.bak-$(date +%Y%m%d%H%M%S)"
+  backup="$(free_backup_path)"
   write_state reencrypted "$backup"
 fi
 
