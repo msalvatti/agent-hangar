@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W3-A 🐳 (single agent, sequential — touches many paths; the only Docker-integration lane running) |
 | **Status** | 📋 ToDo |
-| **Progress** | 0/6 tasks |
+| **Progress** | 1/6 tasks |
 | **Branch** | `feat/w3a-integration` |
 | **Owned paths** | any path (single agent; nothing else runs in `apps/**` concurrently — W3-B owns `README.md` and `docs/**` in parallel and only its own lines of `docs/plan.md` §12 / `docs/tasks/README.md` are touched here) |
 | **Depends on** | W2-A, W2-B, W2-C merged (hence every Wave 1 lane and W0) |
@@ -12,7 +12,7 @@
 | **Source** | [docs/plan.md §8](../plan.md) (W3-A) · spec [01 §5](../spec/01-overview.md) [06 §4](../spec/06-testing.md) [10 §10](../spec/10-ui-design.md) [05 §4](../spec/05-local-dev.md) |
 | **Last updated** | 2026-08-20 |
 
-**Where this lane stands on 2026-08-20.** It has not run: no branch exists and all six tasks are open. Nothing blocks it — W2-A, W2-B and W2-C are all merged. What has changed underneath it is the backlog: besides these six tasks the lane was routed every finding no lane owned, and eleven of those were closed by orchestrator fix pull requests rather than by the lane (R4, R5, R6, R17 and R18 by PR #46; R12, R13 and R28 by PR #60; R33, R34 and R35 by PR #61), with R10 closed halfway by PR #60. [plan §14](../plan.md) is the live list and every open row in it is routed here; [plan §12](../plan.md) records what closed and by what, and carries the count so this file does not have to keep a second copy of it. Read both before planning the work; the tasks below were written when none of it had happened.
+**Where this lane stands on 2026-08-20.** Five of its six tasks are open. Task 3A.4 shipped on its own branch (`feat/smoke-openai`) rather than on the lane branch, because the real-model smoke has no dependency on the rest of the lane in practice: it drives the running instance through the public API and touches only `infra/scripts/lib/**` and the root manifest. The other five are untouched and no lane branch exists yet. Nothing blocks it — W2-A, W2-B and W2-C are all merged. What has changed underneath it is the backlog: besides these six tasks the lane was routed every finding no lane owned, and eleven of those were closed by orchestrator fix pull requests rather than by the lane (R4, R5, R6, R17 and R18 by PR #46; R12, R13 and R28 by PR #60; R33, R34 and R35 by PR #61), with R10 closed halfway by PR #60. [plan §14](../plan.md) is the live list and every open row in it is routed here; [plan §12](../plan.md) records what closed and by what, and carries the count so this file does not have to keep a second copy of it. Read both before planning the work; the tasks below were written when none of it had happened.
 
 ## Context
 
@@ -47,7 +47,7 @@ Quality bar unchanged from W0: TypeScript strict, zero `any`, zero suppression c
 | 3A.1 | Widen `coverage.include` to `src/**` in every package; close coverage gaps | 📋 | P0 | M | — |
 | 3A.2 | Wire remaining seams: health banner + env pill, cancel, restore notice, settings gate, repo hosts, worker heartbeat | 📋 | P0 | L | 3A.1 |
 | 3A.3 | Playwright suite green 3× consecutively on the real stack; fix flakiness at the root | 📋 | P0 | L | 3A.2 |
-| 3A.4 | Real OpenAI smoke: `pnpm smoke:openai` (one turn with `gpt-5.6-sol`, list files + write a file) | 📋 | P0 | S | 3A.3 |
+| 3A.4 | Real OpenAI smoke: `pnpm smoke:openai` (one turn with `gpt-5.6-sol`, list files + write a file) | ✅ | P0 | S | 3A.3 |
 | 3A.5 | UI polish pass against spec 10 §10 on real data; Lighthouse a11y ≥ 95; `pnpm doctor` final | 📋 | P1 | M | 3A.3 |
 | 3A.6 | CI all jobs green; close-out PR with S1–S6, S8 evidence | 📋 | P0 | S | 3A.1–3A.5 |
 
@@ -261,17 +261,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-3a-integration
 
 ## Task 3A.4 — Real OpenAI smoke: `pnpm smoke:openai` (one turn with `gpt-5.6-sol`, list files + write a file)
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 3A.3
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 3A.3
 
 **Description.** Prove the real model path once: a documented script drives the running stack (web + worker with `AGENT_MODEL_PROVIDER=openai`) through the public HTTP API to create a chat on a small public repository and send one prompt that makes the agent list the repository files and write a file. It uses the OpenAI key (and GitHub PAT for the repo picker) that the user entered in Settings; it never reads a key from env or argv and never runs in CI. The result (model, steps, tool calls, duration, tokens) is recorded in the PR.
 
 **Acceptance criteria**
-- [ ] `scripts/smoke-openai.ts` (run via `tsx`; root script `smoke:openai`) takes `--base-url` (default `http://127.0.0.1:${WEB_PORT}`), `--repo` (default a small public repo such as `https://github.com/octocat/Hello-World`), `--branch` (default repo default), `--timeout` (default 300 s); reads no secrets
-- [ ] Flow: `GET /api/health` (requires docker ✓, worker alive, image present) → `GET /api/settings` (requires both secrets configured, else exits 2 with the message "Enter your keys in Settings first") → `POST /api/chats` → `POST …/messages` with the prompt *"List the files in this repository, then create a file SMOKE.md containing the current date and a one-line summary of the repo. Do not push."* → subscribes to the turn SSE with `fetch` + `ReadableStream` (Node 24, no EventSource polyfill) → prints each event compactly → exits 0 when `turn.completed` arrives and the event log contains at least one `tool.call` with `list_dir` (or `run_shell` with `ls`) and one `write_file` for `SMOKE.md`; exits 1 on `turn.failed`, timeout, or missing tool calls
-- [ ] Uses `OPENAI_MODEL` from the running server (the model id shown in the composer / health); the script prints the model id it observed
-- [ ] Unit-tested with a mocked `fetch` (happy path, settings missing, health degraded, failed turn, timeout) — 100 % coverage; the script lives outside any package's `src/**` so add a root `vitest.config.ts` project or place it under `apps/worker/scripts/` with its own include — whichever keeps the 100 % rule simple (decide and note it)
-- [ ] Run once for real with the user's key; the PR body gets a "Real OpenAI smoke" section: date, model, steps, tool calls (names + paths), duration, usage tokens if the `turn.completed` event carries them, and the redacted final assistant message (first 300 chars)
-- [ ] README pointer for W3-B: one paragraph in the completion log describing how to run it (W3-B writes the README "Testing → Real model smoke" subsection from it)
+- [x] `scripts/smoke-openai.ts` (run via `tsx`; root script `smoke:openai`) takes `--base-url` (default `http://127.0.0.1:${WEB_PORT}`), `--repo` (default a small public repo such as `https://github.com/octocat/Hello-World`), `--branch` (default repo default), `--timeout` (default 300 s); reads no secrets
+- [x] Flow: `GET /api/health` (requires docker ✓, worker alive, image present) → `GET /api/settings` (requires both secrets configured, else exits 2 with the message "Enter your keys in Settings first") → `POST /api/chats` → `POST …/messages` with the prompt *"List the files in this repository, then create a file SMOKE.md containing the current date and a one-line summary of the repo. Do not push."* → subscribes to the turn SSE with `fetch` + `ReadableStream` (Node 24, no EventSource polyfill) → prints each event compactly → exits 0 when `turn.completed` arrives and the event log contains at least one `tool.call` with `list_dir` (or `run_shell` with `ls`) and one `write_file` for `SMOKE.md`; exits 1 on `turn.failed`, timeout, or missing tool calls
+- [x] Uses `OPENAI_MODEL` from the running server (the model id shown in the composer / health); the script prints the model id it observed
+- [x] Unit-tested with a mocked `fetch` (happy path, settings missing, health degraded, failed turn, timeout) — 100 % coverage; the script lives outside any package's `src/**` so add a root `vitest.config.ts` project or place it under `apps/worker/scripts/` with its own include — whichever keeps the 100 % rule simple (decide and note it)
+- [x] Run once for real with the user's key; the PR body gets a "Real OpenAI smoke" section: date, model, steps, tool calls (names + paths), duration, usage tokens if the `turn.completed` event carries them, and the redacted final assistant message (first 300 chars)
+- [x] README pointer for W3-B: one paragraph in the completion log describing how to run it (W3-B writes the README "Testing → Real model smoke" subsection from it)
 
 **Files to create**
 `scripts/smoke-openai.ts`, `scripts/smoke-openai.test.ts`, root `package.json` script `smoke:openai` (`tsx scripts/smoke-openai.ts`), root `vitest.config.ts` (or workspace entry) so the test is part of `pnpm test`.
@@ -474,3 +474,7 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-3a-integration
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 3A.4 ✅ 2026-08-20 — smoke: model=gpt-5.6-sol steps=5 duration=14.7s tokens=4231/351, tool calls list_dir · read_file · run_shell ×2 · write_file(SMOKE.md) · read_file · run_shell, all SUCCEEDED exit=0; workspace released (`pnpm ws:list` empty afterwards)
+
+**How to run it (README pointer for W3-B, "Testing → Real model smoke").** `pnpm smoke:openai` drives one real turn through the running instance's public HTTP API: it checks `/api/health`, confirms `/api/settings` reports both credentials as stored, opens a chat on a small public repository, sends one prompt that makes the agent list the files and write `SMOKE.md`, follows the turn's event stream, and finally deletes the chat so the workspace is torn down. Preconditions: the instance is up (`pnpm dev`), Docker is running with the workspace image built, and the GitHub PAT and OpenAI key have been entered **in Settings** — the script reads no credential from the environment, from a file or from an argument, and refuses with exit code 2 and "Enter your keys in Settings first" when either is missing. Flags: `--base-url` (default `http://127.0.0.1:$WEB_PORT`), `--repo` with `--branch` (default `https://github.com/octocat/Hello-World` on `master`; naming a repository requires naming its branch, since the default branch of an arbitrary repository cannot be discovered through this API), `--timeout` in seconds (default 300) and `--keep` to leave the chat in place. Exit codes: 0 the turn completed and both halves were proven, 1 the turn ran and something was not proven, 2 the instance or Settings were not ready. What it proves that no automated suite does: every other check in this repository runs against the scripted provider, so this is the only thing that exercises the real OpenAI path end to end — model composition, credential decryption, container, tools and event stream. It is deliberately **not** in CI: it spends the operator's own tokens and needs their own credentials.
