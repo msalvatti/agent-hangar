@@ -407,6 +407,67 @@ describe('createRunTurnProcessor, failing a turn', () => {
   });
 
   /**
+   * The watch opens before the first row is read, so a Stop pressed while the worker is still
+   * looking the chat up reaches a subscriber — and `POST /api/turns/:id/cancel` has already
+   * answered `202` to it. The chat being gone is a reason the turn could not have run, but it is
+   * not a reason to record something other than what the user was promised, so the row reads
+   * `CANCELLED` and the stream still ends.
+   */
+  it('cancels a turn whose chat is gone when the user stopped it first', async () => {
+    const container = setupProcessorContainer();
+    const { chat, turn } = await seedChatWithTurn(container);
+    container.repos.store.chats.delete(chat.id);
+    const getTurn = container.repos.turns.get.bind(container.repos.turns);
+    vi.spyOn(container.repos.turns, 'get').mockImplementation(async (id) => {
+      // Emitted from the very first lookup the delivery makes: a subscriber has to be in place
+      // already for this to reach anyone.
+      expect(container.commands.emitCancel(turn.id)).toBe(true);
+      return getTurn(id);
+    });
+
+    await runTurnOn(container, turn.id);
+    vi.restoreAllMocks();
+
+    const closed = await container.repos.turns.get(turn.id);
+    expect(closed?.status).toBe('CANCELLED');
+    expect(closed?.error).toBeNull();
+    expect(container.publisher.eventsFor(turn.id)).toEqual([{ type: 'turn.cancelled' }]);
+    expect(container.runner.calls).toHaveLength(0);
+    expect(container.commands.subscriptions).toBe(0);
+  });
+
+  /**
+   * Preparing the workspace is the slow part the user watches, and the two ways out of it must
+   * agree. A Stop that lands while preparation succeeds is already honoured by the check that
+   * follows it; one that lands while preparation fails must be honoured too, instead of recording
+   * the preparation failure over an answer the cancel route already gave. The Stop is emitted from
+   * the workspace row provisioning opens, which is after the turn is marked `PREPARING` and before
+   * the image is found missing.
+   */
+  it('cancels a turn stopped while the workspace it never got was failing', async () => {
+    const container = setupProcessorContainer({
+      runner: (options) => new ImagelessRunner(options),
+    });
+    const { turn } = await seedChatWithTurn(container);
+    const create = container.repos.workspaces.create.bind(container.repos.workspaces);
+    vi.spyOn(container.repos.workspaces, 'create').mockImplementation(async (input) => {
+      const row = await create(input);
+      expect(container.commands.emitCancel(turn.id)).toBe(true);
+      return row;
+    });
+
+    await runTurnOn(container, turn.id);
+    vi.restoreAllMocks();
+
+    const closed = await container.repos.turns.get(turn.id);
+    expect(closed?.status).toBe('CANCELLED');
+    expect(closed?.error).toBeNull();
+    expect(container.publisher.eventsFor(turn.id).at(-1)).toEqual({ type: 'turn.cancelled' });
+    expect([...container.repos.store.workspaces.values()][0]?.status).toBe('FAILED');
+    expect(container.runner.calls.some((call) => call.method === 'exec')).toBe(false);
+  });
+
+  /**
    * A request the protocol rejects — a chat whose stored base branch predates validation, say —
    * must still leave the turn terminal and the workspace usable. The repository URL cannot play
    * that role any more: provisioning measures it against the allow-list first, so a stored URL the

@@ -14,13 +14,16 @@
  * `404` whenever a lookup missed for some other reason. Each id is resolved by the repository that
  * owns it: a `Turn.id` here is a `404`, exactly as a `JobRun.id` is at `/api/turns/:id/cancel`.
  *
- * The guarantee has one window in it, and it is the worker's rather than this route's. A run this
- * process can still take off the queue is closed here outright. Once the worker has taken the
- * delivery, the request is published instead — and the scheduled-job processor subscribes only
- * after it has read the job and resolved the row, so a Stop that lands in the few milliseconds
- * between those two points reaches nobody. The run keeps executing and the answer was `202`, which
- * is honest about the request having been passed on rather than applied; stopping it again once it
- * reports `PREPARING` or `RUNNING` finds the subscriber in place.
+ * The guarantee still has one window in it, and it is still the worker's rather than this route's
+ * — but the worker now closes it as far as a run's identity allows rather than leaving it open. A
+ * run this process can still take off the queue is closed here outright. Once the worker has taken
+ * the delivery, this route only publishes, and the scheduled-job processor's cancellation
+ * subscription is already open by the time that publish could arrive: for a manual run, whose id
+ * exists before it is ever enqueued (the row this route reads is created first), the worker
+ * subscribes before it reads anything of its own; for a scheduled tick, whose id does not exist
+ * until the worker creates its row, the subscription opens the instant that row does, which is the
+ * earliest a subscriber could possibly exist. A `202` here means the request reached a listener
+ * already in place, not that it was published into a gap nobody was watching.
  */
 import {
   isTerminalRunStatus,

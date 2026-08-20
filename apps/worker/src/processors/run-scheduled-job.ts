@@ -148,6 +148,47 @@ async function cancelRun(deps: ProcessorDeps, runId: string): Promise<void> {
 }
 
 /**
+ * Ends a run that never started: as the cancellation the user asked for when one arrived, and
+ * otherwise as the failure that made the delivery unrunnable.
+ *
+ * Both facts can hold of the same delivery. The user pressed Stop — and `POST /api/runs/:id/cancel`
+ * answered `202`, which is a promise about this very row — while the delivery was independently
+ * going nowhere: the job was deleted, the job was disabled, the previous run is still executing, or
+ * the workspace could not be provisioned. Only one record gets written, and it is `CANCELLED`.
+ *
+ * The case for `FAILED` is not empty: the run could not have proceeded whatever the user did, and
+ * the reason is operationally interesting. It loses on two counts. The `202` told the browser this
+ * run was being stopped, so a row that then reads `FAILED` makes the API a liar about the one thing
+ * the user was waiting to see. And the reason is not lost by cancelling — the worker log already
+ * carries it, addressed to the operator who wants it, and a provisioning failure has written itself
+ * onto the workspace row as well. What `FAILED` would lose is the user's own instruction, which
+ * nothing else records anywhere.
+ *
+ * Either way exactly one terminal event goes out, published before the row is finished: the manual
+ * run's browser is attached to that stream, and a run that ends without a terminal event leaves the
+ * page waiting for something nobody is going to send.
+ *
+ * @param deps - Publisher and repositories.
+ * @param runId - The run.
+ * @param watch - The run's own cancellation subscription.
+ * @param code - Machine-readable failure code, recorded when no cancellation arrived.
+ * @param message - Human-readable detail, recorded when no cancellation arrived.
+ */
+async function endUnstartedRun(
+  deps: ProcessorDeps,
+  runId: string,
+  watch: CancellationWatch,
+  code: string,
+  message: string,
+): Promise<void> {
+  if (watch.requested()) {
+    await cancelRun(deps, runId);
+    return;
+  }
+  await failRun(deps, runId, code, message);
+}
+
+/**
  * Writes the outcome for a run whose runtime never reported one.
  *
  * @param deps - Publisher and repositories.
@@ -311,9 +352,9 @@ async function teardownRun(deps: ProcessorDeps, teardown: Teardown): Promise<voi
 /**
  * Records the tick that was dropped because the previous run is still executing.
  *
- * It goes through the same failure path as every other failed run, terminal event included. A
- * manual run already has a browser attached to its stream, and a run finished without a terminal
- * event leaves that page waiting for something nobody is going to send.
+ * It goes through the same terminal path as every other run that never started, terminal event
+ * included — see {@link endUnstartedRun} for why a Stop that already arrived outranks the overlap
+ * as the record, and for why the event matters.
  *
  * The run times are deliberately left alone: the run that is still executing owns them, and
  * moving `nextRunAt` here would report a schedule the job is not following.
@@ -322,15 +363,19 @@ async function teardownRun(deps: ProcessorDeps, teardown: Teardown): Promise<voi
  * @param job - The job definition.
  * @param run - The run being dropped.
  * @param reason - Why it was dropped.
+ * @param watch - The run's cancellation subscription, open since before the overlap was decided.
  */
 async function recordSkippedTick(
   deps: ProcessorDeps,
   job: ScheduledJob,
   run: JobRun,
   reason: string,
+  watch: CancellationWatch,
 ): Promise<void> {
-  await failRun(deps, run.id, OVERLAP_SKIP_CODE, reason);
+  // True of both outcomes: the tick was dropped and nothing was executed for it. Only which
+  // terminal status the row carries depends on whether the user had already asked to stop.
   deps.logger.info({ jobId: job.id, runId: run.id }, 'scheduled run skipped');
+  await endUnstartedRun(deps, run.id, watch, OVERLAP_SKIP_CODE, reason);
 }
 
 /**
@@ -360,27 +405,36 @@ function mayAdopt(run: JobRun, jobId: string): boolean {
  * close and nothing watching.
  *
  * The same eligibility rule as adoption applies, so a stale delivery cannot terminalise a row that
- * belongs to another job or to a run that has already started.
+ * belongs to another job or to a run that has already started. The Stop the user may have pressed
+ * in the meantime is honoured only once that rule has passed, for the same reason: a cancellation
+ * aimed at this run is no licence to write a terminal status onto somebody else's row.
+ *
+ * The early watch stands in for the delivery's `runId` here. The two exist together or not at all —
+ * the consumer opens the watch on `payload.runId` and only when it is present — so its absence is
+ * what says "this delivery carries no row to close", and its key is that row. Reading the id off
+ * the watch also makes it impossible to close out a run the watch does not cover.
  *
  * @param deps - Publisher and repositories.
  * @param payload - The delivery.
+ * @param earlyWatch - The manual run's subscription, or `null` for a tick.
  * @param code - Machine-readable failure code.
  * @param message - What the user is told.
  */
 async function closeUnrunnableRun(
   deps: ProcessorDeps,
   payload: ScheduledDelivery,
+  earlyWatch: CancellationWatch | null,
   code: string,
   message: string,
 ): Promise<void> {
-  if (payload.runId === undefined) {
+  if (earlyWatch === null) {
     return;
   }
-  const run = await deps.repos.jobRuns.get(payload.runId);
+  const run = await deps.repos.jobRuns.get(earlyWatch.key);
   if (run === null || !mayAdopt(run, payload.jobId)) {
     return;
   }
-  await failRun(deps, run.id, code, message);
+  await endUnstartedRun(deps, run.id, earlyWatch, code, message);
 }
 
 /**
@@ -419,6 +473,11 @@ async function destroyAbandonedWorkspace(deps: ProcessorDeps, workspaceId: strin
  *
  * The terminal event goes out like any other failure: a manual run may still have a browser
  * attached to its stream from before the worker died.
+ *
+ * It stays a failure even while this delivery holds an open cancellation watch, because that watch
+ * belongs to a different run. The abandoned row is a predecessor of the job, never the run this
+ * delivery drives, and the only subscription that was ever listening for its Stop died with the
+ * worker that opened it. Recording it as cancelled would claim a request nothing here received.
  *
  * @param deps - Runner, publisher, repositories and logger.
  * @param abandoned - The run found still executing, whose executor is gone.
@@ -527,7 +586,11 @@ async function runInFreshWorkspace(
     branch: job.branch,
   });
   if (!provisioned.ok) {
-    await failRun(deps, runId, provisioned.reason, provisioned.message);
+    // Provisioning is the slow part the user is watching, so it is also where Stop is pressed. A
+    // cancellation that arrives while the clone succeeds is honoured by the executor, which seeds
+    // its state from this same watch; one that arrives while the clone fails is honoured here, so
+    // the two halves of the window agree on what the record says.
+    await endUnstartedRun(deps, runId, watch, provisioned.reason, provisioned.message);
     return;
   }
   teardown.handle = provisioned.handle;
@@ -592,29 +655,84 @@ async function prepareAndRunJob(
 }
 
 /**
- * Listens for a cancellation, then runs the job.
+ * Runs the delivery once its watch is open, from the job lookup through to teardown.
  *
- * The subscription is taken before the workspace exists. A manual run is watched by a browser from
- * the moment the API answered with its id, cancellation travels over Redis pub/sub, and pub/sub
- * keeps nothing for a subscriber that has not arrived yet — so a Stop pressed while the container
- * is being created must find somebody already listening.
+ * The subscription opens as early as the run's identity allows, and no earlier: a manual run
+ * already has an id when this delivery is read — the API created the row and answered the
+ * request with it before the job was ever enqueued — so `earlyWatch` is that subscription,
+ * already receiving. A scheduled tick carries no id, and pub/sub cannot be asked to listen for a
+ * key that does not exist yet, so its watch cannot open before {@link openRun} mints one; opening
+ * it the moment that call returns is the earliest a subscriber could possibly matter, because
+ * nothing could have named this run for cancellation any sooner than that.
+ *
+ * `earlyWatch`, when present, is only good for the run it was opened for. `openRun` mints a fresh
+ * row, with a fresh id, whenever the run the delivery named cannot be adopted — and a watch left
+ * on that stale id would never see a cancellation aimed at the row this function is about to run,
+ * while reading as though the run were covered. `run.id` is compared against `payload.runId`
+ * (the only id `earlyWatch` could have been opened for) and a fresh watch is opened on `run.id`
+ * whenever they differ; `earlyWatch` itself is left for the caller to close, exactly as when it is
+ * reused, so it is never closed twice.
+ *
+ * Opening the watch early is only half of honouring it. Every branch from here down that ends a run
+ * without executing it — the job is gone, the job is disabled, the tick overlaps a run still
+ * executing, the workspace could not be built — asks the watch first, through
+ * {@link endUnstartedRun}, so a Stop the cancel route has already accepted decides the record
+ * rather than being outrun by the reason the delivery was not going to proceed anyway.
  *
  * @param deps - The processor's collaborators.
- * @param job - The job definition.
- * @param runId - The run this delivery drives.
+ * @param payload - The parsed delivery.
+ * @param delivery - The raw delivery, for its timestamp and stalled counter.
+ * @param earlyWatch - The manual run's subscription, or `null` for a tick; owned by the caller.
+ * @throws IneligibleRunError When the delivery names a run row it may not adopt.
  * @throws Error When the Docker daemon is unreachable, so BullMQ retries.
  */
-async function runWatchedJob(deps: ProcessorDeps, job: ScheduledJob, runId: string): Promise<void> {
-  const watch = await openCancellationWatch(deps, runId);
+async function runDelivery(
+  deps: ProcessorDeps,
+  payload: ScheduledDelivery,
+  delivery: ProcessorJob<ScheduledDelivery>,
+  earlyWatch: CancellationWatch | null,
+): Promise<void> {
+  const job = await deps.repos.scheduledJobs.get(payload.jobId);
+  if (job === null) {
+    deps.logger.warn({ jobId: payload.jobId }, 'scheduled job is gone');
+    await closeUnrunnableRun(deps, payload, earlyWatch, JOB_MISSING_CODE, JOB_MISSING_MESSAGE);
+    return;
+  }
+  if (!job.enabled) {
+    deps.logger.info({ jobId: job.id }, 'scheduled job is disabled');
+    await closeUnrunnableRun(deps, payload, earlyWatch, JOB_DISABLED_CODE, JOB_DISABLED_MESSAGE);
+    return;
+  }
+  const scheduledFor =
+    delivery.timestamp === undefined ? deps.clock.now() : new Date(delivery.timestamp);
+
+  const running = await resolveRunningRun(deps, job.id, delivery.stalledCounter ?? 0);
+  // The run this delivery drives is either brand new or an adopted `QUEUED` row, and neither is
+  // what `findRunningByJob` answers with, so the two can never be the same record.
+  const run = await openRun(deps, job, payload, scheduledFor);
+  const canReuseEarlyWatch = earlyWatch !== null && run.id === payload.runId;
+  const watch = canReuseEarlyWatch ? earlyWatch : await openCancellationWatch(deps, run.id);
   try {
-    await prepareAndRunJob(deps, job, runId, watch);
+    const overlap = decideOverlap({ runningRun: running });
+    if (overlap.action === 'skip') {
+      await recordSkippedTick(deps, job, run, overlap.reason, watch);
+      return;
+    }
+    await prepareAndRunJob(deps, job, run.id, watch);
   } finally {
-    await watch.close();
+    if (!canReuseEarlyWatch) {
+      await watch.close();
+    }
   }
 }
 
 /**
  * Builds the `run-scheduled-job` consumer.
+ *
+ * A manual run's watch opens here, before the job row is even read: `payload.runId` arriving on
+ * the delivery is what makes that possible, and every read this consumer does after parsing the
+ * payload is time in which a Stop already has somewhere to land. {@link runDelivery} opens a
+ * tick's watch itself, once its run row exists.
  *
  * @param deps - The processor's collaborators.
  * @returns A BullMQ processor for the `scheduled-jobs` queue.
@@ -624,29 +742,12 @@ export function createRunScheduledJobProcessor(
 ): (job: ProcessorJob<ScheduledDelivery>) => Promise<void> {
   return async (delivery: ProcessorJob<ScheduledDelivery>): Promise<void> => {
     const payload = scheduledDeliveryPayload.parse(delivery.data);
-    const job = await deps.repos.scheduledJobs.get(payload.jobId);
-    if (job === null) {
-      deps.logger.warn({ jobId: payload.jobId }, 'scheduled job is gone');
-      await closeUnrunnableRun(deps, payload, JOB_MISSING_CODE, JOB_MISSING_MESSAGE);
-      return;
+    const earlyWatch =
+      payload.runId === undefined ? null : await openCancellationWatch(deps, payload.runId);
+    try {
+      await runDelivery(deps, payload, delivery, earlyWatch);
+    } finally {
+      await earlyWatch?.close();
     }
-    if (!job.enabled) {
-      deps.logger.info({ jobId: job.id }, 'scheduled job is disabled');
-      await closeUnrunnableRun(deps, payload, JOB_DISABLED_CODE, JOB_DISABLED_MESSAGE);
-      return;
-    }
-    const scheduledFor =
-      delivery.timestamp === undefined ? deps.clock.now() : new Date(delivery.timestamp);
-
-    const running = await resolveRunningRun(deps, job.id, delivery.stalledCounter ?? 0);
-    // The run this delivery drives is either brand new or an adopted `QUEUED` row, and neither is
-    // what `findRunningByJob` answers with, so the two can never be the same record.
-    const run = await openRun(deps, job, payload, scheduledFor);
-    const overlap = decideOverlap({ runningRun: running });
-    if (overlap.action === 'skip') {
-      await recordSkippedTick(deps, job, run, overlap.reason);
-      return;
-    }
-    await runWatchedJob(deps, job, run.id);
   };
 }

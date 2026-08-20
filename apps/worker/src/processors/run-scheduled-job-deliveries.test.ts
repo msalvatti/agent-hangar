@@ -29,6 +29,7 @@ import {
   JOB_DISABLED_CODE,
   JOB_MISSING_CODE,
   STALLED_RUN_CODE,
+  STALLED_RUN_MESSAGE,
 } from './run-scheduled-job.js';
 
 describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
@@ -474,5 +475,152 @@ describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
 
     expect((await container.repos.jobRuns.get(foreign.id))?.status).toBe('QUEUED');
     expect(container.publisher.records).toHaveLength(0);
+  });
+
+  /**
+   * A manual run can be stopped in the window between the delivery being read and the overlap being
+   * decided, and `POST /api/runs/:id/cancel` answers `202` to that Stop — a promise about this very
+   * row. Dropping the tick as overlapping is still the right thing to do with the container that
+   * never gets built, but the record the user is shown must be the cancellation they asked for,
+   * not a failure they did not cause. The Stop is emitted from inside the job lookup so it reaches
+   * the subscription the consumer opened before its first read.
+   */
+  it('cancels a manual run stopped before its overlapping tick was dropped', async () => {
+    const container = setupProcessorContainer();
+    const job = await seedJob(container);
+    const running = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'SCHEDULE',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+    await container.repos.jobRuns.setStatus(running.id, 'RUNNING');
+    const manual = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+    const getJob = container.repos.scheduledJobs.get.bind(container.repos.scheduledJobs);
+    vi.spyOn(container.repos.scheduledJobs, 'get').mockImplementation(async (id) => {
+      expect(container.commands.emitCancel(manual.id)).toBe(true);
+      return getJob(id);
+    });
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: manual.id }));
+    vi.restoreAllMocks();
+
+    const closed = await container.repos.jobRuns.get(manual.id);
+    expect(closed?.status).toBe('CANCELLED');
+    expect(closed?.error).toBeNull();
+    expect(container.publisher.eventsFor(manual.id)).toEqual([{ type: 'turn.cancelled' }]);
+    expect(container.runner.calls).toHaveLength(0);
+    // The run that is still executing keeps the run times, exactly as when the tick is failed.
+    expect((await container.repos.jobRuns.get(running.id))?.status).toBe('RUNNING');
+    expect((await container.repos.scheduledJobs.get(job.id))?.lastRunAt).toBeNull();
+    expect(container.commands.subscriptions).toBe(0);
+  });
+
+  /**
+   * The same promise binds the branch that closes a manual run whose job was disabled meanwhile.
+   * Two things are true at once — the user pressed Stop and the job could not have run — and the
+   * row records the instruction, because the reason is already on the worker log while nothing
+   * else anywhere records that the user asked.
+   */
+  it('cancels the manual run of a disabled job when the user stopped it first', async () => {
+    const container = setupProcessorContainer();
+    const job = await seedJob(container, { enabled: false });
+    const manual = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+    const getJob = container.repos.scheduledJobs.get.bind(container.repos.scheduledJobs);
+    vi.spyOn(container.repos.scheduledJobs, 'get').mockImplementation(async (id) => {
+      expect(container.commands.emitCancel(manual.id)).toBe(true);
+      return getJob(id);
+    });
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: manual.id }));
+    vi.restoreAllMocks();
+
+    const closed = await container.repos.jobRuns.get(manual.id);
+    expect(closed?.status).toBe('CANCELLED');
+    expect(closed?.error).toBeNull();
+    expect(container.publisher.eventsFor(manual.id)).toEqual([{ type: 'turn.cancelled' }]);
+    expect(container.logs.join('')).toContain('scheduled job is disabled');
+  });
+
+  /**
+   * And the branch that closes a manual run whose job was deleted meanwhile, for the same reason.
+   * The job row is gone before the lookup answers, so the delivery has nothing left to run and the
+   * Stop is the only thing left to record.
+   */
+  it('cancels the manual run of a deleted job when the user stopped it first', async () => {
+    const container = setupProcessorContainer();
+    const job = await seedJob(container);
+    const manual = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+    container.repos.store.scheduledJobs.delete(job.id);
+    const getJob = container.repos.scheduledJobs.get.bind(container.repos.scheduledJobs);
+    vi.spyOn(container.repos.scheduledJobs, 'get').mockImplementation(async (id) => {
+      expect(container.commands.emitCancel(manual.id)).toBe(true);
+      return getJob(id);
+    });
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: manual.id }));
+    vi.restoreAllMocks();
+
+    const closed = await container.repos.jobRuns.get(manual.id);
+    expect(closed?.status).toBe('CANCELLED');
+    expect(closed?.error).toBeNull();
+    expect(container.publisher.eventsFor(manual.id)).toEqual([{ type: 'turn.cancelled' }]);
+    expect(container.logs.join('')).toContain('scheduled job is gone');
+  });
+
+  /**
+   * A cancellation reaches this delivery's own watch, and the run a dead worker abandoned is not
+   * the run that watch is for: nothing ever subscribed on its behalf here, and the subscription
+   * that did died with its worker. Recovering it stays a failure, so the delivery cannot invent a
+   * Stop the abandoned run's user never made — while the run this delivery drives still honours
+   * the one that was made.
+   */
+  it('recovers an abandoned run as failed even while its successor is being cancelled', async () => {
+    const container = setupProcessorContainer();
+    const job = await seedJob(container);
+    const abandoned = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'SCHEDULE',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+    await container.repos.jobRuns.setStatus(abandoned.id, 'RUNNING');
+    const manual = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+    const getJob = container.repos.scheduledJobs.get.bind(container.repos.scheduledJobs);
+    vi.spyOn(container.repos.scheduledJobs, 'get').mockImplementation(async (id) => {
+      expect(container.commands.emitCancel(manual.id)).toBe(true);
+      return getJob(id);
+    });
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: manual.id, stalledCounter: 1 }));
+    vi.restoreAllMocks();
+
+    const recovered = await container.repos.jobRuns.get(abandoned.id);
+    expect(recovered?.status).toBe('FAILED');
+    expect(recovered?.error).toContain(STALLED_RUN_CODE);
+    expect(container.publisher.eventsFor(abandoned.id)).toEqual([
+      { type: 'turn.failed', error: { code: STALLED_RUN_CODE, message: STALLED_RUN_MESSAGE } },
+    ]);
+    expect((await container.repos.jobRuns.get(manual.id))?.status).toBe('CANCELLED');
   });
 });

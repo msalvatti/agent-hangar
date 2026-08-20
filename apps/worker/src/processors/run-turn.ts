@@ -443,6 +443,52 @@ async function cancelBeforeStart(deps: ProcessorDeps, turnId: string): Promise<v
 }
 
 /**
+ * Ends a turn that never started: as the cancellation the user asked for when one arrived, and
+ * otherwise as the reason the turn could not begin.
+ *
+ * Both facts can hold of the same delivery. The user pressed Stop — and `POST /api/turns/:id/cancel`
+ * answered `202`, which is a promise about this very row — while the turn was independently going
+ * nowhere: its chat was deleted, another turn of the chat holds the workspace, or the workspace
+ * could not be prepared. Only one record gets written, and it is `CANCELLED`.
+ *
+ * The case for `FAILED` is that the turn could not have proceeded whatever the user did, and the
+ * reason is worth keeping. It loses the same way it loses for a scheduled run: the `202` told the
+ * browser this turn was being stopped, so a row that then reads `FAILED` contradicts the answer the
+ * user already has, while the user's own instruction is recorded nowhere else. The conflict message
+ * makes it sharper still — it asks the user to send the message again, which is the opposite of
+ * what somebody who has just pressed Stop wants to read.
+ *
+ * Most of these reasons survive the choice: a deleted chat and a lost claim are both on the worker
+ * log, and a provisioning failure has written itself onto the workspace row with its reason. One
+ * does not — a repository the operator has removed from the allow-list is refused before any row
+ * exists and without a log line of its own, so cancelling drops that detail. Accepted knowingly:
+ * the operator made that removal deliberately and the user asked for this turn to stop, so neither
+ * of them learns anything from a turn row they were never going to read.
+ *
+ * Either way exactly one terminal event goes out, published before the row is finished, and none of
+ * these paths reaches {@link settleTurn}, so no turn is finished twice.
+ *
+ * @param deps - Publisher and repositories.
+ * @param turnId - The turn.
+ * @param watch - The turn's cancellation subscription, open since before the first row was read.
+ * @param code - Machine-readable failure code, recorded when no cancellation arrived.
+ * @param message - Human-readable detail, recorded when no cancellation arrived.
+ */
+async function endUnstartedTurn(
+  deps: ProcessorDeps,
+  turnId: string,
+  watch: CancellationWatch,
+  code: string,
+  message: string,
+): Promise<void> {
+  if (watch.requested()) {
+    await cancelBeforeStart(deps, turnId);
+    return;
+  }
+  await failTurn(deps, turnId, code, message);
+}
+
+/**
  * Runs the prepared turn to completion.
  *
  * @param deps - The processor's collaborators.
@@ -512,7 +558,10 @@ async function runWatchedTurn(
   const messages = await deps.repos.messages.listByChat(chat.id);
   const ensured = await ensureWorkspace(deps, chat, messages);
   if (!ensured.ok) {
-    await failTurn(deps, turnId, ensured.code, ensured.message);
+    // Preparing the workspace is the slow part the user watches, so it is where Stop is pressed.
+    // The check just below already cancels a turn stopped while preparation succeeded; a Stop that
+    // lands while preparation fails is the same request and gets the same record.
+    await endUnstartedTurn(deps, turnId, watch, ensured.code, ensured.message);
     return;
   }
   await deps.repos.turns.setStatus(turnId, 'PREPARING', { workspaceId: ensured.workspace.id });
@@ -540,6 +589,12 @@ async function runWatchedTurn(
  * Runs one delivery of a turn whose execution this process now owns and whose channel it is
  * already listening on.
  *
+ * Listening is only half of honouring it. Every branch from here down that ends a turn without
+ * executing it — the chat is gone, another turn of the chat holds the workspace, the workspace
+ * could not be prepared — asks the watch first, through {@link endUnstartedTurn}, so a Stop the
+ * cancel route has already accepted decides the record rather than being outrun by the reason the
+ * turn was not going to proceed anyway.
+ *
  * @param deps - The processor's collaborators.
  * @param turnId - The turn named by the delivery.
  * @param attemptsMade - How many times BullMQ already delivered this job.
@@ -559,9 +614,10 @@ async function runDeliveredTurn(
   }
   const chat = await deps.repos.chats.getById(turn.chatId);
   if (chat === null) {
-    await failTurn(
+    await endUnstartedTurn(
       deps,
       turnId,
+      watch,
       'chat_not_found',
       'the chat this turn belongs to no longer exists',
     );
@@ -569,7 +625,13 @@ async function runDeliveredTurn(
   }
   const claimKey = chatClaimKey(chat.id);
   if (!deps.claims.claim(claimKey)) {
-    await failTurn(deps, turnId, WORKSPACE_CONFLICT_CODE, WORKSPACE_CONFLICT_MESSAGE);
+    await endUnstartedTurn(
+      deps,
+      turnId,
+      watch,
+      WORKSPACE_CONFLICT_CODE,
+      WORKSPACE_CONFLICT_MESSAGE,
+    );
     return;
   }
   try {
@@ -592,6 +654,11 @@ async function runDeliveredTurn(
  * claim to its own original and fail the very turn that is running — terminalising a row and a
  * stream the first delivery goes on writing to. A redelivery of a turn already in flight is
  * therefore acknowledged and left alone; only a different turn of the chat is refused.
+ *
+ * That refusal is the one place a Stop is deliberately not acted on here, and the order of the two
+ * claims is what makes it safe: the turn claim is taken before the watch is opened, so a redelivery
+ * that loses it has no subscription of its own to consult — and needs none, because the delivery
+ * that holds the claim is listening on the same channel and will honour the request itself.
  *
  * @param deps - The processor's collaborators.
  * @returns A BullMQ processor for the `chat-turns` queue.

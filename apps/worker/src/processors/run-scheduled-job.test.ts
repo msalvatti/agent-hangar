@@ -16,6 +16,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   FakeSecretsService,
   happyJobScript as happyScript,
+  ImagelessRunner,
   JOB_CRON as CRON,
   jobDelivery as delivery,
   requestSentTo,
@@ -207,6 +208,110 @@ describe('createRunScheduledJobProcessor', () => {
     expect(container.runner.calls).toHaveLength(0);
     expect(container.commands.subscriptions).toBe(0);
     vi.restoreAllMocks();
+  });
+
+  /**
+   * The gap this fix closes: a manual run's id already exists when this delivery is read — the
+   * API created its row and answered the request with it before the job was ever enqueued — so a
+   * Stop pressed while the worker is still looking up the job row must already find a subscriber.
+   * Emitting the cancellation from inside that very lookup, well before the workspace would be
+   * built, proves the watch opened ahead of the first database read rather than merely ahead of
+   * provisioning.
+   */
+  it('cancels a manual run stopped before the worker reads the job row', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const manual = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+    const getJob = container.repos.scheduledJobs.get.bind(container.repos.scheduledJobs);
+    vi.spyOn(container.repos.scheduledJobs, 'get').mockImplementation(async (id) => {
+      // A subscriber must already be in place for this to reach anyone: with the watch opened
+      // only after this lookup, as it used to be, nothing is listening yet and this returns
+      // `false`, and the run below finishes `SUCCEEDED` instead of `CANCELLED`.
+      const reached = container.commands.emitCancel(manual.id);
+      expect(reached).toBe(true);
+      return getJob(id);
+    });
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: manual.id }));
+
+    expect((await container.repos.jobRuns.get(manual.id))?.status).toBe('CANCELLED');
+    expect(container.runner.calls).toHaveLength(0);
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * The early watch is opened on the delivery's own `runId`, but `openRun` mints a fresh row under
+   * a fresh id whenever that named run cannot be adopted (see
+   * `run-scheduled-job-deliveries.test.ts`'s "opens a fresh run..." case). A cancellation must
+   * follow the identity that is actually about to run, not the one the delivery happened to name:
+   * emitting it against the fresh row's id — never against the bogus one the early watch first
+   * opened on — is what a real Stop click would target, because that fresh id is the only one the
+   * UI ever learns about.
+   */
+  it('cancels the fresh run opened when the named run could not be adopted', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const setStatus = container.repos.jobRuns.setStatus.bind(container.repos.jobRuns);
+    vi.spyOn(container.repos.jobRuns, 'setStatus').mockImplementation(
+      async (id, status, update) => {
+        const row = await setStatus(id, status, update);
+        if (status === 'PREPARING') {
+          // `id` is the fresh row `openRun` minted for this delivery, not the bogus id the
+          // delivery named — reaching it here proves the operative watch tracked the identity
+          // that changed rather than the one the early subscription first opened on.
+          expect(container.commands.emitCancel(id)).toBe(true);
+        }
+        return row;
+      },
+    );
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: 'no-such-run' }));
+
+    const runs = await container.repos.jobRuns.listByJob(job.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe('CANCELLED');
+    expect(container.runner.calls).toHaveLength(0);
+    expect(container.commands.subscriptions).toBe(0);
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * Provisioning is the slow part the user is watching, so it is where Stop is pressed — and the
+   * two ways out of it must agree. A cancellation arriving while the container is built is honoured
+   * by the executor, which seeds its state from the same watch; one arriving while the build fails
+   * must be honoured too, instead of recording the build failure over an answer the cancel route
+   * already gave. The Stop is emitted from the workspace row provisioning opens, which is after the
+   * check made before preparation and before the failure is written.
+   */
+  it('cancels a run stopped while the workspace it never got was failing', async () => {
+    const container = setupProcessorContainer({ runner: (opts) => new ImagelessRunner(opts) });
+    const job = await seedJob(container);
+    const manual = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+    const create = container.repos.workspaces.create.bind(container.repos.workspaces);
+    vi.spyOn(container.repos.workspaces, 'create').mockImplementation(async (input) => {
+      const row = await create(input);
+      expect(container.commands.emitCancel(manual.id)).toBe(true);
+      return row;
+    });
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: manual.id }));
+    vi.restoreAllMocks();
+
+    const closed = await container.repos.jobRuns.get(manual.id);
+    expect(closed?.status).toBe('CANCELLED');
+    expect(closed?.error).toBeNull();
+    expect(container.publisher.eventsFor(manual.id).at(-1)).toEqual({ type: 'turn.cancelled' });
+    expect([...container.repos.store.workspaces.values()][0]?.status).toBe('FAILED');
   });
 
   /**
