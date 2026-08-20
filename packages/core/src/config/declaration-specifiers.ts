@@ -34,12 +34,14 @@ const RELATIVE_TS_SPECIFIER_PATTERN = /\b(from\s*|import\s*\()(['"])(\.\.?\/[^'"
  * `import`/`export … from '…'` statement (including bare `export * from '…'`) or a dynamic
  * `import('…')` type reference. Both positions share one property that a false positive never
  * has: nothing between the start of the line and the `from`/`import(` keyword is a quote
- * character, and the line itself does not open with a comment marker (`//` for a line comment, or
- * `*` for a JSDoc continuation line — declaration emit copies doc comments verbatim, and this
- * project's own comments quote specifier syntax as prose). A quoted string or a hand-written
- * comment that merely contains the words "from" or "import(" fails one of these checks, because
- * the string's opening quote — or the comment marker — necessarily precedes the keyword on that
- * line.
+ * character, and the line itself does not open with a comment marker — a line comment, a block
+ * comment's opening delimiter (which also covers a self-contained, single-line doc comment), or
+ * the `*` that starts a JSDoc continuation line. Declaration emit copies doc comments verbatim,
+ * and this project's own comments quote specifier syntax as prose (see `findRelativeTsSpecifiers`
+ * below), so both comment shapes are real risks, not hypothetical ones. A quoted string or a
+ * hand-written comment that merely contains the words "from" or "import(" fails one of these
+ * checks, because the string's opening quote — or the comment marker — necessarily precedes the
+ * keyword on that line.
  *
  * @param source - Full declaration text the candidate was found in.
  * @param matchIndex - Index, in `source`, where the candidate keyword starts.
@@ -48,7 +50,7 @@ const RELATIVE_TS_SPECIFIER_PATTERN = /\b(from\s*|import\s*\()(['"])(\.\.?\/[^'"
 function isGenuineSpecifierPosition(source: string, matchIndex: number): boolean {
   const lineStart = source.lastIndexOf('\n', matchIndex - 1) + 1;
   const linePrefix = source.slice(lineStart, matchIndex);
-  if (/^[ \t]*(?:\/\/|\*)/.test(linePrefix)) {
+  if (/^[ \t]*(?:\/\/|\/\*|\*)/.test(linePrefix)) {
     return false;
   }
   return !/['"]/.test(linePrefix);

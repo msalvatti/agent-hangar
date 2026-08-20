@@ -142,6 +142,17 @@ describe('rewriteDeclarationSpecifiers', () => {
     const source = `// see import('./types.ts') for details`;
     expect(rewriteDeclarationSpecifiers(source)).toBe(source);
   });
+
+  /**
+   * A self-contained, single-line block doc comment opens with `/*` rather than `//` or a bare
+   * `*` continuation marker — it must be recognized as a comment too, or the same prose that a
+   * multi-line JSDoc comment can carry would be rewritten just because it happens to fit on one
+   * line.
+   */
+  it('leaves a ".ts" path inside a single-line block comment untouched', () => {
+    const source = "/** see also `from './types.ts'` for reference */";
+    expect(rewriteDeclarationSpecifiers(source)).toBe(source);
+  });
 });
 
 describe('findRelativeTsSpecifiers', () => {
