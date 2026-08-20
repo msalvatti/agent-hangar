@@ -43,6 +43,23 @@ import type { RedisCommands } from './redis';
 /** How long a blocking `XREAD` waits before the stream loop rechecks its exit conditions. */
 export const SSE_BLOCK_MS = 15_000;
 
+/**
+ * How long a statement issued by the web process may run before Postgres cancels it.
+ *
+ * This is the bound that actually abandons a query. A caller-side race ends the wait but leaves
+ * the statement running and its pooled connection checked out, so a polled endpoint could hold one
+ * connection per poll; `statement_timeout` makes the server end the statement and hand the
+ * connection back. Every query this process issues is a small read of one instance's own rows, so
+ * a bound comfortably above the health probe's own patience is generous rather than restrictive.
+ */
+export const DATABASE_STATEMENT_TIMEOUT_MS = 5000;
+
+/** How long a caller waits for a free pooled connection before the attempt fails. */
+export const DATABASE_CONNECT_TIMEOUT_MS = 2000;
+
+/** Connections the web process keeps open to Postgres. */
+export const DATABASE_POOL_MAX = 5;
+
 /** Everything a route handler is allowed to reach. */
 export interface ServerContainer {
   readonly config: AppConfig;
@@ -58,7 +75,11 @@ export interface ServerContainer {
   readonly github: GithubClient;
   readonly clock: Clock;
   readonly sse: { heartbeatMs: number; blockMs: number };
-  /** Closes queues, Redis and Prisma; safe to call more than once. */
+  /**
+   * Closes queues, Redis and Prisma. One call releases everything it holds even when part of it
+   * fails, and raises the first failure afterwards. A second call is a no-op rather than a retry:
+   * shutdown runs once, and Next.js may tear a route module down more than once.
+   */
   dispose(): Promise<void>;
 }
 
@@ -102,8 +123,33 @@ function buildPersistence(
   if (deps.prisma !== undefined && deps.repos !== undefined) {
     return { prisma: deps.prisma, repos: deps.repos };
   }
-  const client = createPrismaClient({ connectionString: config.DATABASE_URL });
+  const client = createPrismaClient({
+    connectionString: withStatementTimeout(config.DATABASE_URL, DATABASE_STATEMENT_TIMEOUT_MS),
+    max: DATABASE_POOL_MAX,
+    connectionTimeoutMillis: DATABASE_CONNECT_TIMEOUT_MS,
+  });
   return { prisma: client, repos: createRepositories(client, redactor) };
+}
+
+/**
+ * Adds the server-side statement timeout to a connection string.
+ *
+ * Postgres reads `options` out of the startup packet, and the pg driver forwards whatever the
+ * connection string carries, so this is how a query gets a deadline the server itself enforces. An
+ * operator who already set `options` has said something deliberate about the session, and it is
+ * left alone rather than overwritten.
+ *
+ * @param connectionString - `DATABASE_URL`, already validated as a URL.
+ * @param timeoutMs - Statement timeout to apply.
+ * @returns The connection string, with the timeout added when it named no options of its own.
+ */
+export function withStatementTimeout(connectionString: string, timeoutMs: number): string {
+  const url = new URL(connectionString);
+  if (url.searchParams.has('options')) {
+    return connectionString;
+  }
+  url.searchParams.set('options', `-c statement_timeout=${String(timeoutMs)}`);
+  return url.toString();
 }
 
 /**
@@ -142,7 +188,7 @@ function buildMessaging(
  *
  * @param deps - Injected collaborators.
  * @param config - Loaded configuration.
- * @param redactor - Redactor the GitHub client scrubs responses with.
+ * @param redactor - Redactor the GitHub client registers the revealed token with.
  * @param logger - Logger the GitHub client reports failures to.
  * @param repos - Repositories, for the secret envelope store.
  * @returns The secrets service and the GitHub client.
@@ -204,13 +250,32 @@ export function createServerContainer(deps: Partial<ServerContainerDeps> = {}): 
         return;
       }
       disposed = true;
-      await Promise.all([
+      // Shutdown releases everything it holds even when part of it fails: a queue that refuses to
+      // close must not keep a Redis socket and the database pool open behind it. Every failure is
+      // collected, and the first one is raised once there is nothing left to release.
+      const failures: unknown[] = [];
+      for (const attempt of await Promise.allSettled([
         queues.chatTurns.close(),
         queues.scheduledJobs.close(),
         queues.workspaceGc.close(),
-      ]);
-      redis.disconnect();
-      await disconnectPrisma(prisma);
+      ])) {
+        if (attempt.status === 'rejected') {
+          failures.push(attempt.reason);
+        }
+      }
+      try {
+        redis.disconnect();
+      } catch (error) {
+        failures.push(error);
+      }
+      try {
+        await disconnectPrisma(prisma);
+      } catch (error) {
+        failures.push(error);
+      }
+      if (failures.length > 0) {
+        throw failures[0];
+      }
     },
   };
 }

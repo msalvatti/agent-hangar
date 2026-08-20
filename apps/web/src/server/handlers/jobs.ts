@@ -3,10 +3,18 @@
  *
  * Layer: service (server).
  *
- * The database row and the BullMQ Job Scheduler are two halves of one fact, so every handler here
- * leaves them agreeing: a create whose scheduler cannot be registered deletes the row it just
- * wrote, and a disable removes the scheduler after the row says the job is off. Scheduler keys are
- * `ScheduledJob.id`, which is what makes the upsert idempotent per job.
+ * The database row and the BullMQ Job Scheduler are two halves of one fact, and every handler here
+ * leaves them agreeing. Postgres and Redis cannot enlist in one transaction, so the agreement is
+ * reached by compensation rather than by atomicity: the row is written first and a scheduler
+ * operation that fails undoes that write. A failed create deletes the row it just inserted; a
+ * failed edit puts the previous values back, which is exactly what the scheduler that is still
+ * registered describes. A delete goes the other way round and removes the scheduler first, because
+ * a tick firing between the two steps would otherwise deliver a job whose row is already gone.
+ *
+ * The guarantee stops where both stores fail at once. If the compensating write also fails, the
+ * halves are left disagreeing; the request still fails, and the mismatch is logged with the job id
+ * because there is nowhere left to record it. Editing that job again rewrites both halves.
+ * Scheduler keys are `ScheduledJob.id`, which is what makes the upsert idempotent per job.
  */
 import {
   jobPatchRequest,
@@ -26,7 +34,7 @@ import {
 import type { CreateScheduledJobInput, JobRun, ScheduledJob } from '@agent-hangar/core';
 
 import type { ServerContainer } from '../container';
-import { ResourceNotFoundError } from '../errors';
+import { failureName, ResourceNotFoundError } from '../errors';
 import { jsonResponse, noContent, parseJsonBody, withErrorHandling } from '../http';
 import { allowedRepoHosts, assertRepoUrlAllowed } from '../repo-url';
 import { assertSameOrigin } from '../same-origin';
@@ -128,6 +136,54 @@ async function syncScheduler(container: ServerContainer, job: ScheduledJob): Pro
 }
 
 /**
+ * Runs the write that undoes a row the scheduler refused to follow.
+ *
+ * A compensating write is the last chance the two halves have to agree, so its own failure is
+ * reported rather than raised: replacing the scheduler failure with it would hide why the request
+ * failed, and there is no further step to attempt.
+ *
+ * @param container - The server container.
+ * @param jobId - Job whose row is being put back.
+ * @param undo - The write that restores the previous state.
+ */
+async function compensate(
+  container: ServerContainer,
+  jobId: string,
+  undo: () => Promise<unknown>,
+): Promise<void> {
+  try {
+    await undo();
+  } catch (error) {
+    container.logger.error(
+      { failure: failureName(error), jobId },
+      'could not undo a partial scheduled-job write',
+    );
+  }
+}
+
+/**
+ * Restores every editable field of a job to the values it held before an edit.
+ *
+ * @param container - The server container.
+ * @param job - The job as it was before the edit.
+ * @returns Resolves once the row is back, or once the failure to put it back has been reported.
+ */
+function restoreJob(container: ServerContainer, job: ScheduledJob): Promise<void> {
+  return compensate(container, job.id, () =>
+    container.repos.scheduledJobs.update(job.id, {
+      name: job.name,
+      cron: job.cron,
+      timezone: job.timezone,
+      prompt: job.prompt,
+      repoUrl: job.repoUrl,
+      branch: job.branch,
+      enabled: job.enabled,
+      nextRunAt: job.nextRunAt,
+    }),
+  );
+}
+
+/**
  * `POST /api/jobs` — creates a scheduled job and registers its scheduler.
  *
  * @param container - The server container.
@@ -149,7 +205,7 @@ export function createJob(container: ServerContainer, request: Request): Promise
     } catch (error) {
       // A job whose scheduler was never registered would sit in the table looking enabled and
       // never fire, which is worse than a failed request the user can retry.
-      await container.repos.scheduledJobs.delete(job.id);
+      await compensate(container, job.id, () => container.repos.scheduledJobs.delete(job.id));
       throw error;
     }
     return jobResponse(container, job, 201);
@@ -226,7 +282,14 @@ export function updateJob(
       ...merged,
       nextRunAt: computeNextRunAt(container, merged),
     });
-    await syncScheduler(container, updated);
+    try {
+      await syncScheduler(container, updated);
+    } catch (error) {
+      // The row already carries the new cron and enabled flag while Redis still holds the old
+      // scheduler, so the edit is rolled back to the state that scheduler describes.
+      await restoreJob(container, existing);
+      throw error;
+    }
     return jobResponse(container, updated);
   });
 }
@@ -250,7 +313,14 @@ export function deleteJob(
     // Removing the scheduler first: a tick that fires between the two steps would otherwise
     // deliver a job whose row is already gone.
     await removeScheduledJob(container.queues.scheduledJobs, job.id);
-    await container.repos.scheduledJobs.delete(job.id);
+    try {
+      await container.repos.scheduledJobs.delete(job.id);
+    } catch (error) {
+      // The row survived the delete, so it still describes a job that is meant to fire; putting
+      // its scheduler back is what keeps the two halves saying the same thing.
+      await compensate(container, job.id, () => syncScheduler(container, job));
+      throw error;
+    }
     return noContent();
   });
 }
@@ -293,11 +363,13 @@ export function triggerRun(
         RETENTION,
       );
     } catch (error) {
-      await container.repos.jobRuns.finish(run.id, {
-        status: 'FAILED',
-        usage: NO_USAGE,
-        error: 'Could not enqueue the run',
-      });
+      await compensate(container, job.id, () =>
+        container.repos.jobRuns.finish(run.id, {
+          status: 'FAILED',
+          usage: NO_USAGE,
+          error: 'Could not enqueue the run',
+        }),
+      );
       throw error;
     }
     return jsonResponse(triggerRunResponse, { runId: run.id }, { status: RUN_ACCEPTED_STATUS });

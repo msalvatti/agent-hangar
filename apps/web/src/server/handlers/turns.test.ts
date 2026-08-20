@@ -107,6 +107,45 @@ describe('cancelTurn', () => {
   });
 
   /**
+   * The same race, one step later: the job was still removable when its state was read and BullMQ
+   * promoted it to active before the removal, so the removal is refused. That is the running case,
+   * not a broken request — the cancel has to reach the worker instead of surfacing as a 500.
+   */
+  it('falls back to the command channel when the job started between the check and the removal', async () => {
+    const harness = createTestContainer();
+    const turnId = await seedTurn(harness);
+    const job = harness.doubles.queues.chatTurns.jobs.get(turnId)!;
+    vi.spyOn(job, 'remove').mockImplementation(() => {
+      job.state = 'active';
+      return Promise.reject(new Error('Missing lock for job'));
+    });
+
+    const response = await cancelTurn(harness.container, cancelRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(202);
+    expect(harness.doubles.redis.published).toHaveLength(1);
+    expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({ status: 'QUEUED' });
+  });
+
+  /**
+   * The other side of that branch: the removal failed while the job is still sitting in the queue,
+   * which is the store being broken rather than a race. Reporting it as a successful cancel would
+   * leave the turn queued and the user believing it was stopped.
+   */
+  it('reports a removal that fails while the job is still queued', async () => {
+    const harness = createTestContainer();
+    const turnId = await seedTurn(harness);
+    const job = harness.doubles.queues.chatTurns.jobs.get(turnId)!;
+    vi.spyOn(job, 'remove').mockRejectedValue(new Error('redis down'));
+
+    const response = await cancelTurn(harness.container, cancelRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(500);
+    expect(harness.doubles.redis.published).toEqual([]);
+    expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({ status: 'QUEUED' });
+  });
+
+  /**
    * BullMQ may have released the job entirely; a missing job is the same situation as an
    * unremovable one, so the request still reaches the worker.
    */

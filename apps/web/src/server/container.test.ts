@@ -15,6 +15,7 @@ import {
   disposeServerContainer,
   getServerContainer,
   SSE_BLOCK_MS,
+  withStatementTimeout,
 } from './container';
 import { createTestContainer, TEST_ENV } from './testing/test-container';
 
@@ -95,6 +96,66 @@ describe('createServerContainer', () => {
     expect(doubles.queues.workspaceGc.closed).toBe(true);
     expect(doubles.redis.closed).toBe(true);
     expect(doubles.prisma.disconnected).toBe(true);
+  });
+
+  /**
+   * A queue that refuses to close must not take the rest of the shutdown down with it: stopping
+   * there would leave the Redis socket and the database pool open for the lifetime of the process.
+   * Everything is released, and the failure is raised only once there is nothing left to release.
+   */
+  it('releases every connection even when a queue refuses to close', async () => {
+    const { container, doubles } = createTestContainer();
+    const rebuilt = createServerContainer(container);
+    const failure = new Error('queue close failed');
+    vi.spyOn(doubles.queues.chatTurns, 'close').mockRejectedValue(failure);
+
+    await expect(rebuilt.dispose()).rejects.toBe(failure);
+
+    expect(doubles.queues.scheduledJobs.closed).toBe(true);
+    expect(doubles.queues.workspaceGc.closed).toBe(true);
+    expect(doubles.redis.closed).toBe(true);
+    expect(doubles.prisma.disconnected).toBe(true);
+  });
+
+  /**
+   * The same holds for the two releases that follow the queues: neither a Redis client that throws
+   * on disconnect nor a Prisma pool that refuses to close may stop the other from being released.
+   */
+  it('collects a failure from the redis and prisma releases', async () => {
+    const { container, doubles } = createTestContainer();
+    const rebuilt = createServerContainer(container);
+    const failure = new Error('socket already gone');
+    vi.spyOn(doubles.redis, 'disconnect').mockImplementation(() => {
+      throw failure;
+    });
+    vi.spyOn(doubles.prisma, '$disconnect').mockRejectedValue(new Error('pool close failed'));
+
+    await expect(rebuilt.dispose()).rejects.toBe(failure);
+
+    expect(doubles.queues.chatTurns.closed).toBe(true);
+  });
+});
+
+describe('withStatementTimeout', () => {
+  /**
+   * The statement timeout is what actually ends a hung query and hands its pooled connection back,
+   * and Postgres reads it out of the startup packet, so it travels on the connection string.
+   */
+  it('adds the statement timeout to a connection string', () => {
+    const applied = withStatementTimeout('postgresql://u:p@127.0.0.1:5432/db', 5000);
+
+    expect(new URL(applied).searchParams.get('options')).toBe('-c statement_timeout=5000');
+    expect(new URL(applied).pathname).toBe('/db');
+  });
+
+  /**
+   * An operator who already set `options` has said something deliberate about the session;
+   * overwriting it would silently drop their setting.
+   */
+  it('leaves a connection string that already names options alone', () => {
+    const configured = 'postgresql://u:p@127.0.0.1:5432/db?options=-c+search_path%3Dalt';
+
+    expect(withStatementTimeout(configured, 5000)).toBe(configured);
   });
 });
 

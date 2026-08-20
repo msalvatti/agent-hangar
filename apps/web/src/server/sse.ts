@@ -286,8 +286,15 @@ async function tail(context: PumpContext, from: string): Promise<void> {
       cursor,
     );
     if (reply === null) {
-      // Belt and braces: the work finished without a terminal event ever being written, which a
-      // crashed worker produces. Everything up to the cursor was delivered, so the stream ends.
+      // Both exit conditions are rechecked after every empty read, not only before the first one.
+      // A turn that finishes without ever writing an entry — the worker crashed before its first
+      // event, or the replay cache expired while the reader waited — leaves the cursor at the very
+      // start, and testing only the cursor would keep the connection heartbeating for ever.
+      if (await reportExpiry(context, cursor)) {
+        return;
+      }
+      // The work finished without a terminal event ever being written, which a crashed worker
+      // produces. Everything up to the cursor was delivered, so the stream ends.
       if (cursor !== SSE_STREAM_START && (await options.isFinished())) {
         context.stop();
         return;

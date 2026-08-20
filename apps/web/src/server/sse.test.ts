@@ -68,6 +68,8 @@ function open(
   options: {
     lastEventId?: string;
     finished?: boolean;
+    /** Liveness read afresh on every check, for a turn that finishes while the stream is open. */
+    isFinished?: () => Promise<boolean>;
     redis?: RedisCommands;
     fake?: FakeRedis;
   } = {},
@@ -79,7 +81,8 @@ function open(
     redis: options.redis ?? fake,
     streamKey: KEY,
     ...(options.lastEventId === undefined ? {} : { lastEventId: options.lastEventId }),
-    isFinished: () => Promise.resolve(options.finished ?? false),
+    isFinished:
+      options.isFinished ?? ((): Promise<boolean> => Promise.resolve(options.finished ?? false)),
     signal: controller.signal,
     heartbeatMs: TICK_MS,
     blockMs: TICK_MS,
@@ -278,6 +281,24 @@ describe('createSseResponse', () => {
     const text = await readUntil(harness.reader, (read) => read.includes(SSE_EXPIRED_EVENT));
     expect(text).toContain(`event: ${SSE_EXPIRED_EVENT}`);
     expect((await harness.reader.read()).done).toBe(true);
+    expect(harness.redis.duplicates[0]?.closed).toBe(true);
+  });
+
+  /**
+   * Regression: the work can finish after the stream is already open and before the worker has
+   * written a single entry — a crash between claiming the turn and its first event. The cursor is
+   * still at the start of the stream then, so the exit conditions have to be rechecked after every
+   * empty read; testing them only once left the client heartbeating for ever.
+   */
+  it('closes an empty stream once the work finishes while it is being tailed', async () => {
+    let finished = false;
+    const harness = open({ isFinished: () => Promise.resolve(finished) });
+
+    await readUntil(harness.reader, (read) => read.includes(SSE_HEARTBEAT_FRAME));
+    finished = true;
+    const text = await readToEnd(harness.reader);
+
+    expect(text).toContain(`event: ${SSE_EXPIRED_EVENT}`);
     expect(harness.redis.duplicates[0]?.closed).toBe(true);
   });
 

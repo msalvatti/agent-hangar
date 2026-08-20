@@ -8,13 +8,29 @@
  * routing the picker through the worker over BullMQ would buy nothing for a local single-user app.
  * The exception is confined here and enforced by a policy test that greps the whole web app.
  *
- * The token is read per request into one local variable, spliced straight into the `Authorization`
- * header and dropped when the call returns. It is never stored on the client object, never put in
- * a log or an error, and GitHub's own response text never reaches the caller: the body of a failed
- * response is written by a server that was handed the token, so it is summarised by status only.
+ * The token is revealed once per listing into one local variable, spliced straight into the
+ * `Authorization` header of every page and let go when the listing returns. Two rules keep it out
+ * of everything else.
+ *
+ * The revealed value is handed to the redactor the moment it is read, so a later log line that
+ * happens to carry it is scrubbed even when its shape is one the built-in patterns do not know — a
+ * GitHub Enterprise token, for instance, which no pattern describes. That is a deliberate trade:
+ * the redactor keeps the exact value in memory for the life of the process, because a scrubber can
+ * only remove what it still recognises. It is the same bargain the worker makes after its own
+ * reveal, and it moves nothing to a log, a response or a disk.
+ *
+ * The body of a failed response is never read at all: a forge repeats what it was sent, so its
+ * text could echo the very header this module set, and masking a value is a weaker guarantee than
+ * never reading it. A failure is therefore summarised by its status alone, in the log and in the
+ * error.
+ *
+ * Every decoded body is parsed against the schema of the fields this client reads, because an
+ * upstream answering valid JSON of the wrong shape is a failed call, not a listing of `undefined`.
  */
 import type { Redactor, SecretsService } from '@agent-hangar/core';
 import type { Logger } from 'pino';
+import { z } from 'zod';
+import type { ZodType } from 'zod';
 
 import { ApiHttpError, GithubApiError, ValidationError } from './errors';
 
@@ -45,18 +61,30 @@ export interface GithubClient {
 /** Collaborators of {@link createGithubClient}. */
 export interface GithubClientDeps {
   secrets: Pick<SecretsService, 'reveal'>;
-  redactor: Pick<Redactor, 'redact'>;
+  /**
+   * Registers the revealed token, so the exact value is removed from anything this process logs
+   * later — not only the values whose shape the redactor already recognises.
+   */
+  redactor: Pick<Redactor, 'register'>;
   logger: Logger;
   /** `GITHUB_API_BASE_URL`. */
   baseUrl: string;
   fetch: typeof fetch;
 }
 
-/** Page size used for every listing; the picker never paginates. */
+/** Page size requested for every listing; GitHub's own maximum. */
 export const GITHUB_PAGE_SIZE = 100;
 
-/** How much of a failed response body is inspected before it is discarded. */
-const ERROR_BODY_SAMPLE = 200;
+/**
+ * How many pages one listing follows before it stops.
+ *
+ * A listing has to cover more than the first page — a token reaching two hundred repositories
+ * would otherwise hide half of them from the picker — but following pages until an account runs
+ * out is an unbounded amount of work driven by whatever the upstream reports. Ten pages is one
+ * thousand repositories or branches, far past any account a single developer picks from by
+ * scrolling, and it caps a listing at ten round trips however large the account is.
+ */
+export const GITHUB_MAX_PAGES = 10;
 
 /** Characters a repository owner or name may contain. */
 const REPO_SEGMENT_PATTERN = /^[A-Za-z0-9_.-]+$/;
@@ -85,21 +113,25 @@ function isRepoSlug(repo: string): boolean {
   );
 }
 
-/** Shape of the repository fields this client reads. */
-interface GithubRepo {
-  full_name: string;
-  html_url: string;
-  default_branch: string;
-  private: boolean;
-  description: string | null;
-}
+/** The repository fields this client reads, as GitHub reports them. */
+const githubRepoPage = z.array(
+  z.object({
+    full_name: z.string().min(1),
+    html_url: z.string().min(1),
+    default_branch: z.string().min(1),
+    private: z.boolean(),
+    description: z.string().nullable(),
+  }),
+);
 
-/** Shape of the branch fields this client reads. */
-interface GithubBranch {
-  name: string;
-  commit: { sha: string };
-  protected: boolean;
-}
+/** The branch fields this client reads, as GitHub reports them. */
+const githubBranchPage = z.array(
+  z.object({
+    name: z.string().min(1),
+    commit: z.object({ sha: z.string().min(1) }),
+    protected: z.boolean(),
+  }),
+);
 
 /**
  * Creates the GitHub client.
@@ -115,7 +147,7 @@ export function createGithubClient(deps: GithubClientDeps): GithubClient {
         sort: 'updated',
         affiliation: 'owner,collaborator,organization_member',
       });
-      const repos = await request<GithubRepo[]>(deps, `/user/repos?${search.toString()}`);
+      const repos = await listPages(deps, `/user/repos?${search.toString()}`, githubRepoPage);
       const needle = query.trim().toLowerCase();
       return repos
         .filter((repo) => repo.full_name.toLowerCase().includes(needle))
@@ -133,7 +165,7 @@ export function createGithubClient(deps: GithubClientDeps): GithubClient {
         throw new ValidationError('Repository must be given as "owner/name"');
       }
       const path = `/repos/${repo}/branches?per_page=${String(GITHUB_PAGE_SIZE)}`;
-      const branches = await request<GithubBranch[]>(deps, path);
+      const branches = await listPages(deps, path, githubBranchPage);
       return branches.map((branch) => ({
         name: branch.name,
         sha: branch.commit.sha,
@@ -144,52 +176,118 @@ export function createGithubClient(deps: GithubClientDeps): GithubClient {
 }
 
 /**
- * Performs one authenticated GitHub request.
+ * Reads one listing to its end, or to {@link GITHUB_MAX_PAGES}, whichever comes first.
+ *
+ * The token is revealed once for the whole listing rather than once per page: decrypting it again
+ * for every round trip would multiply the number of moments it exists in plaintext without making
+ * any of them shorter.
  *
  * @param deps - Client collaborators.
  * @param path - Path below the configured base URL, query included.
- * @returns The decoded JSON body.
+ * @param schema - Contract one page of results must satisfy.
+ * @returns Every item of every page that was read, in order.
  * @throws ApiHttpError 409 `SECRETS_MISSING` when no token is stored.
- * @throws GithubApiError When GitHub answers with a non-2xx status or an unreadable body.
+ * @throws GithubApiError When GitHub answers with a non-2xx status, an unreadable body or a body
+ *   that does not match the schema.
  */
-async function request<T>(deps: GithubClientDeps, path: string): Promise<T> {
+async function listPages<T>(
+  deps: GithubClientDeps,
+  path: string,
+  schema: ZodType<T[]>,
+): Promise<T[]> {
   const revealed = await deps.secrets.reveal('GITHUB_PAT');
   if (revealed === null) {
     throw new ApiHttpError(409, 'SECRETS_MISSING', 'GitHub token is not configured');
   }
-  const response = await deps.fetch(`${deps.baseUrl}${path}`, {
+  deps.redactor.register([revealed]);
+  const items: T[] = [];
+  let next: string | null = `${deps.baseUrl}${path}`;
+  let pages = 0;
+  while (next !== null && pages < GITHUB_MAX_PAGES) {
+    const response = await request(deps, next, revealed);
+    items.push(...(await decode(response, schema)));
+    next = nextPageUrl(deps.baseUrl, response.headers.get('link'));
+    pages += 1;
+  }
+  if (next !== null) {
+    // The account holds more than one walk reads. The listing is still the most recently updated
+    // thousand entries, but a picker that quietly shows a truncated list is worth being able to
+    // recognise; the path carries no credential, only the endpoint and its page size.
+    deps.logger.warn({ path, pages }, 'github listing stopped at the page limit');
+  }
+  return items;
+}
+
+/**
+ * Performs one authenticated GitHub request.
+ *
+ * @param deps - Client collaborators.
+ * @param url - Absolute URL of the page to read.
+ * @param token - The revealed token, used for this call only.
+ * @returns The response, when GitHub answered with a 2xx status.
+ * @throws GithubApiError When GitHub answers with a non-2xx status.
+ */
+async function request(deps: GithubClientDeps, url: string, token: string): Promise<Response> {
+  const response = await deps.fetch(url, {
     headers: {
-      Authorization: `Bearer ${revealed}`,
+      Authorization: `Bearer ${token}`,
       Accept: 'application/vnd.github+json',
       'X-GitHub-Api-Version': '2022-11-28',
       'User-Agent': 'agent-hangar',
     },
   });
   if (!response.ok) {
-    await reportFailure(deps, response);
+    // Only the status is read. The body is written by a server that was handed the token, so it
+    // is neither logged nor quoted; the status is what tells an auth failure from an outage.
+    deps.logger.warn({ status: response.status }, 'github request failed');
+    throw new GithubApiError(response.status, `GitHub answered ${String(response.status)}`);
   }
-  try {
-    return (await response.json()) as T;
-  } catch {
-    throw new GithubApiError(response.status, 'GitHub returned a body that is not JSON');
-  }
+  return response;
 }
 
 /**
- * Logs a failed GitHub response and raises the typed error for it.
+ * Decodes and validates one page of results.
  *
- * The body is sampled and redacted only so an operator can see it in the log; it never becomes the
- * error message, because a forge repeats what it was sent.
- *
- * @param deps - Client collaborators.
- * @param response - The non-2xx response.
- * @throws GithubApiError Always.
+ * @param response - A successful response.
+ * @param schema - Contract the page must satisfy.
+ * @returns The parsed items.
+ * @throws GithubApiError When the body is not JSON, or is JSON of another shape.
  */
-async function reportFailure(deps: GithubClientDeps, response: Response): Promise<never> {
-  const body = await response.text().catch(() => '');
-  deps.logger.warn(
-    { status: response.status, sample: deps.redactor.redact(body.slice(0, ERROR_BODY_SAMPLE)) },
-    'github request failed',
-  );
-  throw new GithubApiError(response.status, `GitHub answered ${String(response.status)}`);
+async function decode<T>(response: Response, schema: ZodType<T[]>): Promise<T[]> {
+  let body: unknown;
+  try {
+    body = await response.json();
+  } catch {
+    throw new GithubApiError(response.status, 'GitHub returned a body that is not JSON');
+  }
+  const parsed = schema.safeParse(body);
+  if (!parsed.success) {
+    // The issues quote the offending values, which come from the upstream; the caller is told the
+    // shape was wrong and nothing else.
+    throw new GithubApiError(response.status, 'GitHub returned a body of an unexpected shape');
+  }
+  return parsed.data;
+}
+
+/** Matches the `<url>; rel="next"` element of a `Link` header. */
+const NEXT_LINK_PATTERN = /<([^>]+)>\s*;\s*rel="next"/;
+
+/**
+ * Reads the next page's URL out of a `Link` header.
+ *
+ * The URL is chosen by the upstream, and the request that follows it carries the `Authorization`
+ * header, so a link that leaves the configured API is not followed: it would send the token to a
+ * host the operator never configured. The comparison keeps the separator, so a base of
+ * `https://api.github.com` does not accept `https://api.github.com.example.net/…`.
+ *
+ * @param baseUrl - The configured API base URL.
+ * @param header - Value of the `Link` header, or `null` when there was none.
+ * @returns The next page's URL, or `null` when there is no further page to read.
+ */
+function nextPageUrl(baseUrl: string, header: string | null): string | null {
+  const candidate = (header === null ? null : NEXT_LINK_PATTERN.exec(header))?.[1];
+  if (candidate === undefined) {
+    return null;
+  }
+  return candidate.startsWith(`${baseUrl}/`) ? candidate : null;
 }

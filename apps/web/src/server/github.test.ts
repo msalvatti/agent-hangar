@@ -3,18 +3,32 @@
  * Unit tests for the GitHub REST client.
  *
  * Layer: unit.
- * Goal: the stored token authenticates the call and never appears anywhere else, and every
- * failure mode becomes a typed error rather than an echo of GitHub's own text.
+ * Goal: the stored token authenticates the call and never appears anywhere else, a listing covers
+ * more than its first page without following a link off the configured API, and every failure mode
+ * becomes a typed error rather than an echo of GitHub's own text.
  * Mocks: an injected `fetch`, an in-memory secrets service, and a logger writing into an array.
  */
 import { branchSummary, createLogger, createRedactor, repoSummary } from '@agent-hangar/core';
-import { assertNoCanary, GITHUB_CANARY } from '@agent-hangar/core/testing';
+import { assertNoCanary, CANARY_MARKER, GITHUB_CANARY } from '@agent-hangar/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 
 import { ApiHttpError, GithubApiError, ValidationError } from './errors';
-import { createGithubClient, GITHUB_PAGE_SIZE } from './github';
+import { createGithubClient, GITHUB_MAX_PAGES, GITHUB_PAGE_SIZE } from './github';
 import type { GithubClientDeps } from './github';
 import { FakeSecretsService } from './testing/fake-secrets';
+
+/** Base URL every harness in this file is built against. */
+const BASE_URL = 'https://api.github.com';
+
+/**
+ * A token belonging to no family the redactor's shape patterns describe.
+ *
+ * A GitHub Enterprise deployment issues tokens whose spelling this repository has never seen, so
+ * masking by shape cannot help: only the exact value, registered at the moment it is revealed,
+ * keeps it out of a log line. Assembled at runtime and carrying the canary marker, so no
+ * credential-shaped literal is written to this file.
+ */
+const ENTERPRISE_TOKEN = `enterprise${CANARY_MARKER}${'0'.repeat(24)}`;
 
 /** One repository as GitHub's REST API reports it. */
 const GITHUB_REPO = {
@@ -67,7 +81,7 @@ function harness(respond: () => Response, stored: string | null = GITHUB_CANARY)
           },
         },
       }),
-      baseUrl: 'https://api.github.com',
+      baseUrl: BASE_URL,
       fetch: fetchSpy,
     },
   };
@@ -78,13 +92,39 @@ function harness(respond: () => Response, stored: string | null = GITHUB_CANARY)
  *
  * @param body - Value to encode.
  * @param status - HTTP status.
+ * @param headers - Extra headers merged over the content type.
  * @returns The response.
  */
-function jsonResponse(body: unknown, status = 200): Response {
+function jsonResponse(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
   return new Response(JSON.stringify(body), {
     status,
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...headers },
   });
+}
+
+/**
+ * Builds a `Link` header pointing at one more page of the same listing.
+ *
+ * @param url - URL of the next page.
+ * @returns The header value, with the `last` relation GitHub also sends.
+ */
+function nextLink(url: string): Record<string, string> {
+  return { link: `<${url}>; rel="next", <${url}>; rel="last"` };
+}
+
+/**
+ * Scripts one response per call, in order.
+ *
+ * @param responses - Builders, one per expected call.
+ * @returns A responder that hands out the next one each time it is called.
+ */
+function inOrder(responses: (() => Response)[]): () => Response {
+  let index = 0;
+  return () => {
+    const next = responses[index];
+    index += 1;
+    return next === undefined ? jsonResponse([]) : next();
+  };
 }
 
 describe('listRepos', () => {
@@ -150,6 +190,21 @@ describe('listRepos', () => {
   });
 
   /**
+   * The revealed value is registered with the redactor, so a token whose shape no pattern knows —
+   * a GitHub Enterprise one, for instance — is still removed from anything this process logs
+   * afterwards. Shape matching alone would let this exact value through untouched.
+   */
+  it('registers the revealed token so an unknown token shape is still redacted', async () => {
+    const { deps, logOutput } = harness(() => jsonResponse([GITHUB_REPO]), ENTERPRISE_TOKEN);
+    await createGithubClient(deps).listRepos('');
+
+    deps.logger.warn({ note: `upstream said ${ENTERPRISE_TOKEN}` }, 'after the listing');
+
+    expect(logOutput()).toContain('after the listing');
+    expect(logOutput()).not.toContain(ENTERPRISE_TOKEN);
+  });
+
+  /**
    * With no token stored there is nothing to authenticate with, and the UI has a Settings page to
    * send the user to; a 409 says "the state is wrong", not "you got it wrong".
    */
@@ -160,6 +215,94 @@ describe('listRepos', () => {
       code: 'SECRETS_MISSING',
     });
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+});
+
+describe('pagination', () => {
+  /**
+   * A token reaching more than one page of repositories must see all of them: reading only the
+   * first page would hide every repository past the hundredth from the picker for good.
+   */
+  it('follows the next link and combines the pages', async () => {
+    const second = `${BASE_URL}/user/repos?page=2`;
+    const other = { ...GITHUB_REPO, full_name: 'acme/gadgets' };
+    const { deps, fetchSpy } = harness(
+      inOrder([
+        () => jsonResponse([GITHUB_REPO], 200, nextLink(second)),
+        () => jsonResponse([other]),
+      ]),
+    );
+
+    const repos = await createGithubClient(deps).listRepos('');
+
+    expect(repos.map((repo) => repo.fullName)).toEqual(['acme/widgets', 'acme/gadgets']);
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(String(fetchSpy.mock.calls[1]?.[0])).toBe(second);
+  });
+
+  /**
+   * Branches paginate the same way, so a repository with more than a hundred branches does not
+   * silently hide the rest of them from the picker.
+   */
+  it('follows the next link for branches too', async () => {
+    const second = `${BASE_URL}/repos/acme/widgets/branches?page=2`;
+    const { deps } = harness(
+      inOrder([
+        () => jsonResponse([GITHUB_BRANCH], 200, nextLink(second)),
+        () => jsonResponse([{ ...GITHUB_BRANCH, name: 'next' }]),
+      ]),
+    );
+
+    const branches = await createGithubClient(deps).listBranches('acme/widgets');
+
+    expect(branches.map((branch) => branch.name)).toEqual(['main', 'next']);
+  });
+
+  /**
+   * An upstream that keeps offering one more page — a hostile or simply enormous account — must
+   * not turn one picker request into unbounded work, so the walk stops at a fixed page count.
+   */
+  it('stops after the maximum number of pages', async () => {
+    const { deps, fetchSpy, logOutput } = harness(() =>
+      jsonResponse([GITHUB_REPO], 200, nextLink(`${BASE_URL}/user/repos?page=next`)),
+    );
+
+    const repos = await createGithubClient(deps).listRepos('');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(GITHUB_MAX_PAGES);
+    expect(repos).toHaveLength(GITHUB_MAX_PAGES);
+    expect(logOutput()).toContain('github listing stopped at the page limit');
+  });
+
+  /**
+   * The next URL comes from the upstream and the request that follows it carries the token, so a
+   * link pointing anywhere but the configured API ends the walk instead of being followed. The
+   * separator is part of the comparison: a look-alike host must not pass as a prefix match.
+   */
+  it.each([
+    ['another host', 'https://api.github.com.example.net/user/repos?page=2'],
+    ['an unrelated origin', 'https://example.net/user/repos?page=2'],
+  ])('does not follow a next link that leaves the API (%s)', async (_label, link) => {
+    const { deps, fetchSpy } = harness(() => jsonResponse([GITHUB_REPO], 200, nextLink(link)));
+
+    const repos = await createGithubClient(deps).listRepos('');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    expect(repos).toHaveLength(1);
+  });
+
+  /**
+   * The last page still carries a `Link` header, only without a `next` relation; that is the
+   * ordinary end of a walk rather than a failure.
+   */
+  it('stops on a link header that offers no next page', async () => {
+    const { deps, fetchSpy } = harness(() =>
+      jsonResponse([GITHUB_REPO], 200, { link: `<${BASE_URL}/user/repos?page=1>; rel="prev"` }),
+    );
+
+    await createGithubClient(deps).listRepos('');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -174,7 +317,7 @@ describe('listBranches', () => {
     expect(branches).toEqual([{ name: 'main', sha: 'a'.repeat(40), protected: true }]);
     expect(branchSummary.safeParse(branches[0]).success).toBe(true);
     expect(String(fetchSpy.mock.calls[0]?.[0])).toBe(
-      `https://api.github.com/repos/acme/widgets/branches?per_page=${String(GITHUB_PAGE_SIZE)}`,
+      `${BASE_URL}/repos/acme/widgets/branches?per_page=${String(GITHUB_PAGE_SIZE)}`,
     );
   });
 
@@ -220,26 +363,21 @@ describe('failures', () => {
   });
 
   /**
-   * The failing body is logged so an operator can diagnose it, but it goes through the redactor
-   * first: GitHub repeats what it was sent, and what it was sent included a bearer token.
+   * The body of a failed response is never read. A forge repeats what it was sent, so its text can
+   * carry the very token this module put in the request header; the status alone is what reaches
+   * the log and the error, and masking is not relied on to make the body safe.
    */
-  it('redacts the sampled body before logging it', async () => {
+  it('never reads or logs the body of a failed response', async () => {
     const body = { message: `rejected Authorization: Bearer ${GITHUB_CANARY}` };
-    const { deps, logOutput } = harness(() => jsonResponse(body, 403));
+    const response = jsonResponse(body, 403);
+    const { deps, logOutput } = harness(() => response);
+
     await expect(createGithubClient(deps).listRepos('')).rejects.toBeInstanceOf(GithubApiError);
+
+    expect(response.bodyUsed).toBe(false);
     assertNoCanary(logOutput());
     expect(logOutput()).toContain('github request failed');
-  });
-
-  /**
-   * A body that cannot even be read is still reported as a failed GitHub call rather than
-   * crashing the request with a text-decoding error.
-   */
-  it('survives a failing response whose body cannot be read', async () => {
-    const response = new Response(null, { status: 500 });
-    Object.defineProperty(response, 'text', { value: () => Promise.reject(new Error('torn')) });
-    const { deps } = harness(() => response);
-    await expect(createGithubClient(deps).listRepos('')).rejects.toMatchObject({ status: 500 });
+    expect(logOutput()).not.toContain('rejected');
   });
 
   /**
@@ -249,6 +387,33 @@ describe('failures', () => {
   it('reports a successful response with an unreadable body', async () => {
     const { deps } = harness(() => new Response('<html>', { status: 200 }));
     await expect(createGithubClient(deps).listRepos('')).rejects.toBeInstanceOf(GithubApiError);
+  });
+
+  /**
+   * Valid JSON of the wrong shape is a failed call, not a listing of `undefined`: without the
+   * boundary schema an object where an array belongs, or a repository missing `full_name`, would
+   * reach the caller and surface as an internal 500 far from where it went wrong.
+   */
+  it.each([
+    ['an object where a list belongs', {}],
+    ['a repository missing a field', [{ html_url: 'https://github.com/acme/widgets' }]],
+    ['a repository with a field of the wrong type', [{ ...GITHUB_REPO, private: 'yes' }]],
+  ])('rejects a body of an unexpected shape (%s)', async (_label, body) => {
+    const { deps } = harness(() => jsonResponse(body));
+    const rejection = createGithubClient(deps).listRepos('');
+    await expect(rejection).rejects.toBeInstanceOf(GithubApiError);
+    await expect(rejection).rejects.toMatchObject({ status: 200 });
+  });
+
+  /**
+   * The branches endpoint is parsed just as strictly, including the nested commit object the sha
+   * is read out of.
+   */
+  it('rejects a branch listing of an unexpected shape', async () => {
+    const { deps } = harness(() => jsonResponse([{ name: 'main', protected: true }]));
+    await expect(createGithubClient(deps).listBranches('acme/widgets')).rejects.toBeInstanceOf(
+      GithubApiError,
+    );
   });
 
   /**

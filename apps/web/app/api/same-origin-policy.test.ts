@@ -20,6 +20,7 @@ import { readdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { foreignRequest } from '@/server/testing/requests';
@@ -105,6 +106,11 @@ describe('same-origin policy', () => {
   /**
    * Every state-changing export of every route answers 403 to a foreign origin — before the body
    * is read, before anything is looked up, and before anything is written.
+   *
+   * The state assertions belong in this test rather than in one of their own. `beforeEach` builds a
+   * fresh harness per test, so a separate test would inspect a container the refusals never
+   * touched, and would pass just as happily if every route wrote its row and *then* answered 403.
+   * Checked here, the state that is inspected is the state the refusals ran against.
    */
   it('refuses every state-changing route from a foreign origin', async () => {
     const checked: string[] = [];
@@ -128,15 +134,15 @@ describe('same-origin policy', () => {
       }
     }
     expect(checked.length).toBeGreaterThanOrEqual(12);
-  });
 
-  /**
-   * Nothing reached a repository, a queue or the secret store: the guard runs first, so a refused
-   * request leaves no trace at all.
-   */
-  it('leaves no state behind after the refusals', async () => {
+    // Nothing reached a repository, a queue or the secret store: the guard runs before the body is
+    // read and before anything is looked up, so a refused request leaves no trace at all.
     expect(await harness.doubles.repos.chats.list()).toEqual([]);
     expect(await harness.doubles.repos.scheduledJobs.list()).toEqual([]);
+    expect(await harness.doubles.secrets.status()).toMatchObject({
+      GITHUB_PAT: { set: true, last4: GITHUB_CANARY.slice(-4) },
+      OPENAI_API_KEY: { set: true, last4: OPENAI_CANARY.slice(-4) },
+    });
     expect(harness.doubles.queues.chatTurns.added).toEqual([]);
     expect(harness.doubles.queues.scheduledJobs.added).toEqual([]);
     expect(harness.doubles.queues.workspaceGc.added).toEqual([]);

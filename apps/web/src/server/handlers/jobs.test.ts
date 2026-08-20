@@ -144,6 +144,29 @@ describe('createJob', () => {
     expect(response.status).toBe(500);
     expect(await harness.doubles.repos.scheduledJobs.list()).toHaveLength(0);
   });
+
+  /**
+   * Both stores failing at once is the one case the compensation cannot repair, so it is reported
+   * rather than swallowed: the request still fails with the scheduler's own error, and the log
+   * carries the job id an operator needs to reconcile the two halves by hand.
+   */
+  it('reports a mismatch it could not repair', async () => {
+    const harness = createTestContainer({ now: NOW });
+    vi.spyOn(harness.doubles.queues.scheduledJobs, 'upsertJobScheduler').mockRejectedValue(
+      new Error('redis unreachable'),
+    );
+    vi.spyOn(harness.doubles.repos.scheduledJobs, 'delete').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+
+    const response = await createJob(
+      harness.container,
+      writeRequest('/api/jobs', 'POST', JOB_BODY),
+    );
+
+    expect(response.status).toBe(500);
+    expect(harness.doubles.logOutput()).toContain('could not undo a partial scheduled-job write');
+  });
 });
 
 describe('listJobs and getJob', () => {
@@ -253,6 +276,55 @@ describe('updateJob', () => {
   });
 
   /**
+   * The row is written before Redis is told about it, so a scheduler that refuses the new schedule
+   * would otherwise leave the table advertising a cron that never fires. The edit is rolled back to
+   * the values the still-registered scheduler describes, which is what keeps the two halves from
+   * disagreeing after a failed request.
+   */
+  it('rolls the row back when the scheduler refuses the new schedule', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    vi.spyOn(harness.doubles.queues.scheduledJobs, 'upsertJobScheduler').mockRejectedValue(
+      new Error('redis unreachable'),
+    );
+
+    const response = await updateJob(
+      harness.container,
+      writeRequest(`/api/jobs/${job.id}`, 'PATCH', { cron: '30 4 * * *', name: 'Renamed' }),
+      { id: job.id },
+    );
+
+    expect(response.status).toBe(500);
+    expect(await harness.doubles.repos.scheduledJobs.get(job.id)).toMatchObject({
+      cron: JOB_BODY.cron,
+      name: JOB_BODY.name,
+      enabled: true,
+    });
+  });
+
+  /**
+   * Disabling fails the same way round: the row must not be left saying the job is off while the
+   * scheduler that would still fire it is registered.
+   */
+  it('rolls the row back when the scheduler cannot be removed', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    vi.spyOn(harness.doubles.queues.scheduledJobs, 'removeJobScheduler').mockRejectedValue(
+      new Error('redis unreachable'),
+    );
+
+    const response = await updateJob(
+      harness.container,
+      writeRequest(`/api/jobs/${job.id}`, 'PATCH', { enabled: false }),
+      { id: job.id },
+    );
+
+    expect(response.status).toBe(500);
+    expect(await harness.doubles.repos.scheduledJobs.get(job.id)).toMatchObject({ enabled: true });
+    expect(harness.doubles.queues.scheduledJobs.schedulers.has(job.id)).toBe(true);
+  });
+
+  /**
    * The same validation applies to an edit as to a create: an invalid cron never reaches the row,
    * and an unknown job is missing.
    */
@@ -313,6 +385,26 @@ describe('deleteJob', () => {
     expect(harness.doubles.queues.scheduledJobs.schedulers.size).toBe(0);
     expect(await harness.doubles.repos.scheduledJobs.get(job.id)).toBeNull();
     expect(await harness.doubles.repos.jobRuns.listByJob(job.id)).toEqual([]);
+  });
+
+  /**
+   * The scheduler goes first, so a row that then refuses to be deleted would be left describing a
+   * job with nothing to fire it — enabled in the table and invisible to BullMQ. The scheduler is
+   * put back, which is the state the surviving row describes.
+   */
+  it('puts the scheduler back when the row cannot be deleted', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    vi.spyOn(harness.doubles.repos.scheduledJobs, 'delete').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+
+    const response = await deleteJob(harness.container, writeRequest('/api/jobs', 'DELETE'), {
+      id: job.id,
+    });
+
+    expect(response.status).toBe(500);
+    expect(harness.doubles.queues.scheduledJobs.schedulers.has(job.id)).toBe(true);
   });
 
   /**

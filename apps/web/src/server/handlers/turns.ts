@@ -36,16 +36,32 @@ export interface TurnParams {
 /**
  * Removes the queued job of a turn, when it is still removable.
  *
+ * The state is read and then acted on, and nothing holds the queue still in between: BullMQ can
+ * hand the job to a worker after the check, and it refuses to remove a job a worker has locked.
+ * That refusal is the running case rather than a failure — the same situation the caller already
+ * handles for a job that was active when it was checked — so the state is read again to tell the
+ * two apart. A removal that fails while the job is still removable is a failure of the store and
+ * is reported as one.
+ *
  * @param container - The server container.
  * @param turn - The turn being cancelled.
  * @returns `true` when the job was removed before it started.
+ * @throws Error When the queue refuses the removal for any reason other than the job having
+ *   started.
  */
 async function removeQueuedJob(container: ServerContainer, turn: Turn): Promise<boolean> {
   const job = await container.queues.chatTurns.getJob(turn.id);
   if (job === undefined || !REMOVABLE_STATES.includes(await job.getState())) {
     return false;
   }
-  await job.remove();
+  try {
+    await job.remove();
+  } catch (error) {
+    if (REMOVABLE_STATES.includes(await job.getState())) {
+      throw error;
+    }
+    return false;
+  }
   return true;
 }
 
