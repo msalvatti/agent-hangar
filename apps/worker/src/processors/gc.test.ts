@@ -247,7 +247,53 @@ describe('createGcProcessor', () => {
     const result = await collect(container, JOB_NAMES.destroyChatWorkspace, { chatId: chat.id });
 
     expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0 });
-    expect(container.logs.join('')).toContain('archived chat had no live workspace');
+    expect(container.logs.join('')).toContain('chat had no live workspace');
+  });
+
+  /**
+   * Deleting a chat cascades its workspace row's reference away before the teardown runs, so the
+   * container is only reachable by the label it was created with — and it must still go.
+   */
+  it('destroys the container of a chat whose row is gone', async () => {
+    const container = createTestContainer();
+    const chatId = 'deleted-chat';
+    await container.runner.create({
+      workspaceId: 'ws-orphan',
+      kind: 'CHAT',
+      image: 'image',
+      env: {},
+      limits: { cpus: 1, memoryBytes: 1, pids: 1 },
+      labels: { 'ah.instance': container.config.AH_INSTANCE, 'ah.chat': chatId },
+    });
+
+    const result = await collect(container, JOB_NAMES.destroyChatWorkspace, { chatId });
+
+    expect(result.orphansDestroyed).toBe(1);
+    expect(container.runner.getWorkspace('ws-orphan')?.status).toBe('gone');
+  });
+
+  /**
+   * A container the daemon refuses to remove is reported and not counted; the idle pass reaps it
+   * by the instance label on its next tick.
+   */
+  it('reports a chat container it could not destroy', async () => {
+    const container = createTestContainer();
+    const chatId = 'deleted-chat';
+    await container.runner.create({
+      workspaceId: 'ws-orphan',
+      kind: 'CHAT',
+      image: 'image',
+      env: {},
+      limits: { cpus: 1, memoryBytes: 1, pids: 1 },
+      labels: { 'ah.instance': container.config.AH_INSTANCE, 'ah.chat': chatId },
+    });
+    vi.spyOn(container.runner, 'destroy').mockRejectedValue(new Error('remove refused'));
+
+    const result = await collect(container, JOB_NAMES.destroyChatWorkspace, { chatId });
+
+    expect(result.orphansDestroyed).toBe(0);
+    expect(container.logs.join('')).toContain('destroying an orphan workspace failed');
+    vi.restoreAllMocks();
   });
 
   /**

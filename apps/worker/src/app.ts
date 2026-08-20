@@ -7,11 +7,17 @@
  * clients can be unit-tested: which queues get a consumer, with which concurrency and which
  * stalled-job settings, and what a shutdown does when a turn refuses to end.
  */
-import { createWorker as createBullWorker, QUEUE_NAMES } from '@agent-hangar/core';
+import {
+  createWorker as createBullWorker,
+  describeClientFailure,
+  QUEUE_NAMES,
+} from '@agent-hangar/core';
 import type { QueueName, WorkspaceRunner } from '@agent-hangar/core';
 import type { Redis } from 'ioredis';
 
 import type { ContainerDatabase, WorkerContainer, WorkerRedisClient } from './container.js';
+import { startHeartbeat } from './heartbeat.js';
+import type { RunningHeartbeat } from './heartbeat.js';
 import { LABELS, SHUTDOWN_GRACE_MS, WORKER_RELIABILITY } from './processors/constants.js';
 import { createGcProcessor } from './processors/gc.js';
 import { createRunScheduledJobProcessor } from './processors/run-scheduled-job.js';
@@ -110,12 +116,20 @@ export const defaultWorkerFactories: StartWorkerFactories<Redis> = {
 /**
  * Waits, without holding the process open.
  *
+ * Hand-rolled rather than `node:timers/promises`, whose timers Vitest's fake clock does not
+ * install: the shutdown grace is thirty seconds, and a test that had to wait it out would be a
+ * test nobody runs. The timer is unreferenced so a worker that stopped in time still exits at
+ * once instead of waiting out a grace period nothing is watching.
+ *
  * @param ms - How long to wait.
- * @returns A promise that resolves after the delay.
+ * @returns A promise resolving to `true` once the wait is over, which is what the shutdown race
+ *   reads as "the workers did not stop in time".
  */
-function delay(ms: number): Promise<void> {
-  return new Promise<void>((resolve) => {
-    setTimeout(resolve, ms).unref();
+function delay(ms: number): Promise<boolean> {
+  return new Promise<boolean>((resolve) => {
+    setTimeout(() => {
+      resolve(true);
+    }, ms).unref();
   });
 }
 
@@ -132,6 +146,7 @@ function delay(ms: number): Promise<void> {
  */
 function createShutdown(
   workers: readonly WorkerLike[],
+  heartbeat: RunningHeartbeat,
   container: {
     logger: { info: (message: string) => void; warn: (message: string) => void };
     close: () => Promise<void>;
@@ -140,8 +155,9 @@ function createShutdown(
   let inFlight: Promise<void> | undefined;
   const run = async (): Promise<void> => {
     container.logger.info('stopping workers');
+    heartbeat.stop();
     const closed = Promise.all(workers.map((worker) => worker.close())).then(() => false);
-    if (await Promise.race([closed, delay(SHUTDOWN_GRACE_MS).then(() => true)])) {
+    if (await Promise.race([closed, delay(SHUTDOWN_GRACE_MS)])) {
       container.logger.warn('workers did not stop in time; abandoning jobs still in flight');
       await Promise.all(workers.map((worker) => worker.close(true)));
     }
@@ -174,6 +190,7 @@ export async function startWorker<
   }
 
   await reconcileSchedulers(container);
+  const heartbeat = await startHeartbeat(container);
 
   const options = { connection: container.redis.worker, ...WORKER_RELIABILITY };
   const workers = [
@@ -191,11 +208,14 @@ export async function startWorker<
     }),
   ];
   for (const worker of workers) {
+    // Both handlers describe the failure rather than logging the error itself: what reaches them
+    // may have come from Prisma or from ioredis, whose messages carry the connection string with
+    // its password. What the user needs is on the run's own row, redacted on write.
     worker.on('failed', (job: { id?: string } | undefined, error: unknown) => {
-      logger.error({ err: error, jobId: job?.id }, 'job failed');
+      logger.error({ jobId: job?.id, failure: describeClientFailure(error) }, 'job failed');
     });
     worker.on('error', (error: unknown) => {
-      logger.error({ err: error }, 'worker error');
+      logger.error({ failure: describeClientFailure(error) }, 'worker error');
     });
   }
 
@@ -207,5 +227,5 @@ export async function startWorker<
     },
     'worker ready',
   );
-  return { shutdown: createShutdown(workers, container) };
+  return { shutdown: createShutdown(workers, heartbeat, container) };
 }

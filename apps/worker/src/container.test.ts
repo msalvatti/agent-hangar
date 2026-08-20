@@ -14,7 +14,7 @@ import {
   FakeClock,
   FakeWorkspaceRunner,
 } from '@agent-hangar/core/testing';
-import type { Redis } from 'ioredis';
+import type { Logger } from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
@@ -24,76 +24,69 @@ import {
   defaultContainerFactories,
   factoriesFor,
 } from './container.js';
-import type {
-  ContainerDatabase,
-  ContainerFactories,
-  WorkerPrismaClient,
-  WorkerRedisClient,
-} from './container.js';
-import type { EventStreamTransaction } from './events.js';
+import type { ContainerFactories } from './container.js';
 import { createLogger } from './logger.js';
-import { createFakeQueues, FakeSecretsService, TEST_ENV } from './testing/index.js';
+import {
+  createFakeQueues,
+  FakeDatabaseClient,
+  FakeRedisClient,
+  FakeSecretsService,
+  TEST_ENV,
+} from './testing/index.js';
 
-/** A Redis stand-in that records its role and whether it was closed. */
-class FakeRedis implements WorkerRedisClient {
-  quitCalls = 0;
-  readonly duplicates: FakeRedis[] = [];
-
-  constructor(
-    readonly role: string,
-    private readonly onQuit: (role: string) => void,
-    private readonly quitFails = false,
-  ) {}
-
-  multi(): EventStreamTransaction {
-    throw new Error('not used in this test');
-  }
-
-  on(_event: 'message', _listener: (channel: string, payload: string) => void): unknown {
-    return this;
-  }
-
-  subscribe(_channel: string): Promise<unknown> {
-    return Promise.resolve(1);
-  }
-
-  unsubscribe(_channel: string): Promise<unknown> {
-    return Promise.resolve(0);
-  }
-
-  duplicate(): WorkerRedisClient {
-    const copy = new FakeRedis(`${this.role}:duplicate`, this.onQuit);
-    this.duplicates.push(copy);
-    return copy;
-  }
-
-  quit(): Promise<unknown> {
-    this.quitCalls += 1;
-    this.onQuit(this.role);
-    if (this.quitFails) {
-      return Promise.reject(new Error('connection already gone'));
-    }
-    return Promise.resolve('OK');
-  }
+/** Everything the injectable factories are built over. */
+interface FactoryParts {
+  database: FakeDatabaseClient;
+  makeRedis: (role: string, quitFails?: boolean) => FakeRedisClient;
+  queues: ReturnType<typeof createFakeQueues>;
+  clock: Clock;
+  capture: (options: { level: string; redactor: Redactor }) => Logger;
+  queueQuitFails: boolean;
+  released: string[];
+  runnerCalls: { kind: string }[];
 }
 
-/** A Prisma stand-in that only has to be disconnectable. */
-class FakeDatabase implements ContainerDatabase {
-  disconnectCalls = 0;
-
-  $disconnect(): Promise<void> {
-    this.disconnectCalls += 1;
-    return Promise.resolve();
-  }
+/**
+ * Builds the injectable factories over in-memory doubles.
+ *
+ * @param parts - The doubles and the recorders they write into.
+ * @returns One factory per construction seam.
+ */
+function buildFactories(
+  parts: FactoryParts,
+): ContainerFactories<FakeDatabaseClient, FakeRedisClient> {
+  return {
+    createPrismaClient: () => parts.database,
+    disconnectPrisma: (client) => {
+      parts.released.push('prisma');
+      return client.$disconnect();
+    },
+    createRepositories: (_prisma, _redactor): Repositories =>
+      createInMemoryRepositories(parts.clock),
+    createQueueConnection: () => parts.makeRedis('queue', parts.queueQuitFails),
+    createWorkerConnection: () => parts.makeRedis('worker'),
+    closeConnection: async (connection) => {
+      await connection.quit();
+    },
+    createQueues: () => parts.queues,
+    createRedactor: (): Redactor => createRedactor(),
+    createLogger: parts.capture,
+    createSecrets: (): SecretsService => new FakeSecretsService(),
+    createWorkspaceRunner: (kind) => {
+      parts.runnerCalls.push({ kind });
+      return new FakeWorkspaceRunner();
+    },
+    clock: parts.clock,
+  };
 }
 
 /** What a test needs to assert on after building a container. */
 interface Harness {
   config: AppConfig;
-  factories: ContainerFactories<FakeDatabase, FakeRedis>;
+  factories: ContainerFactories<FakeDatabaseClient, FakeRedisClient>;
   released: string[];
-  connections: FakeRedis[];
-  database: FakeDatabase;
+  connections: FakeRedisClient[];
+  database: FakeDatabaseClient;
   logs: string[];
   runnerCalls: { kind: string }[];
   queues: ReturnType<typeof createFakeQueues>;
@@ -108,56 +101,46 @@ interface Harness {
 function harness(options: { queueQuitFails?: boolean } = {}): Harness {
   const config = loadConfig(TEST_ENV);
   const released: string[] = [];
-  const connections: FakeRedis[] = [];
-  const database = new FakeDatabase();
+  const connections: FakeRedisClient[] = [];
+  const database = new FakeDatabaseClient();
   const logs: string[] = [];
   const runnerCalls: { kind: string }[] = [];
   const clock: Clock = new FakeClock();
   const queues = createFakeQueues();
 
-  const makeRedis = (role: string, quitFails = false): FakeRedis => {
-    const redis = new FakeRedis(
+  const makeRedis = (role: string, quitFails = false): FakeRedisClient => {
+    const redis = new FakeRedisClient({
       role,
-      (name) => {
+      quitFails,
+      onQuit: (name) => {
         released.push(name);
       },
-      quitFails,
-    );
+    });
     connections.push(redis);
     return redis;
   };
-
-  const factories: ContainerFactories<FakeDatabase, FakeRedis> = {
-    createPrismaClient: () => database,
-    disconnectPrisma: (client) => {
-      released.push('prisma');
-      return client.$disconnect();
-    },
-    createRepositories: (_prisma, _redactor): Repositories => createInMemoryRepositories(clock),
-    createQueueConnection: () => makeRedis('queue', options.queueQuitFails ?? false),
-    createWorkerConnection: () => makeRedis('worker'),
-    closeConnection: async (connection) => {
-      await connection.quit();
-    },
-    createQueues: () => queues,
-    createRedactor: (): Redactor => createRedactor(),
-    createLogger: ({ level, redactor }) =>
-      createLogger({
-        level,
-        redactor,
-        destination: {
-          write(line: string): void {
-            logs.push(line);
-          },
+  const capture = ({ level, redactor }: { level: string; redactor: Redactor }): Logger =>
+    createLogger({
+      level,
+      redactor,
+      destination: {
+        write(line: string): void {
+          logs.push(line);
         },
-      }),
-    createSecrets: (): SecretsService => new FakeSecretsService(),
-    createWorkspaceRunner: (kind) => {
-      runnerCalls.push({ kind });
-      return new FakeWorkspaceRunner();
-    },
+      },
+    });
+
+  const factories = buildFactories({
+    database,
+    makeRedis,
+    queues,
     clock,
-  };
+    capture,
+    queueQuitFails: options.queueQuitFails ?? false,
+    released,
+    runnerCalls,
+  });
+
   return { config, factories, released, connections, database, logs, runnerCalls, queues };
 }
 
@@ -232,7 +215,7 @@ describe('createContainer', () => {
 
     expect(queues.chatTurns.closed).toBe(true);
     expect(released).toEqual(['queue:duplicate', 'worker', 'queue', 'prisma']);
-    expect(database.disconnectCalls).toBe(1);
+    expect(database.disconnects).toBe(1);
   });
 
   /**
@@ -246,7 +229,7 @@ describe('createContainer', () => {
     await Promise.all([container.close(), container.close()]);
     await container.close();
 
-    expect(database.disconnectCalls).toBe(1);
+    expect(database.disconnects).toBe(1);
   });
 
   /**
@@ -259,7 +242,7 @@ describe('createContainer', () => {
 
     await container.close();
 
-    expect(database.disconnectCalls).toBe(1);
+    expect(database.disconnects).toBe(1);
     expect(logs.join('')).toContain('releasing a worker resource failed');
   });
 });
@@ -309,21 +292,15 @@ describe('factoriesFor', () => {
    */
   it('adopts the clients and collaborators the boot already built', async () => {
     const { config, factories } = harness();
-    const prisma = new FakeDatabase();
-    const redis = new FakeRedis('boot', () => undefined);
+    const prisma = new FakeDatabaseClient();
+    const redis = new FakeRedisClient({ role: 'boot' });
     const redactor = createRedactor();
     const logger = createLogger({ level: 'silent', redactor });
-    const booted = factoriesFor({
-      prisma: prisma as unknown as WorkerPrismaClient,
-      redis: redis as unknown as Redis,
-      redactor,
-      logger,
-    });
 
     const container = await createContainer({
       config,
       env: {},
-      factories: { ...booted, createQueues: factories.createQueues } as unknown as typeof booted,
+      factories: factoriesFor(factories, { prisma, redis, redactor, logger }),
     });
 
     expect(container.prisma).toBe(prisma);

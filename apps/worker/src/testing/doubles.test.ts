@@ -11,6 +11,7 @@
 import { GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 
+import { FakeDatabaseClient, FakeRedisClient } from './fake-clients.js';
 import { createFakeQueues, FakeQueue } from './fake-queues.js';
 import { FakeSecretsService } from './fake-secrets.js';
 import { createFakeWorkerFactory } from './fake-worker-factory.js';
@@ -149,6 +150,71 @@ describe('FakeQueue', () => {
     await queues.workspaceGc.add('reap-idle', {});
 
     expect(queues.workspaceGc.jobs).toEqual([{ name: 'reap-idle', data: {}, opts: undefined }]);
+  });
+});
+
+describe('FakeRedisClient', () => {
+  /**
+   * A message for a connection nobody subscribed on is dropped rather than throwing: the shared
+   * subscriber receives everything Redis publishes, including channels this process never asked
+   * for.
+   */
+  it('drops a message with no handler installed', () => {
+    const redis = new FakeRedisClient();
+
+    expect(() => {
+      redis.deliver('cmd:turn:1', 'cancel');
+    }).not.toThrow();
+    expect(redis.listenerCount).toBe(0);
+  });
+
+  /**
+   * Closing reports the role, which is what makes the container's release order assertable, and a
+   * connection built to fail on close rejects like one that is already gone.
+   */
+  it('reports its role on close, and can fail closing', async () => {
+    const closed: string[] = [];
+    const ok = new FakeRedisClient({
+      role: 'queue',
+      onQuit: (role) => {
+        closed.push(role);
+      },
+    });
+    const broken = new FakeRedisClient({ role: 'worker', quitFails: true });
+
+    await ok.quit();
+    await expect(broken.quit()).rejects.toThrow(/already gone/);
+
+    expect(closed).toEqual(['queue']);
+    expect(ok.quits).toBe(1);
+  });
+
+  /**
+   * A duplicate is a fresh connection that never inherits the original's failure mode; pub/sub
+   * needs one that works even when the producer is on its way out.
+   */
+  it('duplicates into a working connection', async () => {
+    const original = new FakeRedisClient({ role: 'queue', quitFails: true });
+
+    const copy = original.duplicate();
+    await copy.quit();
+
+    expect(original.duplicates).toEqual([copy]);
+    expect(copy.role).toBe('queue:duplicate');
+  });
+});
+
+describe('FakeDatabaseClient', () => {
+  /**
+   * The pool release is counted, which is how the container test proves it happens exactly once.
+   */
+  it('counts releases', async () => {
+    const database = new FakeDatabaseClient();
+
+    await database.$disconnect();
+    await database.$disconnect();
+
+    expect(database.disconnects).toBe(2);
   });
 });
 

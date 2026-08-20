@@ -17,12 +17,8 @@ import {
   nextRunAt,
   runScheduledJobPayload,
 } from '@agent-hangar/core';
-import type {
-  AgentEvent,
-  RunScheduledJobPayload,
-  ScheduledJob,
-  WorkspaceHandle,
-} from '@agent-hangar/core';
+import type { AgentEvent, JobRun, ScheduledJob, WorkspaceHandle } from '@agent-hangar/core';
+import { z } from 'zod';
 
 import { NO_USAGE, WORKER_ERROR_PREFIX } from './constants.js';
 import { buildTurnInstructions } from './instructions.js';
@@ -33,6 +29,22 @@ import type { ToolCallRecorder } from './tool-call-recorder.js';
 import { executeRuntimeTurn } from './turn-executor.js';
 import type { TurnSink, UnreportedOutcome } from './turn-executor.js';
 import type { ProcessorDeps, ProcessorJob } from './types.js';
+
+/**
+ * The delivery this consumer reads.
+ *
+ * `runId` is present only on a manual run: the API answers the request with the id of the `JobRun`
+ * it created, and the browser opens that run's event stream straight away — so adopting the row
+ * rather than inserting a second one is what keeps the page watching a stream something writes to.
+ * A scheduled tick carries no id and the row is created when the tick fires. The field is spelled
+ * here until the shared queue contract carries it.
+ */
+const scheduledDeliveryPayload = runScheduledJobPayload.extend({
+  runId: z.string().min(1).optional(),
+});
+
+/** A delivery of `run-scheduled-job`. */
+export type ScheduledDelivery = z.infer<typeof scheduledDeliveryPayload>;
 
 /** What the run's workspace is torn down with. */
 interface Teardown {
@@ -85,6 +97,46 @@ async function closeOutRun(
 }
 
 /**
+ * Writes the outcome the runtime reported.
+ *
+ * @param deps - Repositories.
+ * @param runId - The run.
+ * @param event - A terminal event, already redacted.
+ * @param steps - Highest step the runtime reached, for the outcomes that report no usage.
+ */
+async function persistRunOutcome(
+  deps: ProcessorDeps,
+  runId: string,
+  event: Extract<AgentEvent, { type: 'turn.completed' | 'turn.failed' | 'turn.cancelled' }>,
+  steps: number,
+): Promise<void> {
+  if (event.type === 'turn.completed') {
+    await deps.repos.jobRuns.finish(runId, {
+      status: 'SUCCEEDED',
+      output: event.finalMessage,
+      usage: {
+        inputTokens: event.usage.inputTokens,
+        outputTokens: event.usage.outputTokens,
+        stepCount: event.steps,
+      },
+    });
+    return;
+  }
+  if (event.type === 'turn.failed') {
+    await deps.repos.jobRuns.finish(runId, {
+      status: 'FAILED',
+      usage: { ...NO_USAGE, stepCount: steps },
+      error: formatRunError(event.error.code, event.error.message),
+    });
+    return;
+  }
+  await deps.repos.jobRuns.finish(runId, {
+    status: 'CANCELLED',
+    usage: { ...NO_USAGE, stepCount: steps },
+  });
+}
+
+/**
  * Builds the persistence half of a run's event stream.
  *
  * A run has no chat, so nothing becomes a message: the final answer is the run's `output` and the
@@ -113,28 +165,9 @@ function makeJobRunSink(deps: ProcessorDeps, runId: string, recorder: ToolCallRe
           await recorder.finish(event);
           break;
         case 'turn.completed':
-          await deps.repos.jobRuns.finish(runId, {
-            status: 'SUCCEEDED',
-            output: event.finalMessage,
-            usage: {
-              inputTokens: event.usage.inputTokens,
-              outputTokens: event.usage.outputTokens,
-              stepCount: event.steps,
-            },
-          });
-          break;
         case 'turn.failed':
-          await deps.repos.jobRuns.finish(runId, {
-            status: 'FAILED',
-            usage: { ...NO_USAGE, stepCount: steps },
-            error: formatRunError(event.error.code, event.error.message),
-          });
-          break;
         case 'turn.cancelled':
-          await deps.repos.jobRuns.finish(runId, {
-            status: 'CANCELLED',
-            usage: { ...NO_USAGE, stepCount: steps },
-          });
+          await persistRunOutcome(deps, runId, event, steps);
           break;
         case 'turn.started':
         case 'prepare.progress':
@@ -220,18 +253,46 @@ async function teardownRun(deps: ProcessorDeps, teardown: Teardown): Promise<voi
 async function recordSkippedTick(
   deps: ProcessorDeps,
   job: ScheduledJob,
-  payload: RunScheduledJobPayload,
-  scheduledFor: Date,
+  run: JobRun,
   reason: string,
 ): Promise<void> {
-  const run = await deps.repos.jobRuns.create({
+  await deps.repos.jobRuns.finish(run.id, { status: 'FAILED', usage: NO_USAGE, error: reason });
+  deps.logger.info({ jobId: job.id, runId: run.id }, 'scheduled run skipped');
+}
+
+/**
+ * Finds the run this delivery belongs to, or opens one.
+ *
+ * A manual run already has its row — the API created it so it could answer with an id the browser
+ * subscribes to — and inserting a second one would leave that subscription watching a stream
+ * nothing writes to. A row that has since vanished is treated as a tick, so a delivery is never
+ * dropped for want of a record.
+ *
+ * @param deps - Repositories.
+ * @param job - The job definition.
+ * @param payload - The delivery.
+ * @param scheduledFor - The tick this delivery belongs to.
+ * @returns The run to record against.
+ */
+async function openRun(
+  deps: ProcessorDeps,
+  job: ScheduledJob,
+  payload: ScheduledDelivery,
+  scheduledFor: Date,
+): Promise<JobRun> {
+  if (payload.runId !== undefined) {
+    const adopted = await deps.repos.jobRuns.get(payload.runId);
+    if (adopted !== null) {
+      return adopted;
+    }
+    deps.logger.warn({ jobId: job.id, runId: payload.runId }, 'run to adopt is gone');
+  }
+  return deps.repos.jobRuns.create({
     jobId: job.id,
     trigger: payload.trigger,
     model: deps.config.OPENAI_MODEL,
     scheduledFor,
   });
-  await deps.repos.jobRuns.finish(run.id, { status: 'FAILED', usage: NO_USAGE, error: reason });
-  deps.logger.info({ jobId: job.id, runId: run.id }, 'scheduled run skipped');
 }
 
 /**
@@ -300,9 +361,9 @@ async function runInFreshWorkspace(
  */
 export function createRunScheduledJobProcessor(
   deps: ProcessorDeps,
-): (job: ProcessorJob<RunScheduledJobPayload>) => Promise<void> {
-  return async (delivery: ProcessorJob<RunScheduledJobPayload>): Promise<void> => {
-    const payload = runScheduledJobPayload.parse(delivery.data);
+): (job: ProcessorJob<ScheduledDelivery>) => Promise<void> {
+  return async (delivery: ProcessorJob<ScheduledDelivery>): Promise<void> => {
+    const payload = scheduledDeliveryPayload.parse(delivery.data);
     const job = await deps.repos.scheduledJobs.get(payload.jobId);
     if (job === null) {
       deps.logger.warn({ jobId: payload.jobId }, 'scheduled job is gone');
@@ -316,18 +377,14 @@ export function createRunScheduledJobProcessor(
       delivery.timestamp === undefined ? deps.clock.now() : new Date(delivery.timestamp);
 
     const running = await deps.repos.jobRuns.findRunningByJob(job.id);
-    const overlap = decideOverlap({ runningRun: running });
+    const run = await openRun(deps, job, payload, scheduledFor);
+    const overlap = decideOverlap({
+      runningRun: running === null || running.id === run.id ? null : running,
+    });
     if (overlap.action === 'skip') {
-      await recordSkippedTick(deps, job, payload, scheduledFor, overlap.reason);
+      await recordSkippedTick(deps, job, run, overlap.reason);
       return;
     }
-
-    const run = await deps.repos.jobRuns.create({
-      jobId: job.id,
-      trigger: payload.trigger,
-      model: deps.config.OPENAI_MODEL,
-      scheduledFor,
-    });
     await deps.repos.jobRuns.setStatus(run.id, 'PREPARING');
     const teardown: Teardown = { runId: run.id, handle: null, workspaceId: null, job };
     try {

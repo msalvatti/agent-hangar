@@ -76,7 +76,7 @@ export function shouldRunDockerSuite(env: RawEnv = process.env): DockerSuiteDeci
 }
 
 /** Prefix every suite of this kind carries, so reporters and filters can find it. */
-export const DOCKER_SUITE_PREFIX = '@docker @db @redis';
+const DOCKER_SUITE_PREFIX = '@docker @db @redis';
 
 /**
  * Registers a suite under a decision that has already been made.

@@ -13,7 +13,7 @@ import {
 
 import { defaultWorkerFactories, startWorker } from './app.js';
 import { boot } from './boot.js';
-import { createContainer, factoriesFor } from './container.js';
+import { createContainer, defaultContainerFactories, factoriesFor } from './container.js';
 import { createLogger } from './logger.js';
 
 const redactor = createRedactor();
@@ -29,7 +29,7 @@ try {
   });
   const container = await createContainer({
     config,
-    factories: factoriesFor({ prisma, redis, redactor, logger }),
+    factories: factoriesFor(defaultContainerFactories, { prisma, redis, redactor, logger }),
   });
   const app = await startWorker(container, defaultWorkerFactories);
   const stop = (signal: string): void => {

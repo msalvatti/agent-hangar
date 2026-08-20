@@ -3,10 +3,10 @@
  *
  * Layer: infrastructure.
  *
- * One stream per turn or job run, keyed by `turnEventsStreamKey`. Each entry carries two fields:
- * `type`, the `AgentEvent` discriminator, which the SSE route maps to the `event:` line, and
- * `data`, the whole event as JSON, which becomes the `data:` line. The entry id BullMQ hands back
- * is what a browser replays from through `Last-Event-ID`.
+ * One stream per turn or job run, keyed by `turnEventsStreamKey`. Each entry is the flat field
+ * list `['event', '<JSON AgentEvent>']`: the SSE route reads that one field back, derives the
+ * `event:` line from the event's own `type` and writes the JSON as the `data:` line. The entry id
+ * Redis hands back is what a browser replays from through `Last-Event-ID`.
  *
  * Security: every event handed to `publish` has already passed through the redactor. This module
  * neither redacts nor inspects — it must stay the boring last hop, so that "redact before publish"
@@ -30,11 +30,13 @@ export const EVENT_STREAM_MAXLEN = TURN_EVENTS_MAXLEN;
 /** Lifetime of a turn's stream, after which the UI falls back to the persisted transcript. */
 export const EVENT_STREAM_TTL_SECONDS = TURN_EVENTS_TTL_SECONDS;
 
-/** Stream field holding the event discriminator. */
-export const EVENT_FIELD_TYPE = 'type';
-
-/** Stream field holding the whole event as JSON. */
-export const EVENT_FIELD_DATA = 'data';
+/**
+ * Name of the single stream field carrying one JSON-encoded event.
+ *
+ * The web app reads it back by this exact name, so the two must agree; it is spelled here until
+ * the shared queue contract carries the constant itself.
+ */
+export const TURN_EVENT_FIELD = 'event';
 
 /**
  * The transaction builder the publisher drives; ioredis' `ChainableCommander` satisfies it.
@@ -128,9 +130,7 @@ export function createTurnEventPublisher(redis: EventStreamRedis): TurnEventPubl
           '~',
           String(EVENT_STREAM_MAXLEN),
           '*',
-          EVENT_FIELD_TYPE,
-          event.type,
-          EVENT_FIELD_DATA,
+          TURN_EVENT_FIELD,
           JSON.stringify(event),
         )
         .expire(key, EVENT_STREAM_TTL_SECONDS)

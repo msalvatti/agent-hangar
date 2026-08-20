@@ -8,20 +8,25 @@
  * because a scheduled turn against a paid API is not a test. Credentials are the canaries, so the
  * suite can assert they reach the container environment and nothing else.
  */
+import { setTimeout as delay } from 'node:timers/promises';
+
 import {
+  agentEventSchema,
   createQueueConnection,
   createSecretsService,
   loadConfig,
   MasterKeyFile,
   turnEventsStreamKey,
 } from '@agent-hangar/core';
-import type { AppConfig, WorkspaceHandle } from '@agent-hangar/core';
+import type { AgentEvent, AppConfig, WorkspaceHandle } from '@agent-hangar/core';
 import { GITHUB_CANARY, OPENAI_CANARY, truncateAll } from '@agent-hangar/core/testing';
 import type { Redis } from 'ioredis';
 
 import { defaultWorkerFactories, startWorker } from '../app.js';
+import type { RunningWorker } from '../app.js';
 import { createContainer, defaultContainerFactories } from '../container.js';
 import type { WorkerContainer } from '../container.js';
+import { TURN_EVENT_FIELD } from '../events.js';
 import { LABELS } from '../processors/constants.js';
 
 /** Repository the suite works against; small, public, and cloneable without a token. */
@@ -34,10 +39,8 @@ export const TEST_REPO_BRANCH = process.env.TEST_REPO_BRANCH ?? 'master';
 export interface StreamEntry {
   /** Stream id, which is also the SSE event id. */
   id: string;
-  /** The `AgentEvent` discriminator. */
-  type: string;
-  /** The whole event, as JSON text. */
-  data: string;
+  /** The event the entry carries, parsed. */
+  event: AgentEvent;
 }
 
 /** How long a scenario waits for a turn to reach a terminal state. */
@@ -87,12 +90,32 @@ export interface IntegrationHarness {
  */
 function toEntries(reply: [string, string[]][]): StreamEntry[] {
   return reply.map(([id, fields]) => {
-    const values = new Map<string, string>();
-    for (let index = 0; index + 1 < fields.length; index += 2) {
-      values.set(fields[index] ?? '', fields[index + 1] ?? '');
-    }
-    return { id, type: values.get('type') ?? '', data: values.get('data') ?? '' };
+    const at = fields.indexOf(TURN_EVENT_FIELD);
+    // The suite asserts the exact wire shape the web app reads, so an entry that does not carry
+    // one parseable event under that field fails here rather than in a vague assertion later.
+    return { id, event: agentEventSchema.parse(JSON.parse(fields[at + 1] ?? 'null')) };
   });
+}
+
+/**
+ * Stores the canaries through the real secrets service, over a throwaway master key.
+ *
+ * The suite asserts these exact values reach the container environment and nothing else, which is
+ * only meaningful if they travelled the production encryption path to get there.
+ *
+ * @param container - The application container, for its secret repository.
+ * @param masterKeyPath - Throwaway key file; created 0600 on first use.
+ */
+async function seedCanaryCredentials(
+  container: WorkerContainer,
+  masterKeyPath: string,
+): Promise<void> {
+  const secrets = createSecretsService({
+    repository: container.repos.secrets,
+    masterKey: new MasterKeyFile({ path: masterKeyPath }),
+  });
+  await secrets.set('GITHUB_PAT', GITHUB_CANARY);
+  await secrets.set('OPENAI_API_KEY', OPENAI_CANARY);
 }
 
 /**
@@ -118,20 +141,30 @@ export async function createIntegrationHarness(options: {
 
   await truncateAll(container.prisma);
   await inspect.flushdb();
-
-  const secrets = createSecretsService({
-    repository: container.repos.secrets,
-    masterKey: new MasterKeyFile({ path: options.masterKeyPath }),
-  });
-  await secrets.set('GITHUB_PAT', GITHUB_CANARY);
-  await secrets.set('OPENAI_API_KEY', OPENAI_CANARY);
+  await seedCanaryCredentials(container, options.masterKeyPath);
 
   const app = await startWorker(container, defaultWorkerFactories);
-  const instanceLabel = { [LABELS.instance]: config.AH_INSTANCE };
+  return assembleHarness(config, container, inspect, app);
+}
 
+/**
+ * Wraps the built collaborators in the surface a scenario drives.
+ *
+ * @param config - Validated configuration of the test instance.
+ * @param container - The application container.
+ * @param inspect - Connection used for reading streams, kept out of BullMQ's way.
+ * @param app - The running workers.
+ * @returns The harness.
+ */
+function assembleHarness(
+  config: AppConfig,
+  container: WorkerContainer,
+  inspect: Redis,
+  app: RunningWorker,
+): IntegrationHarness {
+  const instanceLabel = { [LABELS.instance]: config.AH_INSTANCE };
   const listInstanceHandles = (): Promise<WorkspaceHandle[]> =>
     container.runner.list(instanceLabel);
-
   const destroyAllInstanceContainers = async (): Promise<void> => {
     for (const handle of await listInstanceHandles()) {
       await container.runner.destroy(handle);
@@ -151,7 +184,7 @@ export async function createIntegrationHarness(options: {
         if (await predicate()) {
           return;
         }
-        await new Promise((resolve) => setTimeout(resolve, WAIT_INTERVAL_MS));
+        await delay(WAIT_INTERVAL_MS);
       }
       throw new Error(`timed out after ${WAIT_TIMEOUT_MS} ms waiting for ${what}`);
     },

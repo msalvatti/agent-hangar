@@ -5,76 +5,29 @@
  * Goal: the two guarantees of spec 04 (c) — one fresh workspace per run, always destroyed in a
  * `finally`, and a tick that overlaps the previous run recorded rather than queued — plus the
  * request the runtime receives, every failure path, and the run times the tick leaves behind.
- * Mocks: `createTestContainer` plus runner subclasses for failures the fake cannot produce.
+ * Mocks: the shared processor fixtures over in-memory repositories and the fake runner.
  */
-import {
-  DEFAULT_JOB_TURN_LIMITS,
-  nextRunAt,
-  OVERLAP_SKIP_REASON,
-  turnRequestSchema,
-} from '@agent-hangar/core';
-import type {
-  AgentEvent,
-  ExecEvent,
-  ExecSpec,
-  RunScheduledJobPayload,
-  ScheduledJob,
-  WorkspaceHandle,
-  WorkspaceSpec,
-} from '@agent-hangar/core';
-import {
-  assertNoCanary,
-  FakeClock,
-  FakeWorkspaceRunner,
-  GITHUB_CANARY,
-  OPENAI_CANARY,
-} from '@agent-hangar/core/testing';
-import type { ExecScript, FakeWorkspaceRunnerOptions } from '@agent-hangar/core/testing';
+import { DEFAULT_JOB_TURN_LIMITS, nextRunAt, OVERLAP_SKIP_REASON } from '@agent-hangar/core';
+import type { AgentEvent, ScheduledJob, WorkspaceSpec } from '@agent-hangar/core';
+import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 
 import {
-  createTestContainer,
   FakeSecretsService,
+  FIXTURE_REPO_URL,
+  requestSentTo,
   scriptedRuntime,
-  stdinOf,
+  setupProcessorContainer,
+  UncreatableRunner,
+  UnreachableRunner,
 } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
 import { createRunScheduledJobProcessor } from './run-scheduled-job.js';
+import type { ScheduledDelivery } from './run-scheduled-job.js';
 import type { ProcessorJob } from './types.js';
 
-const REPO_URL = 'https://github.com/octocat/Hello-World.git';
 const CRON = '*/5 * * * *';
-
-/** A runner that has no workspace image. */
-class UncreatableRunner extends FakeWorkspaceRunner {
-  constructor(
-    private readonly failure: unknown,
-    options: FakeWorkspaceRunnerOptions = {},
-  ) {
-    super(options);
-  }
-
-  override async create(): Promise<WorkspaceHandle> {
-    await Promise.resolve();
-    throw this.failure;
-  }
-}
-
-/** A runner whose exec cannot be started at all. */
-class UnreachableRunner extends FakeWorkspaceRunner {
-  constructor(
-    private readonly failure: unknown,
-    options: FakeWorkspaceRunnerOptions = {},
-  ) {
-    super(options);
-  }
-
-  override async *exec(): AsyncIterable<ExecEvent> {
-    await Promise.resolve();
-    throw this.failure;
-  }
-}
 
 /** The events a successful run produces. */
 function happyScript(): AgentEvent[] {
@@ -106,28 +59,6 @@ function happyScript(): AgentEvent[] {
   ];
 }
 
-/** How a test wants its container wired. */
-interface SetupOptions {
-  script?: ExecScript;
-  secrets?: FakeSecretsService;
-  runner?: (options: FakeWorkspaceRunnerOptions) => FakeWorkspaceRunner;
-}
-
-/** Builds a test container whose runner already carries the script the test needs. */
-function setup(options: SetupOptions = {}): TestContainer {
-  const clock = new FakeClock();
-  const runnerOptions: FakeWorkspaceRunnerOptions = {
-    clock,
-    scripts: options.script === undefined ? [] : [options.script],
-  };
-  const runner = (options.runner ?? ((opts) => new FakeWorkspaceRunner(opts)))(runnerOptions);
-  return createTestContainer({
-    clock,
-    runner,
-    ...(options.secrets === undefined ? {} : { secrets: options.secrets }),
-  });
-}
-
 /** Seeds an enabled scheduled job. */
 async function seedJob(
   container: TestContainer,
@@ -138,7 +69,7 @@ async function seedJob(
     cron: overrides.cron ?? CRON,
     timezone: 'UTC',
     prompt: 'print date',
-    repoUrl: REPO_URL,
+    repoUrl: FIXTURE_REPO_URL,
     branch: 'master',
     enabled: overrides.enabled ?? true,
   });
@@ -147,30 +78,21 @@ async function seedJob(
 /** Builds the structural part of a BullMQ delivery. */
 function delivery(
   jobId: string,
-  trigger: RunScheduledJobPayload['trigger'] = 'SCHEDULE',
-  timestamp?: number,
-): ProcessorJob<RunScheduledJobPayload> {
+  trigger: ScheduledDelivery['trigger'] = 'SCHEDULE',
+  extra: { timestamp?: number; runId?: string } = {},
+): ProcessorJob<ScheduledDelivery> {
   return {
     id: 'delivery-1',
     name: 'run-scheduled-job',
-    data: { jobId, trigger },
+    data: { jobId, trigger, ...(extra.runId === undefined ? {} : { runId: extra.runId }) },
     attemptsMade: 0,
-    ...(timestamp === undefined ? {} : { timestamp }),
+    ...(extra.timestamp === undefined ? {} : { timestamp: extra.timestamp }),
   };
 }
 
 /** Runs the processor over a delivery. */
-async function run(
-  container: TestContainer,
-  job: ProcessorJob<RunScheduledJobPayload>,
-): Promise<void> {
+async function run(container: TestContainer, job: ProcessorJob<ScheduledDelivery>): Promise<void> {
   await createRunScheduledJobProcessor(container)(job);
-}
-
-/** The turn request the runtime was handed. */
-async function requestSentTo(container: TestContainer): Promise<unknown> {
-  const call = container.runner.calls.findLast((entry) => entry.method === 'exec');
-  return turnRequestSchema.parse(JSON.parse(await stdinOf(call?.args[1] as ExecSpec)));
 }
 
 describe('createRunScheduledJobProcessor', () => {
@@ -180,7 +102,7 @@ describe('createRunScheduledJobProcessor', () => {
    * destroyed before the processor returns.
    */
   it('runs a tick in a fresh workspace and destroys it', async () => {
-    const container = setup({ script: scriptedRuntime(happyScript()) });
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
     const job = await seedJob(container);
 
     await run(container, delivery(job.id));
@@ -235,7 +157,7 @@ describe('createRunScheduledJobProcessor', () => {
    * occurrence, computed by the same function the API uses.
    */
   it('records the run times of the tick', async () => {
-    const container = setup({ script: scriptedRuntime(happyScript()) });
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
     const job = await seedJob(container);
 
     await run(container, delivery(job.id));
@@ -252,11 +174,11 @@ describe('createRunScheduledJobProcessor', () => {
    * when BullMQ supplied one.
    */
   it('records a manual run against the delivery timestamp', async () => {
-    const container = setup({ script: scriptedRuntime(happyScript()) });
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
     const job = await seedJob(container);
     const tick = Date.parse('2026-02-01T09:00:00.000Z');
 
-    await run(container, delivery(job.id, 'MANUAL', tick));
+    await run(container, delivery(job.id, 'MANUAL', { timestamp: tick }));
 
     const runs = await container.repos.jobRuns.listByJob(job.id);
     expect(runs[0]).toMatchObject({ trigger: 'MANUAL', scheduledFor: new Date(tick) });
@@ -267,7 +189,7 @@ describe('createRunScheduledJobProcessor', () => {
    * nothing else: no container, and no change to the run times the executing run owns.
    */
   it('records an overlapping tick without starting a container', async () => {
-    const container = setup({ script: scriptedRuntime(happyScript()) });
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
     const job = await seedJob(container);
     const running = await container.repos.jobRuns.create({
       jobId: job.id,
@@ -290,11 +212,47 @@ describe('createRunScheduledJobProcessor', () => {
   });
 
   /**
+   * A manual run already has its row: the API answered the request with its id and the browser is
+   * watching that run's stream, so a second row would leave the page watching nothing.
+   */
+  it('adopts the run a manual delivery names', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const existing = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: existing.id }));
+
+    const runs = await container.repos.jobRuns.listByJob(job.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]).toMatchObject({ id: existing.id, status: 'SUCCEEDED' });
+    expect(container.publisher.eventsFor(existing.id).length).toBeGreaterThan(0);
+  });
+
+  /**
+   * A named run that has since been deleted must not drop the delivery: the tick still happened,
+   * so it is recorded against a fresh row.
+   */
+  it('opens a fresh run when the one it was told to adopt is gone', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: 'no-such-run' }));
+
+    expect(await container.repos.jobRuns.listByJob(job.id)).toHaveLength(1);
+    expect(container.logs.join('')).toContain('run to adopt is gone');
+  });
+
+  /**
    * A job that was deleted, or disabled since the scheduler was registered, is acknowledged and
    * nothing is recorded: a disabled job that still ran would be a surprise the UI cannot explain.
    */
   it('skips a job that is gone or disabled', async () => {
-    const container = setup();
+    const container = setupProcessorContainer();
     const disabled = await seedJob(container, { enabled: false });
 
     await run(container, delivery('no-such-job'));
@@ -309,7 +267,7 @@ describe('createRunScheduledJobProcessor', () => {
    * A failure the runtime reported is recorded on the run, and the container is destroyed anyway.
    */
   it('records a reported failure and still destroys the workspace', async () => {
-    const container = setup({
+    const container = setupProcessorContainer({
       script: scriptedRuntime([
         { type: 'turn.started', turnId: 'x', at: '2026-01-01T00:00:00.000Z' },
         { type: 'turn.failed', error: { code: 'auth', message: 'the key was rejected' } },
@@ -328,7 +286,7 @@ describe('createRunScheduledJobProcessor', () => {
    * Cancelling a run records it as cancelled and still tears the container down.
    */
   it('records a cancellation and destroys the workspace', async () => {
-    const container = setup({
+    const container = setupProcessorContainer({
       script: scriptedRuntime([
         { type: 'turn.started', turnId: 'x', at: '2026-01-01T00:00:00.000Z' },
         { type: 'turn.cancelled' },
@@ -347,7 +305,7 @@ describe('createRunScheduledJobProcessor', () => {
    * container is still destroyed.
    */
   it('closes out a cancellation the runtime never acknowledged', async () => {
-    const container = setup({
+    const container = setupProcessorContainer({
       script: scriptedRuntime(
         [
           { type: 'turn.started', turnId: 'x', at: '2026-01-01T00:00:00.000Z' },
@@ -382,7 +340,7 @@ describe('createRunScheduledJobProcessor', () => {
    * database that is down has to surface, not be logged as a cron problem.
    */
   it('propagates a failure that is not an invalid schedule', async () => {
-    const container = setup({ script: scriptedRuntime(happyScript()) });
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
     const job = await seedJob(container);
     vi.spyOn(container.repos.scheduledJobs, 'setRunTimes').mockRejectedValue(
       new Error('database is down'),
@@ -396,7 +354,7 @@ describe('createRunScheduledJobProcessor', () => {
    * A runtime that exits without saying anything is a failed run, and the UI's stream still ends.
    */
   it('fails a run whose runtime said nothing', async () => {
-    const container = setup({ script: scriptedRuntime([], { exitCode: 3 }) });
+    const container = setupProcessorContainer({ script: scriptedRuntime([], { exitCode: 3 }) });
     const job = await seedJob(container);
 
     await run(container, delivery(job.id));
@@ -413,7 +371,9 @@ describe('createRunScheduledJobProcessor', () => {
    * and the run times still move, because this tick did happen.
    */
   it('fails the run when a credential is missing', async () => {
-    const container = setup({ secrets: new FakeSecretsService({ GITHUB_PAT: GITHUB_CANARY }) });
+    const container = setupProcessorContainer({
+      secrets: new FakeSecretsService({ GITHUB_PAT: GITHUB_CANARY }),
+    });
     const job = await seedJob(container);
 
     await run(container, delivery(job.id));
@@ -429,7 +389,7 @@ describe('createRunScheduledJobProcessor', () => {
    * A missing image fails the run without an exec, and the run times still move.
    */
   it('fails the run when the workspace image is missing', async () => {
-    const container = setup({
+    const container = setupProcessorContainer({
       runner: (options) =>
         new UncreatableRunner(
           Object.assign(new Error('No such image'), { code: 'IMAGE' }),
@@ -450,7 +410,7 @@ describe('createRunScheduledJobProcessor', () => {
    * An unreachable daemon rejects the job so BullMQ retries it, and the teardown still runs.
    */
   it('rejects when the daemon is unreachable', async () => {
-    const container = setup({
+    const container = setupProcessorContainer({
       runner: (options) =>
         new UnreachableRunner(
           Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' }),
@@ -470,7 +430,7 @@ describe('createRunScheduledJobProcessor', () => {
    * collector will reap the container by its label on the next tick.
    */
   it('logs a destroy the runner refused', async () => {
-    const container = setup({ script: scriptedRuntime(happyScript()) });
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
     const job = await seedJob(container);
     vi.spyOn(container.runner, 'destroy').mockRejectedValueOnce(new Error('daemon busy'));
 
@@ -487,7 +447,7 @@ describe('createRunScheduledJobProcessor', () => {
    * tick is still recorded and only the next occurrence is left unknown.
    */
   it('records the tick even when the schedule cannot be parsed', async () => {
-    const container = setup({ script: scriptedRuntime(happyScript()) });
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
     const job = await seedJob(container);
     const stored = container.repos.store.scheduledJobs.get(job.id);
     if (stored !== undefined) {
@@ -507,7 +467,7 @@ describe('createRunScheduledJobProcessor', () => {
    * history never shows a run stuck in `RUNNING`.
    */
   it('closes out a run the processor could not finish', async () => {
-    const container = setup({ script: scriptedRuntime(happyScript()) });
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
     const job = await seedJob(container);
     vi.spyOn(container.repos.workspaces, 'setStatus').mockRejectedValueOnce(
       new Error('database is down'),
@@ -525,7 +485,7 @@ describe('createRunScheduledJobProcessor', () => {
    * The credentials the container runs with must reach neither the run's rows nor its stream.
    */
   it('lets no credential reach the run record or its stream', async () => {
-    const container = setup({
+    const container = setupProcessorContainer({
       script: scriptedRuntime([
         {
           type: 'turn.completed',

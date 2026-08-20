@@ -16,6 +16,7 @@
 import {
   closeConnection,
   createPrismaClient,
+  describeClientFailure,
   createQueueConnection,
   createQueues,
   createRedactor,
@@ -46,6 +47,9 @@ import { parseWorkerEnv } from './env.js';
 import type { WorkerEnv, WorkspaceRunnerKind } from './env.js';
 import { createTurnEventPublisher } from './events.js';
 import type { EventStreamRedis, TurnEventPublisher } from './events.js';
+import type { HeartbeatRedis } from './heartbeat.js';
+import { createImageStatus } from './image-status.js';
+import type { WorkspaceImageStatus } from './image-status.js';
 import { createLogger } from './logger.js';
 import type { WorkerQueues } from './queues.js';
 
@@ -59,7 +63,7 @@ export interface ContainerDatabase {
 }
 
 /** The Redis surface the container owns; ioredis' `Redis` satisfies it. */
-export interface WorkerRedisClient extends EventStreamRedis, CommandRedis {
+export interface WorkerRedisClient extends EventStreamRedis, CommandRedis, HeartbeatRedis {
   /** Opens a second connection with the same options, as pub/sub requires. */
   duplicate(): WorkerRedisClient;
   /** Closes the connection. */
@@ -95,6 +99,8 @@ export interface WorkerContainer<
   publisher: TurnEventPublisher;
   commands: CommandListener;
   queues: WorkerQueues;
+  /** What the last workspace create said about the image; published in the health heartbeat. */
+  imageStatus: WorkspaceImageStatus;
   /** Closes queues, the three connections and the database pool; idempotent. */
   close(): Promise<void>;
 }
@@ -180,11 +186,14 @@ export const defaultContainerFactories: ContainerFactories<WorkerPrismaClient, R
 };
 
 /** Clients and collaborators the process built before the container existed. */
-export interface BootedRuntime {
-  /** Prisma client the boot already proved reachable. */
-  prisma: WorkerPrismaClient;
+export interface BootedRuntime<
+  TDatabase extends ContainerDatabase,
+  TRedis extends WorkerRedisClient,
+> {
+  /** Database client the boot already proved reachable. */
+  prisma: TDatabase;
   /** Producer connection the boot already pinged. */
-  redis: Redis;
+  redis: TRedis;
   /** The process's redactor; the same one the boot logger writes through. */
   redactor: Redactor;
   /** The process's logger. */
@@ -192,18 +201,22 @@ export interface BootedRuntime {
 }
 
 /**
- * Builds the production factories over clients the boot sequence already opened.
+ * Adopts clients the boot sequence already opened into a set of factories.
  *
  * The boot proves Postgres and Redis answer before anything else runs, and it can only do that by
  * connecting. Handing those clients to the container is what keeps the process on one pool and one
  * producer connection instead of two of each.
  *
+ * @param base - Factories to start from; production passes {@link defaultContainerFactories}.
  * @param booted - What the boot sequence produced.
- * @returns The real factories, with the already-open clients wired in.
+ * @returns The same factories, with the already-open clients wired in.
  */
-export function factoriesFor(booted: BootedRuntime): ContainerFactories<WorkerPrismaClient, Redis> {
+export function factoriesFor<TDatabase extends ContainerDatabase, TRedis extends WorkerRedisClient>(
+  base: ContainerFactories<TDatabase, TRedis>,
+  booted: BootedRuntime<TDatabase, TRedis>,
+): ContainerFactories<TDatabase, TRedis> {
   return {
-    ...defaultContainerFactories,
+    ...base,
     createPrismaClient: () => booted.prisma,
     createQueueConnection: () => booted.redis,
     createRedactor: () => booted.redactor,
@@ -260,7 +273,13 @@ function createClose(
       try {
         await step.run();
       } catch (error) {
-        logger.warn({ step: step.name, err: error }, 'releasing a worker resource failed');
+        // Described, never repeated: a Prisma or ioredis failure puts the connection string —
+        // password included — in its message, and the redactor knows the credentials this process
+        // revealed, not the ones it was configured with.
+        logger.warn(
+          { step: step.name, failure: describeClientFailure(error) },
+          'releasing a worker resource failed',
+        );
       }
     }
   };
@@ -310,6 +329,7 @@ export function createContainer<
     publisher: createTurnEventPublisher(queueConnection),
     commands: createCommandListener(subscriber, logger),
     queues,
+    imageStatus: createImageStatus(),
     close: createClose(
       [
         { name: 'queues', run: () => closeQueues(queues) },

@@ -122,12 +122,35 @@ async function reapIdle(deps: ProcessorDeps): Promise<GcResult> {
  */
 async function destroyChatWorkspace(deps: ProcessorDeps, chatId: string): Promise<GcResult> {
   const workspace = await deps.repos.workspaces.findLiveByChat(chatId);
-  if (workspace === null) {
-    deps.logger.info({ chatId }, 'archived chat had no live workspace');
+  if (workspace !== null) {
+    const outcome = await teardownWorkspace(deps, workspace, { reason: 'archive' });
+    return { ...NOTHING, reaped: outcome === 'destroyed' ? 1 : 0 };
+  }
+  // Deleting a chat enqueues this teardown and then cascades the rows away, which clears the
+  // workspace's chat reference — so by the time this runs there may be no row to look up and the
+  // container is only reachable by the label it was created with.
+  const orphaned = await deps.runner.list({
+    [LABELS.instance]: deps.config.AH_INSTANCE,
+    [LABELS.chat]: chatId,
+  });
+  if (orphaned.length === 0) {
+    deps.logger.info({ chatId }, 'chat had no live workspace');
     return NOTHING;
   }
-  const outcome = await teardownWorkspace(deps, workspace, { reason: 'archive' });
-  return { ...NOTHING, reaped: outcome === 'destroyed' ? 1 : 0 };
+  let orphansDestroyed = 0;
+  for (const handle of orphaned) {
+    try {
+      await deps.runner.destroy(handle);
+      orphansDestroyed += 1;
+      deps.logger.warn({ chatId, workspaceId: handle.workspaceId }, 'orphan workspace destroyed');
+    } catch (error) {
+      deps.logger.error(
+        { err: error, workspaceId: handle.workspaceId },
+        'destroying an orphan workspace failed',
+      );
+    }
+  }
+  return { ...NOTHING, orphansDestroyed };
 }
 
 /**

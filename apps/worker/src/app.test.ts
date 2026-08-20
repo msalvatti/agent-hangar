@@ -13,25 +13,45 @@ import { describe, expect, it, vi } from 'vitest';
 import { defaultWorkerFactories, probeRunnerReachable, startWorker } from './app.js';
 import type { WorkerContainer } from './container.js';
 import { SHUTDOWN_GRACE_MS, WORKER_RELIABILITY } from './processors/constants.js';
-import { createFakeWorkerFactory, createTestContainer } from './testing/index.js';
+import {
+  createFakeWorkerFactory,
+  createTestContainer,
+  FakeDatabaseClient,
+  FakeRedisClient,
+} from './testing/index.js';
 import type { FakeWorkerFactory, TestContainer } from './testing/index.js';
 
 /** The container shape `startWorker` needs, over the in-memory collaborators. */
-type AppContainer = WorkerContainer<{ $disconnect: () => Promise<void> }, never>;
+type AppContainer = WorkerContainer<FakeDatabaseClient, FakeRedisClient>;
 
 /** Builds a container `startWorker` accepts, recording whether it was closed. */
-function appContainer(test: TestContainer): { container: AppContainer; closed: number[] } {
-  const closed: number[] = [];
-  const container = {
-    ...test,
-    workerEnv: { WORKSPACE_RUNNER: 'fake' as const },
-    prisma: { $disconnect: () => Promise.resolve() },
-    redis: {} as AppContainer['redis'],
+function appContainer(test: TestContainer): { container: AppContainer; closed: string[] } {
+  const closed: string[] = [];
+  const queue = new FakeRedisClient({ role: 'queue' });
+  const container: AppContainer = {
+    config: test.config,
+    workerEnv: { WORKSPACE_RUNNER: 'fake' },
+    logger: test.logger,
+    clock: test.clock,
+    prisma: new FakeDatabaseClient(),
+    repos: test.repos,
+    redis: {
+      queue,
+      worker: new FakeRedisClient({ role: 'worker' }),
+      subscriber: queue.duplicate(),
+    },
+    secrets: test.secrets,
+    redactor: test.redactor,
+    runner: test.runner,
+    publisher: test.publisher,
+    commands: test.commands,
+    queues: test.queues,
+    imageStatus: test.imageStatus,
     close: () => {
-      closed.push(Date.now());
+      closed.push('container');
       return Promise.resolve();
     },
-  } as unknown as AppContainer;
+  };
   return { container, closed };
 }
 
@@ -39,7 +59,7 @@ function appContainer(test: TestContainer): { container: AppContainer; closed: n
 async function start(options: { blocking?: boolean; imagePresent?: boolean } = {}): Promise<{
   test: TestContainer;
   factory: FakeWorkerFactory;
-  closed: number[];
+  closed: string[];
   app: Awaited<ReturnType<typeof startWorker>>;
 }> {
   const test = createTestContainer();

@@ -5,54 +5,21 @@
  * Goal: two turns routed independently over one connection, both cancel spellings accepted,
  * anything else logged and ignored, a throwing handler contained, and unsubscribe both removing
  * the route and releasing the channel.
- * Mocks: a hand-built subscriber recording channels and replaying messages on demand.
+ * Mocks: the shared recording Redis double, which records channels and replays messages on demand.
  */
 import { turnCommandChannel } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
 import { CANCEL_PAYLOAD, createCommandListener, isCancelPayload } from './commands.js';
-import type { CommandRedis } from './commands.js';
-import { createTestContainer } from './testing/index.js';
-
-/** A pub/sub connection a test drives by hand. */
-class FakeSubscriber implements CommandRedis {
-  readonly subscribed: string[] = [];
-  readonly unsubscribed: string[] = [];
-  private listener: ((channel: string, payload: string) => void) | undefined;
-
-  on(_event: 'message', listener: (channel: string, payload: string) => void): unknown {
-    this.listener = listener;
-    return this;
-  }
-
-  subscribe(channel: string): Promise<unknown> {
-    this.subscribed.push(channel);
-    return Promise.resolve(1);
-  }
-
-  unsubscribe(channel: string): Promise<unknown> {
-    this.unsubscribed.push(channel);
-    return Promise.resolve(0);
-  }
-
-  /** Delivers a message as Redis would. */
-  deliver(channel: string, payload: string): void {
-    this.listener?.(channel, payload);
-  }
-
-  /** How many message listeners were installed; the shared connection must only ever get one. */
-  get listenerCount(): number {
-    return this.listener === undefined ? 0 : 1;
-  }
-}
+import { createTestContainer, FakeRedisClient } from './testing/index.js';
 
 /** Builds a listener over a fake subscriber and the test container's capturing logger. */
 function setup(): {
-  subscriber: FakeSubscriber;
+  subscriber: FakeRedisClient;
   listener: ReturnType<typeof createCommandListener>;
   logs: string[];
 } {
-  const subscriber = new FakeSubscriber();
+  const subscriber = new FakeRedisClient();
   const { logger, logs } = createTestContainer();
   return { subscriber, listener: createCommandListener(subscriber, logger), logs };
 }

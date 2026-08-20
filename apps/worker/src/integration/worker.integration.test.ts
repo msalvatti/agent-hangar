@@ -17,6 +17,11 @@ import type { Chat } from '@agent-hangar/core';
 import { assertNoCanary } from '@agent-hangar/core/testing';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 
+import {
+  WORKER_HEARTBEAT_TTL_SEC,
+  workerHeartbeatKey,
+  workerHeartbeatSchema,
+} from '../heartbeat.js';
 import { LABELS } from '../processors/constants.js';
 
 import { describeDocker } from './describe-docker.js';
@@ -67,9 +72,16 @@ describeDocker('worker end-to-end', () => {
     const turn = await repos.turns.create({ chatId: chat.id, model: harness.config.OPENAI_MODEL });
     await queues.chatTurns.add(JOB_NAMES.runTurn, { turnId: turn.id }, { jobId: turn.id });
 
-    await harness.waitFor(`turn ${turn.id} to finish`, async () => {
+    // The turn is finished the moment the runtime reports it, but its workspace goes back to
+    // `READY` a step later, in the processor's own bookkeeping. Waiting for both is what makes the
+    // assertions below about a settled turn rather than about a race.
+    await harness.waitFor(`turn ${turn.id} to settle`, async () => {
       const current = await repos.turns.get(turn.id);
-      return current !== null && current.finishedAt !== null;
+      if (current?.finishedAt == null) {
+        return false;
+      }
+      const workspace = await repos.workspaces.findLiveByChat(chat.id);
+      return workspace?.status !== 'BUSY';
     });
     const stream = await harness.readStream(turn.id);
     const finished = await repos.turns.get(turn.id);
@@ -78,7 +90,7 @@ describeDocker('worker end-to-end', () => {
       console.error(
         'turn did not succeed',
         finished?.error,
-        stream.map((entry) => entry.type),
+        stream.map((entry) => entry.event.type),
       );
     }
     return { turnId: turn.id, stream };
@@ -105,7 +117,7 @@ describeDocker('worker end-to-end', () => {
     expect(handles).toHaveLength(1);
     expect(handles[0]?.workspaceId).toBe(workspace?.id);
 
-    const types = stream.map((entry) => entry.type);
+    const types = stream.map((entry) => entry.event.type);
     expect(types).toContain('turn.started');
     expect(types).toContain('prepare.done');
     expect(types).toContain('tool.call');
@@ -125,8 +137,25 @@ describeDocker('worker end-to-end', () => {
       assertNoCanary(persisted);
     }).not.toThrow();
     expect(() => {
-      assertNoCanary(stream.map((entry) => entry.data).join('\n'));
+      assertNoCanary(JSON.stringify(stream));
     }).not.toThrow();
+  });
+
+  /**
+   * The health card reads Docker reachability, image presence and the container count from this
+   * key and from nothing else, so the worker has to have published it by the time it is ready.
+   */
+  it('publishes a health heartbeat the web app can read', async () => {
+    const raw = await harness.inspect.get(workerHeartbeatKey(harness.config.AH_INSTANCE));
+    const ttl = await harness.inspect.ttl(workerHeartbeatKey(harness.config.AH_INSTANCE));
+
+    expect(raw).not.toBeNull();
+    expect(workerHeartbeatSchema.parse(JSON.parse(raw ?? 'null'))).toMatchObject({
+      dockerOk: true,
+      imagePresent: true,
+    });
+    expect(ttl).toBeGreaterThan(0);
+    expect(ttl).toBeLessThanOrEqual(WORKER_HEARTBEAT_TTL_SEC);
   });
 
   /**
@@ -185,7 +214,7 @@ describeDocker('worker end-to-end', () => {
     const { turnId, stream } = await runTurn(READ_PROMPT);
 
     expect((await repos.turns.get(turnId))?.status).toBe('SUCCEEDED');
-    const types = stream.map((entry) => entry.type);
+    const types = stream.map((entry) => entry.event.type);
     expect(types).toContain('prepare.progress');
     expect(types).toContain('prepare.done');
 

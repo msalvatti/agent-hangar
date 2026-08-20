@@ -157,6 +157,7 @@ export async function provisionWorkspace(
     });
   } catch (error) {
     if (error instanceof WorkspaceImageMissing) {
+      deps.imageStatus.markMissing();
       return failWorkspace(
         deps,
         workspace.id,
@@ -175,6 +176,7 @@ export async function provisionWorkspace(
     return failWorkspace(deps, workspace.id, 'workspace_create_failed', message, message);
   }
 
+  deps.imageStatus.markPresent();
   const ready = await deps.repos.workspaces.setStatus(workspace.id, 'READY', {
     runnerRef: handle.runnerRef,
   });
