@@ -10,8 +10,8 @@
     "start": "next start -H 127.0.0.1",
     "lint": "eslint .",
     "typecheck": "tsc -p tsconfig.json",
-    "test": "vitest run",
-    "test:integration": "vitest run --coverage.enabled=false src/server/sse.integration.test.ts",
+    "test": "vitest run --project unit",
+    "test:integration": "vitest run --project integration --coverage.enabled=false",
     "test:e2e": "playwright test --pass-with-no-tests"
   },
   "dependencies": {

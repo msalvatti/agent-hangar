@@ -3,9 +3,13 @@
  *
  * Layer: config.
  *
- * Coverage is always on with 100 % thresholds over `coverage.include`; lanes append their own
- * paths one line at a time. `src/shared/ui/**` is generated shadcn vendor code and is excluded
- * (the integration wave decides whether to include it).
+ * Two projects, the same split `packages/core` uses: `unit` (default `pnpm test`) excludes
+ * `*.integration.test.{ts,tsx}`, and `integration` (`pnpm test:integration`) runs only those —
+ * currently the Redis-backed SSE suite, which needs the compose Redis. Coverage is collected over
+ * the unit project with 100 % thresholds on every path listed in `coverage.include`; each lane
+ * appends its own paths, one line per lane, at the end of the list. `src/shared/ui/**` is
+ * generated shadcn vendor code and is excluded (the integration wave decides whether to include
+ * it).
  */
 import { fileURLToPath } from 'node:url';
 
@@ -13,30 +17,45 @@ import react from '@vitejs/plugin-react';
 import { defineConfig } from 'vitest/config';
 
 export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: {
-      '@/app': fileURLToPath(new URL('./app', import.meta.url)),
-      '@': fileURLToPath(new URL('./src', import.meta.url)),
-    },
-  },
   test: {
-    name: 'web',
-    environment: 'jsdom',
-    environmentOptions: {
-      jsdom: {
-        url: 'http://localhost:3000',
-      },
-    },
-    globals: false,
-    setupFiles: [
-      './src/test/setup.ts',
-      './src/mocks/vitest.ts',
-      './src/shared/repo-picker/testing/setup.ts',
-    ],
-    include: ['src/**/*.test.{ts,tsx}', 'app/**/*.test.{ts,tsx}'],
-    exclude: ['e2e/**', 'node_modules/**', '.next/**'],
     maxWorkers: 3,
+    projects: [
+      {
+        plugins: [react()],
+        resolve: {
+          alias: {
+            '@/app': fileURLToPath(new URL('./app', import.meta.url)),
+            '@': fileURLToPath(new URL('./src', import.meta.url)),
+          },
+        },
+        test: {
+          name: 'unit',
+          environment: 'jsdom',
+          environmentOptions: {
+            jsdom: {
+              url: 'http://localhost:3000',
+            },
+          },
+          globals: false,
+          setupFiles: [
+            './src/test/setup.ts',
+            './src/mocks/vitest.ts',
+            './src/shared/repo-picker/testing/setup.ts',
+          ],
+          include: ['src/**/*.test.{ts,tsx}', 'app/**/*.test.{ts,tsx}'],
+          exclude: ['src/**/*.integration.test.{ts,tsx}', 'e2e/**', 'node_modules/**', '.next/**'],
+          maxWorkers: 3,
+        },
+      },
+      {
+        test: {
+          name: 'integration',
+          environment: 'node',
+          include: ['src/**/*.integration.test.{ts,tsx}'],
+          maxWorkers: 1,
+        },
+      },
+    ],
     coverage: {
       enabled: true,
       provider: 'v8',
