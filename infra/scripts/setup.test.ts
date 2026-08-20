@@ -8,6 +8,7 @@
  * invoked last (or skipped with `--skip-doctor`), and an unknown flag is rejected.
  * Mocks: docker/pnpm/openssl/node via `infra/scripts/testing/shims.ts`; a fake doctor script.
  */
+import { execFileSync } from 'node:child_process';
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -229,6 +230,46 @@ describe('setup.sh refusals', () => {
     });
     expect(result.status).toBe(1);
     expect(result.stderr).toContain('DOCKER_HOST=unix://');
+  });
+
+  /**
+   * The whole of the reported failure, end to end. A checkout whose `.env.local` held 5 of the 17
+   * keys — the missing one present only as a comment — ran `pnpm setup` and got
+   * `MASTER_KEY_PATH: unbound variable` from step 4: a bash diagnostic that names one variable and
+   * neither the file that lacks it, nor the eleven others, nor a way out.
+   *
+   * Two things have to hold for that to be fixed, and both are asserted here: the run stops with a
+   * message that names the missing key and the file, and it stops at all — `eval "$(cmd)"` reports
+   * the status of `eval`, so the refusal used to be discarded and the run carried on into the
+   * dereference. Nothing may have been started by then, which is what the compose assertion is for.
+   */
+  it('refuses an incomplete env file instead of dying on an unbound variable', () => {
+    const f = fixture();
+    const envScript = fileURLToPath(new URL('./env.sh', import.meta.url));
+    execFileSync('bash', [envScript, '--force'], {
+      env: { PATH: process.env.PATH ?? '', HOME: f.homeDir, AH_ENV_FILE: f.envFile },
+      encoding: 'utf8',
+    });
+    // The observed shape: the key is still in the file, but only as a comment.
+    writeFileSync(
+      f.envFile,
+      readFileSync(f.envFile, 'utf8').replace(/^MASTER_KEY_PATH=/m, '# MASTER_KEY_PATH='),
+    );
+    const shimDir = createShimDir({ log: f.log, docker: { image: 'present' } });
+
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--skip-install', '--skip-doctor'],
+      // MASTER_KEY_PATH is deliberately not exported: the file is what has to supply it, and a
+      // shell that already carries the value would hide the defect.
+      env: { HOME: f.homeDir, AH_ENV_FILE: f.envFile, AH_SHIM_LOG: f.log },
+    });
+
+    expect(result.status).toBe(4);
+    expect(result.stderr).toContain('MASTER_KEY_PATH');
+    expect(result.stderr).toContain(f.envFile);
+    expect(result.stderr).not.toContain('unbound variable');
+    expect(readShimLog(f.log).some((line) => line.includes('docker compose'))).toBe(false);
   });
 
   /**

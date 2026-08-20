@@ -9,15 +9,30 @@
  * ordinary configuration rather than identity still honour an explicit value.
  * Mocks: none.
  */
-import { execFileSync } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import type { SpawnSyncReturns } from 'node:child_process';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 
 const scriptPath = fileURLToPath(new URL('./env.sh', import.meta.url));
 // Prefer the system bash (3.2 on macOS) so the script's portability is exercised where it matters.
 const bash = existsSync('/bin/bash') ? '/bin/bash' : 'bash';
+
+/** Throwaway directories created by a test, removed afterwards. */
+const sandboxes: string[] = [];
+
+afterEach(() => {
+  while (sandboxes.length > 0) {
+    const dir = sandboxes.pop();
+    if (dir !== undefined) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
 
 /**
  * Runs `env.sh --print` with a given environment and parses the `export KEY="value"` lines.
@@ -121,5 +136,132 @@ describe('env.sh instance isolation', () => {
       LOG_LEVEL: 'debug',
     });
     expect(printed).toMatchObject(IDENTITY_FOR_3100);
+  });
+});
+
+describe('env.sh incomplete env file', () => {
+  /**
+   * Writes an env file holding only the keys a predicate keeps, with the values the derivation
+   * would have produced for them.
+   *
+   * The keys come from the derivation itself rather than from a list repeated here, so a key added
+   * to `env.sh` is covered without this file being edited. The one that is left out is written
+   * back as a comment, which is the spelling the failure was reported in: it reads as configured
+   * and is stripped before anything evaluates the file.
+   *
+   * @param keep - Decides which keys the file records.
+   * @returns The env file's path.
+   */
+  function writePartialEnvFile(keep: (key: string) => boolean): string {
+    const dir = mkdtempSync(join(tmpdir(), 'ah-env-partial-'));
+    sandboxes.push(dir);
+    const envFile = join(dir, '.env.local');
+    const complete = printEnv({ AH_INSTANCE: 'feat-x', AH_PORT_BASE: '3100' });
+    const lines = Object.entries(complete).map(([key, value]) =>
+      keep(key) ? `${key}="${value}"` : `# ${key}="${value}"`,
+    );
+    writeFileSync(envFile, `${lines.join('\n')}\n`);
+    return envFile;
+  }
+
+  /**
+   * Runs a print mode against a given env file.
+   *
+   * @param mode - `--print-effective` or `--print-checked`.
+   * @param envFile - File the script must read.
+   * @returns Exit status and both output streams.
+   */
+  function printFrom(
+    mode: '--print-effective' | '--print-checked',
+    envFile: string,
+  ): SpawnSyncReturns<string> {
+    return spawnSync(bash, [scriptPath, mode], {
+      env: {
+        PATH: process.env.PATH ?? '',
+        HOME: process.env.HOME ?? '/tmp',
+        AH_ENV_FILE: envFile,
+      },
+      encoding: 'utf8',
+    });
+  }
+
+  /**
+   * The finding: a file holding 5 of the 17 keys was trusted and echoed verbatim, so the first
+   * consumer to dereference one of the other twelve died on `MASTER_KEY_PATH: unbound variable` —
+   * a message that names neither the file nor the other eleven nor the way out. The refusal has to
+   * name what is missing, and it has to arrive before an environment nobody can use is handed over.
+   */
+  it.each(['--print-effective', '--print-checked'] as const)(
+    '%s names every missing key',
+    (mode) => {
+      const kept = ['AH_INSTANCE', 'AH_PORT_BASE', 'WEB_PORT', 'POSTGRES_PORT', 'REDIS_PORT'];
+      const envFile = writePartialEnvFile((key) => kept.includes(key));
+
+      const result = printFrom(mode, envFile);
+
+      expect(result.status).toBe(4);
+      expect(result.stderr).toContain(envFile);
+      for (const key of ['MASTER_KEY_PATH', 'DATABASE_URL', 'REDIS_URL', 'WORKSPACE_IMAGE']) {
+        expect(result.stderr).toContain(key);
+      }
+      // Nothing an unsuspecting `eval` could act on: the caller gets a refusal, not half a shell.
+      expect(result.stdout).toBe('');
+    },
+  );
+
+  /**
+   * The specific spelling that caused it. A commented-out key reads as configured to a human and
+   * is stripped before anything evaluates the file, so "present as a comment" has to count as
+   * missing or the diagnosis is worse than useless.
+   */
+  it('counts a key that survives only as a comment as missing', () => {
+    const envFile = writePartialEnvFile((key) => key !== 'MASTER_KEY_PATH');
+
+    const result = printFrom('--print-effective', envFile);
+
+    expect(result.status).toBe(4);
+    expect(result.stderr).toContain('MASTER_KEY_PATH');
+  });
+
+  /**
+   * A key recorded with an empty value passes `set -u` and then fails further along with even less
+   * to go on, so it is the same defect and gets the same answer.
+   */
+  it('counts a key recorded empty as missing', () => {
+    const envFile = writePartialEnvFile(() => true);
+    writeFileSync(
+      envFile,
+      readFileSync(envFile, 'utf8').replace(/^LOG_LEVEL=.*$/m, 'LOG_LEVEL=""'),
+    );
+
+    const result = printFrom('--print-effective', envFile);
+
+    expect(result.status).toBe(4);
+    expect(result.stderr).toContain('LOG_LEVEL');
+  });
+
+  /**
+   * The complement, so the check cannot drift into refusing the ordinary case: a file the script
+   * itself wrote is complete, and is still echoed verbatim.
+   */
+  it('accepts the file env.sh writes', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ah-env-complete-'));
+    sandboxes.push(dir);
+    const envFile = join(dir, '.env.local');
+    execFileSync(bash, [scriptPath, '--force'], {
+      env: {
+        PATH: process.env.PATH ?? '',
+        HOME: process.env.HOME ?? '/tmp',
+        AH_ENV_FILE: envFile,
+        AH_INSTANCE: 'feat-x',
+        AH_PORT_BASE: '3100',
+      },
+      encoding: 'utf8',
+    });
+
+    const result = printFrom('--print-effective', envFile);
+
+    expect(result.status).toBe(0);
+    expect(result.stdout).toContain('export MASTER_KEY_PATH=');
   });
 });
