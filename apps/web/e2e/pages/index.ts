@@ -1,4 +1,8 @@
-// Page objects used by the end-to-end specs.
+/**
+ * Public API of the end-to-end page objects.
+ *
+ * Layer: barrel.
+ */
 export * from './chat';
 export * from './composer';
 export * from './scheduled';

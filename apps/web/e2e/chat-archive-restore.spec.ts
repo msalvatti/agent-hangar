@@ -8,12 +8,7 @@
  */
 import { test, expect } from './fixtures';
 import { ChatPage, ComposerPage, SidebarPage } from './pages';
-import {
-  createChatAndRun,
-  readChat,
-  waitForTurnStatus,
-  waitForWorkspace,
-} from './support/chat-flows';
+import { openSettledChat, readChat, waitForWorkspace } from './support/chat-flows';
 import {
   API_SETTLE_TIMEOUT_MS,
   PROMPTS,
@@ -37,28 +32,27 @@ test('archiving releases the workspace and restoring keeps the history', async (
   mode,
   seedSettings,
 }) => {
-  const { chatId, turnId } = await createChatAndRun(
-    { page, api, mode, seedSettings },
-    PROMPTS.createNotes,
-  );
+  const { chatId } = await openSettledChat({ page, api, mode, seedSettings }, PROMPTS.createNotes);
   const chat = new ChatPage(page);
   const sidebar = new SidebarPage(page);
   const composer = new ComposerPage(page);
   const title = (await chat.title.innerText()).trim();
-
-  skipUnlessReal(test, mode, 'the worker owns the workspace an archive releases');
-
-  await waitForTurnStatus(api, chatId, turnId ?? '', 'SUCCEEDED', TURN_TIMEOUT_MS);
   const toolRowsBefore = await chat.toolRows().count();
   const userMessagesBefore = await chat.userMessages.count();
 
+  // Archiving and restoring are user-interface steps the mock API implements, so they run in both
+  // modes; only what the workspace and the next turn do needs the real stack.
   await chat.archive();
   expect(chat.chatIdFromUrl()).toBe(chatId);
   await expect(composer.textarea).toBeDisabled();
   await sidebar.openArchived();
   await expect(sidebar.archivedItem(title)).toBeVisible();
   await expect(sidebar.chatItem(title)).toHaveCount(0);
-  await waitForWorkspace(api, chatId, null, WORKSPACE_GONE_TIMEOUT_MS);
+  if (mode === 'real') {
+    // Checked here rather than after the restore below, which builds a new workspace: what
+    // archiving promises is that the old one is released, and only this moment can show it.
+    await waitForWorkspace(api, chatId, null, WORKSPACE_GONE_TIMEOUT_MS);
+  }
 
   const noticesBefore = await chat.systemNotices.filter({ hasText: PREPARATION_NOTICE }).count();
   await chat.restore();
@@ -67,6 +61,8 @@ test('archiving releases the workspace and restoring keeps the history', async (
   await expect(chat.assistantMessages).not.toHaveCount(0);
   await expect(chat.toolRows()).toHaveCount(toolRowsBefore);
   await expect(sidebar.chatItem(title)).toBeVisible();
+
+  skipUnlessReal(test, mode, 'only the worker runs the turn a restored chat starts');
 
   await composer.type(PROMPTS.showNotes);
   await composer.submit();

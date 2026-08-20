@@ -20,7 +20,7 @@ import { ComposerPage } from '../pages/composer';
 import { SidebarPage } from '../pages/sidebar';
 
 import type { E2eApi } from './api';
-import { SAMPLE_BRANCH, SAMPLE_REPO } from './constants';
+import { SAMPLE_BRANCH, SAMPLE_REPO, TURN_TIMEOUT_MS } from './constants';
 import type { E2eMode } from './mode';
 
 /** Parsed `GET /api/chats/:id` body. */
@@ -31,6 +31,9 @@ export const MOCK_REPO = 'acme/api';
 
 /** Default branch of that repository. */
 export const MOCK_BRANCH = 'main';
+
+/** Chat the mock API seeds with a finished turn, for flows that start from settled history. */
+export const MOCK_FINISHED_CHAT = 'chat-finished';
 
 /** Repository and branch a chat is started against, per mode. */
 export function chatTarget(mode: E2eMode): { repo: string; branch: string } {
@@ -52,6 +55,37 @@ export interface StartedChat {
   chatId: string;
   /** Id of the turn the prompt queued, or `undefined` in mock mode, where no turn is persisted. */
   turnId: string | undefined;
+}
+
+/**
+ * A chat with a finished turn behind it, whichever mode is running.
+ *
+ * In `real` mode one is created and run. In `mock` mode the seeded finished chat is opened instead:
+ * the mock's stream plays on its own schedule, so acting on a chat that is still streaming would
+ * make every later step race it. The flows that start here are about what happens to a chat that
+ * already has history, not about creating one — `chat-create-run` covers creation.
+ *
+ * @param context - Page, API client, mode and the credential seeder.
+ * @param prompt - Prompt to send in real mode.
+ * @returns The chat id, and the turn id in real mode.
+ */
+export async function openSettledChat(
+  context: ChatFlowContext,
+  prompt: string,
+): Promise<StartedChat> {
+  if (context.mode === 'mock') {
+    await new ChatPage(context.page).goto(MOCK_FINISHED_CHAT);
+    return { chatId: MOCK_FINISHED_CHAT, turnId: undefined };
+  }
+  const started = await createChatAndRun(context, prompt);
+  await waitForTurnStatus(
+    context.api,
+    started.chatId,
+    started.turnId ?? '',
+    'SUCCEEDED',
+    TURN_TIMEOUT_MS,
+  );
+  return started;
 }
 
 /**

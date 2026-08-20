@@ -19,6 +19,7 @@ import {
 } from './support/chat-flows';
 import { API_SETTLE_TIMEOUT_MS, PROMPTS, TURN_TIMEOUT_MS } from './support/constants';
 import { skipUnlessReal } from './support/mode';
+import { NON_TERMINAL_STATUS } from './support/selectors';
 
 /**
  * Proves a chat started from the new-chat screen prepares a workspace, runs the two scripted tool
@@ -41,6 +42,12 @@ test('a new chat runs the scripted task and streams the transcript', async ({
 
   skipUnlessReal(test, mode, 'the worker, Docker and the local git server run the turn');
 
+  // A non-terminal phase must be observed before Done: a turn that jumped straight to Done, or a
+  // pill that mislabelled the phase it was in, would otherwise satisfy the wait below. Preparing
+  // and Running are accepted together rather than asserted in order — which of the two is showing
+  // when this first looks depends on how long the clone takes, and betting on that would be a
+  // timing assumption rather than a statement about the product.
+  await expect(chat.statusPill).toHaveText(NON_TERMINAL_STATUS, { timeout: TURN_TIMEOUT_MS });
   await chat.expectPreparingNotice(TURN_TIMEOUT_MS);
   await expect(chat.toolRows('list_dir')).toHaveCount(1, { timeout: TURN_TIMEOUT_MS });
   await expect(chat.toolRows('write_file')).toHaveCount(1, { timeout: TURN_TIMEOUT_MS });

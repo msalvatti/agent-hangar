@@ -40,20 +40,30 @@ test('stopping a running turn cancels it and keeps the workspace', async ({
   const composer = new ComposerPage(page);
   await expect(chat.stop).toBeVisible();
 
-  skipUnlessReal(test, mode, 'only the worker runs a tool long enough to be cancelled');
+  if (mode === 'real') {
+    // Only the real stack runs a tool long enough to be caught mid-flight; the mock API answers
+    // the cancel route but scripts its own stream, so there is no running tool to observe.
+    const runningRow = chat.toolRows('run_shell').first();
+    await expect(runningRow).toHaveAttribute('data-tool-status', 'running', {
+      timeout: TURN_TIMEOUT_MS,
+    });
+  }
 
-  const runningRow = chat.toolRows('run_shell').first();
-  await expect(runningRow).toHaveAttribute('data-tool-status', 'running', {
-    timeout: TURN_TIMEOUT_MS,
-  });
-
+  // Stop and its confirmation are user-interface steps the mock API implements, so they run in
+  // both modes: what needs the real stack is how fast the turn actually ends and what survives it.
   const requestedAt = Date.now();
   await chat.requestStop();
+
+  skipUnlessReal(test, mode, 'the cancellation budget and the workspace outlive only a real turn');
+
   await chat.waitForStatus('cancelled', CANCEL_TIMEOUT_MS);
   await waitForTurnStatus(api, chatId, turnId ?? '', 'CANCELLED', CANCEL_TIMEOUT_MS);
   expect(Date.now() - requestedAt).toBeLessThan(CANCEL_TIMEOUT_MS + CANCEL_MEASUREMENT_SLACK_MS);
 
-  await expect(runningRow).not.toHaveAttribute('data-tool-status', 'running');
+  await expect(chat.toolRows('run_shell').first()).not.toHaveAttribute(
+    'data-tool-status',
+    'running',
+  );
   await waitForWorkspace(api, chatId, 'READY', API_SETTLE_TIMEOUT_MS);
 
   await composer.type(PROMPTS.printDate);

@@ -3,10 +3,11 @@
  *
  * Layer: config.
  *
- * The suite runs in one of two modes, selected by `E2E_MODE`. In `mock` the Next dev server runs
- * against the MSW handlers, so every selector, page object and UI step is exercised with no
- * database, Redis, worker or Docker; assertions that need the real stack skip with their reason
- * named. In `real` the web server and the worker both run against the `test` instance.
+ * The suite runs in one of two modes, selected by `E2E_MODE`. In `mock` a production build of the
+ * web app runs against the in-browser mock API, so every selector, page object and interface step
+ * is exercised with no database, Redis, worker or Docker; assertions that need the real stack skip
+ * with their reason named. In `real` the dev server and the worker both run against the `test`
+ * instance.
  *
  * One worker and no parallelism: there is a single stack behind the suite, and specs reset it
  * between tests.

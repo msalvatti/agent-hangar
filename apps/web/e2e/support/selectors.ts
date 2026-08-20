@@ -188,3 +188,10 @@ export const STATUS_LABEL = {
 
 /** A phase the status pill can show. */
 export type StatusPhase = keyof typeof STATUS_LABEL;
+
+/**
+ * The phases a turn passes through before it settles. A literal pattern rather than one built from
+ * {@link STATUS_LABEL}, so no pattern is compiled from a variable; a unit test keeps the two in
+ * step.
+ */
+export const NON_TERMINAL_STATUS = /Preparing|Running/;

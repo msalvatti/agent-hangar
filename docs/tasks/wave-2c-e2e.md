@@ -145,14 +145,16 @@ Completion Protocol (after you finish):
 
 **Acceptance criteria**
 - [x] `apps/web/e2e/support/env.ts` exports `resolveE2eEnv(processEnv)` → `{ mode, instance, portBase, webPort, baseURL, databaseUrl, redisUrl, gitServerPort, gitServerHost, githubStubPort, repoUrl, allowedRepoHosts, fakeScriptPath, masterKeyPath, workspaceImage }` using core `resolveInstance`; unit-tested
-- [x] `apps/web/playwright.config.ts`: `testDir: 'e2e'`, chromium only, `baseURL`, `timeout 120_000` (real) / `30_000` (mock), `expect.timeout 10_000`, retries 1 in CI, trace `on-first-retry`, video `retain-on-failure`, `globalSetup`/`globalTeardown`, `webServer` = when `E2E_MANAGED_SERVER=1`: mock → one server (`next dev` with `NEXT_PUBLIC_API_MOCK=1`); real → two servers (web `next dev`, worker `tsx watch`) with readiness on `/api/health` and `/api/health?require=worker`
+- [x] `apps/web/playwright.config.ts`: `testDir: 'e2e'`, chromium only, `baseURL`, `timeout 120_000` (real) / `30_000` (mock), `expect.timeout 10_000`, retries 1 in CI, trace `on-first-retry`, video `retain-on-failure`, `globalSetup`/`globalTeardown`, `webServer` when `E2E_MANAGED_SERVER=1` — with two departures the implementation forced: mock serves a production build (`next start`), because the mock API cannot boot under the dev server; and the worker is not a `webServer` entry, because it owns no port and an entry pointed at the web server's health route is treated as already running and never starts. The worker starts with the rest of the stack and the global setup waits for its heartbeat
 - [x] `apps/web/e2e/fixtures.ts` exports `test`, `expect` (`test.extend`) with: `mode`, `env`, `api` (typed request helper with Zod parse of `apiError` on failure), `resetDb` (auto, per test: API-side job cleanup → `truncateAll` → reap `ah-ws-test-*` containers in real mode; no-op in mock), `seedSettings` (PUT canaries via the API; no-op in mock), `health` (poll helper over `/api/health`), `gitServer` (handle from global setup via env)
 - [x] `apps/web/e2e/fake-provider/script.json` with the scripted steps for the five prompts + `default`, validated by a unit test against the `FakeAgentModelProvider` script type
 - [x] `pnpm --filter web test:e2e` → `playwright test`; `E2E_MODE=mock E2E_MANAGED_SERVER=1 pnpm --filter web test:e2e --list` lists the spec files (none yet — harness boots and tears down with an empty/placeholder spec `smoke.spec.ts` that loads `/chats/new`)
-- [x] Harness pure modules 100 % covered by Vitest; `e2e/tsconfig.json` type-checks
+- [x] Harness pure modules 100 % covered by Vitest; the end-to-end sources type-check — through
+  `apps/web/tsconfig.json`, whose `include` already covers `e2e/**`, so no `e2e/tsconfig.json` was
+  added: a second project over the same files would compile them twice and check nothing more
 
-**Files to create**
-`apps/web/e2e/{fixtures.ts,global-setup.ts,global-teardown.ts,tsconfig.json}`, `apps/web/e2e/support/{env,env.test,api,api.test,db,docker,constants,mode}.ts`, `apps/web/e2e/fake-provider/{script.json,script.test.ts}`, `apps/web/e2e/smoke.spec.ts`, `apps/web/playwright.config.ts` (rewrite `webServer` section), `apps/web/package.json` (`test:e2e`), `apps/web/vitest.config.ts` (coverage include for pure helpers).
+**Files to create** (`tsconfig.json` was not needed — see the criterion above)
+`apps/web/e2e/{fixtures.ts,global-setup.ts,global-teardown.ts}`, `apps/web/e2e/support/{env,env.test,api,api.test,db,docker,constants,mode}.ts`, `apps/web/e2e/fake-provider/{script.json,script.test.ts}`, `apps/web/e2e/smoke.spec.ts`, `apps/web/playwright.config.ts` (rewrite `webServer` section), `apps/web/package.json` (`test:e2e`), `apps/web/vitest.config.ts` (coverage include for pure helpers).
 
 **Agent prompt**
 
@@ -625,3 +627,14 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2c-e2e.md (lan
   configured; `POST /api/chats` answers 400 rather than 409 because the request schema rejects a
   repository outside github.com before it checks credentials; and the worker still writes no
   heartbeat, since `apps/worker/src` is the skeleton.
+- 2C.8 ✅ 2026-08-20 — resolved the automated reviewer's findings on the pull request. Two were real
+  defects: the fixture README told the reader to publish the git server on every interface, and the
+  git-server shim answered a spawn failure twice (`error` then `close`), where the second write
+  throws `ERR_HTTP_HEADERS_SENT` and takes the process down. Three were stale descriptions of mock
+  mode still calling it the dev server, one barrel was missing its header, and one acceptance
+  criterion was ticked for an `e2e/tsconfig.json` that was deliberately never created — the
+  criterion now states what is actually true. The substantive one: three specs guarded earlier than
+  they needed to, so the only mode CI runs never exercised archive, restore, Stop or Run now even
+  though the mock API implements all four. Each guard moved below those steps, and each was proved
+  to run by breaking the control it drives. `chat-create-run` now also observes a non-terminal
+  status pill before Done, so a turn that jumped straight to Done would fail.

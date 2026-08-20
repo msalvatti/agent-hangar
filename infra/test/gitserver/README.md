@@ -6,7 +6,9 @@ the bare repository `/repos/sample.git` (branches `main` and `feature/docs`) wit
 commit dates, so the seed commits have the same SHAs on every machine.
 
 Build and run: `docker build -t agent-hangar/gitserver:test infra/test/gitserver` then
-`docker run --rm -p 3907:8080 agent-hangar/gitserver:test`.
+`docker run --rm -p 127.0.0.1:3907:8080 agent-hangar/gitserver:test`. Bind it to loopback, as the
+launcher does: the server accepts anonymous pushes, so publishing it on every interface would
+offer a writable git endpoint to the whole network.
 
 Repository URLs have the shape `http://<host>:<port>/sample.git` — for example
 `http://127.0.0.1:3907/sample.git` from the host, or `http://host.docker.internal:3907/sample.git`

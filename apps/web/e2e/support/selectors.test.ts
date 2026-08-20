@@ -5,7 +5,14 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { SECRET_LABELS, STATUS_LABEL, TEST_IDS, secretFieldId, secretMaskId } from './selectors';
+import {
+  NON_TERMINAL_STATUS,
+  SECRET_LABELS,
+  STATUS_LABEL,
+  TEST_IDS,
+  secretFieldId,
+  secretMaskId,
+} from './selectors';
 
 describe('the selector contract', () => {
   /** The per-key ids the settings page renders are built from the key, not spelled twice. */
@@ -25,6 +32,18 @@ describe('the selector contract', () => {
   /** Both credentials have the label the settings page uses as their input's name. */
   it('names both credentials', () => {
     expect(Object.keys(SECRET_LABELS)).toEqual(['GITHUB_PAT', 'OPENAI_API_KEY']);
+  });
+
+  /**
+   * The non-terminal pattern is written out rather than built from the labels, so it has to be
+   * kept in step with them: it must match every phase a turn passes through and no settled one.
+   */
+  it('matches exactly the phases a turn passes through', () => {
+    expect(NON_TERMINAL_STATUS.test(STATUS_LABEL.preparing)).toBe(true);
+    expect(NON_TERMINAL_STATUS.test(STATUS_LABEL.running)).toBe(true);
+    for (const settled of [STATUS_LABEL.done, STATUS_LABEL.failed, STATUS_LABEL.cancelled]) {
+      expect(NON_TERMINAL_STATUS.test(settled)).toBe(false);
+    }
   });
 
   /** The status labels are the words the pill renders; a spec waits on exactly these. */

@@ -128,24 +128,43 @@ function serveGit(request, response, pathInfo, query) {
       stdio: ['pipe', 'pipe', 'inherit'],
     });
     const chunks = [];
+    // A child that cannot be spawned emits `error` and then `close`, so both handlers would answer
+    // the same request; the second write throws ERR_HTTP_HEADERS_SENT and takes the server with it.
+    // One settlement per request, whichever handler gets there first.
+    let settled = false;
+    const settle = (status, headers, body) => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      response.writeHead(status, headers);
+      response.end(body);
+      resolve(status);
+    };
+    const fail = (message) => {
+      settle(SERVER_ERROR, { 'content-type': 'text/plain' }, `${message}\n`);
+    };
+
     child.stdout.on('data', (chunk) => chunks.push(chunk));
     child.on('error', () => {
-      response.writeHead(SERVER_ERROR, { 'content-type': 'text/plain' });
-      response.end('git http-backend failed\n');
-      resolve(SERVER_ERROR);
+      fail('git http-backend failed');
     });
     child.on('close', () => {
+      if (settled) {
+        return;
+      }
       const parsed = splitCgiResponse(Buffer.concat(chunks));
       if (parsed === null) {
-        response.writeHead(SERVER_ERROR, { 'content-type': 'text/plain' });
-        response.end('git http-backend produced no CGI response\n');
-        resolve(SERVER_ERROR);
+        fail('git http-backend produced no CGI response');
         return;
       }
       const { status, headers } = parseCgiHeaders(parsed.head);
-      response.writeHead(status, headers);
-      response.end(parsed.body);
-      resolve(status);
+      settle(status, headers, parsed.body);
+    });
+    // The child may already be gone, which makes its stdin unwritable; the response is settled by
+    // the handlers above either way, so a broken pipe here must not raise an unhandled error.
+    child.stdin.on('error', () => {
+      fail('git http-backend closed its input');
     });
     request.pipe(child.stdin);
   });

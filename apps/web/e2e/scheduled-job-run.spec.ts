@@ -65,11 +65,16 @@ test('a scheduled job runs on demand and reports its output', async ({
   await expect(row).toBeVisible();
   await expect(row).toContainText(EVERY_MINUTE);
 
-  skipUnlessReal(test, mode, 'only the worker executes a scheduled run in a workspace');
-
+  // Triggering a run and opening the job are user-interface steps the mock API implements, so they
+  // run in both modes; only whether the run succeeds, and what it recorded, needs the worker.
   await scheduled.runNow(JOB_NAME);
   await scheduled.openJob(JOB_NAME);
   const jobId = new URL(page.url()).pathname.split('/').at(-1) ?? '';
+  await expect(detail.runsTable).toBeVisible();
+  await expect(detail.runRows).not.toHaveCount(0);
+
+  skipUnlessReal(test, mode, 'only the worker executes a scheduled run in a workspace');
+
   await detail.waitForRunStatus(SUCCEEDED_LABEL, JOB_RUN_TIMEOUT_MS);
 
   await detail.openRun(0);

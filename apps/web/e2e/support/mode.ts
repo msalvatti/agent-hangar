@@ -3,7 +3,9 @@
  *
  * Layer: test support (pure).
  *
- * `mock` runs the Next dev server against the MSW handlers: no Docker, no worker, no database.
+ * `mock` runs a production build of the web app against the in-browser mock API: no Docker, no
+ * worker, no database. It is a production build because the mock API cannot boot under the dev
+ * server, where the boot effect is invoked twice.
  * Every selector and page-object interaction is still exercised, so the suite proves the UI
  * contract it is written against. `real` runs the full stack. An assertion that cannot hold
  * without the real stack is skipped in `mock` with the reason spelled out, never silently
