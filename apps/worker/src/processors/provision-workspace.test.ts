@@ -4,7 +4,8 @@
  * Layer: unit.
  * Goal: the row precedes the container, the credentials reach the container environment and the
  * redactor and nothing else, the labels carry the run the workspace serves, and each failure
- * closes the row out with the right reason — with only an unreachable daemon rethrown.
+ * closes the row out with the right reason — with only an unreachable daemon rethrown. Plus the
+ * one failure that cannot be closed out by anybody else: a reference the row refused to record.
  * Mocks: `createTestContainer` plus runner subclasses for the failures the fake cannot produce.
  */
 import { WorkspaceImageMissing } from '@agent-hangar/core';
@@ -15,7 +16,11 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTestContainer, FakeSecretsService } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
-import { provisionWorkspace, SECRETS_MISSING_REASON } from './provision-workspace.js';
+import {
+  provisionWorkspace,
+  SECRETS_MISSING_REASON,
+  UNRECORDED_WORKSPACE_REASON,
+} from './provision-workspace.js';
 
 /** A runner whose `create` always rejects with the given failure. */
 class FailingRunner extends FakeWorkspaceRunner {
@@ -35,6 +40,111 @@ function createSpec(container: TestContainer): WorkspaceSpec {
 }
 
 describe('provisionWorkspace', () => {
+  /**
+   * The write that records the container is the last holder of its reference. If it is refused,
+   * the row stays `CREATING` — which the collector reads as an in-flight create it must not close
+   * out — while the container keeps the same workspace id, so the orphan sweep does not see it as
+   * unowned either. Nothing would ever reclaim the pair, and that container's environment holds
+   * both credentials, so it is destroyed here and the row is closed out.
+   */
+  it('destroys the container when its reference cannot be recorded', async () => {
+    const container = createTestContainer();
+    const setStatus = container.repos.workspaces.setStatus.bind(container.repos.workspaces);
+    vi.spyOn(container.repos.workspaces, 'setStatus').mockImplementation(
+      async (id, status, update) => {
+        if (status === 'READY') {
+          throw new Error('database is down');
+        }
+        return setStatus(id, status, update);
+      },
+    );
+
+    await expect(
+      provisionWorkspace(container, {
+        kind: 'CHAT',
+        chatId: 'chat-1',
+        repoUrl: 'https://github.com/octocat/Hello-World',
+        branch: 'main',
+      }),
+    ).rejects.toThrow('database is down');
+
+    const row = [...container.repos.store.workspaces.values()][0];
+    expect(row).toMatchObject({
+      status: 'FAILED',
+      failureReason: UNRECORDED_WORKSPACE_REASON,
+    });
+    const created = container.runner.calls.find((call) => call.method === 'create');
+    expect(
+      container.runner.calls.some(
+        (call) =>
+          call.method === 'destroy' && (call.args[0] as WorkspaceHandle).workspaceId === row?.id,
+      ),
+    ).toBe(true);
+    expect(created).toBeDefined();
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * A daemon that refuses to remove the container must not stop the row being closed out: the
+   * alternative is a row that still claims to be an in-flight create.
+   */
+  it('closes the row out even when the container cannot be destroyed', async () => {
+    const container = createTestContainer();
+    const setStatus = container.repos.workspaces.setStatus.bind(container.repos.workspaces);
+    vi.spyOn(container.repos.workspaces, 'setStatus').mockImplementation(
+      async (id, status, update) => {
+        if (status === 'READY') {
+          throw new Error('database is down');
+        }
+        return setStatus(id, status, update);
+      },
+    );
+    vi.spyOn(container.runner, 'destroy').mockRejectedValue(new Error('daemon busy'));
+
+    await expect(
+      provisionWorkspace(container, {
+        kind: 'JOB',
+        repoUrl: 'https://github.com/octocat/Hello-World',
+        branch: 'main',
+      }),
+    ).rejects.toThrow('database is down');
+
+    expect([...container.repos.store.workspaces.values()][0]).toMatchObject({
+      status: 'FAILED',
+      failureReason: UNRECORDED_WORKSPACE_REASON,
+    });
+    expect(container.logs.join('')).toContain('whose reference was never recorded failed');
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * When the repository is down altogether, the compensating write fails the same way the first
+   * one did. The container is still destroyed — that is the half that leaks — and the failure is
+   * reported by classification, never by a driver message built from a connection string.
+   */
+  it('destroys the container even when the row cannot be closed out', async () => {
+    const container = createTestContainer();
+    vi.spyOn(container.repos.workspaces, 'setStatus').mockRejectedValue(
+      Object.assign(new Error('connect ECONNREFUSED postgres://ah:hunter2@db:5432'), {
+        code: 'ECONNREFUSED',
+      }),
+    );
+
+    await expect(
+      provisionWorkspace(container, {
+        kind: 'JOB',
+        repoUrl: 'https://github.com/octocat/Hello-World',
+        branch: 'main',
+      }),
+    ).rejects.toThrow('ECONNREFUSED');
+
+    expect(container.runner.calls.some((call) => call.method === 'destroy')).toBe(true);
+    const logged = container.logs.join('');
+    expect(logged).toContain('could not close out a workspace whose reference was never recorded');
+    expect(logged).not.toContain('hunter2');
+    vi.restoreAllMocks();
+  });
+
   /**
    * The happy path: a row, then the container with both credentials, the askpass helper and the
    * labels the collector selects on, then the row again with the runner's reference.

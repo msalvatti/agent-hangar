@@ -47,7 +47,16 @@ const NOTHING: GcResult = { reaped: 0, orphansDestroyed: 0, goneMarked: 0 };
  * `CREATING` and `BUSY` are left out because something is still running against them and will write
  * their next status itself: a newly provisioned workspace is `CREATING` for as long as it takes its
  * container to appear, and a `BUSY` one has a turn inside it whose stalled recovery owns the case
- * and writes the note that goes with it. `STOPPING` is different — the only writer of it is a
+ * and writes the note that goes with it.
+ *
+ * Leaving `CREATING` alone puts the burden on the create to keep its promise, and `provisionWorkspace`
+ * carries it: a row whose reference could not be written has its container destroyed there, because
+ * both sides would otherwise agree on a workspace id and neither sweep here would touch either. The
+ * case that remains is a worker that dies between the container being created and that write — no
+ * catch runs, and a `CREATING` row keeps a live container that nothing reclaims. Closing it needs a
+ * staleness rule for `CREATING` rows, which is a threshold decision rather than a status one: too
+ * short and a first-run image pull is reaped mid-create, which is exactly what this exclusion
+ * exists to prevent. `STOPPING` is different — the only writer of it is a
  * teardown, teardowns run on this consumer's own single-slot queue and the idle one holds the
  * workspace's claim, so a `STOPPING` row a pass can see is one whose teardown is gone and which
  * nothing else will ever close out.
