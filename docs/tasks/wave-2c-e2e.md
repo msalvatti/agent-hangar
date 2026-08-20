@@ -3,9 +3,9 @@
 | | |
 |---|---|
 | **Lane** | W2-C (one agent; runs in parallel with W2-A and W2-B 🐳) |
-| **Status** | 🟨 In review |
+| **Status** | 🟩 merged (PR #32) |
 | **Progress** | 6/6 tasks |
-| **Branch** | `feat/w2c-e2e` |
+| **Branch** | `feat/w2c-e2e` — merged and deleted |
 | **Owned paths** | `apps/web/e2e/**`, `infra/test/gitserver/**`, `apps/web/playwright.config.ts` (`webServer`, `globalSetup`/`globalTeardown`, projects) · plus, by explicit exception: `apps/web/package.json` (`scripts.test:e2e` only), `.github/workflows/ci.yml` (**body of the `e2e` job only**) |
 | **Depends on** | W0, W1-G (shell + chats UI, MSW), W1-H (scheduled + settings UI, MSW) — merged to `main`. W2-A/W2-B may still be in progress: specs are authored against the UI + mocked API and only fully executed in W3-A |
 | **Unblocks** | W3-A (end-to-end wiring & stabilisation runs the suite for real) |
