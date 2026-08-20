@@ -18,6 +18,9 @@
   <a href="https://redis.io/"><img src="https://img.shields.io/badge/Redis-8-DC382D?style=flat-square&logo=redis&logoColor=white" alt="Redis 8" /></a>
   <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind 4" /></a>
   <img src="https://img.shields.io/badge/coverage-100%25%20required-success?style=flat-square" alt="100% coverage required" />
+  <!-- Mutation badge: uncomment once W4-C wires `test:mutation` and a Stryker report exists to badge.
+  <img src="https://img.shields.io/badge/mutation-pending-lightgrey?style=flat-square" alt="Mutation score" />
+  -->
 </p>
 
 <p align="center">
@@ -30,7 +33,10 @@
   <a href="docs/spec/README.md">📖 Specification</a>
 </p>
 
-<!-- Screenshot: add .github/assets/readme/chat.png and link it here once a capture of the running chat view exists. -->
+![Agent Hangar — chat view](.github/assets/readme/chat.png)
+<!-- Placeholder: the file above does not exist yet. W3-A's completion log has evidence screenshots
+of the running chat view; the orchestrator can promote one to .github/assets/readme/chat.png and
+this reference will resolve without any other change. -->
 
 ---
 
@@ -248,24 +254,29 @@ Everything is environment-driven and validated with Zod at boot. `.env.example` 
 
 ## 📜 Scripts
 
-Every script is a thin wrapper over `infra/scripts/*.sh`, so it resolves the instance the same way whether you run it by hand or Conductor runs it for you. Scripts marked 🐳 talk to the Docker daemon; the database ones need this instance's compose stack up, which needs Docker too. Only the quality gates run without it.
+Scripts come in two styles. Setup, run and lifecycle scripts (`setup`, `dev`, `start`, `infra:*`, `db:migrate`/`db:studio`, `ws:*`, `archive`, `rotate-key`) are thin wrappers over `infra/scripts/*.sh`, so they resolve the instance the same way whether you run them by hand or Conductor runs them for you. Quality and test scripts (`lint`, `format`, `typecheck`, `test`, `test:e2e`, `test:mutation`) invoke their tool directly — ESLint, Prettier, `tsc`, Vitest, Playwright — with no instance to resolve. Scripts marked 🐳 need the Docker daemon running; the ones that also need this instance's compose stack up say so explicitly.
 
-| Script                                                          | Does                                                                              |
-| --------------------------------------------------------------- | --------------------------------------------------------------------------------- |
-| `pnpm setup` 🐳                                                 | First-run bootstrap (idempotent) — see [Quick start](#-quick-start)               |
-| `pnpm dev` 🐳                                                   | Web (`next dev -H 127.0.0.1`) + worker (`tsx watch`), concurrently                |
-| `pnpm build` · `pnpm start`                                     | Build every workspace / run the built output of both apps (`build` first)         |
-| `pnpm run doctor`                                               | Diagnose every dependency and print the fix for each failure (`--json` available) |
-| `pnpm infra:up` · `infra:down` · `infra:reset` 🐳               | Compose lifecycle (`reset` drops volumes)                                         |
-| `pnpm infra:image` 🐳                                           | Stage the agent-runtime bundle and rebuild the workspace image                    |
-| `pnpm db:generate`                                              | Prisma client — needed once in a fresh worktree before typecheck or tests         |
-| `pnpm db:migrate` · `db:studio` · `db:prune` 🐳                 | Apply migrations · open Prisma Studio · trim old rows                             |
-| `pnpm ws:list` · `ws:reap` 🐳                                   | List / destroy the workspace containers of this instance                          |
-| `pnpm archive` 🐳                                               | Tear this instance's compose stack and workspaces down (Conductor's archive hook) |
-| `pnpm run rotate-key` 🐳                                        | Re-encrypt every stored secret under a new master key (`--yes` to commit to it)   |
-| `pnpm lint` · `lint:fix` · `format` · `format:check`            | ESLint and Prettier                                                               |
-| `pnpm typecheck`                                                | `tsc -b` over every project reference                                             |
-| `pnpm test` · `test:integration` · `test:e2e` · `test:mutation` | See [Testing](#-testing)                                                          |
+| Script                                               | Does                                                                                                  |
+| ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| `pnpm setup` 🐳                                      | First-run bootstrap (idempotent) — see [Quick start](#-quick-start)                                   |
+| `pnpm dev` 🐳                                        | Web (`next dev -H 127.0.0.1`) + worker (`tsx watch`), concurrently, against this instance's stack     |
+| `pnpm build`                                         | Build every workspace — no Docker daemon, no compose stack                                            |
+| `pnpm start` 🐳                                      | Run the built output of both apps against this instance's stack (`build` first)                       |
+| `pnpm run doctor`                                    | Diagnose every dependency and print the fix for each failure (`--json` available)                     |
+| `pnpm infra:up` · `infra:down` · `infra:reset` 🐳    | Compose lifecycle (`reset` drops volumes)                                                             |
+| `pnpm infra:image` 🐳                                | Stage the agent-runtime bundle and rebuild the workspace image                                        |
+| `pnpm db:generate`                                   | Prisma client — needed once in a fresh worktree before typecheck or tests; no Docker                  |
+| `pnpm db:migrate` · `db:studio` · `db:prune` 🐳      | Apply migrations · open Prisma Studio · trim old rows                                                 |
+| `pnpm ws:list` · `ws:reap` 🐳                        | List / destroy the workspace containers of this instance                                              |
+| `pnpm archive` 🐳                                    | Tear this instance's compose stack and workspaces down (Conductor's archive hook)                     |
+| `pnpm run rotate-key` 🐳                             | Re-encrypt every stored secret under a new master key (`--yes` to commit to it)                       |
+| `pnpm lint` · `lint:fix` · `format` · `format:check` | ESLint and Prettier — no Docker                                                                       |
+| `pnpm typecheck`                                     | `tsc -b` over every project reference — no Docker                                                     |
+| `pnpm test`                                          | Unit suites of every workspace — no Docker; see [Testing](#-testing)                                  |
+| `pnpm test:integration` 🐳                           | `@db`/`@redis`/`@docker` suites against this instance's compose stack; see [Testing](#-testing)       |
+| `pnpm test:e2e`                                      | Playwright — no specs on `main` yet; see [Testing](#-testing)                                         |
+| `pnpm test:mutation`                                 | Stryker over the unit suites already run by `pnpm test` — no Docker; see [Testing](#-testing)         |
+| `prepare`                                            | Lifecycle hook `pnpm install` runs automatically (`husky`) — sets up the Git hooks; never run by hand |
 
 ---
 
@@ -303,8 +314,11 @@ Two instances side by side report different ports and different databases, which
 
 ```text
 Agent Hangar doctor · instance=default · ports 3000/3001/3002 · db agent_hangar_default
-Agent Hangar doctor · instance=feat-x  · ports 3100/3101/3102 · db agent_hangar_feat-x
+Agent Hangar doctor · instance=feat-x  · ports 3100/3101/3102 · db agent_hangar_feat_x
 ```
+
+(`env.sh` turns every hyphen in `AH_INSTANCE` into an underscore for `POSTGRES_DB`, since Postgres
+database names cannot contain one — `feat-x` becomes `agent_hangar_feat_x`, not `agent_hangar_feat-x`.)
 
 ---
 
@@ -362,12 +376,12 @@ The rotation writes its phase to a state file before each step and keeps a times
 
 ## 🧪 Testing
 
-| Layer           | Command                 | Needs                                                                  | What it covers                                                                                           |
-| --------------- | ----------------------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
-| **Unit**        | `pnpm test`             | nothing but `pnpm db:generate` once                                    | every module, with 100 % coverage thresholds enforced per package                                        |
-| **Integration** | `pnpm test:integration` | a running stack, a test instance, and two opt-in variables (see below) | repositories against real PostgreSQL, queues against real Redis, the runner against a real Docker daemon |
-| **End to end**  | `pnpm test:e2e`         | Playwright browsers                                                    | **not on `main` yet** — the suite is in review, so today the command passes with zero specs              |
-| **Mutation**    | `pnpm test:mutation`    | —                                                                      | **not wired yet** — no package defines the script, so the command exits 0 doing nothing                  |
+| Layer           | Command                 | Needs                                                                  | Budget                    | What it covers                                                                                           |
+| --------------- | ----------------------- | ---------------------------------------------------------------------- | ------------------------- | -------------------------------------------------------------------------------------------------------- |
+| **Unit**        | `pnpm test`             | nothing but `pnpm db:generate` once                                    | < 30 s                    | every module, with 100 % coverage thresholds enforced per package                                        |
+| **Integration** | `pnpm test:integration` | a running stack, a test instance, and two opt-in variables (see below) | < 5 min                   | repositories against real PostgreSQL, queues against real Redis, the runner against a real Docker daemon |
+| **End to end**  | `pnpm test:e2e`         | Playwright browsers                                                    | < 5 min                   | **not on `main` yet** — the suite is in review, so today the command passes with zero specs              |
+| **Mutation**    | `pnpm test:mutation`    | —                                                                      | < 10 min (CI incremental) | **not wired yet** — no package defines the script, so the command exits 0 doing nothing                  |
 
 ### Running the integration suites
 
@@ -539,7 +553,7 @@ The full version, with the deployment diagram, is in [docs/spec/08-deployment-di
 
 Each is out of scope on purpose, and each already has the seam that makes adding it additive rather than a rewrite.
 
-- **Multi-user authentication** — the app runs locally for one developer. _Seam:_ every route handler takes an explicit dependency container rather than reaching for globals, and `Secret` is keyed by `key` alone, so `(userId, key)` is one migration and one parameter.
+- **Multi-user authentication** — the app runs locally for one developer. _Seam:_ every route handler already receives the incoming `Request` alongside the process-wide `ServerContainer`; a caller identity would thread through a request-scoped context derived from that `Request`, not through the container, which is a single instance cached for the whole process and shared by every concurrent request. `Secret` is keyed by `key` alone, so `(userId, key)` is one migration and one parameter.
 - **Cloud deployment** — local-only is the requirement; see the [deployment discussion](#-deployment-discussion) for what would change. _Seam:_ the `WorkspaceRunner` interface, the secrets key provider, and environment-driven configuration.
 - **Multiple LLM providers** — one provider keeps the agent loop, the tool schema and the streaming mapping simple and testable. _Seam:_ the `AgentModelProvider` interface, selected by `AGENT_MODEL_PROVIDER`; the `fake` provider already proves it works.
 - **Kubernetes** — heavy to run locally and unnecessary for per-workspace isolation. _Seam:_ the same runner interface, with compose today and a chart later if it is ever needed.

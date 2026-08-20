@@ -1,5 +1,12 @@
 # 06 — Testing Strategy
 
+| | |
+|---|---|
+| **Status** | ✅ Approved — 2026-08-19 |
+| **Revision** | 2026-08-20 — corrected against `.github/workflows/ci.yml` and the Vitest configs: coverage policy raised from the tiered numbers originally written here to 100 % on four metrics everywhere, mutation scope expanded to `packages/agent-runtime`, and the CI job list matched to what actually runs |
+| **Owner** | Maximiliano |
+| **Last updated** | 2026-08-19 |
+
 Principle: tests verify **behaviour**, not line coverage. The mutation gate on `packages/core` is the real quality signal; coverage is a floor, not the goal.
 
 ## 1. Layers

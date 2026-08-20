@@ -20,5 +20,9 @@ Status: **Approved** — 2026-08-19. Execution plan: [../plan.md](../plan.md).
 Revision: 2026-08-20 — 01 stack table verified against the installed tree; 05 corrected against
 `infra/scripts/*` and `packages/core/src/config/schema.ts` (setup steps, script list, environment
 table, workspace image); 06 corrected against `.github/workflows/ci.yml` and the Vitest configs
-(job list, coverage policy); 09's authentication seam names the `ServerContainer` the handlers
-actually take. Behaviour, decisions and success criteria are unchanged.
+(job list, and the coverage/mutation success criteria themselves, raised from the tiered numbers
+originally written there to what the configuration already enforces — 100 % on four metrics
+everywhere, mutation scope including `packages/agent-runtime`); 09's authentication seam corrected
+to name the `Request` each route handler already receives, not the process-wide `ServerContainer`
+cache. Behaviour and decisions are unchanged; 06's testing success criteria are corrected upward to
+match what is enforced, not left as originally written.

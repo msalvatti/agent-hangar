@@ -1,5 +1,12 @@
 # 05 — Local Development & Run Story
 
+| | |
+|---|---|
+| **Status** | ✅ Approved — 2026-08-19 |
+| **Revision** | 2026-08-20 — corrected against `infra/scripts/*` and `packages/core/src/config/schema.ts` (setup steps, script list, environment table, workspace image) |
+| **Owner** | Maximiliano |
+| **Last updated** | 2026-08-19 |
+
 Target: **clone → follow README → it runs**, on macOS with Docker Desktop (OrbStack/Colima also work). Every step is a script; `pnpm run doctor` explains anything missing. The same parameterisation that makes Conductor work (per-instance DB, ports, names) is the default for everyone — Conductor is a thin layer on top.
 
 ## 1. Prerequisites (README "Requirements")
