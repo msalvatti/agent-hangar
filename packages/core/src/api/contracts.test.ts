@@ -26,6 +26,7 @@ import {
   putSecretRequest,
   renameChatRequest,
   repoUrl,
+  repoUrlForHosts,
   restoreChatQuery,
   routes,
   runDetail,
@@ -71,13 +72,17 @@ const toolCall = {
 describe('repoUrl', () => {
   /**
    * The shapes a clone actually needs are accepted: owner and repository, with or without the
-   * `.git` suffix git allows, and the punctuation GitHub permits in a repository name.
+   * `.git` suffix git allows, and the punctuation GitHub permits in a repository name. The origin
+   * is not judged here — a self-hosted forge and the local git server of the end-to-end suite
+   * appear in the same rows the API echoes back.
    */
   it.each([
     'https://github.com/acme/widgets',
     'https://github.com/acme/widgets.git',
     'https://github.com/acme/my.repo_name-2',
     'https://github.com:443/acme/widgets',
+    'https://ghe.example.test/acme/widgets',
+    'http://127.0.0.1:3907/acme/sample.git',
   ])('accepts %s', (value) => {
     expect(repoUrl.safeParse(value).success).toBe(true);
   });
@@ -90,10 +95,6 @@ describe('repoUrl', () => {
    * which are the ones a bot review found reachable.
    */
   it.each([
-    ['http scheme', 'http://github.com/acme/widgets'],
-    ['another host', 'https://gitlab.com/acme/widgets'],
-    ['host suffix attack', 'https://github.com.evil.test/acme/widgets'],
-    ['non-default port', 'https://github.com:8080/acme/widgets'],
     ['userinfo with password', `https://user:${GITHUB_CANARY}@github.com/acme/widgets`],
     ['userinfo without password', 'https://user@github.com/acme/widgets'],
     ['query string carrying a token', `https://github.com/acme/widgets?token=${GITHUB_CANARY}`],
@@ -122,6 +123,22 @@ describe('repoUrl', () => {
     expect(() => {
       assertNoCanary(message);
     }).not.toThrow();
+  });
+
+  /**
+   * Which origin a repository may live on is configuration, so the contract exposes it as a
+   * factory the write routes build from `ALLOWED_REPO_HOSTS`. Scheme, host and port together are
+   * the destination the PAT is delivered to, so each is compared, and the comparison is whole:
+   * a host that merely ends with an allowed name is a different machine.
+   */
+  it.each([
+    ['http scheme on a host allowed over https', 'http://github.com/acme/widgets'],
+    ['another host', 'https://gitlab.com/acme/widgets'],
+    ['host suffix attack', 'https://github.com.evil.test/acme/widgets'],
+    ['non-default port', 'https://github.com:8080/acme/widgets'],
+  ])('the configured factory rejects %s', (_label, value) => {
+    expect(repoUrl.safeParse(value).success).toBe(true);
+    expect(repoUrlForHosts(['github.com']).safeParse(value).success).toBe(false);
   });
 });
 

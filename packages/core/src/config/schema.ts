@@ -13,6 +13,7 @@ import { join } from 'node:path';
 import { z } from 'zod';
 
 import { ConfigError } from '../errors.ts';
+import { parseAllowedRepoOrigin } from '../repo-url.ts';
 
 import { resolveInstance } from './instance.ts';
 import type { InstanceInfo } from './instance.ts';
@@ -55,21 +56,79 @@ export const DEFAULT_ALLOWED_REPO_HOSTS = 'github.com';
 export const DEFAULT_GITHUB_API_BASE_URL = 'https://api.github.com';
 
 /**
- * Splits the configured host allow-list into lower-cased hostnames.
+ * Splits the configured host allow-list into its entries.
  *
- * The list can only ever narrow what the API accepts: the request contracts already pin a
- * repository URL to `https://github.com/<owner>/<repository>`, and this check runs after them.
- * It exists so an operator who points the app at another forge — or who wants the default forge
- * refused outright — has one place to say so, rather than a second parser to keep in step.
+ * This is the whole of the forge policy: the request contracts describe the shape of a repository
+ * URL, and this list decides which origins that shape may name. An entry is
+ * `[http://|https://]host[:port]`, so an operator who points the app at another forge — or who
+ * wants the default forge refused outright — has one place to say so.
+ *
+ * A list that yields no entries admits nothing; it never falls back to a built-in forge.
  *
  * @param value - Comma-separated host list.
- * @returns The hosts, trimmed, lower-cased and free of empty entries.
+ * @returns The entries, trimmed, lower-cased and free of empty ones.
  */
 export function parseAllowedRepoHosts(value: string): string[] {
   return value
     .split(',')
     .map((host) => host.trim().toLowerCase())
     .filter((host) => host.length > 0);
+}
+
+/**
+ * Hostnames that address the machine the process runs on, in every spelling `URL` produces.
+ *
+ * `URL` canonicalises before this is consulted — `127.1` and `0x7f.1` both arrive as `127.0.0.1`,
+ * `LOCALHOST` as `localhost`, and an IPv6 literal in its compressed bracketed form — so the set
+ * below is closed rather than heuristic. Anything outside it (a trailing-dot `localhost.`, a
+ * `.localhost` subdomain, `0.0.0.0`) is treated as remote, which refuses a plaintext URL instead
+ * of admitting one: the failure direction of an unrecognised spelling has to be refusal.
+ */
+const LOOPBACK_HOSTNAMES = new Set(['localhost', '[::1]']);
+
+/** IPv4 loopback block `127.0.0.0/8`, as `URL` serialises it. */
+const LOOPBACK_IPV4 = /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/u;
+
+/**
+ * The same block written as an IPv4-mapped IPv6 address, as `URL` serialises it: `127.0.0.1`
+ * becomes `[::ffff:7f00:1]` and the whole of `127.0.0.0/8` is `7f00`–`7fff` in the first group.
+ */
+const LOOPBACK_IPV4_MAPPED = /^\[::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}\]$/u;
+
+/**
+ * Whether a hostname addresses the local machine.
+ *
+ * @param hostname - A hostname as `URL` serialises it.
+ * @returns `true` for `localhost`, `127.0.0.0/8`, `[::1]` and the IPv4-mapped loopback range.
+ */
+export function isLoopbackHostname(hostname: string): boolean {
+  return (
+    LOOPBACK_HOSTNAMES.has(hostname) ||
+    LOOPBACK_IPV4.test(hostname) ||
+    LOOPBACK_IPV4_MAPPED.test(hostname)
+  );
+}
+
+/**
+ * Whether a base URL may carry a credential: `https` anywhere, `http` only to the local machine.
+ *
+ * The GitHub PAT is sent to this base URL on every request, so plaintext to a remote host would
+ * hand the token to anything on the path — which is what pinning the scheme to `https` prevented.
+ * A loopback origin never leaves the machine, and it is the only way to point the app at a stub
+ * or a proxy running beside it, which is what makes the variable configurable at all.
+ *
+ * @param value - A URL string.
+ * @returns `true` when sending a credential to the URL cannot expose it on the wire.
+ */
+export function isCredentialSafeBaseUrl(value: string): boolean {
+  const parsed = URL.parse(value);
+  if (parsed === null) {
+    return false;
+  }
+  if (parsed.protocol === 'https:') {
+    return true;
+  }
+  return parsed.protocol === 'http:' && isLoopbackHostname(parsed.hostname);
 }
 
 const port = z.coerce.number().int().min(1).max(65_535);
@@ -98,8 +157,21 @@ export const envSchema = z.object({
   OPENAI_MODEL: z.string().min(1).default(DEFAULT_OPENAI_MODEL),
   OPENAI_BASE_URL: z.url().optional(),
   AGENT_MODEL_PROVIDER: z.enum(MODEL_PROVIDERS).default('openai'),
-  ALLOWED_REPO_HOSTS: z.string().min(1).default(DEFAULT_ALLOWED_REPO_HOSTS),
-  GITHUB_API_BASE_URL: z.url({ protocol: /^https$/ }).default(DEFAULT_GITHUB_API_BASE_URL),
+  ALLOWED_REPO_HOSTS: z
+    .string()
+    .min(1)
+    .refine(
+      (value) =>
+        parseAllowedRepoHosts(value).every((entry) => parseAllowedRepoOrigin(entry) !== null),
+      { message: 'each entry must be [http://|https://]host[:port]' },
+    )
+    .default(DEFAULT_ALLOWED_REPO_HOSTS),
+  GITHUB_API_BASE_URL: z
+    .url({ protocol: /^https?$/ })
+    .refine(isCredentialSafeBaseUrl, {
+      message: 'must use https, or http with a loopback host',
+    })
+    .default(DEFAULT_GITHUB_API_BASE_URL),
   DOCKER_HOST: z.string().min(1).optional(),
   LOG_LEVEL: z.enum(LOG_LEVELS).default('info'),
   NEXT_PUBLIC_API_MOCK: z.stringbool().default(false),

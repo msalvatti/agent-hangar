@@ -56,7 +56,7 @@ export const MAX_CRON_LENGTH = 100;
 /** Maximum length of an IANA timezone name. */
 export const MAX_TIMEZONE_LENGTH = 64;
 
-export { repoUrl } from '../repo-url.ts';
+export { repoUrl, repoUrlForHosts } from '../repo-url.ts';
 
 // ──────────────────────────────── repos ─────────────────────────────
 
@@ -122,7 +122,12 @@ export const workspaceStatus = z.enum([
   'FAILED',
 ]);
 
-/** `POST /api/chats` body. */
+/**
+ * `POST /api/chats` body.
+ *
+ * `repoUrl` is shape-only here; the route re-validates it against `ALLOWED_REPO_HOSTS` before the
+ * chat is created, because which forge may be reached is configuration and not a contract.
+ */
 export const createChatRequest = z.object({
   repoUrl,
   baseBranch: z.string().min(1).max(MAX_BRANCH_LENGTH),
@@ -245,7 +250,11 @@ export const jobRunStatus = turnStatus;
 /** What started a run. */
 export const jobRunTrigger = z.enum(['SCHEDULE', 'MANUAL']);
 
-/** `POST /api/jobs` body and `PATCH /api/jobs/:id` body (all fields optional on PATCH). */
+/**
+ * `POST /api/jobs` body and `PATCH /api/jobs/:id` body (all fields optional on PATCH).
+ *
+ * As with a chat, `repoUrl` is shape-only here and the route applies `ALLOWED_REPO_HOSTS`.
+ */
 export const jobUpsertRequest = z.object({
   name: z.string().trim().min(1).max(MAX_TITLE_LENGTH),
   cron: z.string().trim().min(1).max(MAX_CRON_LENGTH),
