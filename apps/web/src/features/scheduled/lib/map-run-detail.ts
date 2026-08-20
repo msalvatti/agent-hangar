@@ -6,6 +6,7 @@
 import { toolNameSchema } from '@agent-hangar/core';
 import type { JobSummary, RunDetail, ToolCallView } from '@agent-hangar/core';
 
+import { TURN_CANCELLED_NOTICE, utf8ByteLength } from '@/shared/transcript';
 import type { ToolCallStatus, TranscriptItem, TurnPhase } from '@/shared/transcript';
 
 import { PHASE_BY_STATUS } from './status';
@@ -40,7 +41,7 @@ function toDate(iso: string | null): number | null {
  * @returns The tool item.
  */
 function toToolItem(call: ToolCallView): TranscriptItem {
-  const shownBytes = call.resultBytes ?? 0;
+  const head = call.resultHead ?? '';
   const name = toolNameSchema.safeParse(call.toolName);
   return {
     kind: 'tool',
@@ -50,9 +51,11 @@ function toToolItem(call: ToolCallView): TranscriptItem {
     args: call.args,
     seq: call.seq,
     status: TOOL_STATUS_BY_CONTRACT_STATUS[call.status],
-    stdout: call.resultHead ?? '',
+    stdout: head,
     stderr: '',
-    shownBytes,
+    // What is on screen, not what the tool produced: reporting the full size as "shown" is what
+    // told the row it had nothing left to admit, so a cut result never said it was cut.
+    shownBytes: utf8ByteLength(head),
     totalBytes: call.resultBytes,
     exitCode: call.exitCode,
     durationMs: call.durationMs,
@@ -85,6 +88,17 @@ export function mapRunDetail(detail: RunDetail, job?: JobSummary): MappedRun {
 
   if (detail.output !== null) {
     items.push({ kind: 'assistant', id: 'output', text: detail.output, streaming: false });
+  }
+
+  // The stream says a run was stopped and nothing persists that line, but the status the API
+  // returns is the same fact, so the reloaded drawer rebuilds it from there.
+  if (detail.run.status === 'CANCELLED') {
+    items.push({
+      kind: 'notice',
+      id: 'run-cancelled',
+      tone: 'warning',
+      text: TURN_CANCELLED_NOTICE,
+    });
   }
 
   if (detail.run.error !== null) {

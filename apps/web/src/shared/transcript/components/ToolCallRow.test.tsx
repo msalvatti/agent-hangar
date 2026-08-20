@@ -173,6 +173,17 @@ describe('ToolCallRow', () => {
     expect(meta).toHaveClass('text-destructive');
   });
 
+  // A command killed by a signal — which is what stopping a turn does — reports no exit code, and
+  // a file tool never had a process at all. The word `exit` in front of a blank said nothing.
+  it.each(['succeeded', 'failed'] as const)(
+    'shows the duration alone when %s without an exit code',
+    (status) => {
+      render(<ToolCallRow item={makeItem({ status, exitCode: null, durationMs: 17_300 })} />);
+      expect(screen.getByText('17.3 s')).toBeInTheDocument();
+      expect(screen.queryByText(/exit/)).toBeNull();
+    },
+  );
+
   // Timed out: destructive "timed out" text, no exit code.
   it('shows "timed out" in the destructive colour when timed out', () => {
     render(<ToolCallRow item={makeItem({ status: 'timed_out' })} />);

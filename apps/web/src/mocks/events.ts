@@ -11,7 +11,7 @@
  * mock trades that precision for a simple, reconnect-safe implementation — `GET /api/chats/:id`
  * called mid-stream already shows the turn's end state, which is enough to exercise the UI.
  */
-import { apiError, routes } from '@agent-hangar/core';
+import { apiError, pushedNoticeText, routes } from '@agent-hangar/core';
 import type { AgentEvent } from '@agent-hangar/core';
 import { http, HttpResponse } from 'msw';
 
@@ -378,9 +378,21 @@ function applyFrameToStore(entry: StoredChat, frame: SseScriptFrame): void {
       }
       return;
     }
-    case 'git.pushed':
+    case 'git.pushed': {
+      const now = nowIso();
       entry.chat = { ...entry.chat, workBranch: event.branch, lastPushedSha: event.sha };
+      // The worker stores the push as a SYSTEM message so a reloaded transcript still shows it;
+      // the double stores it too, or mock mode would render a chat the API cannot produce.
+      entry.messages.push({
+        id: `${turn.id}-pushed-${event.sha}`,
+        turnId: turn.id,
+        seq: entry.messages.length + 1,
+        role: 'SYSTEM',
+        content: pushedNoticeText(event.branch, event.sha),
+        createdAt: now,
+      });
       return;
+    }
     case 'turn.completed': {
       const now = nowIso();
       turn.status = 'SUCCEEDED';

@@ -69,13 +69,16 @@ export function formatBytes(bytes: number): string {
 }
 
 /**
- * Shortens a commit SHA to its first 7 characters.
+ * Measures text in the unit the runtime caps tool output in.
  *
- * @param sha - Full or already-short SHA.
- * @returns The first 7 characters (the whole string when shorter).
+ * `String.length` counts UTF-16 code units, so it disagrees with the runtime's budget on every
+ * non-ASCII character; a transcript that mixed the two would claim output was cut when it was not.
+ *
+ * @param text - Text to measure.
+ * @returns Its length in UTF-8 bytes.
  */
-export function shortSha(sha: string): string {
-  return sha.slice(0, 7);
+export function utf8ByteLength(text: string): number {
+  return new TextEncoder().encode(text).length;
 }
 
 /**

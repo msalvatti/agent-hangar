@@ -21,6 +21,7 @@ import {
   ensureWorkspaceDecision,
   isTerminalRunStatus,
   LiveWorkspaceExistsError,
+  pushedNoticeText,
   runTurnPayload,
 } from '@agent-hangar/core';
 import type {
@@ -291,6 +292,16 @@ function makeTurnSink(
             workBranch: event.branch,
             lastPushedSha: event.sha,
           });
+          // The hints above carry only the newest push, and the transcript has to show every one
+          // of them where it happened. A push is also the one thing in a turn that outlives the
+          // workspace: the commit it names is in the remote repository long after the container
+          // is gone, so it is worth a row of its own.
+          await deps.repos.messages.append(
+            context.chat.id,
+            'SYSTEM',
+            pushedNoticeText(event.branch, event.sha),
+            context.turnId,
+          );
           break;
         case 'turn.completed':
           await completeTurn(deps, context, recorder, event);
@@ -315,8 +326,11 @@ function makeTurnSink(
         case 'assistant.message':
         case 'heartbeat':
         case 'protocol.error':
-          // Published and shown, but nothing about them belongs in a row: the transcript is
-          // rebuilt from the messages and the tool-call log, not from the live stream.
+          // Published and shown, but nothing about them belongs in a row. They all describe the
+          // container while it is being set up or while the model is thinking, and the container
+          // does not outlive the turn; what the turn actually did is in its tool calls and its
+          // answer. Keeping them would also cost the model a line of history per turn, since a
+          // stored SYSTEM message is part of the window a later turn carries.
           break;
       }
     },

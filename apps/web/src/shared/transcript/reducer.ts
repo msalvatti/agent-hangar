@@ -6,10 +6,10 @@
  * No wall-clock reads happen here: every timestamp comes in through the action's `now` field so
  * the fold stays deterministic and trivially testable with a fake clock.
  */
-import { agentEventSchema } from '@agent-hangar/core';
+import { agentEventSchema, pushedNoticeText, shortSha } from '@agent-hangar/core';
 import type { AgentEvent, AgentEventType } from '@agent-hangar/core';
 
-import { shortSha } from './lib/format';
+import { utf8ByteLength } from './lib/format';
 import type {
   AssistantTranscriptItem,
   NoticeTone,
@@ -20,7 +20,7 @@ import type {
   TranscriptItem,
   TranscriptState,
 } from './types';
-import { PREPARE_NOTICE_ID, TOOL_OUTPUT_DISPLAY_LIMIT_BYTES } from './types';
+import { PREPARE_NOTICE_ID, TOOL_OUTPUT_DISPLAY_LIMIT_BYTES, TURN_CANCELLED_NOTICE } from './types';
 
 /** Discriminator values of every `AgentEvent` variant, derived from the Zod schema itself. */
 export const AGENT_EVENT_TYPES: readonly AgentEventType[] = agentEventSchema.options.map(
@@ -118,10 +118,6 @@ function findTool(
   return { index, item: items[index] as ToolTranscriptItem };
 }
 
-function byteLength(text: string): number {
-  return new TextEncoder().encode(text).length;
-}
-
 /**
  * Appends a delta to a tool item's stdout/stderr, truncating so the item's `shownBytes` never
  * exceeds {@link TOOL_OUTPUT_DISPLAY_LIMIT_BYTES}.
@@ -144,7 +140,7 @@ function appendToolOutput(
   const encoded = encoder.encode(text);
   const kept =
     encoded.length <= budget ? text : decoder.decode(encoded.slice(0, budget), { stream: true });
-  const keptBytes = byteLength(kept);
+  const keptBytes = utf8ByteLength(kept);
   return {
     ...item,
     [stream]: item[stream] + kept,
@@ -288,7 +284,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): Tr
     }
 
     case 'git.pushed': {
-      const text = `Pushed ${event.branch} @ ${shortSha(event.sha)}`;
+      const text = pushedNoticeText(event.branch, event.sha);
       return { ...state, items: pushNotice(state.items, `git-${event.sha}`, 'success', text) };
     }
 
@@ -357,7 +353,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): Tr
           finalizeStreamingAssistant(state.items),
           `cancel-${state.step}`,
           'warning',
-          'Turn cancelled.',
+          TURN_CANCELLED_NOTICE,
         ),
       };
 

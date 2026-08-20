@@ -135,6 +135,12 @@ export const STALL_TIMEOUT_MS = 45_000;
 /** Stable id of the single notice item that tracks workspace preparation progress. */
 export const PREPARE_NOTICE_ID = 'prepare';
 
+/**
+ * Line shown when a turn was stopped by the operator. Written once so the notice the live stream
+ * pushes and the one a reloaded chat rebuilds from `Turn.status` read the same.
+ */
+export const TURN_CANCELLED_NOTICE = 'Turn cancelled.';
+
 /** Fields a caller may seed on {@link createInitialState}. */
 export type InitialStateOverrides = Partial<
   Pick<TranscriptState, 'items' | 'phase' | 'lastEventId'>

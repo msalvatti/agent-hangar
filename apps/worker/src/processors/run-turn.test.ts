@@ -88,13 +88,24 @@ describe('createRunTurnProcessor, ensuring a workspace', () => {
       jobRunId: null,
     });
 
+    // The `SYSTEM` row is the push: the branch and commit it names outlive the workspace, and
+    // nothing else in the stream is kept, so this is what a reloaded transcript reads it from.
     const messages = await container.repos.messages.listByChat(chat.id);
-    expect(messages.map((message) => message.role)).toEqual(['USER', 'TOOL_SUMMARY', 'ASSISTANT']);
-    expect(messages[1]?.content).toBe(
+    expect(messages.map((message) => message.role)).toEqual([
+      'USER',
+      'SYSTEM',
+      'TOOL_SUMMARY',
+      'ASSISTANT',
+    ]);
+    expect(messages[1]).toMatchObject({
+      content: 'Pushed agent/feature @ deadbee',
+      turnId: turn.id,
+    });
+    expect(messages[2]?.content).toBe(
       `wrote NOTES.md (${Buffer.byteLength(FIXTURE_NOTES_CONTENT)} bytes)`,
     );
-    expect(messages[2]?.content).toBe('Created NOTES.md.');
-    expect(messages[2]?.turnId).toBe(turn.id);
+    expect(messages[3]?.content).toBe('Created NOTES.md.');
+    expect(messages[3]?.turnId).toBe(turn.id);
 
     const finished = await container.repos.turns.get(turn.id);
     expect(finished).toMatchObject({

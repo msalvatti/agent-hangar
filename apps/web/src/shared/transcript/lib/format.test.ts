@@ -1,6 +1,6 @@
 /**
- * Tests for display formatting helpers: durations, byte counts, SHAs, token counts, and relative
- * timestamps.
+ * Tests for display formatting helpers: durations, byte counts, UTF-8 sizes, token counts, and
+ * relative timestamps.
  */
 import { describe, expect, it } from 'vitest';
 
@@ -11,7 +11,7 @@ import {
   formatTimestamp,
   formatTokens,
   relativeTime,
-  shortSha,
+  utf8ByteLength,
 } from './format';
 
 describe('formatElapsed', () => {
@@ -76,15 +76,20 @@ describe('formatBytes', () => {
   });
 });
 
-describe('shortSha', () => {
-  // A full 40-character SHA is truncated to 7 characters.
-  it('truncates a full SHA to 7 characters', () => {
-    expect(shortSha('abcdef1234567890')).toBe('abcdef1');
+describe('utf8ByteLength', () => {
+  // ASCII text measures the same either way, which is the common case.
+  it('counts one byte per ASCII character', () => {
+    expect(utf8ByteLength('README.md')).toBe(9);
   });
 
-  // A SHA already 7 characters or shorter is returned unchanged.
-  it('returns a short SHA unchanged', () => {
-    expect(shortSha('abc')).toBe('abc');
+  // The unit that matters: `String.length` would report 2 for this, the runtime's budget 6.
+  it('counts the UTF-8 bytes of a multi-byte character, not its code units', () => {
+    expect(utf8ByteLength('日本')).toBe(6);
+  });
+
+  // An empty result measures zero rather than being treated as unknown.
+  it('measures empty text as zero', () => {
+    expect(utf8ByteLength('')).toBe(0);
   });
 });
 

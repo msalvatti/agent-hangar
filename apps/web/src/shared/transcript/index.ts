@@ -26,6 +26,7 @@ export {
   PREPARE_NOTICE_ID,
   STALL_TIMEOUT_MS,
   TOOL_OUTPUT_DISPLAY_LIMIT_BYTES,
+  TURN_CANCELLED_NOTICE,
   createInitialState,
 } from './types';
 
@@ -46,7 +47,7 @@ export {
   formatTimestamp,
   formatTokens,
   relativeTime,
-  shortSha,
+  utf8ByteLength,
 } from './lib/format';
 export { assertPresent } from './lib/assert';
 export { maskSecretShapes, toDisplayJson } from './lib/redact-display';

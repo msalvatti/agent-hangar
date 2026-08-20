@@ -31,6 +31,22 @@ export interface ToolCallRowProps {
   className?: string;
 }
 
+/**
+ * Renders the exit code and duration of a finished call.
+ *
+ * Only a command that ran to completion has an exit code: one killed by a signal — which is what
+ * stopping a turn does — reports none, and a file tool never had a process at all. Naming an exit
+ * code there would leave the word `exit` standing in front of a blank, so the duration is shown
+ * on its own instead.
+ *
+ * @param item - The finished call.
+ * @returns The `exit <code> · <duration>` text, or just the duration.
+ */
+function outcomeText(item: ToolTranscriptItem): string {
+  const duration = formatDuration(item.durationMs ?? 0);
+  return item.exitCode === null ? duration : `exit ${String(item.exitCode)} · ${duration}`;
+}
+
 function StatusMeta({ item, elapsed }: { item: ToolTranscriptItem; elapsed: string }) {
   switch (item.status) {
     case 'running':
@@ -46,18 +62,14 @@ function StatusMeta({ item, elapsed }: { item: ToolTranscriptItem; elapsed: stri
     case 'succeeded':
       return (
         <span>
-          exit {item.exitCode} · {formatDuration(item.durationMs ?? 0)}
+          {outcomeText(item)}
           {item.name === 'write_file' && item.totalBytes !== null
             ? ` · ${formatBytes(item.totalBytes)}`
             : ''}
         </span>
       );
     case 'failed':
-      return (
-        <span className="text-destructive">
-          exit {item.exitCode} · {formatDuration(item.durationMs ?? 0)}
-        </span>
-      );
+      return <span className="text-destructive">{outcomeText(item)}</span>;
     case 'timed_out':
       return <span className="text-destructive">timed out</span>;
   }
