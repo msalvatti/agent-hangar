@@ -337,6 +337,43 @@ describe('createRunTurnProcessor, two turns of one chat', () => {
     await first;
     expect((await container.repos.turns.get(turn.id))?.status).toBe('CANCELLED');
   });
+
+  /**
+   * Refusing the second turn tells the user to send the message again in a moment — which is the
+   * opposite of what somebody who has just pressed Stop wants to read, and the cancel route has
+   * already answered `202` to that Stop. The refusal still happens (nothing is executed and the
+   * first turn keeps its workspace), but the record the second turn leaves is the cancellation
+   * that was asked for. The Stop is emitted from the chat lookup, which the second delivery makes
+   * before it tries for the claim.
+   */
+  it('cancels a refused second turn the user had already stopped', async () => {
+    const container = setupProcessorContainer({ script: heldTurnScript() });
+    const { chat, turn } = await seedChatWithTurn(container);
+    const second = await container.repos.turns.create({ chatId: chat.id, model: 'test-model' });
+    const busy = whenWorkspaceIsBusy(container);
+
+    const first = runTurnOn(container, turn.id);
+    await busy;
+    // Installed only once the first turn holds the claim, so it fires on the second delivery.
+    const getChat = container.repos.chats.getById.bind(container.repos.chats);
+    vi.spyOn(container.repos.chats, 'getById').mockImplementation(async (id) => {
+      expect(container.commands.emitCancel(second.id)).toBe(true);
+      return getChat(id);
+    });
+    await runTurnOn(container, second.id);
+    vi.restoreAllMocks();
+
+    const refused = await container.repos.turns.get(second.id);
+    expect(refused?.status).toBe('CANCELLED');
+    expect(refused?.error).toBeNull();
+    expect(container.publisher.eventsFor(second.id)).toEqual([{ type: 'turn.cancelled' }]);
+    expect([...container.repos.store.workspaces.values()]).toHaveLength(1);
+    expect(container.runner.calls.filter((call) => call.method === 'exec')).toHaveLength(1);
+
+    container.commands.emitCancel(turn.id);
+    await first;
+    expect((await container.repos.turns.get(turn.id))?.status).toBe('CANCELLED');
+  });
 });
 
 describe('createRunTurnProcessor, listening for a cancellation', () => {
