@@ -318,6 +318,24 @@ describe('rotate-key.sh --yes success', () => {
   });
 
   /**
+   * The phase file is what a resume reads to decide whether the store has already been
+   * re-encrypted, so it is never left half-written: each update goes to a sibling and is renamed
+   * over the real path. A plain redirect truncates first and fills after, and a crash inside that
+   * window would strand a partial phase line.
+   */
+  it('updates the rotation state by renaming a sibling over it', async () => {
+    const box = await sandbox();
+    const shimDir = createShimDir({ log: box.log });
+    fileOpShims(shimDir);
+    const result = run(box, ['--yes'], {}, shimDir);
+
+    expect(result.status).toBe(0);
+    const log = readShimLog(box.log);
+    expect(log).toContain(`mv ${box.statePath}.tmp ${box.statePath}`);
+    expect(existsSync(`${box.statePath}.tmp`)).toBe(false);
+  });
+
+  /**
    * The swap must never leave the key path empty. The old key is COPIED to the backup while it is
    * still the current key, and the new material then arrives by renaming `.new` over it — a single
    * atomic replacement. Moving the current key aside first, as an earlier version did, opened a

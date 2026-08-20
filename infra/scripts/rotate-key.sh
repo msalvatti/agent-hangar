@@ -99,9 +99,15 @@ read_state() {
 }
 
 # write_state <phase> <backup path>: records the phase reached, before the step it describes runs.
+#
+# Written to a sibling and renamed over the real path, so the file a resume reads is always a whole
+# record. A plain redirect truncates first and fills after, leaving a window in which a crash would
+# strand a half-written phase line — and this file is what tells a resume whether the store has
+# been re-encrypted.
 write_state() {
-  printf 'phase=%s\nbackup=%s\n' "$1" "$2" > "$state"
-  chmod 600 "$state"
+  printf 'phase=%s\nbackup=%s\n' "$1" "$2" > "$state.tmp"
+  chmod 600 "$state.tmp"
+  mv "$state.tmp" "$state"
 }
 
 # free_backup_path: prints a backup path no file occupies yet. The timestamp has a one-second
@@ -132,7 +138,7 @@ put_key_in_place() {
     mv "$key.new" "$key"
     chmod 600 "$key"
   fi
-  rm -f "$state"
+  rm -f "$state" "$state.tmp"
 }
 
 if [ $confirmed -ne 1 ]; then
@@ -220,7 +226,7 @@ else
     # possible, and deleting either key file would then destroy the credentials it holds.
     if [ "$rc" = "$EXIT_ROLLED_BACK" ] ||
       { [ "$rc" = "$EXIT_ABORTED" ] && [ "$mode" = "strict" ]; }; then
-      rm -f "$key.new" "$state"
+      rm -f "$key.new" "$state" "$state.tmp"
       echo "Rotation aborted (helper exit $rc); the current master key is unchanged." >&2
       exit "$rc"
     fi
