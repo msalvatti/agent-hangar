@@ -6,10 +6,10 @@
   "type": "module",
   "scripts": {
     "dev": "tsx watch --conditions=development src/main.ts",
-    "build": "tsc -b && pnpm --filter @agent-hangar/core declarations:rewrite",
+    "build": "bash ../../scripts/tsc-build.sh",
     "start": "node dist/main.js",
     "lint": "eslint .",
-    "typecheck": "tsc -b && pnpm --filter @agent-hangar/core declarations:rewrite",
+    "typecheck": "bash ../../scripts/tsc-build.sh",
     "test": "vitest run",
     "test:integration": "DOCKER_AVAILABLE=1 vitest run --project integration --coverage.enabled=false"
   },

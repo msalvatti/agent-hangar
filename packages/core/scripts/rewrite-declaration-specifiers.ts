@@ -7,9 +7,10 @@
  * `tsc -b` emits declarations for every `composite` project it builds, so it produces `dist`
  * whether it was invoked to build or merely to type-check. This rewrite therefore belongs to
  * `tsc -b` itself rather than to any one script: every `typecheck` and `build` script in the
- * repository whose `tsc -b` can reach this package chains the two with `&&`, running this rewrite
- * immediately after a successful compile. That chain short-circuits on failure, so a failing tree
- * can hold a partially-emitted, unrewritten `dist` until the next successful compile rewrites it.
+ * repository whose `tsc -b` can reach this package runs the two together. `scripts/tsc-build.sh`
+ * is where that pairing lives — it runs this rewrite whether the compile succeeded or not, so a
+ * failing tree cannot hold a partially emitted, unrewritten `dist`, while still exiting with the
+ * compiler's own status.
  *
  * The rewrite itself is the pure transform in `../src/config/declaration-specifiers.ts` — see
  * that module for why the rewrite is needed. This script supplies the file-system side of it:

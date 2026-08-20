@@ -17,10 +17,10 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -b && pnpm --filter @agent-hangar/core declarations:rewrite && node esbuild.config.mjs",
+    "build": "bash ../../scripts/tsc-build.sh && node esbuild.config.mjs",
     "check:bundle": "node scripts/check-bundle.mjs",
     "lint": "eslint .",
-    "typecheck": "tsc -b && pnpm --filter @agent-hangar/core declarations:rewrite",
+    "typecheck": "bash ../../scripts/tsc-build.sh",
     "test": "vitest run",
     "test:watch": "vitest"
   },
