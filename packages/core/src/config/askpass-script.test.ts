@@ -92,6 +92,12 @@ describe('infra/workspace/askpass.sh', () => {
    * could otherwise point it at its own remote and be handed the PAT as Basic auth. Each case must
    * print nothing at all on stdout — an empty line would be read by git as a valid empty password —
    * exit non-zero, and never let the token reach stderr either.
+   *
+   * The query-string, fragment and backslash cases are the same trick written with a character
+   * that ENDS the authority rather than one that starts a new label:
+   * `https://evil.test?@github.com` reaches `evil.test`, and a reduction that dropped userinfo
+   * before cutting the query would report `github.com` and release the token to a host it does not
+   * belong to.
    */
   it.each([
     ['a foreign host', "Password for 'https://x-access-token@evil.test': "],
@@ -109,6 +115,9 @@ describe('infra/workspace/askpass.sh', () => {
       "Password for 'https://x@github.com:8443': ",
     ],
     ['a username prompt from a stranger', "Username for 'https://evil.test': "],
+    ['the query-string userinfo trick', "Password for 'https://evil.test?@github.com': "],
+    ['the fragment userinfo trick', "Password for 'https://evil.test#@github.com': "],
+    ['the backslash userinfo trick', "Password for 'https://evil.test\\@github.com': "],
     ['a prompt naming no URL at all', 'Password: '],
     ['an empty prompt', ''],
   ])('refuses %s', (_label, prompt) => {

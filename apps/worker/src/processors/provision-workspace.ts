@@ -398,8 +398,6 @@ export async function provisionWorkspace(
         GIT_ASKPASS: ASKPASS_PATH,
         OPENAI_MODEL: deps.config.OPENAI_MODEL,
         AGENT_MODEL_PROVIDER: deps.config.AGENT_MODEL_PROVIDER,
-        // A fixed name and a value that is an origin: it is spelled as a key of this literal
-        // rather than spread in, so it cannot stand in for the credentials above it.
         [ALLOWED_ORIGIN_VAR]: decision.origin,
         ...(deps.config.OPENAI_BASE_URL === undefined
           ? {}

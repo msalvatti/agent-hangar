@@ -56,6 +56,9 @@ export const ASKPASS_PATH = '/opt/agent-runtime/askpass.sh';
  * URL at all — so the name is spelled on each side of the boundary rather than shared, exactly as
  * {@link ASKPASS_PATH} is. The value is derived from the repository URL the workspace was created
  * for, once that URL has been measured against `ALLOWED_REPO_HOSTS`.
+ *
+ * It is a fixed name, so writing it as a key of the container's environment literal — rather than
+ * spreading a computed object in — is what makes it unable to stand in for a credential there.
  */
 export const ALLOWED_ORIGIN_VAR = 'AH_GIT_ALLOWED_ORIGIN';
 

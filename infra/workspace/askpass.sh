@@ -63,11 +63,21 @@ case "$url" in
     ;;
 esac
 
-# Reduce the URL to its origin: the scheme, plus the authority up to the first "/" with any
-# userinfo dropped.
+# Reduce the URL to its origin: the scheme, plus the authority with any userinfo dropped.
+#
+# The authority ends at the first of "/", "?", "#" or "\", and all four have to be cut before the
+# userinfo is dropped, because dropping it takes everything up to the LAST "@" in what is left. Cut
+# only at "/" and `https://evil.test?@github.com` keeps an "@" that belongs to the query, so the
+# reduction reports `github.com` for a URL whose host is `evil.test` — the exfiltration this helper
+# exists to stop, spelled with a character that ends the authority rather than one that starts a
+# new label. A backslash is not a delimiter for every URL parser, so cutting there can only make
+# this reduction disagree with a caller's in the direction of refusing.
 scheme=${url%%://*}
 authority=${url#*://}
 authority=${authority%%/*}
+authority=${authority%%\?*}
+authority=${authority%%#*}
+authority=${authority%%\\*}
 origin="$scheme://${authority##*@}"
 
 # One comparison decides scheme, host and port together, because those three are what an origin
