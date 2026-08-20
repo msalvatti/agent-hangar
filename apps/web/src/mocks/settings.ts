@@ -7,11 +7,12 @@
  * served by the shared mock foundation); this file only mutates it. Plaintext never touches the
  * store — only `last4` and `updatedAt` are kept, matching spec 04 (d).
  */
-import { putSecretRequest, settingsKeyParam } from '@agent-hangar/core';
+import { putSecretRequest, routes, settingsKeyParam } from '@agent-hangar/core';
+import type { SecretKey } from '@agent-hangar/core';
 import { HttpResponse, http } from 'msw';
 
 import { nowIso, store } from './store';
-import type { SecretKey } from './store';
+import type { MockStore } from './store';
 
 function isSecretKey(value: string): value is SecretKey {
   return settingsKeyParam.safeParse(value).success;
@@ -30,7 +31,7 @@ function notFound() {
 
 /** Mock handlers for `PUT /api/settings/:key` and `DELETE /api/settings/:key`. */
 export const settingsHandlers = [
-  http.put('/api/settings/:key', async ({ params, request }) => {
+  http.put(routes.settingsKey, async ({ params, request }) => {
     const key = String(params.key);
     if (!isSecretKey(key)) {
       return notFound();
@@ -50,13 +51,22 @@ export const settingsHandlers = [
     return HttpResponse.json({ set: true, last4: trimmed.slice(-4) });
   }),
 
-  http.delete('/api/settings/:key', ({ params }) => {
+  http.delete(routes.settingsKey, ({ params }) => {
     const key = String(params.key);
     if (!isSecretKey(key)) {
       return notFound();
     }
-    const { [key]: _removed, ...rest } = store.secrets;
-    store.secrets = rest;
+    // Rebuilt key by key: a computed-key rest destructure (`{ [key]: _, ...rest }`) widens a
+    // union-typed key to `string`, which this record has no index signature for.
+    const remaining: MockStore['secrets'] = {};
+    for (const candidate of settingsKeyParam.options) {
+      const status = store.secrets[candidate];
+      if (candidate === key || status === undefined) {
+        continue;
+      }
+      remaining[candidate] = status;
+    }
+    store.secrets = remaining;
     return new HttpResponse(null, { status: 204 });
   }),
 ];

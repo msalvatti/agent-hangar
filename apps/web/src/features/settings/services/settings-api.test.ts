@@ -10,20 +10,26 @@
 import { GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { setScenario } from '@/mocks/scenario';
 import { resetStore } from '@/mocks/store';
-import { registerMockServer } from '@/mocks/vitest';
 
 import { deleteSecret, getHealth, getSettings, putSecret } from './settings-api';
-
-registerMockServer();
 
 afterEach(() => {
   resetStore();
 });
 
 describe('getSettings', () => {
-  /** Returns the masked settings status. */
-  it('returns both secrets unset by default', async () => {
+  /** The seeded instance already holds both credentials, masked down to their last four. */
+  it('returns the masked status of both seeded secrets', async () => {
+    const settings = await getSettings();
+    expect(settings.githubPat).toMatchObject({ set: true, last4: 'ab12' });
+    expect(settings.openaiKey).toMatchObject({ set: true, last4: 'cd34' });
+  });
+
+  /** A fresh instance has neither credential, which is what the onboarding notice keys off. */
+  it('reports both secrets unset on an instance with none', async () => {
+    setScenario('missing-settings');
     const settings = await getSettings();
     expect(settings.githubPat.set).toBe(false);
     expect(settings.openaiKey.set).toBe(false);

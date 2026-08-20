@@ -9,11 +9,8 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { resetScheduledStore } from '@/mocks/scheduled';
-import { registerMockServer } from '@/mocks/vitest';
 
 import { useJobs } from './useJobs';
-
-registerMockServer();
 
 afterEach(() => {
   resetScheduledStore();

@@ -49,7 +49,7 @@ export interface UseApiQueryOptions {
   /** Set to `false` to skip fetching (e.g. a dependent query with no id yet). */
   enabled?: boolean;
   /** Re-runs the loader on this interval while `enabled`. */
-  refetchIntervalMs?: number | undefined;
+  refetchIntervalMs?: number;
   /** Re-runs the loader whenever the window regains focus. */
   refetchOnWindowFocus?: boolean;
 }

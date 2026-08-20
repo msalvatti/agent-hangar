@@ -26,6 +26,7 @@ import { Textarea } from '@/shared/ui/textarea';
 
 import { useJobForm } from '../hooks/useJobForm';
 import { useJobMutations } from '../hooks/useJobMutations';
+import { repoFullName } from '../lib/job-form';
 
 import { CronField } from './CronField';
 import { FormField } from './FormField';
@@ -104,17 +105,18 @@ export function JobDialog({ open, onOpenChange, job, onSaved }: JobDialogProps) 
             )}
           </FormField>
           <div className="grid grid-cols-2 gap-3">
-            <FormField id="job-repo" label="Repository" error={showError('repo')}>
+            <FormField id="job-repo" label="Repository" composite error={showError('repo')}>
               {() => (
                 <RepoPicker
                   value={values.repo}
-                  onChange={(value) => {
-                    setField('repo', value);
+                  onChange={(selected) => {
+                    setField('repo', repoFullName(selected));
+                    setField('branch', null);
                   }}
                 />
               )}
             </FormField>
-            <FormField id="job-branch" label="Branch" error={showError('branch')}>
+            <FormField id="job-branch" label="Branch" composite error={showError('branch')}>
               {() => (
                 <BranchPicker
                   repo={values.repo}
@@ -137,7 +139,7 @@ export function JobDialog({ open, onOpenChange, job, onSaved }: JobDialogProps) 
             timezone={values.timezone}
             error={showError('cron')}
           />
-          <FormField id="job-timezone" label="Timezone" error={showError('timezone')}>
+          <FormField id="job-timezone" label="Timezone" composite error={showError('timezone')}>
             {() => (
               <TimezoneCombobox
                 value={values.timezone}

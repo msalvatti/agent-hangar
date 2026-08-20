@@ -36,7 +36,7 @@ describe('CronField', () => {
     act(() => {
       vi.advanceTimersByTime(150);
     });
-    expect(screen.getByText(/Runs every Monday at 09:00/)).toBeInTheDocument();
+    expect(screen.getByText(/Runs every Mon at 09:00 UTC/)).toBeInTheDocument();
   });
 
   /** Clicking a quick-fill example sets the value. */

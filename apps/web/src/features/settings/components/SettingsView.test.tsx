@@ -2,9 +2,10 @@
  * Unit tests for `SettingsView`.
  *
  * Layer: unit.
- * Goal: end-to-end against MSW — both secrets start unset, saving each shows its mask (and the
- * plaintext canary never appears in the DOM), removing one returns it to unset; the environment
- * card shows the healthy summary; and both cards show an error card with Retry on failure.
+ * Goal: end-to-end against MSW — on an instance with no credentials, saving each shows its mask
+ * (and the plaintext canary never appears in the DOM), removing one returns it to unset; the
+ * environment card shows the healthy summary; and both cards show an error card with Retry on
+ * failure.
  * Mocks: MSW node server serving `src/mocks/{settings,settings-status,health}.ts`.
  */
 import { GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
@@ -13,22 +14,21 @@ import userEvent from '@testing-library/user-event';
 import { HttpResponse, http } from 'msw';
 import { afterEach, describe, expect, it } from 'vitest';
 
+import { setScenario } from '@/mocks/scenario';
 import { server } from '@/mocks/server';
 import { resetStore } from '@/mocks/store';
-import { registerMockServer } from '@/mocks/vitest';
 
 import { SettingsView } from './SettingsView';
-
-registerMockServer();
 
 afterEach(() => {
   resetStore();
 });
 
 describe('SettingsView', () => {
-  /** Both secrets start unset, saving each shows its mask, and the plaintext never leaks into the
-   * DOM; removing one returns it to unset. */
+  /** On an instance with no credentials, saving each shows its mask, the plaintext never leaks
+   * into the DOM, and removing one returns that field to its unset input. */
   it('saves both secrets then removes one', async () => {
+    setScenario('missing-settings');
     const user = userEvent.setup();
     render(<SettingsView />);
 

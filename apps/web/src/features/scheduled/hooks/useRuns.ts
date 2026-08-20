@@ -28,7 +28,8 @@ export interface UseRunsOptions {
  * @returns The runs query state.
  */
 export function useRuns(jobId: string, options: UseRunsOptions): UseApiQueryResult<RunSummary[]> {
-  return useApiQuery(['runs', jobId], (signal) => listRuns(jobId, signal), {
-    refetchIntervalMs: options.live ? LIVE_POLL_MS : undefined,
-  });
+  // The option is omitted rather than set to `undefined` when polling is off: under
+  // `exactOptionalPropertyTypes` an optional property accepts a value or no property at all.
+  const polling = options.live ? { refetchIntervalMs: LIVE_POLL_MS } : {};
+  return useApiQuery(['runs', jobId], (signal) => listRuns(jobId, signal), polling);
 }

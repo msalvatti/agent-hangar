@@ -4,7 +4,7 @@
  * Layer: service (adapter).
  */
 import { jobUpsertRequest } from '@agent-hangar/core';
-import type { JobSummary, JobUpsertRequest } from '@agent-hangar/core';
+import type { JobSummary, JobUpsertRequest, RepoSummary } from '@agent-hangar/core';
 
 import { validateCron } from './cron';
 import { listTimezones, systemTimezone } from './timezones';
@@ -42,6 +42,16 @@ export function emptyJobForm(): JobFormValues {
     prompt: '',
     enabled: true,
   };
+}
+
+/**
+ * Reduces a repository picked in the palette to the value the form stores.
+ *
+ * @param repo - The chosen repository, or `null` when the choice was cleared.
+ * @returns The `owner/name` the form holds, or `null`.
+ */
+export function repoFullName(repo: RepoSummary | null): string | null {
+  return repo === null ? null : repo.fullName;
 }
 
 /**

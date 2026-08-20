@@ -9,6 +9,7 @@ import type { JobSummary } from '@agent-hangar/core';
 import { Box } from 'lucide-react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { useState } from 'react';
 
 import { relativeTime } from '@/shared/transcript';
 import { Switch } from '@/shared/ui/switch';
@@ -42,6 +43,9 @@ function repoLabel(repoUrl: string): string {
  */
 export function JobRow({ job, enabled, busy, onToggle, onEdit, onRunNow, onDelete }: JobRowProps) {
   const router = useRouter();
+  // Relative labels are anchored to a single instant captured when the row mounts: reading the
+  // clock during render would make the output depend on when React happened to re-render.
+  const [now] = useState(() => Date.now());
 
   return (
     <TableRow
@@ -83,7 +87,7 @@ export function JobRow({ job, enabled, busy, onToggle, onEdit, onRunNow, onDelet
         ) : (
           <Tooltip>
             <TooltipTrigger render={<span className="tabular-nums" />}>
-              {relativeTime(job.nextRunAt)}
+              {relativeTime(job.nextRunAt, now)}
             </TooltipTrigger>
             <TooltipContent>{new Date(job.nextRunAt).toLocaleString()}</TooltipContent>
           </Tooltip>

@@ -10,11 +10,8 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { setScenario } from '@/mocks/scenario';
-import { registerMockServer } from '@/mocks/vitest';
 
 import { useHealthSummary } from './useHealthSummary';
-
-registerMockServer();
 
 afterEach(() => {
   setScenario('default');

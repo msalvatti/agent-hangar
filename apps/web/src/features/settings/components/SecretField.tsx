@@ -49,6 +49,9 @@ export function SecretField({
   onRemove,
   onClearError,
 }: SecretFieldProps) {
+  // Relative labels are anchored to a single instant captured when the field mounts: reading the
+  // clock during render would make the output depend on when React happened to re-render.
+  const [now] = useState(() => Date.now());
   const titleId = useId();
   const helperId = useId();
   const errorId = useId();
@@ -100,7 +103,7 @@ export function SecretField({
           <span className="text-muted-foreground text-xs">
             {currentStatus.updatedAt === undefined
               ? 'set'
-              : `updated ${relativeTime(currentStatus.updatedAt)}`}
+              : `updated ${relativeTime(currentStatus.updatedAt, now)}`}
           </span>
           <Button
             variant="ghost"

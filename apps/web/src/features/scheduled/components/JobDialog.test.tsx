@@ -15,11 +15,8 @@ import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { resetScheduledStore } from '@/mocks/scheduled';
 import { server } from '@/mocks/server';
-import { registerMockServer } from '@/mocks/vitest';
 
 import { JobDialog } from './JobDialog';
-
-registerMockServer();
 
 // `cmdk`, inside the dialog's TimezoneCombobox, measures/scrolls its list with two DOM APIs
 // jsdom does not implement.
@@ -62,10 +59,18 @@ const job: JobSummary = {
   lastRunStatus: null,
 };
 
+/**
+ * Fills every field of the create form. Repository and branch are command palettes, not text
+ * inputs: the repository is chosen from the list, and the branch picker then defaults itself to
+ * the repository's default branch, which is the interaction a user actually performs.
+ */
 async function fillCreateForm(user: ReturnType<typeof userEvent.setup>) {
   await user.type(screen.getByLabelText('Name'), 'Weekly report');
-  await user.type(screen.getByLabelText('Repository'), 'acme/api');
-  await user.type(screen.getByLabelText('Branch'), 'main');
+  await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+  await user.click(await screen.findByText('acme/api'));
+  await waitFor(() => {
+    expect(screen.getByRole('group', { name: 'Branch' })).toHaveTextContent('main');
+  });
   await user.type(screen.getByLabelText('Cron'), '0 8 * * 1');
   await user.type(screen.getByLabelText('Prompt'), 'Summarize the week.');
 }

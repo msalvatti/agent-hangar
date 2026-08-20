@@ -14,11 +14,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetScheduledStore } from '@/mocks/scheduled';
 import { server } from '@/mocks/server';
-import { registerMockServer } from '@/mocks/vitest';
 
 import { useRunActions } from './useRunActions';
-
-registerMockServer();
 
 let writeText: ReturnType<typeof vi.fn>;
 

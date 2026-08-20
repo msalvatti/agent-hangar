@@ -13,15 +13,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { resetScheduledStore } from '@/mocks/scheduled';
 import { server } from '@/mocks/server';
-import { registerMockServer } from '@/mocks/vitest';
+import { assertPresent } from '@/shared/transcript';
 
 import { ScheduledView } from './ScheduledView';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
 }));
-
-registerMockServer();
 
 afterEach(() => {
   resetScheduledStore();
@@ -88,7 +86,10 @@ describe('ScheduledView', () => {
     server.use(http.get('/api/jobs', () => HttpResponse.json({ jobs: [] })));
     const user = userEvent.setup();
     render(<ScheduledView />);
-    const emptyState = await screen.findByTestId('empty-state');
+    const emptyState = assertPresent(
+      (await screen.findByText('No scheduled jobs yet.')).parentElement,
+      'empty state container',
+    );
     await user.click(within(emptyState).getByRole('button', { name: 'New job' }));
     expect(
       await screen.findByText('Runs your prompt in a fresh workspace on a schedule.'),
@@ -113,8 +114,11 @@ describe('ScheduledView', () => {
     await screen.findByText('Nightly tests');
     await user.click(screen.getByRole('button', { name: 'New job' }));
     await user.type(screen.getByLabelText('Name'), 'Weekly report');
-    await user.type(screen.getByLabelText('Repository'), 'acme/api');
-    await user.type(screen.getByLabelText('Branch'), 'main');
+    await user.click(screen.getByRole('button', { name: /Choose repository/i }));
+    await user.click(await screen.findByText('acme/api'));
+    await waitFor(() => {
+      expect(screen.getByRole('group', { name: 'Branch' })).toHaveTextContent('main');
+    });
     await user.type(screen.getByLabelText('Cron'), '0 8 * * 1');
     await user.type(screen.getByLabelText('Prompt'), 'Summarize the week.');
     await user.click(screen.getByRole('button', { name: 'Save' }));

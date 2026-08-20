@@ -100,6 +100,7 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
   const persistedOutput = runQuery.data?.output ?? null;
   const outputText = persistedOutput ?? lastAssistantText;
   const startedAt = runQuery.data?.run.startedAt;
+  const startedAtMs = startedAt == null ? null : Date.parse(startedAt);
 
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
@@ -114,7 +115,7 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
             )}
           </div>
           <div className="flex items-center gap-2">
-            <StatusPill phase={displayPhase} />
+            <StatusPill phase={displayPhase} startedAt={startedAtMs} />
             {isActiveNow && (
               <Button
                 variant="ghost"

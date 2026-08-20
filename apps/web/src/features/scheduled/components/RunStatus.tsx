@@ -6,6 +6,7 @@
 'use client';
 
 import type { JobRunStatus } from '@agent-hangar/core';
+import { useState } from 'react';
 
 import { cn } from '@/shared/lib/cn';
 import { relativeTime } from '@/shared/transcript';
@@ -36,6 +37,9 @@ const TONE_CLASS: Record<string, string> = {
  * @param props - Status, optional relative time and error.
  */
 export function RunStatus({ status, at, error, className }: RunStatusProps) {
+  // Relative labels are anchored to a single instant captured when the row mounts: reading the
+  // clock during render would make the output depend on when React happened to re-render.
+  const [now] = useState(() => Date.now());
   const presentation = runStatusPresentation(status);
   const Icon = presentation.icon;
   const isOverlapSkip = error === 'previous run still running';
@@ -50,7 +54,7 @@ export function RunStatus({ status, at, error, className }: RunStatusProps) {
       <Icon className="size-3.5" aria-hidden="true" />
       {presentation.label}
       {at !== undefined && at !== null && (
-        <span className="text-muted-foreground tabular-nums">{relativeTime(at)}</span>
+        <span className="text-muted-foreground tabular-nums">{relativeTime(at, now)}</span>
       )}
     </span>
   );

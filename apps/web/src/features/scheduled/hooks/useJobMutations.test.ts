@@ -13,13 +13,10 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { resetScheduledStore } from '@/mocks/scheduled';
 import { server } from '@/mocks/server';
-import { registerMockServer } from '@/mocks/vitest';
 
 import type { JobFormValues } from '../lib/job-form';
 
 import { useJobMutations } from './useJobMutations';
-
-registerMockServer();
 
 afterEach(() => {
   resetScheduledStore();

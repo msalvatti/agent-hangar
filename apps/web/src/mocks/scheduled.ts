@@ -15,10 +15,11 @@ import type {
   RunSummary,
   ToolCallView,
 } from '@agent-hangar/core';
-import { jobPatchRequest, jobUpsertRequest } from '@agent-hangar/core';
+import { agentEventSchema, jobPatchRequest, jobUpsertRequest, routes } from '@agent-hangar/core';
 import { HttpResponse, http } from 'msw';
 
 import { createSseResponse, scriptedTurnFrames } from './events';
+import type { SseScriptFrame } from './events';
 import { getScenario } from './scenario';
 import { nextId, nowIso, store } from './store';
 
@@ -303,14 +304,65 @@ function notFound(message: string) {
   return HttpResponse.json({ error: { code: 'NOT_FOUND', message } }, { status: 404 });
 }
 
+/** How a scripted stream ended, when it ended at all. */
+interface StreamOutcome {
+  status: Extract<JobRunStatus, 'SUCCEEDED' | 'FAILED'>;
+  finalMessage: string | null;
+  error: string | null;
+}
+
+/**
+ * Reads the outcome a scripted stream ends on.
+ *
+ * The frames carry `unknown` payloads, so each is parsed with the protocol schema rather than
+ * asserted: a frame that is not an agent event — the `expired` marker, for one — carries no
+ * outcome and is skipped.
+ *
+ * @param frames - The turn's scripted frames.
+ * @returns The terminal outcome, or `null` when the script never reaches one.
+ */
+function streamOutcome(frames: readonly SseScriptFrame[]): StreamOutcome | null {
+  let outcome: StreamOutcome | null = null;
+  for (const frame of frames) {
+    const parsed = agentEventSchema.safeParse(frame.data);
+    if (!parsed.success) {
+      continue;
+    }
+    if (parsed.data.type === 'turn.completed') {
+      outcome = { status: 'SUCCEEDED', finalMessage: parsed.data.finalMessage, error: null };
+    } else if (parsed.data.type === 'turn.failed') {
+      outcome = { status: 'FAILED', finalMessage: null, error: parsed.data.error.message };
+    }
+  }
+  return outcome;
+}
+
+/**
+ * Fast-forwards a still-active run to the outcome its scripted stream ends on, the same
+ * simplification the chat event handler makes.
+ *
+ * @param run - The run whose stream was just requested.
+ * @param outcome - The outcome its script ends on.
+ * @returns The settled copy of the run.
+ */
+function settleRun(run: MockRun, outcome: StreamOutcome): MockRun {
+  return {
+    ...run,
+    status: outcome.status,
+    error: outcome.error,
+    finishedAt: nowIso(),
+    output: outcome.finalMessage,
+  };
+}
+
 /** Mock handlers for `/api/jobs`, `/api/jobs/:id`, `/api/jobs/:id/run(s)` and `/api/runs/:id(/events)`. */
 export const scheduledHandlers = [
-  http.get('/api/jobs', () => {
+  http.get(routes.jobs, () => {
     const sorted = [...jobs].sort((a, b) => a.name.localeCompare(b.name));
     return HttpResponse.json({ jobs: sorted.map(toJobSummary) });
   }),
 
-  http.post('/api/jobs', async ({ request }) => {
+  http.post(routes.jobs, async ({ request }) => {
     const parsed = jobUpsertRequest.safeParse(await request.json());
     if (!parsed.success) {
       return badRequest('VALIDATION', parsed.error.message);
@@ -319,12 +371,12 @@ export const scheduledHandlers = [
       return badRequest('INVALID_CRON', 'Cron expression must have 5 fields');
     }
     const now = nowIso();
-    const job: MockJob = { id: nextId('job'), createdAt: now, updatedAt: now, ...parsed.data };
+    const job: MockJob = { id: nextId(), createdAt: now, updatedAt: now, ...parsed.data };
     jobs = [...jobs, job];
     return HttpResponse.json(toJobSummary(job), { status: 201 });
   }),
 
-  http.patch('/api/jobs/:id', async ({ request, params }) => {
+  http.patch(routes.job, async ({ request, params }) => {
     const job = findJob(String(params.id));
     if (job === undefined) {
       return notFound('Job not found');
@@ -352,7 +404,7 @@ export const scheduledHandlers = [
     return HttpResponse.json(toJobSummary(updated));
   }),
 
-  http.delete('/api/jobs/:id', ({ params }) => {
+  http.delete(routes.job, ({ params }) => {
     const job = findJob(String(params.id));
     if (job === undefined) {
       return notFound('Job not found');
@@ -362,7 +414,7 @@ export const scheduledHandlers = [
     return new HttpResponse(null, { status: 204 });
   }),
 
-  http.post('/api/jobs/:id/run', ({ params }) => {
+  http.post(routes.jobRun, ({ params }) => {
     const job = findJob(String(params.id));
     if (job === undefined) {
       return notFound('Job not found');
@@ -371,7 +423,7 @@ export const scheduledHandlers = [
     const now = nowIso();
     if (alreadyRunning) {
       const skipped: MockRun = {
-        id: nextId('run'),
+        id: nextId(),
         jobId: job.id,
         prompt: job.prompt,
         status: 'FAILED',
@@ -393,7 +445,7 @@ export const scheduledHandlers = [
       );
     }
     const started: MockRun = {
-      id: nextId('run'),
+      id: nextId(),
       jobId: job.id,
       prompt: job.prompt,
       status: 'RUNNING',
@@ -412,7 +464,7 @@ export const scheduledHandlers = [
     return HttpResponse.json({ runId: started.id }, { status: 201 });
   }),
 
-  http.get('/api/jobs/:id/runs', ({ params }) => {
+  http.get(routes.jobRuns, ({ params }) => {
     const job = findJob(String(params.id));
     if (job === undefined) {
       return notFound('Job not found');
@@ -420,7 +472,7 @@ export const scheduledHandlers = [
     return HttpResponse.json({ runs: jobRuns(job.id).map(toRunSummary) });
   }),
 
-  http.get('/api/runs/:id', ({ params }) => {
+  http.get(routes.run, ({ params }) => {
     const run = findRun(String(params.id));
     if (run === undefined) {
       return notFound('Run not found');
@@ -428,41 +480,36 @@ export const scheduledHandlers = [
     return HttpResponse.json(toRunDetail(run));
   }),
 
-  http.get('/api/runs/:id/events', ({ params, request }) => {
+  http.get(routes.runEvents, ({ params, request }) => {
     const run = findRun(String(params.id));
     if (run === undefined) {
       return notFound('Run not found');
     }
     const url = new URL(request.url);
     const from = url.searchParams.get('from') ?? undefined;
+    // A run that had already finished replays instantly: its frames are history, not progress.
+    const wasActive =
+      run.status === 'RUNNING' || run.status === 'QUEUED' || run.status === 'PREPARING';
     const frames = scriptedTurnFrames({
       turnId: run.id,
-      prompt: run.prompt,
       scenario: getScenario(),
-    });
-    if (run.status === 'RUNNING' || run.status === 'QUEUED' || run.status === 'PREPARING') {
-      const completed = frames.find((frame) => frame.event === 'turn.completed');
-      const failed = frames.find((frame) => frame.event === 'turn.failed');
-      const finalMessage =
-        completed?.data.type === 'turn.completed' ? completed.data.finalMessage : null;
-      const settled: MockRun = {
-        ...run,
-        status: failed !== undefined ? 'FAILED' : 'SUCCEEDED',
-        error: failed?.data.type === 'turn.failed' ? failed.data.error.message : null,
-        finishedAt: nowIso(),
-        output: finalMessage,
-      };
+      baseMs: Date.parse(run.queuedAt),
+    }).map((frame) => (wasActive ? frame : { ...frame, delayMs: 0 }));
+    const outcome = wasActive ? streamOutcome(frames) : null;
+    if (outcome !== null) {
+      const settled = settleRun(run, outcome);
       runs = runs.map((candidate) => (candidate.id === run.id ? settled : candidate));
     }
     return createSseResponse(frames, from === undefined ? {} : { from });
   }),
 
-  // `POST /api/turns/:id/cancel` is a shared route (`TurnRequest.turnId` is a `Turn.id` or a
-  // `JobRun.id`); the chats lane owns its own mock for the turn case, this one covers job runs.
-  http.post('/api/turns/:id/cancel', ({ params }) => {
+  // `POST /api/turns/:id/cancel` is a shared route: the id is a `Turn.id` or a `JobRun.id`. This
+  // handler answers only the job-run case and returns nothing for anything else, which hands the
+  // request to the next matching handler — the chat mock, which owns the turn case.
+  http.post(routes.turnCancel, ({ params }) => {
     const run = findRun(String(params.id));
     if (run === undefined) {
-      return notFound('Run not found');
+      return undefined;
     }
     if (run.status === 'RUNNING' || run.status === 'PREPARING' || run.status === 'QUEUED') {
       const cancelled: MockRun = { ...run, status: 'CANCELLED', finishedAt: nowIso() };

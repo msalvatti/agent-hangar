@@ -61,6 +61,9 @@ export interface RunRowProps {
  * @param props - The run and its open callback.
  */
 export function RunRow({ run, onOpen }: RunRowProps) {
+  // Relative labels are anchored to a single instant captured when the row mounts: reading the
+  // clock during render would make the output depend on when React happened to re-render.
+  const [now] = useState(() => Date.now());
   const duration = useRunDuration(run);
   const totalTokens = (run.usage.inputTokens ?? 0) + (run.usage.outputTokens ?? 0);
   const hasTokens = run.usage.inputTokens !== null || run.usage.outputTokens !== null;
@@ -77,7 +80,7 @@ export function RunRow({ run, onOpen }: RunRowProps) {
           <TooltipTrigger render={<span />}>
             {new Date(run.queuedAt).toLocaleString()}
           </TooltipTrigger>
-          <TooltipContent>{relativeTime(run.queuedAt)}</TooltipContent>
+          <TooltipContent>{relativeTime(run.queuedAt, now)}</TooltipContent>
         </Tooltip>
       </TableCell>
       <TableCell className="font-mono text-[13px] tabular-nums">{duration}</TableCell>

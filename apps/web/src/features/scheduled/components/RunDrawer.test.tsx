@@ -18,12 +18,9 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { resetScheduledStore } from '@/mocks/scheduled';
 import { server } from '@/mocks/server';
-import { registerMockServer } from '@/mocks/vitest';
 import { createFakeEventSourceFactory } from '@/shared/transcript/testing';
 
 import { RunDrawer } from './RunDrawer';
-
-registerMockServer();
 
 afterEach(() => {
   resetScheduledStore();
@@ -61,7 +58,8 @@ describe('RunDrawer — terminal run', () => {
     render(<RunDrawer runId="run-nightly-success" job={job} open onOpenChange={vi.fn()} />);
     expect(screen.getByText('Nightly tests')).toBeInTheDocument();
     expect(await screen.findByText('Done')).toBeInTheDocument();
-    expect(await screen.findByText('run_shell · succeeded')).toBeInTheDocument();
+    expect(await screen.findByText('run_shell')).toBeInTheDocument();
+    expect(document.querySelector('[data-tool-status="succeeded"]')).not.toBeNull();
   });
 
   /** The sheet content carries the 720 px width class. */
@@ -146,7 +144,8 @@ describe('RunDrawer — active run (live stream)', () => {
       { type: 'tool.call', callId: 'call-1', name: 'run_shell', args: {}, seq: 0 },
       '2',
     );
-    expect(await screen.findByText('run_shell · running')).toBeInTheDocument();
+    expect(await screen.findByText('run_shell')).toBeInTheDocument();
+    expect(document.querySelector('[data-tool-status="running"]')).not.toBeNull();
 
     source.emit(
       'tool.result',
@@ -160,7 +159,9 @@ describe('RunDrawer — active run (live stream)', () => {
       },
       '3',
     );
-    expect(await screen.findByText('run_shell · succeeded')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(document.querySelector('[data-tool-status="succeeded"]')).not.toBeNull();
+    });
 
     source.emit(
       'turn.completed',

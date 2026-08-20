@@ -2,14 +2,15 @@
  * Unit tests for the job form model.
  *
  * Layer: unit.
- * Goal: `emptyJobForm`/`jobToForm` construct the right values, `formToRequest` maps to the
- * contract shape, and `validateJobForm` covers every validation rule plus the schema fallback.
+ * Goal: `emptyJobForm`/`jobToForm` construct the right values, `repoFullName` reduces a picked
+ * repository to the stored field, `formToRequest` maps to the contract shape, and
+ * `validateJobForm` covers every validation rule plus the schema fallback.
  * Mocks: none.
  */
 import type { JobSummary } from '@agent-hangar/core';
 import { describe, expect, it } from 'vitest';
 
-import { emptyJobForm, formToRequest, jobToForm, validateJobForm } from './job-form';
+import { emptyJobForm, formToRequest, jobToForm, repoFullName, validateJobForm } from './job-form';
 import type { JobFormValues } from './job-form';
 
 const job: JobSummary = {
@@ -144,5 +145,26 @@ describe('validateJobForm', () => {
   it('rejects a repo that fails the shared schema after passing field checks', () => {
     const errors = validateJobForm({ ...validForm(), repo: 'not a valid repo' });
     expect(errors.prompt).toBeDefined();
+  });
+});
+
+describe('repoFullName', () => {
+  /** A picked repository is stored as its `owner/name`, which is what the request URL is built
+   * from. */
+  it('reduces a picked repository to its full name', () => {
+    expect(
+      repoFullName({
+        fullName: 'acme/api',
+        url: 'https://github.com/acme/api',
+        defaultBranch: 'main',
+        private: false,
+        description: null,
+      }),
+    ).toBe('acme/api');
+  });
+
+  /** Clearing the choice clears the field, so validation reports the repository as required. */
+  it('maps a cleared choice to null', () => {
+    expect(repoFullName(null)).toBeNull();
   });
 });

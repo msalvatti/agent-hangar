@@ -24,6 +24,6 @@ describe('ScheduleCell', () => {
     const user = userEvent.setup();
     render(<ScheduleCell cron="0 2 * * *" timezone="UTC" />);
     await user.hover(screen.getByText('0 2 * * *'));
-    expect(await screen.findByText('Runs every day at 02:00 (UTC)')).toBeInTheDocument();
+    expect(await screen.findByText('every day at 02:00 UTC')).toBeInTheDocument();
   });
 });

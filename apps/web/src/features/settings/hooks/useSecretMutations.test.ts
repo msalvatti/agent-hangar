@@ -16,11 +16,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { server } from '@/mocks/server';
 import { resetStore } from '@/mocks/store';
-import { registerMockServer } from '@/mocks/vitest';
 
 import { useSecretMutations } from './useSecretMutations';
-
-registerMockServer();
 
 afterEach(() => {
   resetStore();

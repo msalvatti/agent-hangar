@@ -10,12 +10,9 @@
 import { GITHUB_CANARY } from '@agent-hangar/core/testing';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { registerMockServer } from '@/mocks/vitest';
 import { apiFetch } from '@/shared/api/client';
 
 import { resetStore, store } from './store';
-
-registerMockServer();
 
 afterEach(() => {
   resetStore();

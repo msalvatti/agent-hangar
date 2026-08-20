@@ -14,11 +14,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetScheduledStore } from '@/mocks/scheduled';
 import { server } from '@/mocks/server';
-import { registerMockServer } from '@/mocks/vitest';
+import { assertPresent } from '@/shared/transcript';
 
 import { JobDetailView } from './JobDetailView';
-
-registerMockServer();
 
 let currentSearch = '';
 const push = vi.fn();
@@ -105,7 +103,10 @@ describe('JobDetailView', () => {
     server.use(http.get('/api/jobs/:id/runs', () => HttpResponse.json({ runs: [] })));
     const user = userEvent.setup();
     render(<JobDetailView jobId="job-changelog" />);
-    const emptyState = await screen.findByTestId('empty-state');
+    const emptyState = assertPresent(
+      (await screen.findByText('No runs yet.')).parentElement,
+      'empty state container',
+    );
     await user.click(within(emptyState).getByRole('button', { name: 'Run now' }));
   });
 

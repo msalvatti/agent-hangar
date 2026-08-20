@@ -14,13 +14,19 @@ import { scheduledHandlers } from './scheduled';
 import { settingsHandlers } from './settings';
 import { settingsStatusHandlers } from './settings-status';
 
-/** Every mock handler, in the order MSW matches them. */
+/**
+ * Every mock handler, in the order MSW matches them.
+ *
+ * `scheduledHandlers` comes before `chatHandlers` because both answer `POST /api/turns/:id/cancel`
+ * — the route takes a turn id or a job-run id. The scheduled handler returns nothing for an id it
+ * does not know, so an unmatched id falls through to the chat handler behind it.
+ */
 export const handlers = [
   ...repoHandlers,
+  ...scheduledHandlers,
   ...chatHandlers,
   ...healthHandlers,
   ...settingsStatusHandlers,
   ...eventHandlers,
-  ...scheduledHandlers,
   ...settingsHandlers,
 ];

@@ -1,15 +1,14 @@
 /**
  * Live, plain-language preview of a cron expression: valid schedule + next run, or the reason
- * it's invalid.
+ * it cannot be scheduled.
  *
  * Layer: component.
  */
 'use client';
 
 import { Clock, TriangleAlert } from 'lucide-react';
-import { useMemo } from 'react';
 
-import { describeCron, nextRunAt, validateCron } from '../lib/cron';
+import { describeCron, nextRunAt } from '../lib/cron';
 import { formatNextRun } from '../lib/timezones';
 
 /** Props of {@link CronPreview}. */
@@ -19,14 +18,16 @@ export interface CronPreviewProps {
 }
 
 /**
- * Renders the live preview of a cron field: description + next run when valid, the validation
- * reason when not, or a hint when empty.
+ * Renders the live preview of a cron field: description + next run when the schedule is usable,
+ * the reason it is not when it isn't, or a hint while the field is still empty.
+ *
+ * A schedule with no next run is exactly a schedule the description could not be built for
+ * either — a malformed expression or a timezone the runtime does not know — so both states are
+ * driven by the same pair of calls rather than by a separate validation pass.
  *
  * @param props - The (debounced) cron expression and its timezone.
  */
 export function CronPreview({ cron, timezone }: CronPreviewProps) {
-  const validation = useMemo(() => validateCron(cron), [cron]);
-
   if (cron.trim().length === 0) {
     return (
       <p aria-live="polite" className="text-muted-foreground text-[13px]">
@@ -35,20 +36,20 @@ export function CronPreview({ cron, timezone }: CronPreviewProps) {
     );
   }
 
-  if (!validation.ok) {
+  const description = describeCron(cron, timezone);
+  const next = nextRunAt({ cron, timezone });
+
+  if (next === null) {
     return (
       <p
         aria-live="polite"
         className="text-destructive inline-flex items-center gap-1.5 text-[13px]"
       >
         <TriangleAlert className="size-3.5" aria-hidden="true" />
-        Invalid cron expression: {validation.reason}
+        {description}
       </p>
     );
   }
-
-  const next = nextRunAt({ cron, timezone });
-  const nextLabel = next === null ? '' : ` (next: ${formatNextRun(next, timezone)})`;
 
   return (
     <p
@@ -56,8 +57,7 @@ export function CronPreview({ cron, timezone }: CronPreviewProps) {
       className="text-muted-foreground inline-flex items-center gap-1.5 text-[13px]"
     >
       <Clock className="size-3.5" aria-hidden="true" />
-      {describeCron(cron, timezone)}
-      {nextLabel}
+      Runs {description} (next: {formatNextRun(next, timezone)})
     </p>
   );
 }

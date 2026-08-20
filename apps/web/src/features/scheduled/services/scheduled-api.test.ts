@@ -9,7 +9,6 @@
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { resetScheduledStore } from '@/mocks/scheduled';
-import { registerMockServer } from '@/mocks/vitest';
 
 import {
   cancelRun,
@@ -21,8 +20,6 @@ import {
   runJob,
   updateJob,
 } from './scheduled-api';
-
-registerMockServer();
 
 afterEach(() => {
   resetScheduledStore();

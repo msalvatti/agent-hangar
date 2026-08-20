@@ -14,11 +14,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { resetScheduledStore } from '@/mocks/scheduled';
 import { server } from '@/mocks/server';
-import { registerMockServer } from '@/mocks/vitest';
 
 import { useJobActions } from './useJobActions';
-
-registerMockServer();
 
 afterEach(() => {
   resetScheduledStore();

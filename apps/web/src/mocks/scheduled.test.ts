@@ -16,12 +16,9 @@ import {
 } from '@agent-hangar/core';
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { registerMockServer } from '@/mocks/vitest';
 import { apiFetch, ApiClientError } from '@/shared/api/client';
 
 import { resetScheduledStore } from './scheduled';
-
-registerMockServer();
 
 afterEach(() => {
   resetScheduledStore();
