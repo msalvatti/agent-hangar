@@ -35,10 +35,19 @@ export type JobName = (typeof JOB_NAMES)[keyof typeof JOB_NAMES];
 /** `chat-turns` / `run-turn` payload; the BullMQ `jobId` equals `turnId` for idempotency. */
 export const runTurnPayload = z.object({ turnId: z.string().min(1) });
 
-/** `scheduled-jobs` / `run-scheduled-job` payload. */
+/**
+ * `scheduled-jobs` / `run-scheduled-job` payload.
+ *
+ * `runId` is present only on a manual run: `POST /api/jobs/:id/run` answers with the id of the
+ * `JobRun` it created, because the client opens the run's event stream on that id straight away.
+ * A scheduled tick carries no run id — the worker creates the row when the tick fires — so the
+ * field is optional, and its presence is what tells the consumer to adopt an existing row instead
+ * of inserting one.
+ */
 export const runScheduledJobPayload = z.object({
   jobId: z.string().min(1),
   trigger: z.enum(['SCHEDULE', 'MANUAL']),
+  runId: z.string().min(1).optional(),
 });
 
 /** `workspace-gc` / `reap-idle` payload (none). */

@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W2-A (one agent; runs in parallel with W2-B 🐳 and W2-C) |
 | **Status** | 🟦 running |
-| **Progress** | 2/6 tasks |
+| **Progress** | 3/6 tasks |
 | **Branch** | `feat/w2a-web-api-sse` |
 | **Owned paths** | `apps/web/app/api/**`, `apps/web/src/server/**` · plus, by explicit exception: `apps/web/vitest.config.ts` (`coverage.include` + test `include` globs only), `apps/web/package.json` (`scripts.test:integration` only), and **additive** lines in `packages/core/src/queues/contracts.ts`, `packages/core/src/api/contracts.ts`, `packages/core/src/config/schema.ts` (listed in Task 2A.1; every such addition is reported under `contractChangeRequests`) |
 | **Depends on** | W0, W1-A (secrets/redaction/logging), W1-E (persistence repositories), W1-F (scheduling, queues) — all merged to `main` |
@@ -49,7 +49,7 @@ Two decisions are taken here and must be stated in the PR description:
 |---|---|---|---|---|---|
 | 2A.1 | Server DI container, HTTP helpers, test container, GitHub client, additive core contracts | ✅ | P0 | M | — |
 | 2A.2 | Chats, messages, archive/restore, delete, turn cancel routes | ✅ | P0 | M | 2A.1 |
-| 2A.3 | Jobs CRUD + manual run, runs list/detail, repos + branches routes | 📋 | P0 | M | 2A.1 |
+| 2A.3 | Jobs CRUD + manual run, runs list/detail, repos + branches routes | ✅ | P0 | M | 2A.1 |
 | 2A.4 | Settings (status/set/remove, no request logging) and health routes | 📋 | P0 | S | 2A.1 |
 | 2A.5 | SSE: stream factory, `chats/[id]/events`, `runs/[id]/events`, `@redis` integration | 📋 | P0 | L | 2A.1, 2A.2 |
 | 2A.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 2A.1–2A.5 |
@@ -275,17 +275,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 
 ## Task 2A.3 — Jobs CRUD + manual run, runs list/detail, repos + branches routes
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** M · **Depends on:** 2A.1
+**Status:** ✅ Done · **Priority:** P0 · **Size:** M · **Depends on:** 2A.1
 
 **Description.** Implement the scheduled-jobs API (create/list/get/patch/delete with BullMQ Job Scheduler upsert/remove, manual run enqueue), run history and detail, and the GitHub repo/branch picker routes.
 
 **Acceptance criteria**
-- [ ] `POST /api/jobs` validates `jobUpsertRequest`, `validateCron(cron, timezone)` (400 `INVALID_CRON` on failure), computes `nextRunAt`, creates the row, upserts the scheduler when `enabled`, returns 201 `jobSummary`
-- [ ] `GET /api/jobs` → `jobSummary[]` (createdAt desc); `GET /api/jobs/:id` → `jobSummary` or 404; `PATCH /api/jobs/:id` partial update with re-validation and scheduler upsert/remove according to `enabled`; `DELETE /api/jobs/:id` → remove scheduler + cascade delete → 204
-- [ ] `POST /api/jobs/:id/run` → 404 / 409 `SECRETS_MISSING` guards; enqueues `scheduled-jobs`/`run-scheduled-job` `{ jobId, trigger: 'MANUAL' }` → 202 `runJobResponse`
-- [ ] `GET /api/jobs/:id/runs?limit=` → `runSummary[]` newest first (default 50, max 200); `GET /api/runs/:id` → `runDetail` with tool calls or 404
-- [ ] `GET /api/repos?query=` → `repoSummary[]`; `GET /api/repos/branches?repo=` → `branchSummary[]`; 409 `SECRETS_MISSING`, 401 `GITHUB_AUTH`, 502 `GITHUB_ERROR`, 400 on bad `repo`
-- [ ] 100 % coverage on `src/server/handlers/{jobs,runs,repos}.ts` and route files
+- [x] `POST /api/jobs` validates `jobUpsertRequest`, `validateCron(cron, timezone)` (400 `INVALID_CRON` on failure), computes `nextRunAt`, creates the row, upserts the scheduler when `enabled`, returns 201 `jobSummary`
+- [x] `GET /api/jobs` → `jobSummary[]` (createdAt desc); `GET /api/jobs/:id` → `jobSummary` or 404; `PATCH /api/jobs/:id` partial update with re-validation and scheduler upsert/remove according to `enabled`; `DELETE /api/jobs/:id` → remove scheduler + cascade delete → 204
+- [x] `POST /api/jobs/:id/run` → 404 / 409 `SECRETS_MISSING` guards; enqueues `scheduled-jobs`/`run-scheduled-job` `{ jobId, trigger: 'MANUAL' }` → 202 `runJobResponse`
+- [x] `GET /api/jobs/:id/runs?limit=` → `runSummary[]` newest first (default 50, max 200); `GET /api/runs/:id` → `runDetail` with tool calls or 404
+- [x] `GET /api/repos?query=` → `repoSummary[]`; `GET /api/repos/branches?repo=` → `branchSummary[]`; 409 `SECRETS_MISSING`, 401 `GITHUB_AUTH`, 502 `GITHUB_ERROR`, 400 on bad `repo`
+- [x] 100 % coverage on `src/server/handlers/{jobs,runs,repos}.ts` and route files
 
 **Files to create**
 `apps/web/src/server/handlers/{jobs,runs,repos}.ts` + tests; `mappers.ts` extended (`toJobSummary`, `toRunSummary`, `toRunDetail`); `apps/web/app/api/jobs/route.ts`, `app/api/jobs/[id]/route.ts`, `app/api/jobs/[id]/run/route.ts`, `app/api/jobs/[id]/runs/route.ts`, `app/api/runs/[id]/route.ts`, `app/api/repos/route.ts`, `app/api/repos/branches/route.ts`; `app/api/routes.test.ts` extended.
@@ -606,5 +606,6 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 
+- 2A.3 ✅ 2026-08-19 — scheduled-job CRUD with scheduler sync, manual run, run history and detail, and the GitHub repository and branch pickers
 - 2A.2 ✅ 2026-08-19 — chat, message, rename, archive, restore, delete and turn-cancel routes over the in-memory repositories and the BullMQ double
 - 2A.1 ✅ 2026-08-19 — server container, HTTP helpers, same-origin guard, GitHub client, test doubles and the additive core contracts

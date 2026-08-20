@@ -251,6 +251,23 @@ describe('listChats', () => {
   });
 
   /**
+   * A chat that has no turn yet — the worker deleted its only one, or a row was seeded directly —
+   * reports no activity rather than failing to serialise.
+   */
+  it('reports no last turn status for a chat with no turns', async () => {
+    const harness = createTestContainer();
+    await harness.doubles.repos.chats.create({
+      title: 'Seeded',
+      repoUrl: REPO_URL,
+      baseBranch: 'main',
+    });
+    const body = listChatsResponse.parse(
+      await (await listChats(harness.container, read('/api/chats'))).json(),
+    );
+    expect(body.chats[0]?.lastTurnStatus).toBeNull();
+  });
+
+  /**
    * A status the contract does not know is refused rather than ignored: silently returning every
    * chat would look like a bug in the sidebar.
    */

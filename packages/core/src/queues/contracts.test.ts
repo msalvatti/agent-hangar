@@ -59,6 +59,14 @@ describe('payload schemas', () => {
       trigger: 'MANUAL',
     });
     expect(runScheduledJobPayload.safeParse({ jobId: 'j1', trigger: 'CRON' }).success).toBe(false);
+    expect(runScheduledJobPayload.parse({ jobId: 'j1', trigger: 'MANUAL', runId: 'r1' })).toEqual({
+      jobId: 'j1',
+      trigger: 'MANUAL',
+      runId: 'r1',
+    });
+    expect(
+      runScheduledJobPayload.safeParse({ jobId: 'j1', trigger: 'MANUAL', runId: '' }).success,
+    ).toBe(false);
 
     expect(reapIdlePayload.parse({})).toEqual({});
 

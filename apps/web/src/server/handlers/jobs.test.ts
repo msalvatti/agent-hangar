@@ -1,0 +1,402 @@
+/** @vitest-environment node */
+/**
+ * Unit tests for the scheduled-job routes.
+ *
+ * Layer: unit.
+ * Goal: the row and the BullMQ Job Scheduler always agree, the next fire time is the one core
+ * computes, and a manual run creates the row the client will stream from.
+ * Mocks: the `bullmq` module; the clock is pinned so `nextRunAt` is deterministic.
+ */
+import {
+  JOB_NAMES,
+  jobSummary,
+  listJobsResponse,
+  nextRunAt,
+  triggerRunResponse,
+} from '@agent-hangar/core';
+import { describe, expect, it, vi } from 'vitest';
+
+import { createTestContainer } from '../testing/test-container';
+import type { TestContainer } from '../testing/test-container';
+
+import { createJob, deleteJob, getJob, listJobs, triggerRun, updateJob } from './jobs';
+
+vi.mock('bullmq', () => import('../testing/fake-queue'));
+
+/** Instant every container in this file starts from. */
+const NOW = new Date('2026-08-19T10:00:00.000Z');
+
+/** A repository URL the contracts accept. */
+const REPO_URL = 'https://github.com/acme/widgets';
+
+/** A valid job definition. */
+const JOB_BODY = {
+  name: 'Nightly triage',
+  cron: '0 3 * * *',
+  timezone: 'Europe/Lisbon',
+  prompt: 'Triage new issues',
+  repoUrl: REPO_URL,
+  branch: 'main',
+  enabled: true,
+};
+
+/**
+ * Builds a same-origin state-changing request.
+ *
+ * @param path - Path below the API root.
+ * @param method - HTTP method.
+ * @param body - JSON body, when the route takes one.
+ * @returns The request.
+ */
+function write(path: string, method: string, body?: unknown): Request {
+  return new Request(`http://127.0.0.1:3000${path}`, {
+    method,
+    headers: {
+      host: '127.0.0.1:3000',
+      origin: 'http://127.0.0.1:3000',
+      'content-type': 'application/json',
+    },
+    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+  });
+}
+
+/**
+ * Creates a job through the route.
+ *
+ * @param harness - The test container.
+ * @param body - Overrides of the default definition.
+ * @returns The created job summary.
+ */
+async function seedJob(
+  harness: TestContainer,
+  body: Partial<typeof JOB_BODY> = {},
+): Promise<ReturnType<typeof jobSummary.parse>> {
+  const response = await createJob(
+    harness.container,
+    write('/api/jobs', 'POST', { ...JOB_BODY, ...body }),
+  );
+  expect(response.status).toBe(201);
+  return jobSummary.parse(await response.json());
+}
+
+describe('createJob', () => {
+  /**
+   * The happy path writes the row, registers the scheduler under the job's own id and reports the
+   * next fire time core computed — the same value the worker will reconcile against.
+   */
+  it('creates the job and registers its scheduler', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+
+    expect(job).toMatchObject({ name: 'Nightly triage', enabled: true, lastRunStatus: null });
+    expect(job.nextRunAt).toBe(
+      nextRunAt({ cron: JOB_BODY.cron, timezone: JOB_BODY.timezone }, NOW).toISOString(),
+    );
+    expect(harness.doubles.queues.scheduledJobs.schedulers.get(job.id)).toMatchObject({
+      pattern: JOB_BODY.cron,
+      tz: JOB_BODY.timezone,
+      template: { name: JOB_NAMES.runScheduledJob },
+    });
+  });
+
+  /**
+   * A disabled job is a definition without a schedule: no scheduler is registered and there is no
+   * next fire time to show.
+   */
+  it('registers no scheduler for a disabled job', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness, { enabled: false });
+    expect(job.nextRunAt).toBeNull();
+    expect(harness.doubles.queues.scheduledJobs.schedulers.size).toBe(0);
+  });
+
+  /**
+   * Cron and timezone are validated by core before anything is written, so an expression that
+   * would never fire is refused at the boundary rather than discovered at the first tick.
+   */
+  it('rejects an invalid cron expression and an unknown timezone', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const badCron = await createJob(
+      harness.container,
+      write('/api/jobs', 'POST', { ...JOB_BODY, cron: '61 * * * *' }),
+    );
+    expect(badCron.status).toBe(400);
+    expect(await badCron.json()).toMatchObject({ error: { code: 'INVALID_CRON' } });
+
+    const badZone = await createJob(
+      harness.container,
+      write('/api/jobs', 'POST', { ...JOB_BODY, timezone: 'Mars/Olympus' }),
+    );
+    expect(badZone.status).toBe(400);
+    expect(await harness.doubles.repos.scheduledJobs.list()).toHaveLength(0);
+  });
+
+  /**
+   * A repository the operator did not allow is refused, and a foreign origin never reaches the
+   * body at all.
+   */
+  it('rejects a disallowed repository and a cross-origin request', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const badRepo = await createJob(
+      harness.container,
+      write('/api/jobs', 'POST', { ...JOB_BODY, repoUrl: 'https://github.com/a/b/c' }),
+    );
+    expect(badRepo.status).toBe(400);
+
+    const foreign = new Request('http://127.0.0.1:3000/api/jobs', {
+      method: 'POST',
+      headers: {
+        host: '127.0.0.1:3000',
+        origin: 'http://evil.example',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify(JOB_BODY),
+    });
+    expect((await createJob(harness.container, foreign)).status).toBe(403);
+    expect(await harness.doubles.repos.scheduledJobs.list()).toHaveLength(0);
+  });
+
+  /**
+   * If the scheduler cannot be registered the row is removed again: a job that looks enabled but
+   * never fires is the failure mode this rollback exists to prevent.
+   */
+  it('removes the row when the scheduler cannot be registered', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const queue = harness.doubles.queues.scheduledJobs;
+    vi.spyOn(queue, 'upsertJobScheduler').mockRejectedValue(new Error('redis unreachable'));
+    const response = await createJob(harness.container, write('/api/jobs', 'POST', JOB_BODY));
+    expect(response.status).toBe(500);
+    expect(await harness.doubles.repos.scheduledJobs.list()).toHaveLength(0);
+  });
+});
+
+describe('listJobs and getJob', () => {
+  /**
+   * The list carries the status of each job's most recent run, which is the column the table
+   * renders next to the schedule.
+   */
+  it('lists jobs with their last run status', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    await harness.doubles.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'SCHEDULE',
+      model: 'gpt-test',
+      scheduledFor: NOW,
+    });
+    const body = listJobsResponse.parse(await (await listJobs(harness.container)).json());
+    expect(body.jobs).toHaveLength(1);
+    expect(body.jobs[0]?.lastRunStatus).toBe('QUEUED');
+  });
+
+  /**
+   * Reading one job is its own route because the edit form loads a single row; an unknown id is a
+   * missing resource.
+   */
+  it('reads one job and reports an unknown id as missing', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    const found = await getJob(harness.container, write('/api/jobs', 'GET'), { id: job.id });
+    expect(jobSummary.parse(await found.json()).id).toBe(job.id);
+    const missing = await getJob(harness.container, write('/api/jobs', 'GET'), { id: 'nope' });
+    expect(missing.status).toBe(404);
+  });
+});
+
+describe('updateJob', () => {
+  /**
+   * Changing the cron re-registers the scheduler under the same key and moves the next fire time,
+   * which is what makes editing idempotent rather than additive.
+   */
+  it('re-registers the scheduler when the schedule changes', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    const response = await updateJob(
+      harness.container,
+      write(`/api/jobs/${job.id}`, 'PATCH', { cron: '30 4 * * *' }),
+      { id: job.id },
+    );
+    const updated = jobSummary.parse(await response.json());
+    expect(updated.cron).toBe('30 4 * * *');
+    expect(updated.nextRunAt).toBe(
+      nextRunAt({ cron: '30 4 * * *', timezone: JOB_BODY.timezone }, NOW).toISOString(),
+    );
+    expect(harness.doubles.queues.scheduledJobs.schedulers.get(job.id)?.pattern).toBe('30 4 * * *');
+  });
+
+  /**
+   * A field the patch omits keeps its stored value; spreading an absent optional would otherwise
+   * blank the prompt the user spent time on.
+   */
+  it('leaves omitted fields untouched', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    const response = await updateJob(
+      harness.container,
+      write(`/api/jobs/${job.id}`, 'PATCH', { name: 'Renamed' }),
+      { id: job.id },
+    );
+    const updated = jobSummary.parse(await response.json());
+    expect(updated).toMatchObject({
+      name: 'Renamed',
+      prompt: JOB_BODY.prompt,
+      cron: JOB_BODY.cron,
+    });
+  });
+
+  /**
+   * Disabling stops the schedule at both ends — the row and Redis — and enabling puts it back.
+   */
+  it('removes the scheduler on disable and restores it on enable', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    const disabled = jobSummary.parse(
+      await (
+        await updateJob(
+          harness.container,
+          write(`/api/jobs/${job.id}`, 'PATCH', { enabled: false }),
+          {
+            id: job.id,
+          },
+        )
+      ).json(),
+    );
+    expect(disabled.nextRunAt).toBeNull();
+    expect(harness.doubles.queues.scheduledJobs.schedulers.size).toBe(0);
+
+    await updateJob(harness.container, write(`/api/jobs/${job.id}`, 'PATCH', { enabled: true }), {
+      id: job.id,
+    });
+    expect(harness.doubles.queues.scheduledJobs.schedulers.has(job.id)).toBe(true);
+  });
+
+  /**
+   * The same validation applies to an edit as to a create: an invalid cron never reaches the row,
+   * and an unknown job is missing.
+   */
+  it('validates the edited schedule and reports an unknown job', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    const bad = await updateJob(
+      harness.container,
+      write(`/api/jobs/${job.id}`, 'PATCH', { cron: 'not a cron' }),
+      { id: job.id },
+    );
+    expect(bad.status).toBe(400);
+    const missing = await updateJob(harness.container, write('/api/jobs/nope', 'PATCH', {}), {
+      id: 'nope',
+    });
+    expect(missing.status).toBe(404);
+  });
+
+  /**
+   * Editing the repository re-checks the host allow-list, so a job cannot be moved to a forge the
+   * operator refused.
+   */
+  it('rejects an edit that moves the job to a disallowed repository', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    const response = await updateJob(
+      harness.container,
+      write(`/api/jobs/${job.id}`, 'PATCH', { repoUrl: 'https://evil.example/a/b' }),
+      { id: job.id },
+    );
+    expect(response.status).toBe(400);
+  });
+});
+
+describe('deleteJob', () => {
+  /**
+   * Deleting removes the scheduler before the row, so a tick that fires in between cannot deliver
+   * a job whose definition is already gone; the runs go with it by cascade.
+   */
+  it('removes the scheduler and the job with its runs', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    await harness.doubles.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'SCHEDULE',
+      model: 'gpt-test',
+      scheduledFor: NOW,
+    });
+    const response = await deleteJob(harness.container, write('/api/jobs', 'DELETE'), {
+      id: job.id,
+    });
+    expect(response.status).toBe(204);
+    expect(await response.text()).toBe('');
+    expect(harness.doubles.queues.scheduledJobs.schedulers.size).toBe(0);
+    expect(await harness.doubles.repos.scheduledJobs.get(job.id)).toBeNull();
+    expect(await harness.doubles.repos.jobRuns.listByJob(job.id)).toEqual([]);
+  });
+
+  /**
+   * An unknown job is missing rather than a silent success, so a double delete is visible.
+   */
+  it('reports an unknown job as missing', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const response = await deleteJob(harness.container, write('/api/jobs', 'DELETE'), {
+      id: 'nope',
+    });
+    expect(response.status).toBe(404);
+  });
+});
+
+describe('triggerRun', () => {
+  /**
+   * A manual run creates the row the client immediately streams from, and passes its id on the
+   * payload so the worker adopts it instead of inserting a second run.
+   */
+  it('creates the run row and enqueues it with the run id', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    const response = await triggerRun(harness.container, write('/api/jobs/x/run', 'POST'), {
+      id: job.id,
+    });
+    expect(response.status).toBe(202);
+    const { runId } = triggerRunResponse.parse(await response.json());
+    expect(await harness.doubles.repos.jobRuns.get(runId)).toMatchObject({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      status: 'QUEUED',
+    });
+    const [enqueued] = harness.doubles.queues.scheduledJobs.added;
+    expect(enqueued?.name).toBe(JOB_NAMES.runScheduledJob);
+    expect(enqueued?.data).toEqual({ jobId: job.id, trigger: 'MANUAL', runId });
+    expect(typeof enqueued?.opts?.removeOnComplete).toBe('number');
+  });
+
+  /**
+   * A run cannot start without both credentials, and an unknown job cannot run at all.
+   */
+  it('refuses to run without credentials or for an unknown job', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    await harness.doubles.secrets.remove('GITHUB_PAT');
+    const noSecrets = await triggerRun(harness.container, write('/api/jobs/x/run', 'POST'), {
+      id: job.id,
+    });
+    expect(noSecrets.status).toBe(409);
+    expect(await noSecrets.json()).toMatchObject({ error: { code: 'SECRETS_MISSING' } });
+
+    const missing = await triggerRun(harness.container, write('/api/jobs/x/run', 'POST'), {
+      id: 'nope',
+    });
+    expect(missing.status).toBe(404);
+  });
+
+  /**
+   * A run the queue refused is closed as `FAILED` rather than left `QUEUED`, so the history shows
+   * what happened instead of a run that never moves.
+   */
+  it('fails the run when the queue rejects the job', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    harness.doubles.queues.scheduledJobs.addFailure = new Error('redis unreachable');
+    const response = await triggerRun(harness.container, write('/api/jobs/x/run', 'POST'), {
+      id: job.id,
+    });
+    expect(response.status).toBe(500);
+    const [run] = await harness.doubles.repos.jobRuns.listByJob(job.id);
+    expect(run).toMatchObject({ status: 'FAILED', error: 'Could not enqueue the run' });
+  });
+});

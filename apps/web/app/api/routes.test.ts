@@ -103,6 +103,58 @@ describe('chat routes', () => {
   });
 });
 
+describe('job and run routes', () => {
+  /**
+   * The job collection serves the table and the create form.
+   */
+  it('wires GET and POST on the job collection', async () => {
+    const route = await import('./jobs/route');
+    expect(route.dynamic).toBe('force-dynamic');
+    expect((await route.GET()).status).toBe(200);
+    expect((await route.POST(request(routes.jobs, 'POST', {}))).status).toBe(400);
+  });
+
+  /**
+   * The job item route hosts all three methods and resolves the `params` promise for each.
+   */
+  it('wires GET, PATCH and DELETE on the job item', async () => {
+    const route = await import('./jobs/[id]/route');
+    const ctx = context({ id: 'missing' });
+    expect((await route.GET(request('/api/jobs/missing'), ctx)).status).toBe(404);
+    expect((await route.PATCH(request('/api/jobs/missing', 'PATCH', {}), ctx)).status).toBe(404);
+    expect((await route.DELETE(request('/api/jobs/missing', 'DELETE'), ctx)).status).toBe(404);
+  });
+
+  /**
+   * The manual-run action and the two read routes each reach their own handler.
+   */
+  it('wires the manual run, the run history and the run detail', async () => {
+    const ctx = context({ id: 'missing' });
+    const run = await import('./jobs/[id]/run/route');
+    expect((await run.POST(request('/api/jobs/missing/run', 'POST'), ctx)).status).toBe(404);
+
+    const history = await import('./jobs/[id]/runs/route');
+    expect((await history.GET(request('/api/jobs/missing/runs'), ctx)).status).toBe(404);
+
+    const detail = await import('./runs/[id]/route');
+    expect((await detail.GET(request('/api/runs/missing'), ctx)).status).toBe(404);
+  });
+});
+
+describe('repository routes', () => {
+  /**
+   * Both picker routes are reads that reach the GitHub client through the container.
+   */
+  it('wires the repository and branch pickers', async () => {
+    const repos = await import('./repos/route');
+    expect(repos.dynamic).toBe('force-dynamic');
+    expect((await repos.GET(request(routes.repos))).status).toBe(200);
+
+    const branches = await import('./repos/branches/route');
+    expect((await branches.GET(request(routes.repoBranches))).status).toBe(400);
+  });
+});
+
 describe('turn routes', () => {
   /**
    * Cancel is the one route under `/api/turns`, and it reaches the handler that decides between
