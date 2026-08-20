@@ -14,7 +14,8 @@
  * The guarantee stops where both stores fail at once. If the compensating write also fails, the
  * halves are left disagreeing; the request still fails, and the mismatch is logged with the job id
  * because there is nowhere left to record it. Editing that job again rewrites both halves.
- * Scheduler keys are `ScheduledJob.id`, which is what makes the upsert idempotent per job.
+ * Scheduler keys are `ScheduledJob.id`, which is what makes the upsert idempotent per job. The undo
+ * step itself is `./compensate.ts`'s `compensate`, shared with `handlers/chats.ts`.
  */
 import {
   jobPatchRequest,
@@ -34,11 +35,12 @@ import {
 import type { CreateScheduledJobInput, JobRun, ScheduledJob } from '@agent-hangar/core';
 
 import type { ServerContainer } from '../container';
-import { failureName, ResourceNotFoundError } from '../errors';
+import { ResourceNotFoundError } from '../errors';
 import { jsonResponse, noContent, parseJsonBody, withErrorHandling } from '../http';
 import { allowedRepoHosts, assertRepoUrlAllowed } from '../repo-url';
 import { assertSameOrigin } from '../same-origin';
 
+import { compensate } from './compensate';
 import { NO_USAGE, requireSecrets } from './guards';
 import { toJobSummary } from './mappers';
 
@@ -136,32 +138,6 @@ async function syncScheduler(container: ServerContainer, job: ScheduledJob): Pro
 }
 
 /**
- * Runs the write that undoes a row the scheduler refused to follow.
- *
- * A compensating write is the last chance the two halves have to agree, so its own failure is
- * reported rather than raised: replacing the scheduler failure with it would hide why the request
- * failed, and there is no further step to attempt.
- *
- * @param container - The server container.
- * @param jobId - Job whose row is being put back.
- * @param undo - The write that restores the previous state.
- */
-async function compensate(
-  container: ServerContainer,
-  jobId: string,
-  undo: () => Promise<unknown>,
-): Promise<void> {
-  try {
-    await undo();
-  } catch (error) {
-    container.logger.error(
-      { failure: failureName(error), jobId },
-      'could not undo a partial scheduled-job write',
-    );
-  }
-}
-
-/**
  * Restores every editable field of a job to the values it held before an edit.
  *
  * @param container - The server container.
@@ -169,17 +145,21 @@ async function compensate(
  * @returns Resolves once the row is back, or once the failure to put it back has been reported.
  */
 function restoreJob(container: ServerContainer, job: ScheduledJob): Promise<void> {
-  return compensate(container, job.id, () =>
-    container.repos.scheduledJobs.update(job.id, {
-      name: job.name,
-      cron: job.cron,
-      timezone: job.timezone,
-      prompt: job.prompt,
-      repoUrl: job.repoUrl,
-      branch: job.branch,
-      enabled: job.enabled,
-      nextRunAt: job.nextRunAt,
-    }),
+  return compensate(
+    container,
+    { jobId: job.id },
+    'could not undo a partial scheduled-job write',
+    () =>
+      container.repos.scheduledJobs.update(job.id, {
+        name: job.name,
+        cron: job.cron,
+        timezone: job.timezone,
+        prompt: job.prompt,
+        repoUrl: job.repoUrl,
+        branch: job.branch,
+        enabled: job.enabled,
+        nextRunAt: job.nextRunAt,
+      }),
   );
 }
 
@@ -205,7 +185,12 @@ export function createJob(container: ServerContainer, request: Request): Promise
     } catch (error) {
       // A job whose scheduler was never registered would sit in the table looking enabled and
       // never fire, which is worse than a failed request the user can retry.
-      await compensate(container, job.id, () => container.repos.scheduledJobs.delete(job.id));
+      await compensate(
+        container,
+        { jobId: job.id },
+        'could not undo a partial scheduled-job write',
+        () => container.repos.scheduledJobs.delete(job.id),
+      );
       throw error;
     }
     return jobResponse(container, job, 201);
@@ -318,7 +303,12 @@ export function deleteJob(
     } catch (error) {
       // The row survived the delete, so it still describes a job that is meant to fire; putting
       // its scheduler back is what keeps the two halves saying the same thing.
-      await compensate(container, job.id, () => syncScheduler(container, job));
+      await compensate(
+        container,
+        { jobId: job.id },
+        'could not undo a partial scheduled-job write',
+        () => syncScheduler(container, job),
+      );
       throw error;
     }
     return noContent();
@@ -363,12 +353,16 @@ export function triggerRun(
         RETENTION,
       );
     } catch (error) {
-      await compensate(container, job.id, () =>
-        container.repos.jobRuns.finish(run.id, {
-          status: 'FAILED',
-          usage: NO_USAGE,
-          error: 'Could not enqueue the run',
-        }),
+      await compensate(
+        container,
+        { jobId: job.id },
+        'could not undo a partial scheduled-job write',
+        () =>
+          container.repos.jobRuns.finish(run.id, {
+            status: 'FAILED',
+            usage: NO_USAGE,
+            error: 'Could not enqueue the run',
+          }),
       );
       throw error;
     }

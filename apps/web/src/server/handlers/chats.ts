@@ -7,6 +7,20 @@
  * it runs under Vitest without Next.js. Rows are always written before anything is enqueued: a job
  * that arrives at the worker before its row exists has nothing to work on, while a row without a
  * job is visible and recoverable.
+ *
+ * Archiving and restoring each write the chat's status before a second operation that can fail —
+ * enqueuing the teardown job, appending the restoration notice — and each is a status the guards
+ * above only accept from one side (`ACTIVE` to archive, `ARCHIVED` to restore), so a row left in
+ * the new status has no request that can ever retry the failed half. Both undo that status write
+ * on failure through `compensate` (`./compensate.ts`, shared with `handlers/jobs.ts`), the same
+ * helper and the same shape as the job routes: the row goes back to the status it held before the
+ * request, and the failed enqueue or append is what the request still fails with. A restore's undo
+ * sets `archivedAt` to the moment of the undo, not the instant the chat was originally archived —
+ * `Chat.setStatus` has no way to pin an exact timestamp — so the row returns to `ARCHIVED` but not
+ * byte-for-byte to what it was. The guarantee stops where the undo itself fails: the two halves are
+ * left disagreeing, the request still fails with the original error, and the mismatch is only
+ * recorded in the log line `compensate` writes, naming the chat. Nothing here repairs that; an
+ * operator, or a later request against the same chat that rewrites the status again, is what would.
  */
 import {
   chatSummary,
@@ -37,6 +51,7 @@ import {
 import { allowedRepoHosts, assertRepoUrlAllowed } from '../repo-url';
 import { assertSameOrigin } from '../same-origin';
 
+import { compensate } from './compensate';
 import { NO_USAGE, requireNoLiveTurn, requireSecrets } from './guards';
 import { lastTurnStatus, toChatDetail, toChatSummary } from './mappers';
 
@@ -248,7 +263,10 @@ export function postMessage(
  * `POST /api/chats/:id/archive` — archives the chat and asks the worker to tear its workspace down.
  *
  * The teardown job is enqueued unconditionally: the worker owns the decision of whether a
- * container exists, and it snapshots the repository before destroying it.
+ * container exists, and it snapshots the repository before destroying it. If the enqueue fails,
+ * the status write is undone: `ARCHIVED` is the only status this route will act on again, so a row
+ * left in it after a failed enqueue would have no request left that could ever ask for the
+ * teardown.
  *
  * @param container - The server container.
  * @param request - The incoming request.
@@ -268,7 +286,17 @@ export function archiveChat(
     }
     await requireNoLiveTurn(container, chat.id);
     const archived = await container.repos.chats.setStatus(chat.id, 'ARCHIVED');
-    await enqueueDestroyChatWorkspace(container.queues.workspaceGc, { chatId: chat.id });
+    try {
+      await enqueueDestroyChatWorkspace(container.queues.workspaceGc, { chatId: chat.id });
+    } catch (error) {
+      await compensate(
+        container,
+        { chatId: chat.id },
+        'could not undo a partial chat archive',
+        () => container.repos.chats.setStatus(chat.id, 'ACTIVE'),
+      );
+      throw error;
+    }
     const turns = await container.repos.turns.listByChat(chat.id);
     return jsonResponse(chatSummary, toChatSummary(archived, lastTurnStatus(turns)));
   });
@@ -278,7 +306,9 @@ export function archiveChat(
  * `POST /api/chats/:id/restore` — reactivates the chat and records what the model lost.
  *
  * `?warm=1` is accepted and ignored: v1 has no warm-up job, and the next message recreates the
- * workspace from the persisted restore context.
+ * workspace from the persisted restore context. If the notice cannot be appended, the status write
+ * is undone: `ACTIVE` is a status this route refuses to act on, so a row left in it after a failed
+ * append would have no request left that could ever retry the notice.
  *
  * @param container - The server container.
  * @param request - The incoming request.
@@ -298,11 +328,21 @@ export function restoreChat(
       throw new ConflictError('ILLEGAL_TRANSITION', 'Chat is not archived');
     }
     const restored = await container.repos.chats.setStatus(chat.id, 'ACTIVE');
-    await container.repos.messages.append(
-      chat.id,
-      'SYSTEM',
-      restorationNotice({ at: container.clock.now(), workBranch: chat.workBranch }),
-    );
+    try {
+      await container.repos.messages.append(
+        chat.id,
+        'SYSTEM',
+        restorationNotice({ at: container.clock.now(), workBranch: chat.workBranch }),
+      );
+    } catch (error) {
+      await compensate(
+        container,
+        { chatId: chat.id },
+        'could not undo a partial chat restore',
+        () => container.repos.chats.setStatus(chat.id, 'ARCHIVED'),
+      );
+      throw error;
+    }
     const turns = await container.repos.turns.listByChat(chat.id);
     return jsonResponse(chatSummary, toChatSummary(restored, lastTurnStatus(turns)));
   });

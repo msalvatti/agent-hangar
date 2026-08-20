@@ -502,6 +502,61 @@ describe('archiveChat and restoreChat', () => {
   });
 
   /**
+   * If the teardown cannot be enqueued the status write is undone: `ARCHIVED` is a status this
+   * route refuses to act on, so a row left there after a failed enqueue would have no request left
+   * that could ever ask for the teardown, and the workspace would stay alive forever.
+   */
+  it('puts the chat back to active when the teardown cannot be enqueued', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    harness.doubles.queues.workspaceGc.addFailure = new Error('redis unreachable');
+
+    const response = await archiveChat(harness.container, writeRequest('/api/chats', 'POST'), {
+      id: chatId,
+    });
+
+    expect(response.status).toBe(500);
+    const [chat] = await harness.doubles.repos.chats.list();
+    expect(chat).toMatchObject({ status: 'ACTIVE', archivedAt: null });
+  });
+
+  /**
+   * Both the enqueue and the undo failing is the one case compensation cannot repair: the request
+   * still fails with the enqueue's own error, and the log line is the only record of the mismatch.
+   */
+  it('reports a mismatch it could not repair when archiving fails twice over', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    harness.doubles.queues.workspaceGc.addFailure = new Error('redis unreachable');
+    const chatsRepo = harness.doubles.repos.chats;
+    const originalSetStatus = chatsRepo.setStatus.bind(chatsRepo);
+    // The compensating write asks for 'ACTIVE'; only that call is made to fail, so the archiving
+    // write it follows still happens for real.
+    vi.spyOn(chatsRepo, 'setStatus').mockImplementation((id, status) =>
+      status === 'ACTIVE'
+        ? Promise.reject(new Error('database unreachable'))
+        : originalSetStatus(id, status),
+    );
+
+    const response = await archiveChat(harness.container, writeRequest('/api/chats', 'POST'), {
+      id: chatId,
+    });
+
+    expect(response.status).toBe(500);
+    expect(harness.doubles.logOutput()).toContain('could not undo a partial chat archive');
+  });
+
+  /**
    * Restoring reactivates the chat and records a SYSTEM notice, which is the only thing that tells
    * the model its filesystem is gone; `?warm=1` is accepted and does nothing in v1.
    */
@@ -524,6 +579,33 @@ describe('archiveChat and restoreChat', () => {
     const messages = await harness.doubles.repos.messages.listByChat(chatId);
     expect(messages.at(-1)).toMatchObject({ role: 'SYSTEM' });
     expect(messages.at(-1)?.content).toContain(RESTORATION_NOTICE_PREFIX);
+  });
+
+  /**
+   * If the restoration notice cannot be appended the status write is undone: `ACTIVE` is a status
+   * this route refuses to act on, so a row left there after a failed append would have no request
+   * left that could ever retry the notice explaining what the model lost.
+   */
+  it('puts the chat back to archived when the restoration notice cannot be appended', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    await archiveChat(harness.container, writeRequest('/api/chats', 'POST'), { id: chatId });
+    vi.spyOn(harness.doubles.repos.messages, 'append').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+
+    const response = await restoreChat(harness.container, writeRequest('/api/chats', 'POST'), {
+      id: chatId,
+    });
+
+    expect(response.status).toBe(500);
+    const [chat] = await harness.doubles.repos.chats.list();
+    expect(chat).toMatchObject({ status: 'ARCHIVED' });
   });
 
   /**
