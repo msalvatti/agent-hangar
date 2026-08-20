@@ -1,0 +1,48 @@
+/*
+ * Token-only syntax highlight palette for rehype-highlight's `.hljs-*` classes.
+ *
+ * Every colour is one of the design tokens from `app/globals.css` — no raw hex here, so the
+ * highlight palette follows the active theme (light/dark) automatically.
+ */
+.hljs {
+  color: var(--foreground);
+  background: transparent;
+}
+
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-built_in {
+  color: var(--accent);
+}
+
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+  color: var(--success);
+}
+
+.hljs-comment,
+.hljs-quote {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+
+.hljs-number,
+.hljs-literal,
+.hljs-symbol {
+  color: var(--warning);
+}
+
+.hljs-title,
+.hljs-attr,
+.hljs-attribute,
+.hljs-name {
+  color: var(--foreground);
+  font-weight: 600;
+}
+
+.hljs-deletion,
+.hljs-variable,
+.hljs-template-variable {
+  color: var(--destructive);
+}

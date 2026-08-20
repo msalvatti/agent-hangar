@@ -1,25 +1,20 @@
 /**
- * Chat route — placeholder until the chats feature lands.
+ * Chat route.
  *
  * Layer: screen.
  */
 import type { Metadata } from 'next';
 
+import { ChatView } from '@/features/chats';
+
 export const metadata: Metadata = { title: 'Chat' };
 
 /**
- * Placeholder page for `/chats/:id`.
+ * Renders one chat.
  *
  * @param props - Route params (`id`).
  */
 export default async function ChatPage({ params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
-  return (
-    <section className="mx-auto max-w-210 px-6 py-10">
-      <h1 className="text-[28px] font-semibold tracking-tight" data-testid="placeholder-chats-id">
-        Chat
-      </h1>
-      <p className="text-muted-foreground mt-2 font-mono text-[13px]">{id}</p>
-    </section>
-  );
+  return <ChatView chatId={id} />;
 }
