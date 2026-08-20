@@ -8,7 +8,10 @@
  * `failureReason` and passes null through unchanged, and never touches `lastActiveAt` (only
  * `markActive` does); a live-workspace conflict raised by `setStatus` carries the owning chat, read
  * from the row on the error path, and falls back to the workspace id when the row is gone;
- * `listIdle`/`listLive`/`findLiveByChat` build the expected queries.
+ * `listIdle`/`listLive`/`findLiveByChat` build the expected queries; `claimStatus` carries the
+ * expected status in the `WHERE` of both its guarded `readyAt` stamp and its status update,
+ * writes exactly the columns `setStatus` writes, answers `null` when no row matched and
+ * translates a live-workspace conflict the same way.
  * Mocks: a Prisma client double exposing only `workspace.*` — no database.
  */
 import { describe, expect, it, vi } from 'vitest';
@@ -62,6 +65,7 @@ function fakePrisma(
     create?: ReturnType<typeof vi.fn>;
     updateMany?: ReturnType<typeof vi.fn>;
     update?: ReturnType<typeof vi.fn>;
+    updateManyAndReturn?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
   const workspace = {
@@ -71,6 +75,8 @@ function fakePrisma(
     findUnique: vi.fn((): Promise<typeof workspaceRow | null> => Promise.resolve(workspaceRow)),
     updateMany: overrides.updateMany ?? vi.fn(() => Promise.resolve({ count: 1 })),
     update: overrides.update ?? vi.fn(() => Promise.resolve(workspaceRow)),
+    updateManyAndReturn:
+      overrides.updateManyAndReturn ?? vi.fn(() => Promise.resolve([workspaceRow])),
   };
   // `setStatus` runs its guarded timestamp write and its status update inside one
   // interactive transaction; the double runs the callback against the same `workspace`
@@ -343,5 +349,81 @@ describe('PrismaWorkspaceRepository', () => {
     workspace.findUnique = vi.fn(() => Promise.resolve(null));
     const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
     expect(await repo.get('missing')).toBeNull();
+  });
+  /** claimStatus() carries the expected status in the WHERE, which is what makes it conditional. */
+  it('claimStatus() puts the expected status in the WHERE of the update', async () => {
+    const { client, workspace } = fakePrisma();
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+    await repo.claimStatus('ws-1', 'READY', 'BUSY');
+    expect(workspace.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: 'ws-1', status: 'READY' },
+      data: { status: 'BUSY' },
+    });
+  });
+
+  /** A claim that matched no row is a lost race, reported as null rather than as an error. */
+  it('claimStatus() returns null when no row matched the expected status', async () => {
+    const { client } = fakePrisma({ updateManyAndReturn: vi.fn(() => Promise.resolve([])) });
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+    expect(await repo.claimStatus('ws-1', 'READY', 'BUSY')).toBeNull();
+  });
+
+  /** A winning claim resolves with the row it produced, mapped like every other write. */
+  it('claimStatus() returns the mapped row when the claim won', async () => {
+    const { client } = fakePrisma();
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+    expect((await repo.claimStatus('ws-1', 'CREATING', 'READY'))?.id).toBe('ws-1');
+  });
+
+  /** claimStatus() writes the same columns as setStatus: DESTROYED stamps destroyedAt. */
+  it('claimStatus(DESTROYED) stamps destroyedAt and redacts failureReason', async () => {
+    const { client, workspace } = fakePrisma();
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+    await repo.claimStatus('ws-1', 'READY', 'DESTROYED', { failureReason: 'container missing' });
+    expect(workspace.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: 'ws-1', status: 'READY' },
+      data: {
+        status: 'DESTROYED',
+        destroyedAt: expect.any(Date) as Date,
+        failureReason: '[REDACTED:container missing]',
+      },
+    });
+  });
+
+  /** The guarded readyAt stamp is conditional too, so a lost claim leaves no timestamp behind. */
+  it('claimStatus(READY) guards the readyAt stamp by the expected status as well', async () => {
+    const { client, workspace } = fakePrisma();
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+    await repo.claimStatus('ws-1', 'CREATING', 'READY', { runnerRef: 'ctr-1' });
+    expect(workspace.updateMany).toHaveBeenCalledWith({
+      where: { id: 'ws-1', status: 'CREATING', readyAt: null },
+      data: { readyAt: expect.any(Date) as Date },
+    });
+    expect(workspace.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: 'ws-1', status: 'CREATING' },
+      data: { status: 'READY', runnerRef: 'ctr-1' },
+    });
+  });
+
+  /** A claim refused by the live-workspace index reports the owning chat, like setStatus does. */
+  it('claimStatus() translates a live-workspace conflict and names the chat', async () => {
+    const { client } = fakePrisma({
+      updateManyAndReturn: vi.fn(() => Promise.reject(p2002LiveWorkspace())),
+    });
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+    await expect(repo.claimStatus('ws-1', 'READY', 'BUSY')).rejects.toBeInstanceOf(
+      LiveWorkspaceExistsError,
+    );
+  });
+
+  /** A null failureReason is passed through unredacted, matching setStatus. */
+  it('claimStatus() passes a null failureReason through unchanged', async () => {
+    const { client, workspace } = fakePrisma();
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+    await repo.claimStatus('ws-1', 'READY', 'BUSY', { failureReason: null, runnerRef: null });
+    expect(workspace.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: 'ws-1', status: 'READY' },
+      data: { status: 'BUSY', runnerRef: null, failureReason: null },
+    });
   });
 });

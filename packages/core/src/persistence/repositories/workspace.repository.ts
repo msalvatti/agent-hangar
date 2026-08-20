@@ -12,6 +12,11 @@
  * transaction, so a rejected READY transition never leaves a timestamp behind. `setStatus`
  * intentionally does not touch `lastActiveAt` — only `markActive` does — matching
  * `InMemoryWorkspaceRepository`, which every later lane's tests run against.
+ *
+ * `claimStatus` writes the same columns as `setStatus` from the same builder, and differs only in
+ * carrying the expected status in its `WHERE`. That predicate is the arbitration: two callers that
+ * read the same row race in Postgres rather than in a process, so a claim held across processes
+ * means what a claim held in one process means.
  */
 import type { Redactor } from '../../secrets/types.ts';
 import { LIVE_WORKSPACE_STATUSES } from '../../workspace/types.ts';
@@ -22,6 +27,14 @@ import type { CreateWorkspaceInput, WorkspaceRepository, WorkspaceStatusUpdate }
 
 import { toPrismaWorkspaceKind, toPrismaWorkspaceStatus, toWorkspace } from './mappers.ts';
 import { translatePrismaError } from './prisma-errors.ts';
+
+/** Columns a status write sets; every field beyond `status` is written only when it applies. */
+interface WorkspaceStatusData {
+  status: WorkspaceStatus;
+  destroyedAt?: Date;
+  runnerRef?: string | null;
+  failureReason?: string | null;
+}
 
 /** Workspace rows. */
 export class PrismaWorkspaceRepository implements WorkspaceRepository {
@@ -62,6 +75,31 @@ export class PrismaWorkspaceRepository implements WorkspaceRepository {
     return row === null ? null : toWorkspace(row);
   }
 
+  /**
+   * The columns a status write sets, beyond the status itself.
+   *
+   * Shared by {@link setStatus} and {@link claimStatus} so the conditional write cannot drift from
+   * the unconditional one: the two differ in which rows they match, never in what they write.
+   *
+   * @param status - Status being written.
+   * @param update - Optional columns the caller passed.
+   * @returns The Prisma `data` payload.
+   */
+  private statusData(status: WorkspaceStatus, update: WorkspaceStatusUpdate): WorkspaceStatusData {
+    const data: WorkspaceStatusData = { status: toPrismaWorkspaceStatus(status) };
+    if (status === 'DESTROYED') {
+      data.destroyedAt = new Date();
+    }
+    if (update.runnerRef !== undefined) {
+      data.runnerRef = update.runnerRef;
+    }
+    if (update.failureReason !== undefined) {
+      data.failureReason =
+        update.failureReason === null ? null : this.redactor.redact(update.failureReason);
+    }
+    return data;
+  }
+
   /** @inheritDoc */
   async setStatus(
     id: string,
@@ -77,25 +115,53 @@ export class PrismaWorkspaceRepository implements WorkspaceRepository {
             data: { readyAt: new Date() },
           });
         }
-        const data: {
-          status: WorkspaceStatus;
-          destroyedAt?: Date;
-          runnerRef?: string | null;
-          failureReason?: string | null;
-        } = { status: toPrismaWorkspaceStatus(status) };
-        if (status === 'DESTROYED') {
-          data.destroyedAt = new Date();
-        }
-        if (update.runnerRef !== undefined) {
-          data.runnerRef = update.runnerRef;
-        }
-        if (update.failureReason !== undefined) {
-          data.failureReason =
-            update.failureReason === null ? null : this.redactor.redact(update.failureReason);
-        }
-        return tx.workspace.update({ where: { id }, data });
+        return tx.workspace.update({ where: { id }, data: this.statusData(status, update) });
       });
       return toWorkspace(row);
+    } catch (error) {
+      const chatId = await this.chatIdOf(id);
+      translatePrismaError(error, {
+        entity: 'Workspace',
+        id,
+        ...(chatId === null ? {} : { chatId }),
+      });
+    }
+  }
+
+  /**
+   * @inheritDoc
+   *
+   * The expected status is part of the `WHERE` of the update itself, so Postgres — not this
+   * process — decides which of two concurrent callers wins: the second one's statement re-evaluates
+   * the predicate against the row the first one committed, matches nothing and returns no row.
+   * Reading the row first and updating by id would put the decision back in the application, which
+   * is the race this method exists to remove.
+   *
+   * A row that does not exist is reported the same way as one that moved: both mean the caller may
+   * not act, and neither is worth a second query to tell apart.
+   */
+  async claimStatus(
+    id: string,
+    from: WorkspaceStatus,
+    to: WorkspaceStatus,
+    update: WorkspaceStatusUpdate = {},
+  ): Promise<Workspace | null> {
+    const where = { id, status: toPrismaWorkspaceStatus(from) };
+    try {
+      const row = await this.prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        if (to === 'READY') {
+          await tx.workspace.updateMany({
+            where: { ...where, readyAt: null },
+            data: { readyAt: new Date() },
+          });
+        }
+        const rows = await tx.workspace.updateManyAndReturn({
+          where,
+          data: this.statusData(to, update),
+        });
+        return rows[0] ?? null;
+      });
+      return row === null ? null : toWorkspace(row);
     } catch (error) {
       const chatId = await this.chatIdOf(id);
       translatePrismaError(error, {

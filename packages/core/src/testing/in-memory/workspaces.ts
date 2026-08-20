@@ -2,6 +2,10 @@
  * In-memory `WorkspaceRepository` enforcing "one live workspace per chat".
  *
  * Layer: test double.
+ *
+ * A conditional write is deterministic here in a way it can never be against a database: there is
+ * no concurrency to arrange, so "the row moved" is expressed by moving it. That makes this double
+ * — not Postgres — the place to pin what `claimStatus` promises a caller.
  */
 import { LiveWorkspaceExistsError } from '../../errors.ts';
 import type { Workspace } from '../../persistence/entities.ts';
@@ -84,6 +88,21 @@ export class InMemoryWorkspaceRepository implements WorkspaceRepository {
       workspace.failureReason = update.failureReason;
     }
     return { ...workspace };
+  }
+
+  async claimStatus(
+    id: string,
+    from: WorkspaceStatus,
+    to: WorkspaceStatus,
+    update: WorkspaceStatusUpdate = {},
+  ): Promise<Workspace | null> {
+    if (this.store.workspaces.get(id)?.status !== from) {
+      return null;
+    }
+    // The winning claim writes exactly what an unconditional write of the same status writes; the
+    // whole difference is the guard above. Delegating is what keeps the two indistinguishable to
+    // a caller that switched from one to the other.
+    return this.setStatus(id, to, update);
   }
 
   async markActive(id: string): Promise<void> {

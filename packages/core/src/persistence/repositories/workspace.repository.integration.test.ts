@@ -7,7 +7,9 @@
  * workspace for one chat is refused, a workspace that has moved on (DESTROYED) frees the slot for
  * a new one, and two `JOB` workspaces with no chat coexist; `listIdle`/`listLive` build the right
  * result sets; a canary in `failureReason` is redacted before the write; a `setStatus` refused by
- * the partial index names the owning chat and rolls its `readyAt` stamp back.
+ * the partial index names the owning chat and rolls its `readyAt` stamp back. And the one property
+ * only a real database can show: `claimStatus` is a single conditional UPDATE, so two callers that
+ * issue it together cannot both win.
  * Mocks: none — a real compose Postgres.
  */
 import { beforeEach, expect, it } from 'vitest';
@@ -180,6 +182,35 @@ describeDb('PrismaWorkspaceRepository', () => {
   });
 
   /** get() on an unknown id returns null; setStatus() throws NotFoundError. */
+  /**
+   * The one property that cannot be proven against the double: that the conditional write is
+   * really one conditional statement in Postgres, not a read followed by a write.
+   *
+   * Both halves fail the moment the expected status leaves the `WHERE`. Sequentially, a claim
+   * naming a status the row has already left would apply anyway and answer with a row. And two
+   * callers issued together would both apply, because nothing in either statement would make the
+   * second one re-evaluate against what the first committed — which is exactly the race the
+   * process-local claim used to stand in for.
+   */
+  it('claimStatus() is one conditional UPDATE, so exactly one of two concurrent callers wins', async () => {
+    const chatId = await seedChat(client);
+    const repo = new PrismaWorkspaceRepository(client, testRedactor);
+    const workspace = await repo.create({ ...baseInput, chatId });
+    await repo.setStatus(workspace.id, 'READY');
+
+    const [first, second] = await Promise.all([
+      repo.claimStatus(workspace.id, 'READY', 'BUSY'),
+      repo.claimStatus(workspace.id, 'READY', 'STOPPING'),
+    ]);
+    const winners = [first, second].filter((row) => row !== null);
+    expect(winners).toHaveLength(1);
+    expect((await repo.get(workspace.id))?.status).toBe(winners[0]?.status);
+
+    // And a claim naming the status the row has now left is refused rather than applied.
+    expect(await repo.claimStatus(workspace.id, 'READY', 'DESTROYED')).toBeNull();
+    expect((await repo.get(workspace.id))?.status).toBe(winners[0]?.status);
+  });
+
   it('get() returns null and setStatus() throws NotFoundError for an unknown id', async () => {
     const repo = new PrismaWorkspaceRepository(client, testRedactor);
     expect(await repo.get('missing')).toBeNull();
