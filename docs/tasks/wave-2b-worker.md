@@ -3,8 +3,8 @@
 | | |
 |---|---|
 | **Lane** | W2-B 🐳 (parallel with W2-A, W2-C; the only Docker-integration lane running at a time) |
-| **Status** | 🟦 running |
-| **Progress** | 5/6 tasks |
+| **Status** | 🟨 PR open |
+| **Progress** | 6/6 tasks |
 | **Branch** | `feat/w2b-worker` |
 | **Owned paths** | `apps/worker/src/**` (incl. `apps/worker/src/testing/**`), `apps/worker/vitest.config.ts`, `apps/worker/package.json` scripts only (`test:integration`) |
 | **Depends on** | W0, W1-A, W1-B, W1-C, W1-D, W1-E, W1-F merged to `main` |
@@ -47,7 +47,7 @@ This lane adds the BullMQ consumers: `run-turn` (flow a and b: ensure workspace 
 | 2B.3 | `processors/run-scheduled-job.ts` + `scheduler-reconcile.ts` — overlap policy, JOB workspace, destroy in `finally`, boot reconcile | ✅ | P0 | L | 2B.2 |
 | 2B.4 | `processors/gc.ts` (reap-idle, destroy-chat-workspace, orphan reconcile) + `main.ts` wiring, image check, graceful shutdown | ✅ | P0 | M | 2B.3 |
 | 2B.5 | 🐳 Integration suite `@docker @db @redis` — full turn, GC idle + orphan, restore turn, scheduled run | ✅ | P0 | L | 2B.4 |
-| 2B.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 2B.1–2B.5 |
+| 2B.6 | Close-out: gates, code review, dashboard, PR | ✅ | P0 | S | 2B.1–2B.5 |
 
 ---
 
@@ -485,16 +485,16 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2b-worker.md; 
 
 ## Task 2B.6 — Close-out: gates, code review, dashboard, PR
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** S · **Depends on:** 2B.1–2B.5
+**Status:** ✅ Done · **Priority:** P0 · **Size:** S · **Depends on:** 2B.1–2B.5
 
 **Description.** Run every gate (unit 100 %, 🐳 integration green locally), bring the code review to zero findings, update the plan dashboard and tasks index, open the PR with the structured summary, and record the end-to-end evidence (`AGENT_MODEL_PROVIDER=fake` round-trip) the orchestrator needs for W3-A.
 
 **Acceptance criteria**
-- [ ] `pnpm lint && pnpm format:check && pnpm typecheck` — exit 0
-- [ ] `pnpm --filter worker test -- --coverage` — 100/100/100/100 on `src/**` (minus `main.ts`, integration files, harness); `pnpm --filter worker test:integration` green with Docker
-- [ ] `/bymax-quality:code-review` → zero open findings (or justified)
-- [ ] `docs/plan.md` §12 row W2-B → 🟨 with branch/PR; `docs/tasks/README.md` updated
-- [ ] PR opened; structured result returned incl. `contractChangeRequests`
+- [x] `pnpm lint && pnpm format:check && pnpm typecheck` — exit 0
+- [x] `pnpm --filter worker test -- --coverage` — 100/100/100/100 on `src/**` (minus `main.ts`, integration files, harness); `pnpm --filter worker test:integration` green with Docker
+- [x] `/bymax-quality:code-review` → zero open findings (or justified)
+- [x] `docs/plan.md` §12 row W2-B → 🟨 with branch/PR; `docs/tasks/README.md` updated
+- [x] PR opened; structured result returned incl. `contractChangeRequests`
 
 **Files to create/modify**
 `docs/plan.md` (§12 row only), `docs/tasks/README.md` (W2-B row only), this file.
@@ -551,3 +551,4 @@ Completion Protocol: append `- 2B.6 ✅ <date> — PR #<n> opened`; commit `docs
 - 2B.3 ✅ 2026-08-19 — scheduled-job processor with the overlap policy and destroy-in-finally, plus the boot-time scheduler reconciliation
 - 2B.4 ✅ 2026-08-19 — workspace collector with idle reaping and orphan reconciliation, plus the application wiring and graceful shutdown
 - 2B.5 ✅ 2026-08-19 — docker integration suite: a real turn, idle and orphan collection, a restored turn, a scheduled run and the overlap policy
+- 2B.6 ✅ 2026-08-19 — gates green, review to zero findings, dashboards updated, PR opened
