@@ -13,6 +13,7 @@ import {
   InvalidCronError,
   SecretIntegrityError,
 } from '@agent-hangar/core';
+import { assertNoCanary, GITHUB_CANARY } from '@agent-hangar/core/testing';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -89,11 +90,14 @@ describe('reportError', () => {
 
   /**
    * GitHub's own body is never repeated: it is written by a server that was handed the token, so
-   * only the status — a number this process read — reaches the client.
+   * only the status — a number this process read — reaches the client. The body carries the
+   * credential canary, so the assertion is not that some wording is absent but that the secret
+   * itself never reaches the client.
    */
   it('never echoes the text of a GitHub error', () => {
-    const report = reportError(new GithubApiError(500, 'Bearer ghp_secret-looking-text'));
+    const report = reportError(new GithubApiError(500, `Bearer ${GITHUB_CANARY}`));
     expect(report.message).not.toContain('Bearer');
+    assertNoCanary(report.message);
   });
 
   /**
