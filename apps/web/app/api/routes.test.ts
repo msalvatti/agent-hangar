@@ -155,6 +155,54 @@ describe('repository routes', () => {
   });
 });
 
+describe('event stream routes', () => {
+  /**
+   * Both SSE routes answer `text/event-stream` and are dynamic; a cached event stream would be a
+   * transcript frozen at whatever the first reader saw. Each stream is cancelled straight away so
+   * no blocked reader outlives the test.
+   */
+  it('wires the chat and run event streams', async () => {
+    const chats = await import('./chats/[id]/events/route');
+    expect(chats.dynamic).toBe('force-dynamic');
+    const missingChat = await chats.GET(
+      request('/api/chats/missing/events'),
+      context({ id: 'missing' }),
+    );
+    expect(missingChat.status).toBe(404);
+
+    const runs = await import('./runs/[id]/events/route');
+    const missingRun = await runs.GET(
+      request('/api/runs/missing/events'),
+      context({ id: 'missing' }),
+    );
+    expect(missingRun.status).toBe(404);
+  });
+
+  /**
+   * A chat with a live turn opens a real stream, which is the wiring that matters: the route must
+   * reach the factory rather than the JSON helpers.
+   */
+  it('opens a stream for a chat that has a turn', async () => {
+    const chats = await import('./chats/[id]/events/route');
+    const created = await (
+      await import('./chats/route')
+    ).POST(
+      request(routes.chats, 'POST', {
+        repoUrl: 'https://github.com/acme/widgets',
+        baseBranch: 'main',
+        prompt: 'work',
+      }),
+    );
+    const { chatId } = (await created.json()) as { chatId: string };
+    const response = await chats.GET(
+      request(`/api/chats/${chatId}/events`),
+      context({ id: chatId }),
+    );
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+    await response.body?.cancel();
+  });
+});
+
 describe('settings and health routes', () => {
   /**
    * The settings collection is read-only; the per-key route hosts the write and the removal, and

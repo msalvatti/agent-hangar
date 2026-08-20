@@ -15,7 +15,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
 
-import { deleteSetting, failureName, getSettings, putSetting } from './settings';
+import { deleteSetting, getSettings, putSetting } from './settings';
 
 vi.mock('bullmq', () => import('../testing/fake-queue'));
 
@@ -232,17 +232,5 @@ describe('deleteSetting', () => {
       headers: { host: '127.0.0.1:3000', origin: 'http://evil.example' },
     });
     expect((await deleteSetting(container, foreign, { key: 'GITHUB_PAT' })).status).toBe(403);
-  });
-});
-
-describe('failureName', () => {
-  /**
-   * The one thing the failure path logs is a class name, so it has to be a name and never text
-   * carried in by the value that failed. Anything that is not an `Error` has no name to report.
-   */
-  it('names an error by its class and reports anything else as unknown', () => {
-    expect(failureName(new TypeError('boom'))).toBe('TypeError');
-    expect(failureName('a bare string')).toBe('unknown');
-    expect(failureName(undefined)).toBe('unknown');
   });
 });

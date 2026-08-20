@@ -4,7 +4,7 @@
 |---|---|
 | **Lane** | W2-A (one agent; runs in parallel with W2-B 🐳 and W2-C) |
 | **Status** | 🟦 running |
-| **Progress** | 4/6 tasks |
+| **Progress** | 5/6 tasks |
 | **Branch** | `feat/w2a-web-api-sse` |
 | **Owned paths** | `apps/web/app/api/**`, `apps/web/src/server/**` · plus, by explicit exception: `apps/web/vitest.config.ts` (`coverage.include` + test `include` globs only), `apps/web/package.json` (`scripts.test:integration` only), and **additive** lines in `packages/core/src/queues/contracts.ts`, `packages/core/src/api/contracts.ts`, `packages/core/src/config/schema.ts` (listed in Task 2A.1; every such addition is reported under `contractChangeRequests`) |
 | **Depends on** | W0, W1-A (secrets/redaction/logging), W1-E (persistence repositories), W1-F (scheduling, queues) — all merged to `main` |
@@ -51,7 +51,7 @@ Two decisions are taken here and must be stated in the PR description:
 | 2A.2 | Chats, messages, archive/restore, delete, turn cancel routes | ✅ | P0 | M | 2A.1 |
 | 2A.3 | Jobs CRUD + manual run, runs list/detail, repos + branches routes | ✅ | P0 | M | 2A.1 |
 | 2A.4 | Settings (status/set/remove, no request logging) and health routes | ✅ | P0 | S | 2A.1 |
-| 2A.5 | SSE: stream factory, `chats/[id]/events`, `runs/[id]/events`, `@redis` integration | 📋 | P0 | L | 2A.1, 2A.2 |
+| 2A.5 | SSE: stream factory, `chats/[id]/events`, `runs/[id]/events`, `@redis` integration | ✅ | P0 | L | 2A.1, 2A.2 |
 | 2A.6 | Close-out: gates, code review, dashboard, PR | 📋 | P0 | S | 2A.1–2A.5 |
 
 ---
@@ -426,17 +426,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 
 ## Task 2A.5 — SSE: stream factory, `chats/[id]/events`, `runs/[id]/events`, `@redis` integration
 
-**Status:** 📋 ToDo · **Priority:** P0 · **Size:** L · **Depends on:** 2A.1, 2A.2
+**Status:** ✅ Done · **Priority:** P0 · **Size:** L · **Depends on:** 2A.1, 2A.2
 
 **Description.** Implement the Server-Sent Events endpoints over Redis Streams: replay via `XRANGE` from `Last-Event-ID`/`?from=`, tail via `XREAD BLOCK` on a dedicated duplicated ioredis connection, `: ping` heartbeat every 15 s, clean close on client abort, `event: expired` when the stream is gone and the turn/run is finished, terminal-event close. Unit-tested with `FakeRedis`, integration-tested `@redis` against compose Redis.
 
 **Acceptance criteria**
-- [ ] `apps/web/src/server/sse.ts` exports `formatSseFrame(frame: SseFrame): string`, `SSE_HEADERS`, `createSseResponse(opts)` building a `ReadableStream<Uint8Array>` with the behaviour below
-- [ ] `GET /api/chats/:id/events?turnId=&from=` (default: latest turn of the chat; 404 chat/turn) and `GET /api/runs/:id/events?from=` (404 run) respond `200 text/event-stream` with headers `Content-Type: text/event-stream; charset=utf-8`, `Cache-Control: no-cache, no-transform`, `Connection: keep-alive`, `X-Accel-Buffering: no`; `export const runtime = 'nodejs'`, `dynamic = 'force-dynamic'`
-- [ ] Replay: with `Last-Event-ID` header (or `?from=`) → `XRANGE key (<id> +`; without → full stream from `0-0`; frames `id: <stream-id>\nevent: <AgentEvent.type>\ndata: <json>\n\n`
-- [ ] Tail: `XREAD BLOCK <blockMs> STREAMS key <cursor>` loop on `redis.duplicate()`; closes after a terminal event (`turn.completed|turn.failed|turn.cancelled`), on `request.signal` abort, or on stream cancel; heartbeat comment `: ping\n\n` every `heartbeatMs` (15 000 default); the duplicated connection is always disconnected
-- [ ] Expired: stream key missing and turn/run in a terminal status → single frame `event: expired` then close; stream key missing and turn not finished → wait (tail from `0-0`) — the worker has not started yet
-- [ ] Unit tests (FakeRedis) + `@redis` integration tests (real Redis: XADD → frames, Last-Event-ID replay returns only later entries, heartbeat within 16 s using a short `heartbeatMs`, abort closes, expired path); 100 % coverage
+- [x] `apps/web/src/server/sse.ts` exports `formatSseFrame(frame: SseFrame): string`, `SSE_HEADERS`, `createSseResponse(opts)` building a `ReadableStream<Uint8Array>` with the behaviour below
+- [x] `GET /api/chats/:id/events?turnId=&from=` (default: latest turn of the chat; 404 chat/turn) and `GET /api/runs/:id/events?from=` (404 run) respond `200 text/event-stream` with headers `Content-Type: text/event-stream; charset=utf-8`, `Cache-Control: no-cache, no-transform`, `Connection: keep-alive`, `X-Accel-Buffering: no`; `export const runtime = 'nodejs'`, `dynamic = 'force-dynamic'`
+- [x] Replay: with `Last-Event-ID` header (or `?from=`) → `XRANGE key (<id> +`; without → full stream from `0-0`; frames `id: <stream-id>\nevent: <AgentEvent.type>\ndata: <json>\n\n`
+- [x] Tail: `XREAD BLOCK <blockMs> STREAMS key <cursor>` loop on `redis.duplicate()`; closes after a terminal event (`turn.completed|turn.failed|turn.cancelled`), on `request.signal` abort, or on stream cancel; heartbeat comment `: ping\n\n` every `heartbeatMs` (15 000 default); the duplicated connection is always disconnected
+- [x] Expired: stream key missing and turn/run in a terminal status → single frame `event: expired` then close; stream key missing and turn not finished → wait (tail from `0-0`) — the worker has not started yet
+- [x] Unit tests (FakeRedis) + `@redis` integration tests (real Redis: XADD → frames, Last-Event-ID replay returns only later entries, heartbeat within 16 s using a short `heartbeatMs`, abort closes, expired path); 100 % coverage
 
 **Files to create**
 `apps/web/src/server/sse.ts` + `sse.test.ts` + `sse.integration.test.ts`; `apps/web/src/server/handlers/events.ts` + test; `apps/web/app/api/chats/[id]/events/route.ts`, `app/api/runs/[id]/events/route.ts`; `apps/web/package.json` (`test:integration` script); `app/api/routes.test.ts` extended.
@@ -606,6 +606,7 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-2a-web-api-sse
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
 
+- 2A.5 ✅ 2026-08-19 — SSE stream factory with replay, tail, heartbeat and expiry, the two events routes, and a @redis suite against a real Redis
 - 2A.4 ✅ 2026-08-19 — settings routes that never echo or log a credential, and a health route that reports Docker from the worker heartbeat
 - 2A.3 ✅ 2026-08-19 — scheduled-job CRUD with scheduler sync, manual run, run history and detail, and the GitHub repository and branch pickers
 - 2A.2 ✅ 2026-08-19 — chat, message, rename, archive, restore, delete and turn-cancel routes over the in-memory repositories and the BullMQ double

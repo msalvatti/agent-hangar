@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import {
   ApiHttpError,
   ConflictError,
+  failureName,
   ForbiddenOriginError,
   GithubApiError,
   INTERNAL_ERROR_MESSAGE,
@@ -132,5 +133,19 @@ describe('reportError', () => {
       message: INTERNAL_ERROR_MESSAGE,
     });
     expect(reportError('a bare string')).toMatchObject({ code: 'INTERNAL' });
+  });
+});
+
+describe('failureName', () => {
+  /**
+   * Where a failure is logged on a path that may have touched a credential, the only thing written
+   * is a class name — a value this codebase and its dependencies chose, never text carried in by
+   * the value that failed. Anything that is not an `Error` has no name to report.
+   */
+  it('names an error by its class and reports anything else as unknown', () => {
+    expect(failureName(new TypeError('boom'))).toBe('TypeError');
+    expect(failureName(new GithubApiError(500, 'x'))).toBe('GithubApiError');
+    expect(failureName('a bare string')).toBe('unknown');
+    expect(failureName(undefined)).toBe('unknown');
   });
 });

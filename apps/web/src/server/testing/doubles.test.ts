@@ -91,6 +91,29 @@ describe('FakeRedis', () => {
   });
 
   /**
+   * The tail read really waits: an entry appended while it is blocked is delivered by that same
+   * read, which is what makes the stream pump a loop rather than a poll.
+   */
+  it('delivers an entry that arrives while the tail read is blocked', async () => {
+    const redis = new FakeRedis();
+    const pending = redis.xread('BLOCK', 30, 'STREAMS', 's', '0-0');
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const id = await redis.xadd('s', 'event', '1');
+    expect(await pending).toEqual([['s', [[id, ['event', '1']]]]]);
+  });
+
+  /**
+   * Dropping the connection ends a blocked read with the rejection ioredis produces, rather than
+   * leaving it waiting out its full block duration — the property the abort path relies on.
+   */
+  it('rejects a blocked read when the connection is dropped', async () => {
+    const redis = new FakeRedis();
+    const pending = redis.xread('BLOCK', 10_000, 'STREAMS', 's', '0-0');
+    redis.disconnect();
+    await expect(pending).rejects.toThrow(CONNECTION_CLOSED_MESSAGE);
+  });
+
+  /**
    * ioredis rejects every command issued after the socket is dropped; the double does the same so
    * the SSE pump's abort path is exercised for real rather than assumed.
    */
@@ -108,6 +131,7 @@ describe('FakeRedis', () => {
     await expect(redis.xread('BLOCK', 1, 'STREAMS', 's', '0-0')).rejects.toThrow(
       CONNECTION_CLOSED_MESSAGE,
     );
+    expect(redis.published).toEqual([]);
   });
 });
 

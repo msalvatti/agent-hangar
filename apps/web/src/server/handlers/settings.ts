@@ -23,7 +23,7 @@ import type { SecretKey, SecretStatus } from '@agent-hangar/core';
 import type { z } from 'zod';
 
 import type { ServerContainer } from '../container';
-import { ApiHttpError, ResourceNotFoundError } from '../errors';
+import { ApiHttpError, failureName, ResourceNotFoundError } from '../errors';
 import { jsonResponse, noContent, parseJsonBody, withErrorHandling } from '../http';
 import { assertSameOrigin } from '../same-origin';
 
@@ -109,19 +109,6 @@ export function putSetting(
     container.logger.info({ key, action: 'set' }, 'secret updated');
     return jsonResponse(putSecretResponse, { set: true, last4 }, { headers: NO_STORE });
   });
-}
-
-/**
- * Names a thrown value by its class, without inspecting anything else about it.
- *
- * Used on the one path where the failure may have touched a plaintext credential: a class name is
- * chosen by this codebase and its dependencies, never assembled from the value that failed.
- *
- * @param error - The value that was thrown.
- * @returns The class name, or `unknown` for anything that is not an `Error`.
- */
-export function failureName(error: unknown): string {
-  return error instanceof Error ? error.name : 'unknown';
 }
 
 /**

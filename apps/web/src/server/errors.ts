@@ -17,6 +17,19 @@ import {
 /** Message returned for any failure the API does not recognise. */
 export const INTERNAL_ERROR_MESSAGE = 'Internal error';
 
+/**
+ * Names a thrown value by its class, without inspecting anything else about it.
+ *
+ * Used wherever a failure is logged on a path that may have touched a credential: a class name is
+ * chosen by this codebase and its dependencies, never assembled from the value that failed.
+ *
+ * @param error - The value that was thrown.
+ * @returns The class name, or `unknown` for anything that is not an `Error`.
+ */
+export function failureName(error: unknown): string {
+  return error instanceof Error ? error.name : 'unknown';
+}
+
 /** A failure the handler wants reported with a specific status and code. */
 export class ApiHttpError extends Error {
   /** HTTP status of the response. */
