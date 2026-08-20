@@ -1,6 +1,6 @@
 # 05 — Local Development & Run Story
 
-Target: **clone → follow README → it runs**, on macOS with Docker Desktop (OrbStack/Colima also work). Every step is a script; `pnpm doctor` explains anything missing. The same parameterisation that makes Conductor work (per-instance DB, ports, names) is the default for everyone — Conductor is a thin layer on top.
+Target: **clone → follow README → it runs**, on macOS with Docker Desktop (OrbStack/Colima also work). Every step is a script; `pnpm run doctor` explains anything missing. The same parameterisation that makes Conductor work (per-instance DB, ports, names) is the default for everyone — Conductor is a thin layer on top.
 
 ## 1. Prerequisites (README "Requirements")
 
@@ -8,7 +8,7 @@ Target: **clone → follow README → it runs**, on macOS with Docker Desktop (O
 |---|---|---|
 | macOS | 13+ | — |
 | Docker Desktop (or OrbStack / Colima) | current; Docker Engine API reachable | `docker info` |
-| Node.js | 24 LTS | `node -v` (`.nvmrc` / `.node-version` = `24`) |
+| Node.js | 24 LTS | `node -v` (`.nvmrc` = `24`) |
 | pnpm | 11 | `corepack enable && corepack prepare pnpm@11 --activate` (`packageManager` pinned in root `package.json`) |
 | Git | 2.40+ | `git --version` |
 
@@ -27,7 +27,8 @@ agent-hangar/
 ├─ infra/
 │  ├─ docker-compose.yml   postgres:18-alpine, redis:8-alpine (parameterised)
 │  ├─ workspace/           Dockerfile for the workspace image + askpass helper
-│  └─ scripts/             setup.sh, run.sh, doctor.sh, env.sh (shared by README and Conductor)
+│  └─ scripts/             env.sh, setup.sh, run.sh, doctor.sh, image.sh, ws.sh,
+│                          archive.sh, db-prune.sh, rotate-key.sh (shared by README and Conductor)
 ├─ .conductor/settings.toml
 ├─ docs/                   this specification + README appendices
 ├─ .github/workflows/ci.yml
@@ -59,7 +60,10 @@ All configuration is read from environment variables, validated with Zod at boot
 | `OPENAI_BASE_URL` | unset | optional override (tests point it at a fake) |
 | `AGENT_MODEL_PROVIDER` | `openai` | `fake` in E2E |
 | `DOCKER_HOST` | unset | optional; runner falls back to `~/.docker/run/docker.sock`, then `/var/run/docker.sock` |
+| `ALLOWED_REPO_HOSTS` | `github.com` | comma-separated host allow-list for repository URLs; can only narrow what the request contracts already accept |
+| `GITHUB_API_BASE_URL` | `https://api.github.com` | REST base URL used by the repository picker |
 | `LOG_LEVEL` | `info` | pino |
+| `NEXT_PUBLIC_API_MOCK` | `0` | serve the web UI against the mock handlers instead of the API (development only) |
 
 Secrets (PAT, OpenAI key) are **not** environment variables of the web/worker — they live encrypted in Postgres and are entered in Settings. The README says so explicitly.
 
@@ -68,7 +72,7 @@ Secrets (PAT, OpenAI key) are **not** environment variables of the web/worker �
 ```bash
 git clone <repo-url> agent-hangar && cd agent-hangar
 corepack enable
-pnpm setup          # 1. installs deps  2. writes .env.local  3. creates master key  4. docker compose up -d  5. prisma migrate deploy  6. builds workspace image  7. runs doctor
+pnpm setup          # 1. installs deps  2. writes .env.local  3. resolves the Docker socket  4. creates master key  5. docker compose up -d --wait  6. prisma generate + migrate deploy  7. builds the workspace image, then runs the doctor
 pnpm dev            # web + worker with hot reload (turbo / concurrently), prints http://localhost:3000
 ```
 
@@ -76,15 +80,18 @@ Then in the browser: **Settings → paste GitHub PAT and OpenAI API key → New 
 
 `pnpm setup` is idempotent. What each step does:
 
-1. `pnpm install --frozen-lockfile`
-2. `infra/scripts/env.sh` → computes the table above from `AH_INSTANCE`/`AH_PORT_BASE` (or Conductor vars) and writes `.env.local` if absent (never overwrites without `--force`).
-3. `infra/scripts/setup.sh` → `mkdir -p ~/.agent-hangar && [ -f master.key ] || openssl rand -hex 32 > master.key && chmod 600`.
-4. `docker compose -f infra/docker-compose.yml --env-file .env.local up -d --wait` (healthchecks on both services).
-5. `pnpm --filter @agent-hangar/core prisma migrate deploy` (+ `prisma generate`).
-6. `docker build -t $WORKSPACE_IMAGE infra/workspace` (multi-stage; bundles `packages/agent-runtime`).
-7. `pnpm doctor`.
+1. `pnpm install --frozen-lockfile` (skipped with `--skip-install`).
+2. `infra/scripts/env.sh` → computes the table above from `AH_INSTANCE`/`AH_PORT_BASE` (or Conductor vars) and writes `.env.local` if absent (never overwrites without `--force`). The rest of the run then loads that file rather than re-deriving, so a preserved file and an exported instance name can never disagree.
+3. Resolve the Docker socket (`DOCKER_HOST`, else `~/.docker/run/docker.sock`, else `/var/run/docker.sock`) and fail fast if the daemon does not answer.
+4. `mkdir -p ~/.agent-hangar && [ -f master.key ] || openssl rand -hex 32 > master.key && chmod 600`; a key whose mode is looser than `0600` aborts the run.
+5. `docker compose -f infra/docker-compose.yml --env-file .env.local up -d --wait` (healthchecks on both services).
+6. `pnpm --filter @agent-hangar/core db:generate` then `db:migrate` (`prisma generate`, then `prisma migrate deploy`).
+7. `pnpm infra:image`, but only when the image is missing (`--rebuild-image` forces it). The script stages the agent-runtime bundle into the build context, which a bare `docker build` would skip.
+8. `infra/scripts/doctor.sh`, whose exit code becomes the run's (skipped with `--skip-doctor`).
 
-`pnpm doctor` prints a table: Node/pnpm versions, Docker socket found at …, Postgres reachable, Redis reachable, migrations applied, workspace image present, master key present (0600), secrets configured (✓/✗ with last4), OpenAI model reachable (only if key set). Each ✗ comes with the exact command to fix it.
+Flags reach the script through `pnpm run setup --<flag>`: a bare `pnpm setup` parses them against pnpm's own `setup` command first.
+
+`pnpm run doctor` prints a table: Node/pnpm versions, Docker socket found at …, Postgres reachable, Redis reachable, migrations applied, workspace image present, master key present (0600), secrets configured (✓/⚠ with last4), OpenAI model reachable (only if key set). Each ✗ comes with the exact command to fix it, and the exit code is non-zero only when a required row failed; `--json` prints the same rows as JSON. It resolves the instance from the shell rather than from `.env.local`, so a non-default checkout needs the same `AH_INSTANCE`/`AH_PORT_BASE` prefix that set it up. `pnpm doctor` without `run` reaches pnpm's own `doctor` command instead.
 
 Other scripts:
 
@@ -94,10 +101,12 @@ Other scripts:
 | `pnpm build` · `pnpm start` | production build/start of both apps |
 | `pnpm infra:up` · `infra:down` · `infra:reset` | compose lifecycle (`reset` drops volumes) |
 | `pnpm infra:image` | rebuild workspace image |
-| `pnpm db:migrate` · `db:studio` · `db:prune` | Prisma |
+| `pnpm db:generate` · `db:migrate` · `db:studio` · `db:prune` | Prisma (`db:generate` is needed once in a fresh worktree before typecheck or tests) |
 | `pnpm test` · `test:integration` · `test:e2e` · `test:mutation` | see [06](06-testing.md) |
-| `pnpm lint` · `typecheck` · `format` | gates |
+| `pnpm lint` · `lint:fix` · `typecheck` · `format` · `format:check` | gates |
 | `pnpm ws:list` · `ws:reap` | list / destroy workspace containers of this instance (debug aid) |
+| `pnpm archive` | tear this instance's compose stack and workspaces down (Conductor's archive hook) |
+| `pnpm run rotate-key` | re-encrypt every stored secret under a new master key (`--yes` commits to it, `--resume` finishes an interrupted run) |
 
 ## 5. docker-compose services
 
@@ -120,14 +129,14 @@ services:
 volumes: { pgdata: {}, redisdata: {} }
 ```
 
-Web and worker run **on the host** (fast reload, direct Docker socket access). Workspace containers are created by the worker via dockerode, not by compose. A `profiles: [full]` variant that containerises web+worker (socket mounted read-only) is documented for parity checks but is not the default.
+Web and worker run **on the host** (fast reload, direct Docker socket access). Workspace containers are created by the worker via dockerode, not by compose. A `profiles: [full]` variant that containerises web+worker was considered for parity checks and was not built.
 
 ### Workspace image (`infra/workspace/Dockerfile`)
 
-- Base `node:24-bookworm-slim`; installs `git`, `ca-certificates`, `ripgrep`, `jq`, `python3`, `build-essential` (common repo needs); `corepack enable` (pnpm/yarn available).
+- Base `node:24-bookworm-slim`; installs `git`, `ca-certificates`, `ripgrep`, `jq`, `python3`, `build-essential`, `curl` (common repo needs); `corepack enable` (pnpm/yarn available).
 - Non-root user `agent` (uid 1001), `WORKDIR /workspace`, owned by `agent`.
-- Copies the esbuild bundle of `packages/agent-runtime` to `/opt/agent-runtime/` plus `askpass.sh` (`echo "$GITHUB_TOKEN"`) and `git` config: `credential.helper=""`, `user.name/email` from env defaults.
-- No secrets, no `.env`, no source of this repo other than the runtime bundle. `ENTRYPOINT ["sleep","infinity"]` — the container idles; the worker `exec`s turns into it.
+- Copies the esbuild bundle of `packages/agent-runtime` to `/opt/agent-runtime/` plus `askpass.sh`, all root-owned so the workspace user cannot replace them. The helper answers only `https://` URLs on the exact allowed host with no explicit port, reading the token from `AH_GIT_TOKEN_FILE` or `GITHUB_TOKEN`. Global `git` config: `credential.helper=""`, `user.name`/`user.email` defaults, `safe.directory /workspace`, `init.defaultBranch main`.
+- No secrets, no `.env`, no source of this repo other than the runtime bundle. `CMD ["sleep","infinity"]` — the container idles and the worker `exec`s turns into it, while a `CMD` (rather than an `ENTRYPOINT`) still lets `docker run <image> node --version` work for CI and the doctor.
 
 ## 6. Conductor integration (bonus, designed in from the start)
 

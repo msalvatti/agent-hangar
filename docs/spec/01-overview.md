@@ -3,6 +3,7 @@
 | | |
 |---|---|
 | **Status** | ✅ Approved — 2026-08-19 |
+| **Revision** | 2026-08-20 — stack table verified against the installed dependency versions |
 | **Owner** | Maximiliano |
 | **Last updated** | 2026-08-19 |
 | **Related** | [02 Data model](02-data-model.md) · [03 Interfaces](03-interfaces.md) · [04 Flows](04-flows.md) · [05 Local dev](05-local-dev.md) · [06 Testing](06-testing.md) · [07 Build plan](07-build-plan.md) · [08 Deployment](08-deployment-discussion.md) · [09 Non-goals](09-non-goals.md) · [10 UI design](10-ui-design.md) |
@@ -124,7 +125,7 @@ flowchart LR
 | Model | `gpt-5.6-sol` default, configurable via `OPENAI_MODEL` | — | OpenAI's flagship for coding and reasoning as of 2026-08; the name lives in one env var, never in code. |
 | UI | Next.js 16 App Router, Tailwind v4, shadcn/ui | — | See [10 UI design](10-ui-design.md): dark-first, sidebar + centered composer, closely modelled on current cloud-agent apps. |
 
-**Stack (latest stable, verified 2026-08-19)**
+**Stack (latest stable; versions re-verified against the installed tree on 2026-08-20)**
 
 | Layer | Version |
 |---|---|

@@ -16,3 +16,8 @@ Technical specification for **Agent Hangar**, a local-first web application wher
 | 10 | [UI design](10-ui-design.md) | Direction, tokens, shell, screens, components, states, motion, accessibility |
 
 Status: **Approved** — 2026-08-19. Execution plan: [../plan.md](../plan.md).
+
+Revision: 2026-08-20 — 01 stack table verified against the installed tree; 05 corrected against
+`infra/scripts/*` and `packages/core/src/config/schema.ts` (setup steps, script list, environment
+table, workspace image); 06 corrected against `.github/workflows/ci.yml` and the Vitest configs
+(job list, coverage policy). Behaviour, decisions and success criteria are unchanged.
