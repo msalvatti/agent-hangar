@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Lane** | W3-B (single agent; documentation only — runs in parallel with W3-A 🐳) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 merged (PR #37) |
 | **Progress** | 5/5 tasks |
 | **Branch** | `feat/w3b-docs` |
 | **Owned paths** | `README.md`, `docs/**` (except `docs/tasks/wave-3a-integration.md` and the W3-A row of `docs/plan.md` §12 / `docs/tasks/README.md`, which W3-A keeps current) |
