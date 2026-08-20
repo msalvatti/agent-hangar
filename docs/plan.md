@@ -303,8 +303,8 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | Lanes not started | **5** — end-to-end authoring, wiring and stabilisation, documentation, and both mutation-testing lanes |
 | Tasks merged | **51 of 94** |
 | Tasks written but not yet merged | **18** on the three open lane branches, so 69 of 94 exist as code |
-| Routed findings still open | **17**, in §14 below, each naming one lane |
-| Orchestrator fixes | **12 merged, 2 open** — defects found while shepherding, listed under the lane table |
+| Routed findings still open | **18**, in §14 below, each naming one lane |
+| Orchestrator fixes | **13 merged, 1 open** — defects found while shepherding, listed under the lane table |
 
 Three tables in this section describe the same build and are updated together, because one of them
 being stale is how a reader ends up with the wrong answer: the lane table, the orchestrator-fix
@@ -355,7 +355,7 @@ the three pull requests currently in review, in no particular order among themse
 | #20 | 🟩 merged | The development server could not resolve the shared package at all: it requests the source condition unconditionally and resolves the NodeNext specifiers literally |
 | #23 | 🟩 merged | Findings that no lane could close had no record outside a conversation |
 | #25 | 🟩 merged | A routed row stated a contract change as though it had landed, and named the wrong remedy for it |
-| #26 | 🟨 PR open | `pnpm typecheck` emits without rewriting, so it leaves a `dist` whose declarations name files that do not exist |
+| #26 | 🟩 merged | `pnpm typecheck` emits without rewriting, so it leaves a `dist` whose declarations name files that do not exist |
 | #27 | 🟩 merged | The dashboard and the task index disagreed about which lanes were ready |
 | #28 | 🟨 PR open | The dashboard listed every lane's state but never what it added up to |
 
@@ -424,6 +424,7 @@ stating the residual risk in plain terms.
 | R14 | `GITHUB_API_BASE_URL` and `ALLOWED_REPO_HOSTS` promise that another forge can be configured, but the `repoUrl` schema shared by the chat and job requests accepts only `https://github.com/...`. An Enterprise or self-hosted repository therefore appears in the picker and then fails with a 400 the user cannot act on. | Both halves must change together and `repoUrl` is in frozen core. Either the schema consults the configured hosts or the configuration stops offering what the contract refuses — that is a product decision, not a patch. | W3-A |
 | R12 | `packages/core`'s `loadConfig()` still treats the instance-derived ports as defaults, so an explicit `POSTGRES_PORT` in the process environment wins there. `env.sh` is now stricter than the library it mirrors. In practice everything loads from `.env.local`, which `env.sh` writes with derived values, so the two agree today. | Making the identity block non-overridable lives in `packages/core/src/config/schema.ts`, which is frozen and belongs to no open lane. | W3-A |
 | R17 | `pnpm test` is `pnpm -r --if-present test && vitest run --project scripts`. The `&&` means a failure in any workspace stops the run, so the scripts suite never executes — a flake elsewhere silently voids it, and the job reports the earlier failure rather than "these tests did not run". Observed: a timing-dependent web test failed, the scripts suite was never reached, and the tests that mattered to the change under review were never executed. | Restructuring the root test script and how continuous integration reports per-workspace results is repository-wide tooling, not a lane deliverable. | W3-A |
+| R18 | `tsc -b && <rewrite>` short-circuits, so a failing typecheck emits a partial `dist` and skips the rewrite. Accepted as unlikely when the chain was written; observed on the first real attempt after it merged, because a tree without a generated Prisma client fails typecheck and leaves 256 unrewritten declarations behind. The next successful compile repairs it, and the headers say so — but anything reading `dist` in that window sees the broken form, which is how a confusing cascade starts. | Preserving the compiler's exit code while always rewriting needs exit-code handling in four manifests; the cheaper answer may be making the prerequisite explicit so the compile does not fail that way in the first place. | W3-A |
 | R11 | The presence check that greps route files for `assertSameOrigin` reports every route as covered **by construction**, because the guard lives in the handler behind a thin wiring module. It cannot fail. | Replaced by `apps/web/app/api/same-origin-policy.test.ts`, which calls every state-changing export from a foreign origin and names the offending route when the guard is removed. The grep must be retired from the lane prompts so it is not reintroduced. | W3-B |
 
 Approved 2026-08-19. Per-lane task files with self-contained agent prompts live in [docs/tasks/](tasks/README.md).
