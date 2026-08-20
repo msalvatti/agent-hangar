@@ -227,8 +227,7 @@ describe('getChat', () => {
   });
 
   /**
-   * Tool calls are returned in execution order across the whole chat, because the transcript
-   * renders them interleaved with the messages rather than grouped by turn.
+   * Within one turn the calls come back in `seq` order, which is the order they ran in.
    */
   it('returns tool calls ordered by their sequence', async () => {
     const harness = createTestContainer();
@@ -258,6 +257,58 @@ describe('getChat', () => {
     );
     expect(detail.toolCalls.map((call) => call.seq)).toEqual([1, 2]);
     expect(detail.workspace?.id).toBe(workspace.id);
+  });
+
+  /**
+   * Across turns the order is the order the work happened in, turn by turn. The rule this protects
+   * is that `seq` counts within a turn and nothing wider: comparing it across turns interleaves
+   * them, so a chat of two turns with two calls each would tell the model it ran the first call of
+   * both turns before the second call of either, which is not what happened.
+   */
+  it('keeps tool calls of separate turns in execution order', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    const workspace = await harness.doubles.repos.workspaces.create({
+      kind: 'CHAT',
+      chatId,
+      runnerKind: 'docker',
+      image: 'agent-hangar/workspace:dev',
+      repoUrl: REPO_URL,
+      branch: 'main',
+    });
+    const record = async (turn: string, seq: number, callId: string): Promise<void> => {
+      await harness.doubles.repos.toolCalls.start({
+        workspaceId: workspace.id,
+        turnId: turn,
+        callId,
+        seq,
+        toolName: 'run_shell',
+        args: { command: 'ls' },
+      });
+    };
+    await record(turnId, 1, 'first-turn-first');
+    await record(turnId, 2, 'first-turn-second');
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    const second = await harness.doubles.repos.turns.create({ chatId, model: 'gpt-5' });
+    await record(second.id, 1, 'second-turn-first');
+    await record(second.id, 2, 'second-turn-second');
+
+    const detail = chatDetail.parse(
+      await (
+        await getChat(harness.container, readRequest(`/api/chats/${chatId}`), { id: chatId })
+      ).json(),
+    );
+
+    expect(detail.toolCalls.map((call) => call.callId)).toEqual([
+      'first-turn-first',
+      'first-turn-second',
+      'second-turn-first',
+      'second-turn-second',
+    ]);
   });
 
   /**

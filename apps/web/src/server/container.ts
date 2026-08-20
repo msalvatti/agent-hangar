@@ -131,24 +131,31 @@ function buildPersistence(
   return { prisma: client, repos: createRepositories(client, redactor) };
 }
 
+/** Any `-c statement_timeout=…` already present in the connection string's `options`. */
+const STATEMENT_TIMEOUT_SETTING = /(?:^|\s)-c\s+statement_timeout=\S*/g;
+
 /**
  * Adds the server-side statement timeout to a connection string.
  *
  * Postgres reads `options` out of the startup packet, and the pg driver forwards whatever the
- * connection string carries, so this is how a query gets a deadline the server itself enforces. An
- * operator who already set `options` has said something deliberate about the session, and it is
- * left alone rather than overwritten.
+ * connection string carries, so this is how a query gets a deadline the server itself enforces.
+ * The deadline is not optional: it is the only thing that abandons a hung query and hands its
+ * pooled connection back, so every connection this process opens carries it. An operator who set
+ * `options` of their own keeps every setting they wrote — the timeout is appended to them, not
+ * substituted for them — and only a `statement_timeout` they named themselves is replaced, because
+ * this process cannot honour a deadline it does not control.
  *
  * @param connectionString - `DATABASE_URL`, already validated as a URL.
  * @param timeoutMs - Statement timeout to apply.
- * @returns The connection string, with the timeout added when it named no options of its own.
+ * @returns The connection string, always carrying the timeout among its options.
  */
 export function withStatementTimeout(connectionString: string, timeoutMs: number): string {
   const url = new URL(connectionString);
-  if (url.searchParams.has('options')) {
-    return connectionString;
-  }
-  url.searchParams.set('options', `-c statement_timeout=${String(timeoutMs)}`);
+  const configured = (url.searchParams.get('options') ?? '')
+    .replace(STATEMENT_TIMEOUT_SETTING, ' ')
+    .trim();
+  const timeout = `-c statement_timeout=${String(timeoutMs)}`;
+  url.searchParams.set('options', configured === '' ? timeout : `${configured} ${timeout}`);
   return url.toString();
 }
 

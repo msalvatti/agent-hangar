@@ -303,6 +303,61 @@ describe('updateJob', () => {
   });
 
   /**
+   * The undo restores a snapshot taken before this request wrote, so it must not run once another
+   * edit owns the row. The rule this protects is that a request that failed never reverts a
+   * request that succeeded: writing the pre-edit values back over a later edit would lose a change
+   * the user was already told had been saved, which is worse than the mismatch the undo repairs.
+   */
+  it('declines to undo an edit a later write already replaced', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    vi.spyOn(harness.doubles.queues.scheduledJobs, 'upsertJobScheduler').mockImplementation(
+      async () => {
+        // A second edit commits while this request sits between its row write and its sync.
+        await harness.doubles.repos.scheduledJobs.update(job.id, { name: 'The later edit' });
+        throw new Error('redis unreachable');
+      },
+    );
+
+    const response = await updateJob(
+      harness.container,
+      writeRequest(`/api/jobs/${job.id}`, 'PATCH', { name: 'Renamed' }),
+      { id: job.id },
+    );
+
+    expect(response.status).toBe(500);
+    expect(await harness.doubles.repos.scheduledJobs.get(job.id)).toMatchObject({
+      name: 'The later edit',
+    });
+    expect(harness.doubles.logOutput()).toContain('declined to undo a scheduled-job edit');
+  });
+
+  /**
+   * A job deleted while an edit was in flight leaves nothing to undo, and the request still fails
+   * with the error that explains it rather than with a second one raised by the undo.
+   */
+  it('declines to undo an edit whose job is already gone', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    vi.spyOn(harness.doubles.queues.scheduledJobs, 'upsertJobScheduler').mockImplementation(
+      async () => {
+        await harness.doubles.repos.scheduledJobs.delete(job.id);
+        throw new Error('redis unreachable');
+      },
+    );
+
+    const response = await updateJob(
+      harness.container,
+      writeRequest(`/api/jobs/${job.id}`, 'PATCH', { name: 'Renamed' }),
+      { id: job.id },
+    );
+
+    expect(response.status).toBe(500);
+    expect(await harness.doubles.repos.scheduledJobs.get(job.id)).toBeNull();
+    expect(harness.doubles.logOutput()).toContain('declined to undo a scheduled-job edit');
+  });
+
+  /**
    * Disabling fails the same way round: the row must not be left saying the job is off while the
    * scheduler that would still fire it is registered.
    */

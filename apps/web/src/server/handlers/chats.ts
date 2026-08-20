@@ -18,6 +18,12 @@
  * index over a chat's live turn, so the invariant is enforced here rather than declared once in the
  * schema.
  *
+ * Archiving races the same request on a different field and is settled the same way. Its claim is
+ * the status write, made before it re-reads the chat's turns; a message writes its turn before it
+ * re-reads the status. Write-then-read on both sides is the whole argument, and it rules out the
+ * outcome that matters — an `ARCHIVED` chat whose workspace teardown is queued while a turn it
+ * accepted is still live.
+ *
  * What the claim buys is mutual exclusion, not a winner. Refusing on sight of any rival is what
  * makes the rule single-valued, and the price is that when both inserts land before either read —
  * the ordinary outcome for two genuinely simultaneous requests, not a rare corner — *both* requests
@@ -128,6 +134,24 @@ function claimTurn(container: ServerContainer, chatId: string): Promise<Turn> {
 }
 
 /**
+ * Refuses to continue when the chat is no longer accepting work.
+ *
+ * Read after the caller has written its own claim, so it sees an archive that committed
+ * concurrently: the archive's status write and this read are ordered the same way on both sides,
+ * which is what stops a message and an archive from both proceeding.
+ *
+ * @param container - The server container.
+ * @param chatId - Chat to re-read.
+ * @throws ConflictError 409 `CHAT_ARCHIVED` when the chat was archived meanwhile.
+ */
+async function requireStillActive(container: ServerContainer, chatId: string): Promise<void> {
+  const chat = await requireChat(container, chatId);
+  if (chat.status !== 'ACTIVE') {
+    throw new ConflictError('CHAT_ARCHIVED', 'The chat was archived while the message was sent');
+  }
+}
+
+/**
  * Refuses to continue when the chat carries a live turn other than the caller's own claim.
  *
  * Losing on sight rather than by comparing ids is what keeps the rule single-valued under every
@@ -180,6 +204,12 @@ async function dispatchTurn(container: ServerContainer, turn: Turn): Promise<Tur
 /**
  * Builds the full detail response of a chat.
  *
+ * The tool calls are flattened turn by turn and not re-sorted. `seq` orders a call within its own
+ * turn and nothing wider, so comparing it across turns interleaves them: two turns of two calls
+ * come back as first-of-each then second-of-each instead of in execution order. The turns arrive
+ * oldest first and each turn's calls arrive in `seq` order, so concatenating them is already the
+ * order the work happened in.
+ *
  * @param container - The server container.
  * @param chat - The chat row.
  * @returns The parsed detail value.
@@ -194,9 +224,9 @@ async function readChatDetail(
     repos.turns.listByChat(chat.id),
     repos.workspaces.findLiveByChat(chat.id),
   ]);
-  const toolCalls = (await Promise.all(turns.map((turn) => repos.toolCalls.listByTurn(turn.id))))
-    .flat()
-    .sort((left, right) => left.seq - right.seq);
+  const toolCalls = (
+    await Promise.all(turns.map((turn) => repos.toolCalls.listByTurn(turn.id)))
+  ).flat();
   return toChatDetail({ chat, messages, turns, toolCalls, workspace });
 }
 
@@ -301,8 +331,10 @@ export function renameChat(
  * written afterwards, so two simultaneous requests can both find the chat idle. The gap is closed
  * on the far side of the write instead of before it: each request creates its own `QUEUED` turn
  * and then looks again, and a request that finds a live turn other than its own gives its claim
- * back and refuses. The message is appended only once the claim has held, so a refused request
- * leaves no half of the exchange behind.
+ * back and refuses. The same re-read covers the archive route, which races this one on the other
+ * field: the status is read again after the claim exists, so a chat archived meanwhile is seen.
+ * The message is appended only once both checks have held, so a refused request leaves no half of
+ * the exchange behind.
  *
  * @param container - The server container.
  * @param request - The incoming request.
@@ -326,6 +358,7 @@ export function postMessage(
     const turn = await claimTurn(container, chat.id);
     try {
       await requireSoleClaim(container, chat.id, turn.id);
+      await requireStillActive(container, chat.id);
       await container.repos.messages.append(chat.id, 'USER', body.prompt);
     } catch (error) {
       await compensate(
@@ -346,9 +379,16 @@ export function postMessage(
  * `POST /api/chats/:id/archive` — archives the chat and asks the worker to tear its workspace down.
  *
  * The teardown job is enqueued unconditionally: the worker owns the decision of whether a
- * container exists, and it snapshots the repository before destroying it. If the enqueue fails,
- * the status write is undone: `ARCHIVED` is the only status this route will act on again, so a row
- * left in it after a failed enqueue would have no request left that could ever ask for the
+ * container exists, and it snapshots the repository before destroying it.
+ *
+ * The status write is this route's claim on the chat, and it is made before the live-turn check
+ * that decides whether the teardown may go out. A message request claims the chat by writing its
+ * own turn and then re-reads the status, so each side writes before it reads the other's marker
+ * and the two cannot both proceed: either the archive sees the turn and gives up, or the message
+ * sees `ARCHIVED` and gives up, or both see each other and both give up, which costs a retry and
+ * never a destroyed workspace under running work. Whatever fails after the status write — the
+ * re-read finding a turn, or the enqueue itself — undoes it, because `ARCHIVED` is the only status
+ * this route will act on again and a row left in it would have no request that could ask for the
  * teardown.
  *
  * @param container - The server container.
@@ -370,6 +410,10 @@ export function archiveChat(
     await requireNoLiveTurn(container, chat.id);
     const archived = await container.repos.chats.setStatus(chat.id, 'ARCHIVED');
     try {
+      // Re-read after the status write, which is this route's claim: a message that passed its own
+      // live-turn check before the archive landed has written its turn by now, and tearing the
+      // workspace down under it would destroy the container the worker is about to use.
+      await requireNoLiveTurn(container, chat.id);
       await enqueueDestroyChatWorkspace(container.queues.workspaceGc, { chatId: chat.id });
     } catch (error) {
       await compensate(

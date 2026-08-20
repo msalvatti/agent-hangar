@@ -4,14 +4,26 @@
  * Layer: service (server).
  *
  * The database row and the BullMQ Job Scheduler are two halves of one fact, and every handler here
- * leaves them agreeing. Postgres and Redis cannot enlist in one transaction, so the agreement is
- * reached by compensation rather than by atomicity: the row is written first and a scheduler
- * operation that fails undoes that write. A failed create deletes the row it just inserted; a
- * failed edit puts the previous values back, which is exactly what the scheduler that is still
- * registered describes. A delete goes the other way round and removes the scheduler first, because
- * a tick firing between the two steps would otherwise deliver a job whose row is already gone.
+ * leaves them agreeing **for requests that do not overlap on the same job**. Postgres and Redis
+ * cannot enlist in one transaction, so the agreement is reached by compensation rather than by
+ * atomicity: the row is written first and a scheduler operation that fails undoes that write. A
+ * failed create deletes the row it just inserted; a failed edit puts the previous values back,
+ * which is exactly what the scheduler that is still registered describes. A delete goes the other
+ * way round and removes the scheduler first, because a tick firing between the two steps would
+ * otherwise deliver a job whose row is already gone.
  *
- * The guarantee stops where both stores fail at once. If the compensating write also fails, the
+ * Two limits, and the first is the one the qualification above is about. Two edits of the *same*
+ * job in flight together can finish with the row from one and the scheduler from the other, both
+ * answering success: each request writes its row and then syncs its own scheduler, and nothing
+ * orders the second step the way the first was ordered. Every handler reads the job before it
+ * writes, so the snapshot it decided from may already be stale by the time it acts, and no
+ * re-read closes it — a request can still re-read before a rival writes and sync after it. Closing
+ * this needs a write that fails when the row has moved, and `ScheduledJobRepository` exposes only
+ * an unconditional `update`; a conditional one belongs in the persistence port, which is frozen.
+ * What is ruled out is the worse half of that race: an undo is skipped when the row no longer
+ * carries what this request wrote, so a failed edit never reverts a later edit that succeeded.
+ *
+ * The second limit is where both stores fail at once. If the compensating write also fails, the
  * halves are left disagreeing; the request still fails, and the mismatch is logged with the job id
  * because there is nowhere left to record it. Editing that job again rewrites both halves.
  * Scheduler keys are `ScheduledJob.id`, which is what makes the upsert idempotent per job. The undo
@@ -140,24 +152,71 @@ async function syncScheduler(container: ServerContainer, job: ScheduledJob): Pro
   await removeScheduledJob(container.queues.scheduledJobs, job.id);
 }
 
+/** The fields an edit writes; compared to tell this request's row apart from a later one's. */
+const EDITABLE_FIELDS = [
+  'name',
+  'cron',
+  'timezone',
+  'prompt',
+  'repoUrl',
+  'branch',
+  'enabled',
+] as const;
+
+/**
+ * Whether a stored job still carries exactly the values an edit wrote.
+ *
+ * Compared by value rather than by `updatedAt`, which cannot tell two writes apart when they land
+ * in the same clock tick.
+ *
+ * @param stored - The row as it reads now.
+ * @param written - The row this request produced.
+ * @returns `true` when nothing has been written over it since.
+ */
+function isUnchangedSince(stored: ScheduledJob, written: ScheduledJob): boolean {
+  return (
+    EDITABLE_FIELDS.every((field) => stored[field] === written[field]) &&
+    (stored.nextRunAt?.getTime() ?? null) === (written.nextRunAt?.getTime() ?? null)
+  );
+}
+
 /**
  * Restores every editable field of a job to the values it held before an edit.
  *
+ * The undo is skipped when the row no longer carries what this request wrote, because another edit
+ * has landed on top and has synced a scheduler of its own. Writing the pre-edit snapshot over it
+ * would revert an edit that already answered success, which is a worse outcome than the mismatch
+ * being repaired: it loses a change the user was told had been saved.
+ *
  * @param container - The server container.
- * @param job - The job as it was before the edit.
- * @returns Resolves once the row is back, or once the failure to put it back has been reported.
+ * @param previous - The job as it was before the edit.
+ * @param written - The row this request wrote, to recognise a later edit.
+ * @returns Resolves once the row is back, once the failure to put it back has been reported, or
+ *   once the undo has been declined because a newer edit owns the row.
  */
-function restoreJob(container: ServerContainer, job: ScheduledJob): Promise<void> {
-  return compensate(container, { jobId: job.id }, COMPENSATE_FAILURE_MESSAGE, () =>
-    container.repos.scheduledJobs.update(job.id, {
-      name: job.name,
-      cron: job.cron,
-      timezone: job.timezone,
-      prompt: job.prompt,
-      repoUrl: job.repoUrl,
-      branch: job.branch,
-      enabled: job.enabled,
-      nextRunAt: job.nextRunAt,
+async function restoreJob(
+  container: ServerContainer,
+  previous: ScheduledJob,
+  written: ScheduledJob,
+): Promise<void> {
+  const current = await container.repos.scheduledJobs.get(previous.id);
+  if (current === null || !isUnchangedSince(current, written)) {
+    container.logger.warn(
+      { jobId: previous.id },
+      'declined to undo a scheduled-job edit a later write already replaced',
+    );
+    return;
+  }
+  await compensate(container, { jobId: previous.id }, COMPENSATE_FAILURE_MESSAGE, () =>
+    container.repos.scheduledJobs.update(previous.id, {
+      name: previous.name,
+      cron: previous.cron,
+      timezone: previous.timezone,
+      prompt: previous.prompt,
+      repoUrl: previous.repoUrl,
+      branch: previous.branch,
+      enabled: previous.enabled,
+      nextRunAt: previous.nextRunAt,
     }),
   );
 }
@@ -233,6 +292,11 @@ export function getJob(
  * The next fire time is recomputed from the merged values rather than from the patch, so editing
  * only the timezone still moves the schedule.
  *
+ * The patch is merged onto a snapshot read at the start of the request, so two edits of one job in
+ * flight together are last-write-wins on the row and can leave the scheduler describing the other
+ * one; see the module header for why that cannot be closed from here. The undo below is the part
+ * that is closed: it runs only while the row still carries what this request wrote.
+ *
  * @param container - The server container.
  * @param request - The incoming request.
  * @param params - Resolved path parameters.
@@ -268,7 +332,7 @@ export function updateJob(
     } catch (error) {
       // The row already carries the new cron and enabled flag while Redis still holds the old
       // scheduler, so the edit is rolled back to the state that scheduler describes.
-      await restoreJob(container, existing);
+      await restoreJob(container, existing, updated);
       throw error;
     }
     return jobResponse(container, updated);

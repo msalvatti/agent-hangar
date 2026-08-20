@@ -149,13 +149,31 @@ describe('withStatementTimeout', () => {
   });
 
   /**
-   * An operator who already set `options` has said something deliberate about the session;
-   * overwriting it would silently drop their setting.
+   * An operator who set `options` keeps every setting they wrote, and still gets the deadline. The
+   * rule this protects is that no configuration opts out of it: the timeout is the only thing that
+   * abandons a hung query and returns its pooled connection, so a connection string that named a
+   * search path used to leave every health poll able to strand a connection for good.
    */
-  it('leaves a connection string that already names options alone', () => {
+  it('keeps configured options and still applies the timeout', () => {
     const configured = 'postgresql://u:p@127.0.0.1:5432/db?options=-c+search_path%3Dalt';
 
-    expect(withStatementTimeout(configured, 5000)).toBe(configured);
+    const options = new URL(withStatementTimeout(configured, 5000)).searchParams.get('options');
+
+    expect(options).toBe('-c search_path=alt -c statement_timeout=5000');
+  });
+
+  /**
+   * A `statement_timeout` the operator wrote themselves is the one setting that is replaced rather
+   * than kept: this process bounds its own queries, and two conflicting deadlines in one options
+   * string would leave which one applies to the order Postgres happens to read them in.
+   */
+  it('replaces a statement timeout the connection string already named', () => {
+    const configured =
+      'postgresql://u:p@127.0.0.1:5432/db?options=-c+statement_timeout%3D0+-c+search_path%3Dalt';
+
+    const options = new URL(withStatementTimeout(configured, 5000)).searchParams.get('options');
+
+    expect(options).toBe('-c search_path=alt -c statement_timeout=5000');
   });
 });
 

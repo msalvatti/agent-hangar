@@ -178,6 +178,46 @@ describe('postMessage', () => {
   });
 
   /**
+   * A message and an archive race on different fields: the message checks the status, the archive
+   * checks for live turns, and each writes after the other has read. The rule this protects is
+   * that the pair cannot both succeed — an archived chat whose workspace teardown is queued while
+   * a turn it just accepted is still live would have the worker destroy the container out from
+   * under itself. Whichever side gives way, the two stores agree afterwards: a queued teardown
+   * only ever accompanies a chat with no live turn.
+   */
+  it('never archives a chat and accepts a message for it at the same time', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+
+    const [message, archive] = await Promise.all([
+      postMessage(
+        harness.container,
+        writeRequest(`/api/chats/${chatId}/messages`, 'POST', { prompt: 'one more thing' }),
+        { id: chatId },
+      ),
+      archiveChat(harness.container, writeRequest('/api/chats', 'POST'), { id: chatId }),
+    ]);
+
+    expect([message.status, archive.status].every((status) => status < 500)).toBe(true);
+    expect(message.status === 201 && archive.status === 200).toBe(false);
+    const chat = await harness.doubles.repos.chats.getById(chatId);
+    const live = (await harness.doubles.repos.turns.listByChat(chatId)).filter((turn) =>
+      LIVE_STATUSES.includes(turn.status),
+    );
+    if (harness.doubles.queues.workspaceGc.added.length > 0) {
+      expect(chat).toMatchObject({ status: 'ARCHIVED' });
+      expect(live).toEqual([]);
+    } else {
+      expect(chat).toMatchObject({ status: 'ACTIVE' });
+    }
+  });
+
+  /**
    * The losing side of that race, made deterministic: the live-turn check is blinded once, so the
    * request creates its claim while a rival turn is already live. It must give the claim back
    * rather than leave a `QUEUED` turn holding the chat's work slot for ever, and it must not have
