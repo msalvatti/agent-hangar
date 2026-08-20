@@ -63,7 +63,7 @@ import {
 } from './constants.js';
 import { buildTurnInstructions } from './instructions.js';
 import { provisionWorkspace, takeReadyWorkspace } from './provision-workspace.js';
-import { formatRunError, publishCancellation, publishFailure } from './run-outcome.js';
+import { cancelRun, failRun, formatRunError } from './run-outcome.js';
 import { createToolCallRecorder } from './tool-call-recorder.js';
 import type { ToolCallRecorder } from './tool-call-recorder.js';
 import { executeRuntimeTurn } from './turn-executor.js';
@@ -109,39 +109,6 @@ interface Teardown {
   handle: WorkspaceHandle | null;
   workspaceId: string | null;
   job: ScheduledJob;
-}
-
-/**
- * Records a run as failed and ends its event stream.
- *
- * @param deps - Publisher and repositories.
- * @param runId - The run.
- * @param code - Machine-readable failure code.
- * @param message - Human-readable detail; already safe to persist.
- */
-async function failRun(
-  deps: ProcessorDeps,
-  runId: string,
-  code: string,
-  message: string,
-): Promise<void> {
-  await publishFailure(deps, runId, code, message);
-  await deps.repos.jobRuns.finish(runId, {
-    status: 'FAILED',
-    usage: NO_USAGE,
-    error: formatRunError(code, message),
-  });
-}
-
-/**
- * Records a run as cancelled and ends its event stream.
- *
- * @param deps - Publisher and repositories.
- * @param runId - The run.
- */
-async function cancelRun(deps: ProcessorDeps, runId: string): Promise<void> {
-  await publishCancellation(deps, runId);
-  await deps.repos.jobRuns.finish(runId, { status: 'CANCELLED', usage: NO_USAGE });
 }
 
 /**
@@ -318,9 +285,8 @@ async function updateRunTimes(deps: ProcessorDeps, job: ScheduledJob): Promise<v
 /**
  * Destroys the run's workspace and leaves nothing half-written, whatever happened above.
  *
- * The status write is unconditional because there is nobody to lose a race to: `workspaceId` is
- * filled only once the run has taken the row `BUSY`, and every other writer takes `READY` or
- * `STOPPING`.
+ * The status write is unconditional because there is nobody to lose a race to: `teardown` names a
+ * workspace only once this run took it `BUSY`, and every other writer takes `READY` or `STOPPING`.
  *
  * @param deps - Runner, repositories and logger.
  * @param teardown - The run, its container and the job it belongs to.
@@ -445,13 +411,9 @@ async function closeUnrunnableRun(
  * teardown that got far enough, or by an earlier recovery — must not be destroyed twice or walked
  * back out of a terminal status the lifecycle forbids leaving.
  *
- * A live row is this run's to destroy unless it is `STOPPING`, which is the one live status a
- * competitor can put it in: a run records the workspace before it takes it, so the collector may
- * have won the race for it since, and a teardown that reached `STOPPING` has committed to
- * destroying that container itself. Destroying it here as well would be the overwrite the
- * conditional take exists to prevent. Every other live status — `CREATING` from a provisioning that
- * never finished, `READY` from one that did, `BUSY` from a run that took it — belongs to this run,
- * because a job workspace is created for one run and never reused.
+ * A live row is this run's unless it is `STOPPING`, the one live status a competitor can put it in:
+ * a teardown that reached it has committed to destroying that container, so doing it here too is the
+ * overwrite the conditional take prevents. A job workspace serves one run, so the rest is this run's.
  *
  * @param deps - Runner, repositories and logger.
  * @param workspaceId - The workspace the abandoned run was using.
@@ -574,13 +536,11 @@ async function openRun(
 /**
  * Takes the workspace this run provisioned, or ends the run because something else took it first.
  *
- * The workspace is recorded on the run *before* it is taken, not after. That is what leaves the
- * stalled-run recovery a handle on the row when a process dies between the two writes — the run's
- * `workspaceId` is the only link there is, because the row carries no reference back to its run. It
- * is safe to record early precisely because a job workspace is created for one run and never reused,
- * so a row this run names can only ever have been this run's; what a losing run must not do is
- * *destroy* it, and {@link destroyAbandonedWorkspace} is where that is enforced, by acting only on a
- * row still `BUSY`. Why the take is conditional is {@link takeReadyWorkspace}.
+ * The run records the workspace *before* taking it, which is what leaves the stalled-run recovery a
+ * handle if a process dies between the two writes: the run's `workspaceId` is the only link, because
+ * the row carries no reference back. {@link destroyAbandonedWorkspace} is what stops a run that
+ * recorded but never took one destroying it; {@link takeReadyWorkspace}, why the take is
+ * conditional.
  *
  * @param deps - The processor's collaborators.
  * @param teardown - Filled in once the workspace is this run's, so the `finally` tears it down.

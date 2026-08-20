@@ -9,6 +9,7 @@
  */
 import type { AgentEvent } from '@agent-hangar/core';
 
+import { NO_USAGE } from './constants.js';
 import { redactAgentEvent } from './turn-executor.js';
 import type { ProcessorDeps } from './types.js';
 
@@ -50,4 +51,37 @@ export async function publishFailure(
 export async function publishCancellation(deps: ProcessorDeps, runId: string): Promise<void> {
   const event: AgentEvent = { type: 'turn.cancelled' };
   await deps.publisher.publish(runId, redactAgentEvent(deps.redactor, event));
+}
+
+/**
+ * Records a run as failed and ends its event stream.
+ *
+ * @param deps - Publisher and repositories.
+ * @param runId - The run.
+ * @param code - Machine-readable failure code.
+ * @param message - Human-readable detail; already safe to persist.
+ */
+export async function failRun(
+  deps: ProcessorDeps,
+  runId: string,
+  code: string,
+  message: string,
+): Promise<void> {
+  await publishFailure(deps, runId, code, message);
+  await deps.repos.jobRuns.finish(runId, {
+    status: 'FAILED',
+    usage: NO_USAGE,
+    error: formatRunError(code, message),
+  });
+}
+
+/**
+ * Records a run as cancelled and ends its event stream.
+ *
+ * @param deps - Publisher and repositories.
+ * @param runId - The run.
+ */
+export async function cancelRun(deps: ProcessorDeps, runId: string): Promise<void> {
+  await publishCancellation(deps, runId);
+  await deps.repos.jobRuns.finish(runId, { status: 'CANCELLED', usage: NO_USAGE });
 }
