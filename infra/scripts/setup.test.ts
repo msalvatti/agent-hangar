@@ -15,7 +15,13 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createShimDir, readShimLog, spawnScript, writeExtraShim } from './testing/shims.js';
+import {
+  createShimDir,
+  readShimLog,
+  spawnScript,
+  writeExtraShim,
+  writeGnuStatShim,
+} from './testing/shims.js';
 
 const scriptPath = fileURLToPath(new URL('./setup.sh', import.meta.url));
 
@@ -74,37 +80,6 @@ function baseEnv(f: Fixture, extra: Record<string, string> = {}): Record<string,
     AH_SHIM_LOG: f.log,
     ...extra,
   };
-}
-
-/**
- * Writes a `stat` shim that behaves like GNU coreutils rather than the BSD build the developer
- * machines carry, so a Linux-only regression is reproducible everywhere.
- *
- * The distinction that matters: GNU reads `-f` as `--file-system` and treats the format string as
- * another file operand, so it prints a filesystem block on stdout for the real file *and* exits
- * non-zero. A `stat -f … || stat -c …` chain therefore captures both outputs concatenated.
- *
- * @param shimDir - Shim directory prepended to PATH.
- * @param mode - Octal mode the GNU form reports for any file.
- */
-function gnuStatShim(shimDir: string, mode = '600'): void {
-  writeExtraShim(
-    shimDir,
-    'stat',
-    [
-      'if [ "${1:-}" = \'-c\' ]; then',
-      `  printf '%s\\n' '${mode}'`,
-      '  exit 0',
-      'fi',
-      'if [ "${1:-}" = \'-f\' ]; then',
-      '  printf \'%s\\n\' "  File: \\"${3:-}\\""',
-      "  printf '%s\\n' '    ID: 0        Namelen: 255     Type: UNKNOWN'",
-      "  printf '%s\\n' 'Block size: 1048576'",
-      '  exit 1',
-      'fi',
-      'exit 1',
-    ].join('\n'),
-  );
 }
 
 describe('setup.sh first run', () => {
@@ -279,7 +254,7 @@ describe('setup.sh on a GNU userland', () => {
   it('accepts a mode-600 key instead of refusing it', () => {
     const f = fixture();
     const shimDir = createShimDir({ log: f.log, docker: { image: 'present' } });
-    gnuStatShim(shimDir);
+    writeGnuStatShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--skip-doctor'],
@@ -297,7 +272,7 @@ describe('setup.sh on a GNU userland', () => {
   it('still refuses a group-readable key', () => {
     const f = fixture();
     const shimDir = createShimDir({ log: f.log, docker: { image: 'present' } });
-    gnuStatShim(shimDir, '644');
+    writeGnuStatShim(shimDir, '644');
     const result = spawnScript(scriptPath, {
       shimDir,
       args: ['--skip-doctor'],

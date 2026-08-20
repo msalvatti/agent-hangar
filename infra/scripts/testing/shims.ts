@@ -296,6 +296,38 @@ export function writeExtraShim(dir: string | undefined, name: string, body: stri
 }
 
 /**
+ * Writes a `stat` shim that behaves like GNU coreutils rather than the BSD build a developer
+ * machine carries, so a Linux-only regression is reproducible everywhere.
+ *
+ * The distinction that matters: GNU reads `-f` as `--file-system` and treats the format string as
+ * another file operand, so it prints a filesystem block on stdout for the real file *and* exits
+ * non-zero. A `stat -f … || stat -c …` chain therefore captures both outputs concatenated.
+ *
+ * @param dir - Shim directory prepended to PATH.
+ * @param mode - Octal mode the GNU form reports for any file.
+ * @returns The absolute path of the written executable.
+ */
+export function writeGnuStatShim(dir: string, mode = '600'): string {
+  return writeExtraShim(
+    dir,
+    'stat',
+    [
+      `if [ "\${1:-}" = '-c' ]; then`,
+      `  printf '%s\\n' '${mode}'`,
+      '  exit 0',
+      'fi',
+      `if [ "\${1:-}" = '-f' ]; then`,
+      `  printf '%s\\n' "  File: \\"\${3:-}\\""`,
+      `  printf '%s\\n' '    ID: 0        Namelen: 255     Type: UNKNOWN'`,
+      `  printf '%s\\n' 'Block size: 1048576'`,
+      '  exit 1',
+      'fi',
+      'exit 1',
+    ].join('\n'),
+  );
+}
+
+/**
  * Reads the lines a shim log recorded, oldest first.
  *
  * @param log - Path passed as `AH_SHIM_LOG` to the spawned script.

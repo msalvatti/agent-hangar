@@ -77,7 +77,9 @@ function listen(port: number): Promise<Server> {
  * Reserves a port base whose web port (`base + 0`) nothing is listening on.
  *
  * The script probes that port to decide whether the instance is running, so every test that is
- * not about that check has to name a base where the probe finds nothing.
+ * not about that check has to name a base where the probe finds nothing. The port is bound and
+ * released rather than merely guessed: the OS hands out ephemeral ports in rotation rather than
+ * reissuing the one just returned, so it stays free for the length of one test.
  *
  * @returns A base whose web port is free.
  */

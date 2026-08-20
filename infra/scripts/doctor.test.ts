@@ -21,7 +21,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createShimDir, spawnScript, writeExtraShim } from './testing/shims.js';
+import { createShimDir, spawnScript, writeExtraShim, writeGnuStatShim } from './testing/shims.js';
 import type { DockerShimOptions, PnpmShimOptions } from './testing/shims.js';
 
 const scriptPath = fileURLToPath(new URL('./doctor.sh', import.meta.url));
@@ -122,37 +122,6 @@ async function closedPortBase(): Promise<number> {
   const bound = await bindDerivedPorts();
   bound.close();
   return bound.portBase;
-}
-
-/**
- * Writes a `stat` shim that behaves like GNU coreutils rather than the BSD build the developer
- * machines carry, so a Linux-only regression is reproducible everywhere.
- *
- * The distinction that matters: GNU reads `-f` as `--file-system` and treats the format string as
- * another file operand, so it prints a filesystem block on stdout for the real file *and* exits
- * non-zero. A `stat -f … || stat -c …` chain therefore captures both outputs concatenated.
- *
- * @param shimDir - Shim directory prepended to PATH.
- * @param mode - Octal mode the GNU form reports for any file.
- */
-function gnuStatShim(shimDir: string, mode = '600'): void {
-  writeExtraShim(
-    shimDir,
-    'stat',
-    [
-      'if [ "${1:-}" = \'-c\' ]; then',
-      `  printf '%s\\n' '${mode}'`,
-      '  exit 0',
-      'fi',
-      'if [ "${1:-}" = \'-f\' ]; then',
-      '  printf \'%s\\n\' "  File: \\"${3:-}\\""',
-      "  printf '%s\\n' '    ID: 0        Namelen: 255     Type: UNKNOWN'",
-      "  printf '%s\\n' 'Block size: 1048576'",
-      '  exit 1',
-      'fi',
-      'exit 1',
-    ].join('\n'),
-  );
 }
 
 interface HelperFixture {
@@ -661,7 +630,7 @@ describe('doctor.sh on a GNU userland', () => {
   it('reads the key mode correctly and still emits valid JSON', async () => {
     const sandbox = await greenSandbox();
     const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
-    gnuStatShim(shimDir);
+    writeGnuStatShim(shimDir);
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
@@ -672,7 +641,7 @@ describe('doctor.sh on a GNU userland', () => {
     expect(result.status).toBe(0);
     const rows = JSON.parse(result.stdout) as { check: string; status: string; detail: string }[];
     const key = rows.find((row) => row.check === 'Master key');
-    expect(key?.status).toBe('\u2713');
+    expect(key?.status).toBe('✓');
     expect(key?.detail).toBe(`${sandbox.keyPath} (mode 600)`);
   });
 
@@ -683,7 +652,7 @@ describe('doctor.sh on a GNU userland', () => {
   it('still refuses a group-readable key', async () => {
     const sandbox = await greenSandbox();
     const shimDir = createShimDir({ log: sandbox.log, docker: greenDocker(), pnpm: greenPnpm() });
-    gnuStatShim(shimDir, '644');
+    writeGnuStatShim(shimDir, '644');
     const helper = helperShim(shimDir);
     const result = spawnScript(scriptPath, {
       shimDir,
@@ -694,7 +663,7 @@ describe('doctor.sh on a GNU userland', () => {
     expect(result.status).toBe(1);
     const rows = JSON.parse(result.stdout) as { check: string; status: string; fix: string }[];
     const key = rows.find((row) => row.check === 'Master key');
-    expect(key?.status).toBe('\u2717');
+    expect(key?.status).toBe('✗');
     expect(key?.fix).toContain('chmod 600');
   });
 });
