@@ -136,6 +136,14 @@ export interface TranscriptState {
   connection: ConnectionState;
   lastEventId: string | null;
   lastActivityAt: number | null;
+  /**
+   * Turn the stream is currently describing, once it has said so.
+   *
+   * Only the preparation notice needs it, and it needs it because the notice has to be keyed per
+   * turn: a chat holds the notices of every turn it has run, and a single id would have each new
+   * turn overwrite the last one's rather than add its own.
+   */
+  turnId: string | null;
 }
 
 /** Action folded into a {@link TranscriptState} by {@link transcriptReducer}. */
@@ -159,6 +167,25 @@ export const STALL_TIMEOUT_MS = 45_000;
 
 /** Stable id of the single notice item that tracks workspace preparation progress. */
 export const PREPARE_NOTICE_ID = 'prepare';
+
+/**
+ * The id of one turn's preparation notice.
+ *
+ * Scoped to the turn because a chat's transcript keeps every turn it has run, and the live stream
+ * and a reload both write this row: they have to agree on the id, or a reload of a running turn
+ * shows the line twice, and they have to differ between turns, or a new turn's preparation erases
+ * the previous one's — which is what a single constant did, measured by the archive-and-restore
+ * spec counting one notice where it had counted one before and expected two.
+ *
+ * The unscoped constant remains the answer when the turn is not known: a stream joined after
+ * `turn.started` has scrolled out of the window still has a preparation to describe.
+ *
+ * @param turnId - Turn the notice belongs to, or `null` when it has not been named.
+ * @returns The notice id.
+ */
+export function prepareNoticeId(turnId: string | null): string {
+  return turnId === null ? PREPARE_NOTICE_ID : `${PREPARE_NOTICE_ID}-${turnId}`;
+}
 
 /**
  * Line shown when a turn was stopped by the operator. Written once so the notice the live stream
@@ -190,5 +217,6 @@ export function createInitialState(partial: InitialStateOverrides = {}): Transcr
     connection: 'idle',
     lastEventId: partial.lastEventId ?? null,
     lastActivityAt: null,
+    turnId: null,
   };
 }

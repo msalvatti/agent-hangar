@@ -24,6 +24,7 @@ export type {
 } from './types';
 export {
   PREPARE_NOTICE_ID,
+  prepareNoticeId,
   STALL_TIMEOUT_MS,
   TOOL_OUTPUT_DISPLAY_LIMIT_BYTES,
   TURN_CANCELLED_NOTICE,

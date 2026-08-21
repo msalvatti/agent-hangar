@@ -260,6 +260,8 @@ describe('PrismaTurnRepository', () => {
         inputTokens: null,
         outputTokens: null,
         stepCount: 0,
+        preparedBranch: null,
+        preparedSha: null,
       },
     });
     // The row comes back from the statement that wrote it, so nothing re-reads it: a second round
@@ -281,6 +283,25 @@ describe('PrismaTurnRepository', () => {
 
     expect(await repo.requeue('turn-1')).toBeNull();
     expect(turn.findUnique).not.toHaveBeenCalled();
+  });
+
+  /**
+   * `recordPrepared` addresses the row by id through `updateMany`, so a turn deleted with its chat
+   * while the runtime was still cloning matches nothing instead of raising P2025 under the
+   * processor. The preparation is the one part of a workspace's setup that outlives it, because
+   * the transcript states it again after a reload and the event itself is not kept.
+   */
+  it('recordPrepared() writes the branch and commit without failing on a missing row', async () => {
+    const { client, turn } = fakePrisma();
+    const repo = new PrismaTurnRepository(client, fakeRedactor);
+
+    await repo.recordPrepared('turn-1', { branch: 'agent/018f3a2b', headSha: 'abc1234def' });
+
+    expect(turn.updateMany).toHaveBeenCalledWith({
+      where: { id: 'turn-1' },
+      data: { preparedBranch: 'agent/018f3a2b', preparedSha: 'abc1234def' },
+    });
+    expect(turn.update).not.toHaveBeenCalled();
   });
 
   /** listByChat() orders by queuedAt asc. */

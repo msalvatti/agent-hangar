@@ -12,10 +12,10 @@
  * that follows it, and a turn finishes after the last call it made. So the lists are merged on
  * their own timestamps, which is right for the whole history rather than only for its newest part.
  */
-import { systemNoticeTone, toolNameSchema } from '@agent-hangar/core';
+import { preparedNoticeText, systemNoticeTone, toolNameSchema } from '@agent-hangar/core';
 import type { ChatDetail, MessageView, ToolCallView, ToolName, TurnView } from '@agent-hangar/core';
 
-import { TURN_CANCELLED_NOTICE, utf8ByteLength } from '@/shared/transcript';
+import { prepareNoticeId, TURN_CANCELLED_NOTICE, utf8ByteLength } from '@/shared/transcript';
 import type { ToolCallStatus, TranscriptItem, TurnPhase } from '@/shared/transcript';
 
 /** Code every rebuilt failure row carries; the persisted turn keeps the message, not a code. */
@@ -174,6 +174,37 @@ function hasVisibleFailure(turn: TurnView): turn is TurnView & { error: string }
 }
 
 /**
+ * The preparation notice of one turn, when the turn got far enough to have one.
+ *
+ * The id is the point, and it comes from `prepareNoticeId` rather than from here. A reload of a
+ * live turn reopens the stream from its first event, so `prepare.done` arrives again and the
+ * reducer writes this same row: the two have to agree on the id, or the reader is told the same
+ * thing twice. They also have to differ between turns, or a new turn's preparation overwrites the
+ * previous turn's line instead of joining it — which is what one shared constant did, and what the
+ * archive-and-restore spec caught by counting.
+ *
+ * @param turn - The turn.
+ * @returns The timed notice, or nothing when the turn never reported a prepared workspace.
+ */
+function preparedItem(turn: TurnView): TimedItem[] {
+  const { preparedBranch, preparedSha } = turn;
+  if (preparedBranch === null || preparedSha === null) {
+    return [];
+  }
+  return [
+    {
+      at: Date.parse(turn.startedAt ?? turn.queuedAt),
+      item: {
+        kind: 'notice' as const,
+        id: prepareNoticeId(turn.id),
+        tone: 'success' as const,
+        text: preparedNoticeText(preparedBranch, preparedSha),
+      },
+    },
+  ];
+}
+
+/**
  * Places every displayed row on the chat's one timeline.
  *
  * The sort is stable and the three lists are concatenated in the order a row can cause the next
@@ -213,7 +244,8 @@ function timedItems(messages: readonly MessageView[], detail: ChatDetail): Timed
       turnId: turn.id,
     },
   }));
-  return [...fromMessages, ...fromCalls, ...fromStops, ...fromFailures].sort(
+  const fromPreparations = detail.turns.flatMap((turn) => preparedItem(turn));
+  return [...fromMessages, ...fromCalls, ...fromStops, ...fromFailures, ...fromPreparations].sort(
     (left, right) => left.at - right.at,
   );
 }

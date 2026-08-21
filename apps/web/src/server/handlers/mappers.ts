@@ -122,6 +122,8 @@ function toTurnView(turn: Turn): z.output<typeof turnView> {
       stepCount: turn.stepCount,
     },
     error: turn.error,
+    preparedBranch: turn.preparedBranch,
+    preparedSha: turn.preparedSha,
     queuedAt: turn.queuedAt.toISOString(),
     startedAt: iso(turn.startedAt),
     finishedAt: iso(turn.finishedAt),

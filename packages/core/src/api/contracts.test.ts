@@ -270,6 +270,8 @@ describe('chat schemas', () => {
           workspaceId: 'w1',
           usage: { inputTokens: 10, outputTokens: 5, stepCount: 1 },
           error: null,
+          preparedBranch: null,
+          preparedSha: null,
           queuedAt: now,
           startedAt: now,
           finishedAt: now,

@@ -288,6 +288,41 @@ describe('TurnRepository', () => {
    * of the failed attempt erased, so nothing about the previous run is rendered under a turn that
    * is waiting to run again.
    */
+  it('records what a workspace was prepared on, and forgets it on requeue', async () => {
+    const chat = await seedChat();
+    const turn = await repos.turns.create({ chatId: chat.id, model: 'gpt' });
+    expect(turn).toMatchObject({ preparedBranch: null, preparedSha: null });
+
+    await repos.turns.recordPrepared(turn.id, { branch: 'agent/018f3a2b', headSha: 'abc1234def' });
+    expect(await repos.turns.get(turn.id)).toMatchObject({
+      preparedBranch: 'agent/018f3a2b',
+      preparedSha: 'abc1234def',
+    });
+
+    // A retry prepares a workspace of its own, so the previous attempt's commit must not be left
+    // for the transcript to state as this one's.
+    await repos.turns.finish(
+      turn.id,
+      'FAILED',
+      { inputTokens: 0, outputTokens: 0, stepCount: 0 },
+      'boom',
+    );
+    expect(await repos.turns.requeue(turn.id)).toMatchObject({
+      preparedBranch: null,
+      preparedSha: null,
+    });
+  });
+
+  /**
+   * A turn that vanished — deleted with its chat while the runtime was still cloning — is not a
+   * failure of the run, so the write is silent about it rather than throwing under the processor.
+   */
+  it('is silent when the turn it would record against is gone', async () => {
+    await expect(
+      repos.turns.recordPrepared('turn-that-never-existed', { branch: 'main', headSha: 'abc1234' }),
+    ).resolves.toBeUndefined();
+  });
+
   it('requeues a failed turn and clears the failed attempt', async () => {
     const chat = await seedChat();
     const turn = await repos.turns.create({ chatId: chat.id, model: 'gpt' });

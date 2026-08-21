@@ -6,7 +6,12 @@
  * No wall-clock reads happen here: every timestamp comes in through the action's `now` field so
  * the fold stays deterministic and trivially testable with a fake clock.
  */
-import { agentEventSchema, isPrepareWarning, pushedNoticeText, shortSha } from '@agent-hangar/core';
+import {
+  agentEventSchema,
+  isPrepareWarning,
+  preparedNoticeText,
+  pushedNoticeText,
+} from '@agent-hangar/core';
 import type { AgentEvent, AgentEventOf, AgentEventType } from '@agent-hangar/core';
 
 import { utf8ByteLength } from './lib/format';
@@ -20,7 +25,7 @@ import type {
   TranscriptItem,
   TranscriptState,
 } from './types';
-import { PREPARE_NOTICE_ID, TOOL_OUTPUT_DISPLAY_LIMIT_BYTES, TURN_CANCELLED_NOTICE } from './types';
+import { prepareNoticeId, TOOL_OUTPUT_DISPLAY_LIMIT_BYTES, TURN_CANCELLED_NOTICE } from './types';
 
 /** Discriminator values of every `AgentEvent` variant, derived from the Zod schema itself. */
 export const AGENT_EVENT_TYPES: readonly AgentEventType[] = agentEventSchema.options.map(
@@ -232,7 +237,14 @@ function recordPush(state: TranscriptState, event: AgentEventOf<'git.pushed'>): 
 function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): TranscriptState {
   switch (event.type) {
     case 'turn.started':
-      return { ...state, phase: 'preparing', startedAt: Date.parse(event.at) };
+      // The turn is remembered for the preparation notice alone, which has to be keyed per turn:
+      // see `prepareNoticeId`.
+      return {
+        ...state,
+        phase: 'preparing',
+        startedAt: Date.parse(event.at),
+        turnId: event.turnId,
+      };
 
     case 'prepare.progress':
       // A finding is not progress. Progress collapses onto one line and `prepare.done` replaces
@@ -249,23 +261,29 @@ function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): Tr
             ...state,
             items: upsertNotice(
               state.items,
-              `${PREPARE_NOTICE_ID}-finding-${event.message}`,
+              `${prepareNoticeId(state.turnId)}-finding-${event.message}`,
               'warning',
               event.message,
             ),
           }
         : {
             ...state,
-            items: upsertNotice(state.items, PREPARE_NOTICE_ID, 'info', event.message),
+            items: upsertNotice(state.items, prepareNoticeId(state.turnId), 'info', event.message),
           };
 
     case 'prepare.done': {
       const durationMs = state.startedAt === null ? undefined : now - state.startedAt;
-      const text = `Prepared ${event.branch} at ${shortSha(event.headSha)}`;
+      const text = preparedNoticeText(event.branch, event.headSha);
       return {
         ...state,
         phase: 'running',
-        items: upsertNotice(state.items, PREPARE_NOTICE_ID, 'success', text, durationMs),
+        items: upsertNotice(
+          state.items,
+          prepareNoticeId(state.turnId),
+          'success',
+          text,
+          durationMs,
+        ),
       };
     }
 

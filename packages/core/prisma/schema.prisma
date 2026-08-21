@@ -80,6 +80,11 @@ model Turn {
   outputTokens Int?
   stepCount    Int        @default(0) // model round-trips in the loop
   error        String? // redacted
+  // What the workspace was prepared on, so a reload can state it again. Not stored as a SYSTEM
+  // message the way a push is: a message is part of the window a later turn carries to the model,
+  // and this describes a container the turn does not outlive.
+  preparedBranch String?
+  preparedSha    String?
   queuedAt     DateTime   @default(now())
   startedAt    DateTime?
   finishedAt   DateTime?

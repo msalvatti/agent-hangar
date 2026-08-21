@@ -179,6 +179,8 @@ export class InMemoryTurnRepository implements TurnRepository {
       outputTokens: null,
       stepCount: 0,
       error: null,
+      preparedBranch: null,
+      preparedSha: null,
       queuedAt: this.store.now(),
       startedAt: null,
       finishedAt: null,
@@ -244,8 +246,23 @@ export class InMemoryTurnRepository implements TurnRepository {
       inputTokens: null,
       outputTokens: null,
       stepCount: 0,
+      preparedBranch: null,
+      preparedSha: null,
     });
     return { ...turn };
+  }
+
+  async recordPrepared(id: string, prepared: { branch: string; headSha: string }): Promise<void> {
+    // Silent on a missing row, exactly as the conditional write it stands in for: a turn deleted
+    // with its chat mid-preparation is not a failure the run should report. A double that threw
+    // here would be stricter than the thing it replaces, and every caller would be written to the
+    // stricter contract.
+    const turn = this.store.turns.get(id);
+    if (turn === undefined) {
+      return;
+    }
+    turn.preparedBranch = prepared.branch;
+    turn.preparedSha = prepared.headSha;
   }
 
   async listByChat(chatId: string): Promise<Turn[]> {
