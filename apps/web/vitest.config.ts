@@ -76,7 +76,8 @@ export default defineConfig({
         'app/**/*.{ts,tsx}',
         // End-to-end harness, the modules a unit test can decide. `gitserver.ts`, `docker.ts`,
         // `db.ts`, `process.ts`, `worker.ts`, `heartbeat.ts`, `prepare-stack.ts`, `stack.ts`,
-        // `stack-state.ts`, the page objects and the Playwright hooks spawn processes, signal
+        // `stack-state.ts`, `interactive-controls.ts`, the page objects and the Playwright hooks
+        // spawn processes, signal
         // them, open sockets or drive a browser, so the end-to-end run is what exercises them.
         // Where one of those modules holds a decision worth pinning it carries its own unit test
         // without the whole module being measured: `worker.ts`'s command-line matcher, which
@@ -95,8 +96,9 @@ export default defineConfig({
         // `src/shared/ui/vendored.ts` and checked by `vendored.test.ts`, which re-hashes every
         // file behind it: edit one and the digest stops matching, so the file leaves this
         // exclusion and comes under measurement instead of staying hidden behind it. That is why
-        // `button.tsx`, `sheet.tsx` and `sonner.tsx` are measured — each carries a decision of
-        // this project's own.
+        // `button.tsx`, `sheet.tsx`, `sonner.tsx`, `command.tsx`, `dropdown-menu.tsx`,
+        // `switch.tsx` and `tabs.tsx` are measured — each carries a decision of this project's
+        // own.
         ...VENDORED_UI_COVERAGE_EXCLUDE,
       ],
       thresholds: {

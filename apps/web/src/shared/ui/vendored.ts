@@ -10,10 +10,13 @@
  * re-hashes every file named here and fails when one of them has been edited, which moves the file
  * out of this list and under measurement instead of leaving a modified file behind an exclusion.
  *
- * The three primitives deliberately absent are `button.tsx` and `sheet.tsx`, each of which carries
- * a commit of this project's own, and `sonner.tsx`, which was rewired at vendoring time to read the
- * palette from `@/shared/lib/theme` because the registry's version reads it from `next-themes` — a
- * dependency this repository does not have.
+ * The primitives deliberately absent each carry a decision of this project's own. `button.tsx` and
+ * `sheet.tsx` carry a commit apiece. `sonner.tsx` was rewired at vendoring time to read the palette
+ * from `@/shared/lib/theme`, because the registry's version reads it from `next-themes` — a
+ * dependency this repository does not have. `command.tsx`, `dropdown-menu.tsx`, `switch.tsx` and
+ * `tabs.tsx` were edited so that every row a person can click answers the pointer: the registry
+ * ships menu rows and palette options with `cursor-default` and gives the switch and the tab
+ * trigger no cursor at all, which spec 10 §10 does not allow.
  */
 
 /** Directory the primitives live in, relative to the package root. */
@@ -46,16 +49,8 @@ export const VENDORED_UI_PRIMITIVES: readonly VendoredPrimitive[] = [
     sha256: '3874f47a3844a0211277fcfc3628dd7c0ad88c2ca0713f5efd1a43d74c635dc0',
   },
   {
-    file: 'command.tsx',
-    sha256: '92dc5799b66b604aceb27212caef08d232ecf290348e15a66b0a162395aa6d1c',
-  },
-  {
     file: 'dialog.tsx',
     sha256: '9cbbd552632acadad5c9f79f7b50a5a1ea9185250a6b2e8f49d98372a05fd064',
-  },
-  {
-    file: 'dropdown-menu.tsx',
-    sha256: 'a150b660acf3cdea109388b09c831f494c14bfa50b21d40cd9d2ef4dbfa34382',
   },
   {
     file: 'input-group.tsx',
@@ -74,12 +69,7 @@ export const VENDORED_UI_PRIMITIVES: readonly VendoredPrimitive[] = [
     file: 'skeleton.tsx',
     sha256: '3865da6bcfd7adac5d27c64cf85c92848e920512cc2167a622cfc3c8e37b1085',
   },
-  {
-    file: 'switch.tsx',
-    sha256: '39fd70723f7859480761799c39719ecc41019888ab0ebffdee985925c77acb72',
-  },
   { file: 'table.tsx', sha256: 'ca314129c22cedb33a55a7503b9481331bba35b3df630797970584120646508a' },
-  { file: 'tabs.tsx', sha256: '79a8a1cbcaf1b84c26e6cec13d02f2601c2de21b3cd6d8f196f480b8b85e91f9' },
   {
     file: 'textarea.tsx',
     sha256: '7f7348fe732b3cdb19f016210048f46c9fc22b8b1ebe33f0284a58cca4d531b9',

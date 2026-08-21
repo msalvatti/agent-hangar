@@ -131,6 +131,11 @@ export function SecretField({
         <div className="flex flex-wrap items-center gap-2">
           <Input
             type="password"
+            // Only when Replace put this input on screen. Pressing Replace is a request to type a
+            // new value, and leaving the focus on a button that is no longer there makes the
+            // keyboard path continue from nowhere. On first load the field is simply unset, nobody
+            // asked for it, and stealing the focus would move it away from the top of the page.
+            autoFocus={replacing}
             autoComplete="off"
             spellCheck={false}
             placeholder={field.placeholder}

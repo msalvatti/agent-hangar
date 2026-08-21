@@ -68,7 +68,7 @@ Icons: Lucide, 16 px in nav/buttons, 18 px in cards, stroke 1.75. Never emoji as
 
 - **Sidebar** (260 px, `--sidebar`, right hairline): wordmark + search (filters chats by title, `⌘K`); primary nav with icons — *New chat*, *Scheduled*, *Settings*; section label **CHATS** (uppercase 11 px, `--muted-foreground`, letter-spacing .06em) followed by active chats sorted by `updatedAt`, each row: title (truncate), tiny status dot (running = accent pulse, failed = destructive) on the right; collapsible **ARCHIVED** group; footer: environment pill (`docker ✓` / `docker ✗` from `/api/health`, click → doctor details dialog), theme toggle. Active route has `--muted` background + accent 2 px left bar.
 - **Header** (per page, 48 px, hairline bottom): page title or chat title (inline-editable), repo chip (`owner/repo · branch`), workspace status pill, overflow menu (Archive / Restore / Delete / Copy chat id).
-- Keyboard: `⌘K` search, `⌘N` new chat, `⌘Enter` send, `Esc` cancel turn (with confirm), `⌘,` settings. Shown in tooltips.
+- Keyboard: `⌘K` search, `⌘N` new chat, `Enter` send (`Shift+Enter` inserts a newline; `⌘/Ctrl+Enter` also sends), `Esc` cancel turn (with confirm), `⌘,` settings. Shown in tooltips.
 
 ## 4. Screens
 
