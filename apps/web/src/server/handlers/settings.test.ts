@@ -12,7 +12,7 @@ import { putSecretResponse, settingsStatus } from '@agent-hangar/core';
 import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { foreignRequest } from '../testing/requests';
+import { foreignRequest, readRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
 
@@ -69,7 +69,7 @@ describe('getSettings', () => {
    */
   it('reports both credentials as unset and names the model', async () => {
     const { container } = harness({ secretsSet: false });
-    const response = await getSettings(container);
+    const response = await getSettings(container, readRequest('/api/settings'));
     expect(response.headers.get('cache-control')).toBe('no-store');
     const body = settingsStatus.parse(await response.json());
     expect(body.githubPat).toEqual({ set: false });
@@ -83,7 +83,7 @@ describe('getSettings', () => {
    */
   it('masks stored credentials to their last four characters', async () => {
     const { container } = harness();
-    const response = await getSettings(container);
+    const response = await getSettings(container, readRequest('/api/settings'));
     const text = await response.text();
     assertNoCanary(text);
     const body = settingsStatus.parse(JSON.parse(text));

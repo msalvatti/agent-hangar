@@ -110,7 +110,7 @@ describe('job and run routes', () => {
   it('wires GET and POST on the job collection', async () => {
     const route = await import('./jobs/route');
     expect(route.dynamic).toBe('force-dynamic');
-    expect((await route.GET()).status).toBe(200);
+    expect((await route.GET(request(routes.jobs))).status).toBe(200);
     expect((await route.POST(request(routes.jobs, 'POST', {}))).status).toBe(400);
   });
 
@@ -226,7 +226,7 @@ describe('settings and health routes', () => {
   it('wires the settings status, write and removal', async () => {
     const collection = await import('./settings/route');
     expect(collection.dynamic).toBe('force-dynamic');
-    expect((await collection.GET()).status).toBe(200);
+    expect((await collection.GET(request(routes.settings))).status).toBe(200);
 
     const item = await import('./settings/[key]/route');
     const ctx = context({ key: 'NOPE' });
@@ -242,7 +242,7 @@ describe('settings and health routes', () => {
   it('wires the health route', async () => {
     const route = await import('./health/route');
     expect(route.dynamic).toBe('force-dynamic');
-    expect((await route.GET()).status).toBe(200);
+    expect((await route.GET(request(routes.health))).status).toBe(200);
   });
 });
 

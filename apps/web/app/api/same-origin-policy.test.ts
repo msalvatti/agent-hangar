@@ -1,15 +1,20 @@
 /** @vitest-environment node */
 /**
- * Policy test: every state-changing route refuses a request from another origin.
+ * Policy test: no route serves a request that did not come from this application, and no route at
+ * all serves one addressed to a host this machine does not answer to.
  *
  * Layer: unit.
  * Goal: this API has no session cookie and no login, so its effective authorisation is "whoever
- * can reach the port" — and a page open in the developer's browser can reach it. A cross-origin
- * `fetch(..., { mode: 'no-cors' })` with a `text/plain` content type triggers no preflight, and
- * `request.json()` parses the body regardless of what it declares, so the write would land even
- * though the attacker cannot read the answer.
+ * can reach the port" — and a page open in the developer's browser can reach it. Two shapes get
+ * there. A cross-origin `fetch(..., { mode: 'no-cors' })` with a `text/plain` content type
+ * triggers no preflight, and `request.json()` parses the body regardless of what it declares, so
+ * the write would land even though the attacker cannot read the answer. And a DNS-rebinding page,
+ * whose own hostname the attacker points at the loopback address, produces a request in which
+ * `Origin`, `Host` and `Sec-Fetch-Site` all agree — so every check that compares the request
+ * against itself passes, and the browser hands the response body back too, which puts the reads in
+ * scope as well as the writes.
  *
- * The route files are deliberately thin wiring, so the guard lives in the handler behind each one.
+ * The route files are deliberately thin wiring, so the guards live in the handler behind each one.
  * That makes a grep for `assertSameOrigin` over `app/api/**` the wrong instrument: it would report
  * every route file while the invariant holds perfectly. This suite calls the routes instead, which
  * is what actually proves it — and it discovers the routes by walking the directory, so a route
@@ -23,7 +28,7 @@ import { fileURLToPath } from 'node:url';
 import { GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { foreignRequest } from '@/server/testing/requests';
+import { foreignRequest, reboundRequest } from '@/server/testing/requests';
 import { createTestContainer } from '@/server/testing/test-container';
 import type { TestContainer } from '@/server/testing/test-container';
 
@@ -38,8 +43,14 @@ beforeEach(() => {
   harness = createTestContainer();
 });
 
-/** Methods that change state and therefore carry the guard. */
+/** Methods that change state and therefore carry the same-origin guard. */
 const STATE_CHANGING = ['POST', 'PUT', 'PATCH', 'DELETE'] as const;
+
+/** Every method a route module may export; all of them carry the host guard. */
+const EVERY_METHOD = ['GET', ...STATE_CHANGING] as const;
+
+/** Body the hostile requests carry; wide enough to satisfy every write contract on the way in. */
+const HOSTILE_BODY = { value: 'x'.repeat(40), title: 'x', prompt: 'x' };
 
 /** Values used for the dynamic segments; the guard runs before anything is looked up. */
 const SEGMENT_VALUES: Readonly<Record<string, string>> = { '[id]': 'missing', '[key]': 'NOPE' };
@@ -122,11 +133,7 @@ describe('same-origin policy', () => {
           continue;
         }
         const invoke = handler as (request: Request, context: unknown) => Promise<Response>;
-        const request = foreignRequest(route.path, method, {
-          value: 'x'.repeat(40),
-          title: 'x',
-          prompt: 'x',
-        });
+        const request = foreignRequest(route.path, method, HOSTILE_BODY);
         const response = await invoke(request, { params: Promise.resolve(route.params) });
         expect(response.status, `${method} ${route.path}`).toBe(403);
         expect(await response.json()).toMatchObject({ error: { code: 'FORBIDDEN_ORIGIN' } });
@@ -143,6 +150,53 @@ describe('same-origin policy', () => {
       GITHUB_PAT: { set: true, last4: GITHUB_CANARY.slice(-4) },
       OPENAI_API_KEY: { set: true, last4: OPENAI_CANARY.slice(-4) },
     });
+    expect(harness.doubles.queues.chatTurns.added).toEqual([]);
+    expect(harness.doubles.queues.scheduledJobs.added).toEqual([]);
+    expect(harness.doubles.queues.workspaceGc.added).toEqual([]);
+  });
+
+  /**
+   * Every export of every route — reads, streams and writes alike — answers 403 to a request
+   * addressed to a hostname this machine does not answer to.
+   *
+   * This is the DNS-rebinding case, and it is the one the origin checks cannot see: the request is
+   * internally consistent, so a guard that compares `Origin` against `Host` waves it through. It
+   * covers `GET` as well, because rebinding is the situation in which the browser considers the
+   * response same-origin and lets the attacking page read it — the confidentiality argument that
+   * excuses the reads from the origin guard is exactly what fails here.
+   *
+   * The doubles are inspected in this test rather than in one of their own for the same reason as
+   * above: `beforeEach` gives each test its own harness, so a separate one would inspect a
+   * container these refusals never touched.
+   */
+  it('refuses every route export addressed to a rebound host', async () => {
+    const checked: string[] = [];
+    for (const route of routes) {
+      const loaded = (await import(/* @vite-ignore */ route.specifier)) as Record<string, unknown>;
+      for (const method of EVERY_METHOD) {
+        const handler = loaded[method];
+        if (typeof handler !== 'function') {
+          continue;
+        }
+        const invoke = handler as (request: Request, context: unknown) => Promise<Response>;
+        const request =
+          method === 'GET'
+            ? reboundRequest(route.path, method)
+            : reboundRequest(route.path, method, HOSTILE_BODY);
+        const response = await invoke(request, { params: Promise.resolve(route.params) });
+        expect(response.status, `${method} ${route.path}`).toBe(403);
+        expect(await response.json(), `${method} ${route.path}`).toMatchObject({
+          error: { code: 'FORBIDDEN_ORIGIN' },
+        });
+        checked.push(`${method} ${route.path}`);
+      }
+    }
+    expect(checked.length).toBeGreaterThanOrEqual(24);
+
+    // Nothing was read and nothing was written: the host guard runs before the query string is
+    // parsed, before the row is looked up and before a stream is opened.
+    expect(await harness.doubles.repos.chats.list()).toEqual([]);
+    expect(await harness.doubles.repos.scheduledJobs.list()).toEqual([]);
     expect(harness.doubles.queues.chatTurns.added).toEqual([]);
     expect(harness.doubles.queues.scheduledJobs.added).toEqual([]);
     expect(harness.doubles.queues.workspaceGc.added).toEqual([]);

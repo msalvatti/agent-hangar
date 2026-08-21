@@ -23,6 +23,7 @@ import type { WorkerHeartbeat } from '@agent-hangar/core';
 
 import type { ServerContainer } from '../container';
 import { jsonResponse, withErrorHandling } from '../http';
+import { assertKnownHost } from '../same-origin';
 import { TIMED_OUT, withTimeout } from '../timeout';
 import type { ProbeResult } from '../timeout';
 
@@ -149,10 +150,12 @@ function fromHeartbeat(heartbeat: WorkerHeartbeat | null): {
  * `GET /api/health` — reachability of the database, Redis, Docker and the workspace image.
  *
  * @param container - The server container.
+ * @param request - The incoming request; only its addressed host is read.
  * @returns `200` with the health report; `ok` is false when a dependency is unreachable.
  */
-export function getHealth(container: ServerContainer): Promise<Response> {
+export function getHealth(container: ServerContainer, request: Request): Promise<Response> {
   return withErrorHandling(container, async () => {
+    assertKnownHost(request);
     const [db, redis, heartbeat] = await Promise.all([
       probe(container, 'db', () => container.prisma.$queryRaw`SELECT 1`),
       probe(container, 'redis', () => container.redis.ping()),

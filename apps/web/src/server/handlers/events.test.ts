@@ -35,7 +35,9 @@ const REPO_URL = 'https://github.com/acme/widgets';
  * @returns The request.
  */
 function stream(path: string, headers: Record<string, string> = {}): Request {
-  return new Request(`http://127.0.0.1:3000${path}`, { headers });
+  return new Request(`http://127.0.0.1:3000${path}`, {
+    headers: { host: '127.0.0.1:3000', ...headers },
+  });
 }
 
 /**

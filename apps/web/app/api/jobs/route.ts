@@ -9,10 +9,11 @@ import { createJob, listJobs } from '@/server/handlers/jobs';
 export const dynamic = 'force-dynamic';
 
 /**
+ * @param request - The incoming request.
  * @returns Every scheduled job.
  */
-export function GET(): Promise<Response> {
-  return listJobs(getServerContainer());
+export function GET(request: Request): Promise<Response> {
+  return listJobs(getServerContainer(), request);
 }
 
 /**

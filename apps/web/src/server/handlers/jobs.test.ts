@@ -18,7 +18,7 @@ import {
 import { describe, expect, it, vi } from 'vitest';
 
 import { REPO_URL_NOT_ALLOWED } from '../repo-url';
-import { foreignRequest, writeRequest } from '../testing/requests';
+import { foreignRequest, readRequest, writeRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
 
@@ -187,7 +187,9 @@ describe('listJobs and getJob', () => {
       model: 'gpt-test',
       scheduledFor: NOW,
     });
-    const body = listJobsResponse.parse(await (await listJobs(harness.container)).json());
+    const body = listJobsResponse.parse(
+      await (await listJobs(harness.container, readRequest('/api/jobs'))).json(),
+    );
     expect(body.jobs).toHaveLength(1);
     expect(body.jobs[0]?.lastRunStatus).toBe('QUEUED');
   });

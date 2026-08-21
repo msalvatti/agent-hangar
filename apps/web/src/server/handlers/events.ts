@@ -5,7 +5,9 @@
  *
  * Both resolve which stream to read and then hand off to the stream factory. Neither carries the
  * same-origin guard: they are reads, `EventSource` is same-origin by construction, and the browser
- * already stops a cross-origin page from reading the body.
+ * already stops a cross-origin page from reading the body. Both do carry the host guard, which is
+ * the part that argument depends on — a rebound hostname makes the browser call the stream
+ * same-origin and hand the transcript to the page that opened it.
  *
  * The resume point comes from the `Last-Event-ID` header the browser resends on its own
  * reconnects, or from `?from=` when the page was reloaded. The header wins, because it is the one
@@ -19,6 +21,7 @@ import { z } from 'zod';
 import type { ServerContainer } from '../container';
 import { ResourceNotFoundError } from '../errors';
 import { parseQuery, withErrorHandling } from '../http';
+import { assertKnownHost } from '../same-origin';
 import { createSseResponse } from '../sse';
 
 import { isLive } from './guards';
@@ -63,6 +66,7 @@ export function chatEvents(
   params: EventsParams,
 ): Promise<Response> {
   return withErrorHandling(container, async () => {
+    assertKnownHost(request);
     const query = parseQuery(request.url, eventsQuery);
     if ((await container.repos.chats.getById(params.id)) === null) {
       throw new ResourceNotFoundError('Chat not found');
@@ -99,6 +103,7 @@ export function runEvents(
   params: EventsParams,
 ): Promise<Response> {
   return withErrorHandling(container, async () => {
+    assertKnownHost(request);
     const query = parseQuery(request.url, eventsQuery);
     const run = await container.repos.jobRuns.get(params.id);
     if (run === null) {
