@@ -82,6 +82,15 @@ export interface LoopDeps {
   sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /** Heartbeat interval; defaults to ten seconds. */
   heartbeatMs?: number;
+  /**
+   * What preparation found about the checkout this turn starts from, oldest first.
+   *
+   * These are not progress: a work branch that has diverged from its remote is still diverged when
+   * the model starts, and the model is what can reconcile it — with git, in the workspace it is
+   * already holding. Handed to it as one system item so it plans against the ground it actually
+   * has rather than against the remote it cannot see.
+   */
+  prepareNotes?: readonly string[];
 }
 
 /** How the turn ended. */
@@ -98,6 +107,9 @@ interface LoopState {
   /** Stops the heartbeat; called before a terminal event so none can follow it. */
   stopHeartbeat: () => void;
 }
+
+/** Opening of the system item that carries what preparation found. */
+const PREPARE_NOTES_HEADING = 'Workspace preparation reported:';
 
 /** Clock captured at the start of the turn. */
 interface LoopClock {
@@ -534,6 +546,28 @@ async function runSteps(deps: LoopDeps, state: LoopState, clock: LoopClock): Pro
 }
 
 /**
+ * Renders what preparation found as the conversation item the model reads it from.
+ *
+ * One item rather than one per note, and last rather than first: the notes describe the state the
+ * turn starts in, so they belong next to the request they qualify, and a turn that found nothing
+ * adds nothing at all to the window.
+ *
+ * @param notes - Findings from preparation, oldest first.
+ * @returns The item to append, or nothing when preparation found nothing.
+ */
+function prepareNoteItems(notes: readonly string[]): ConversationItem[] {
+  if (notes.length === 0) {
+    return [];
+  }
+  return [
+    {
+      role: 'system',
+      content: [PREPARE_NOTES_HEADING, ...notes.map((note) => `- ${note}`)].join('\n'),
+    },
+  ];
+}
+
+/**
  * Runs one turn to completion, cancellation or failure.
  *
  * @param deps - Everything the loop needs for this turn.
@@ -551,7 +585,7 @@ export async function runTurnLoop(deps: LoopDeps): Promise<LoopOutcome> {
     clearInterval(heartbeat);
   };
   const state: LoopState = {
-    items: [...deps.request.items],
+    items: [...deps.request.items, ...prepareNoteItems(deps.prepareNotes ?? [])],
     usage: { inputTokens: 0, outputTokens: 0 },
     seq: 0,
     steps: 0,

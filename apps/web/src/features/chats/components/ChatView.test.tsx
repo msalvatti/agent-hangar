@@ -56,6 +56,31 @@ function failStoredTurn(chatId: string, turnId: string): void {
   Object.assign(turn, { status: 'FAILED', error: 'OpenAI rejected the API key (401)' });
 }
 
+/**
+ * Inserts a turn that failed before the chat's existing one, as a chat that was retried holds.
+ *
+ * @param chatId - Chat to extend.
+ * @param error - What that earlier attempt recorded.
+ */
+function addEarlierFailedTurn(chatId: string, error: string): void {
+  const entry = store.chats.find((candidate) => candidate.chat.id === chatId);
+  if (entry === undefined) {
+    throw new Error(`No chat ${chatId}`);
+  }
+  const newest = entry.turns[0];
+  if (newest === undefined) {
+    throw new Error(`Chat ${chatId} has no turn to precede`);
+  }
+  entry.turns.unshift({
+    ...newest,
+    id: `${newest.id}-earlier`,
+    error,
+    queuedAt: '2026-08-19T09:00:00.000Z',
+    startedAt: '2026-08-19T09:00:01.000Z',
+    finishedAt: '2026-08-19T09:00:09.000Z',
+  });
+}
+
 const push = vi.fn();
 vi.mock('next/navigation', () => ({ useRouter: () => ({ push }) }));
 
@@ -227,6 +252,43 @@ describe('ChatView', () => {
     ).toHaveLength(1);
     expect(userRows('chat-failed')).toBe(1);
     expect(turnIds('chat-failed')).toEqual(['turn-failed-1']);
+  });
+
+  /**
+   * A chat that failed, was asked again and failed again reads as both failures. Only the newest
+   * turn's error used to survive a reload, so the earlier attempt appeared to have produced
+   * nothing at all.
+   *
+   * Exactly one Retry is on screen, and it belongs to the newest turn: the API answers
+   * `TURN_NOT_RETRYABLE` for every other id, so a button on the older row would be an offer that
+   * cannot be honoured. That is asserted by counting the buttons, not by finding the text — both
+   * failures render either way.
+   */
+  it('keeps an earlier turn failure and offers Retry only on the newest', async () => {
+    addEarlierFailedTurn('chat-failed', 'The model is rate limiting');
+    renderChat('chat-failed');
+
+    expect(await screen.findByText('The turn failed')).toBeInTheDocument();
+    expect(screen.getByText('The model is rate limiting')).toBeInTheDocument();
+    expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1);
+  });
+
+  /**
+   * Sending a follow-up answers the failure the operator was looking at, not the ones before it.
+   * Clearing every error row would delete history the next reload brings straight back.
+   */
+  it('keeps an earlier failure when a follow-up supersedes the newest one', async () => {
+    addEarlierFailedTurn('chat-failed', 'The model is rate limiting');
+    renderChat('chat-failed');
+    expect(await screen.findByText('The turn failed')).toBeInTheDocument();
+
+    await userEvent.type(screen.getByRole('textbox'), 'try again please');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: 'Retry' })).toBeNull();
+    });
+    expect(screen.getByText('The model is rate limiting')).toBeInTheDocument();
   });
 
   // The retry request itself can be refused — a missing credential answers 409 before any turn is

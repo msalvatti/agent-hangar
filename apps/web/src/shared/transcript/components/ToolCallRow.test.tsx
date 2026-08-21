@@ -258,6 +258,53 @@ describe('ToolCallRow', () => {
     expect(screen.getByText(/truncated — /)).toBeInTheDocument();
   });
 
+  /**
+   * The row publishes the routing of each output block, so a caller — a test, or a person with the
+   * inspector open — can read which stream a line landed on. Asserting the destructive border's
+   * class instead would pass on any element that happens to carry it, which is what let a routing
+   * defect survive a green suite: the text was on screen either way.
+   */
+  it('publishes which stream each block of output came from', async () => {
+    const user = userEvent.setup();
+    render(<ToolCallRow item={makeItem({ stdout: 'built ok\n', stderr: 'warning: slow\n' })} />);
+    await user.click(screen.getByRole('button', { name: /run_shell/ }));
+
+    const log = screen.getByRole('log');
+    expect(within(log).getByText('built ok').getAttribute('data-stream')).toBe('stdout');
+    expect(within(log).getByText('warning: slow').getAttribute('data-stream')).toBe('stderr');
+  });
+
+  /**
+   * A row built from a call whose opening event never arrived names no tool and shows no
+   * arguments. Naming `run_shell` and printing `{}` is what it used to do, and both read on screen
+   * exactly like a real call the model made with no arguments.
+   */
+  it('says it cannot name a call whose opening event was not received', async () => {
+    const user = userEvent.setup();
+    render(
+      <ToolCallRow
+        item={makeItem({ name: null, args: undefined, seq: null, status: 'succeeded' })}
+      />,
+    );
+
+    const row = document.querySelector('[data-item-kind="tool"]');
+    expect(row?.getAttribute('data-tool-name')).toBe('');
+    expect(row?.getAttribute('data-call-id')).toBe('c1');
+    expect(screen.getByText('call c1')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /unknown tool/ }));
+    expect(screen.getByText(/never saw the event that opened the call/)).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain('run_shell');
+  });
+
+  /** A named call still prints its arguments, so the honest row does not swallow the normal one. */
+  it('prints the arguments of a call whose opening event did arrive', async () => {
+    const user = userEvent.setup();
+    render(<ToolCallRow item={makeItem({ name: 'read_file', args: { path: 'a.ts' } })} />);
+    await user.click(screen.getByRole('button', { name: /read_file/ }));
+
+    expect(screen.getByText(/"path": "a.ts"/)).toBeInTheDocument();
+  });
+
   /** No truncation footer when the full output is shown. */
   it('shows no truncation footer when output was not capped', async () => {
     const user = userEvent.setup();

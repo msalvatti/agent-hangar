@@ -10,7 +10,7 @@ import { useCallback, useRef, useState } from 'react';
 import { ErrorCard } from '@/shared/feedback';
 import { PageHeader } from '@/shared/shell/PageHeader';
 import { assertPresent } from '@/shared/transcript';
-import type { CreateEventSource } from '@/shared/transcript';
+import type { CreateEventSource, TranscriptItem } from '@/shared/transcript';
 import { Button } from '@/shared/ui/button';
 import { ButtonLink } from '@/shared/ui/button-link';
 
@@ -132,6 +132,9 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
   const errorRef = useRef<HTMLDivElement>(null);
 
   const { phase, connection } = stream.state;
+  // The turn a failure row may still offer a retry on: the one being streamed, or the chat's
+  // newest when the failure was loaded from history and nothing is being followed.
+  const retryableTurnId = stream.activeTurnId ?? lastTurnId;
   const running =
     stream.activeTurnId !== null &&
     phase !== 'succeeded' &&
@@ -143,6 +146,19 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
   }, []);
   useEscapeToStop(running, openStop);
 
+  /**
+   * Whether a failure row is the one the turn about to run supersedes.
+   *
+   * Only the actionable one goes: a new turn answers the failure the operator was looking at, not
+   * the failures of turns before it, and those stay because a reload would bring them back anyway.
+   *
+   * @param item - A row of the live transcript.
+   * @returns `true` when the row should be dropped.
+   */
+  function supersededFailure(item: TranscriptItem): boolean {
+    return item.kind === 'error' && (item.turnId === undefined || item.turnId === retryableTurnId);
+  }
+
   async function submit(prompt: string): Promise<void> {
     setLastAction('send');
     const turnId = await send.send(prompt);
@@ -152,10 +168,8 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
     setDraft('');
     stream.dispatch({
       type: 'reset',
-      // The new turn supersedes any failure already on screen: a reloaded chat only ever shows the
-      // newest turn's error, so the live transcript must not accumulate the older ones either.
       items: [
-        ...stream.state.items.filter((item) => item.kind !== 'error'),
+        ...stream.state.items.filter((item) => !supersededFailure(item)),
         { kind: 'user', id: `pending-${turnId}`, text: prompt },
       ],
       phase: 'queued',
@@ -173,10 +187,7 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
    * the turn is queued again.
    */
   function retry(): void {
-    const turnId = assertPresent(
-      stream.activeTurnId ?? lastTurnId,
-      'A failure on screen belongs to a turn',
-    );
+    const turnId = assertPresent(retryableTurnId, 'A failure on screen belongs to a turn');
     setLastAction('retry');
     void (async () => {
       if (!(await retryAction.retry(turnId))) {
@@ -185,7 +196,7 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
       const wasFollowing = stream.activeTurnId === turnId;
       stream.dispatch({
         type: 'reset',
-        items: stream.state.items.filter((item) => item.kind !== 'error'),
+        items: stream.state.items.filter((item) => !supersededFailure(item)),
         phase: 'queued',
       });
       stream.followTurn(turnId);
@@ -224,6 +235,7 @@ function LoadedChatView({ chatId, loaded, createEventSource }: LoadedChatViewPro
         phase={phase}
         archived={archived}
         onRetry={retry}
+        retryableTurnId={retryableTurnId}
         errorRef={errorRef}
         draft={draft}
         onDraftChange={setDraft}

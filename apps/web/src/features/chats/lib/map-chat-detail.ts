@@ -12,10 +12,13 @@
  * finishes after the last call it made. So the lists are merged on their own timestamps.
  */
 import { systemNoticeTone, toolNameSchema } from '@agent-hangar/core';
-import type { ChatDetail, MessageView, ToolCallView, TurnView } from '@agent-hangar/core';
+import type { ChatDetail, MessageView, ToolCallView, ToolName, TurnView } from '@agent-hangar/core';
 
 import { TURN_CANCELLED_NOTICE, utf8ByteLength } from '@/shared/transcript';
 import type { ToolCallStatus, TranscriptItem, TurnPhase } from '@/shared/transcript';
+
+/** Code every rebuilt failure row carries; the persisted turn keeps the message, not a code. */
+const TURN_FAILED_CODE = 'TURN_FAILED';
 
 /** Turn status as persisted, mapped onto the transcript's phase. */
 const PHASE_BY_TURN_STATUS: Readonly<Record<TurnView['status'], TurnPhase>> = {
@@ -34,6 +37,19 @@ const TOOL_STATUS: Readonly<Record<ToolCallView['status'], ToolCallStatus>> = {
   FAILED: 'failed',
   TIMED_OUT: 'timed_out',
 };
+
+/**
+ * Tools whose output the agent runtime streams as it is produced.
+ *
+ * Every other tool hands back one block of text, and the runtime routes that block by outcome:
+ * stdout when the call succeeded, stderr when it did not, because the text is then the reason it
+ * did not work (`packages/agent-runtime/src/loop.ts`, the branch that emits a `tool.output.delta`
+ * for a tool that never used the streaming hook). A persisted row keeps the text and not the
+ * stream it was written to, so the reload path re-derives it from the same two facts — which is
+ * exact for these tools and only for these: a `run_shell` result interleaves both streams and no
+ * rule can split it back apart.
+ */
+const STREAMING_TOOLS: ReadonlySet<ToolName> = new Set<ToolName>(['run_shell']);
 
 /** Phases in which the turn is still producing events, so the stream stays open. */
 const LIVE_PHASES: ReadonlySet<TurnPhase> = new Set<TurnPhase>(['queued', 'preparing', 'running']);
@@ -94,18 +110,23 @@ function toMessageItem(message: MessageView): TranscriptItem | null {
  * @returns The tool item.
  */
 function toToolItem(call: ToolCallView): TranscriptItem {
-  const name = toolNameSchema.safeParse(call.toolName);
+  const parsed = toolNameSchema.safeParse(call.toolName);
+  // The contract types `toolName` as a free string, so a build that does not know the tool says
+  // so. Falling back to a real tool name would make the row read as a call the model never made.
+  const name: ToolName | null = parsed.success ? parsed.data : null;
   const head = call.resultHead ?? '';
+  const failed = call.status === 'FAILED' || call.status === 'TIMED_OUT';
+  const onStderr = failed && name !== null && !STREAMING_TOOLS.has(name);
   return {
     kind: 'tool',
     id: call.id,
     callId: call.callId,
-    name: name.success ? name.data : 'run_shell',
+    name,
     args: call.args,
     seq: call.seq,
     status: TOOL_STATUS[call.status],
-    stdout: head,
-    stderr: '',
+    stdout: onStderr ? '' : head,
+    stderr: onStderr ? head : '',
     // The head is what is on screen and `resultBytes` is what the tool produced, so the two
     // together are what decides whether the row admits to having been cut. Measured in UTF-8
     // bytes because that is the unit the runtime capped the head in.
@@ -129,6 +150,26 @@ function toToolItem(call: ToolCallView): TranscriptItem {
  */
 function wasStopped(turn: TurnView): boolean {
   return turn.status === 'CANCELLED' && turn.error === null;
+}
+
+/**
+ * Reports whether a turn's recorded error is a failure the transcript should show.
+ *
+ * `FAILED` is a turn that was accepted and did not finish its work, and every one of them gets a
+ * row — the newest and the ones before it alike, since a chat that failed, was asked again and
+ * failed differently is a chat whose history is those two failures.
+ *
+ * `CANCELLED` never does. Either the operator stopped the turn, which the cancellation notice
+ * already says in words meant for them, or the claim on the chat was given back before any work
+ * started because a second request won the race — and that one records an internal line about the
+ * race, addressed to whoever reads the row, not to whoever reads the chat. The caller that lost
+ * the race was already answered with the same fact, as an error on the request it made.
+ *
+ * @param turn - The persisted turn.
+ * @returns `true` when the turn's error belongs on screen.
+ */
+function hasVisibleFailure(turn: TurnView): turn is TurnView & { error: string } {
+  return turn.status === 'FAILED' && turn.error !== null;
 }
 
 /**
@@ -161,7 +202,19 @@ function timedItems(messages: readonly MessageView[], detail: ChatDetail): Timed
       text: TURN_CANCELLED_NOTICE,
     },
   }));
-  return [...fromMessages, ...fromCalls, ...fromStops].sort((left, right) => left.at - right.at);
+  const fromFailures = detail.turns.filter(hasVisibleFailure).map((turn) => ({
+    at: Date.parse(turn.finishedAt ?? turn.queuedAt),
+    item: {
+      kind: 'error' as const,
+      id: `${turn.id}-error`,
+      code: TURN_FAILED_CODE,
+      message: turn.error,
+      turnId: turn.id,
+    },
+  }));
+  return [...fromMessages, ...fromCalls, ...fromStops, ...fromFailures].sort(
+    (left, right) => left.at - right.at,
+  );
 }
 
 /**
@@ -176,14 +229,6 @@ export function mapChatDetail(detail: ChatDetail): MappedChat {
 
   const latest = detail.turns.at(-1);
   const phase = latest === undefined ? 'idle' : PHASE_BY_TURN_STATUS[latest.status];
-  if (latest !== undefined && latest.error !== null) {
-    items.push({
-      kind: 'error',
-      id: `${latest.id}-error`,
-      code: 'TURN_FAILED',
-      message: latest.error,
-    });
-  }
   const lastPrompt = messages.filter((message) => message.role === 'USER').at(-1)?.content ?? null;
   const startedAtIso = latest?.startedAt ?? null;
 

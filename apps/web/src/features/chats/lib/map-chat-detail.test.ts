@@ -375,17 +375,19 @@ describe('mapChatDetail', () => {
 
   /**
    * A turn the API cancelled to give a contested claim back was never on screen: it has an error
-   * where a real cancellation has none, and it earns no notice.
+   * where a real cancellation has none, so it earns no cancellation notice — and no failure row
+   * either. The text it carries names the race between two requests, which is bookkeeping the
+   * losing caller was already answered with; putting it in the transcript would be the chat
+   * reporting an internal detail of the request that never became a turn.
    */
-  it('does not announce a turn that was cancelled to release a claim', () => {
+  it('shows neither a notice nor a failure row for a turn cancelled to release a claim', () => {
     const mapped = mapChatDetail(
       detailWith({
         turns: [turn('CANCELLED', { error: 'Released: another message claimed the chat' })],
       }),
     );
 
-    expect(mapped.items.filter((item) => item.kind === 'notice')).toEqual([]);
-    expect(mapped.items.at(-1)).toMatchObject({ kind: 'error' });
+    expect(mapped.items).toEqual([]);
   });
 
   /**
@@ -473,15 +475,19 @@ describe('mapChatDetail', () => {
     expect(mapped.items[1]).toMatchObject({ kind: 'tool', stdout: '', shownBytes: 0 });
   });
 
-  /** A tool name the schema does not know still renders, as a shell call. */
-  it('falls back for an unknown tool name', () => {
+  /**
+   * A tool name the schema does not know still renders, and the row says it cannot name the tool
+   * rather than naming a different one. `run_shell` was the previous answer, and it is the reading
+   * that does the damage: the row would then claim the model ran a shell command it never ran.
+   */
+  it('reports an unknown tool name as unknown instead of as a shell call', () => {
     const mapped = mapChatDetail(
       detailWith({
         messages: [{ id: 'm1', turnId: null, seq: 1, role: 'USER', content: 'go', createdAt: AT }],
         toolCalls: [toolCall({ id: 't1', seq: 1, toolName: 'invented_tool' })],
       }),
     );
-    expect(mapped.items[1]).toMatchObject({ kind: 'tool', name: 'run_shell' });
+    expect(mapped.items[1]).toMatchObject({ kind: 'tool', name: null });
   });
 
   /** Every persisted turn status has a phase, and only live ones keep the stream open. */
@@ -509,7 +515,156 @@ describe('mapChatDetail', () => {
   /** A failed turn contributes an error row so the failure is visible in the transcript itself. */
   it('appends an error item for a failed turn', () => {
     const mapped = mapChatDetail(detailWith({ turns: [turn('FAILED', { error: 'boom' })] }));
-    expect(mapped.items.at(-1)).toMatchObject({ kind: 'error', message: 'boom' });
+    expect(mapped.items.at(-1)).toMatchObject({
+      kind: 'error',
+      message: 'boom',
+      turnId: 'turn-1',
+    });
+  });
+
+  /**
+   * A chat that failed, was asked again and failed differently keeps both failures. Only the
+   * newest turn's error used to survive a reload, so the transcript claimed the first attempt had
+   * simply produced nothing — the one reading a reader cannot check, because the row that would
+   * have contradicted it is the row that is missing.
+   *
+   * The rows are matched by the turn they name rather than by their position: what is being
+   * asserted is that each failure is attributed to the turn it happened in.
+   */
+  it('keeps the failure of every failed turn, not only the newest', () => {
+    const mapped = mapChatDetail(
+      detailWith({
+        turns: [
+          {
+            ...turn('FAILED', { error: 'first attempt: rate limited' }),
+            id: 'turn-1',
+            finishedAt: '2026-08-19T10:00:30.000Z',
+          },
+          {
+            ...turn('FAILED', { error: 'second attempt: context too long' }),
+            id: 'turn-2',
+            queuedAt: '2026-08-19T10:01:00.000Z',
+            finishedAt: '2026-08-19T10:01:30.000Z',
+          },
+        ],
+      }),
+    );
+
+    expect(mapped.items.filter((item) => item.kind === 'error')).toEqual([
+      expect.objectContaining({ turnId: 'turn-1', message: 'first attempt: rate limited' }),
+      expect.objectContaining({ turnId: 'turn-2', message: 'second attempt: context too long' }),
+    ]);
+  });
+
+  /**
+   * A failure belongs where it happened, not at the end: the prompt that came after it has to read
+   * as a reply to it. Appending every failure to the tail would put the first turn's error below
+   * the second turn's prompt and invert the conversation.
+   */
+  it('places a failure row at the moment its turn finished', () => {
+    const mapped = mapChatDetail(
+      detailWith({
+        messages: [
+          {
+            id: 'm1',
+            turnId: null,
+            seq: 1,
+            role: 'USER',
+            content: 'first',
+            createdAt: '2026-08-19T10:00:00.000Z',
+          },
+          {
+            id: 'm2',
+            turnId: null,
+            seq: 2,
+            role: 'USER',
+            content: 'second',
+            createdAt: '2026-08-19T10:01:00.000Z',
+          },
+        ],
+        turns: [
+          {
+            ...turn('FAILED', { error: 'rate limited' }),
+            id: 'turn-1',
+            finishedAt: '2026-08-19T10:00:30.000Z',
+          },
+        ],
+      }),
+    );
+
+    expect(mapped.items.map((item) => item.kind)).toEqual(['user', 'error', 'user']);
+  });
+
+  /**
+   * A retried turn that lost the race for the chat's work slot is recorded `FAILED` with the same
+   * bookkeeping line, so this is the case the `FAILED`/`CANCELLED` split does not cover. Pinned so
+   * the residual is a measured fact rather than something a later reader has to rediscover.
+   */
+  it('still shows the claim-release line of a turn recorded as failed', () => {
+    const mapped = mapChatDetail(
+      detailWith({
+        turns: [turn('FAILED', { error: 'Released: another request claimed the chat' })],
+      }),
+    );
+
+    expect(mapped.items).toEqual([expect.objectContaining({ kind: 'error', turnId: 'turn-1' })]);
+  });
+
+  /**
+   * The runtime routes the whole result of a tool that cannot stream to stderr when the call
+   * failed, so the live row carries a destructive left border. A reload put that same text on
+   * stdout, which dropped the border and made a failed read look like a successful one that
+   * happened to print an error message. The assertion is which stream the text landed on, not
+   * whether the text is on screen — it was on screen the whole time.
+   */
+  it.each([
+    ['FAILED', 'read_file'],
+    ['TIMED_OUT', 'list_dir'],
+  ] as const)('routes the head of a %s %s call to stderr', (status, toolName) => {
+    const mapped = mapChatDetail(
+      detailWith({
+        toolCalls: [
+          { ...toolCall({ id: 't1', seq: 0, toolName, status }), resultHead: 'no such file' },
+        ],
+      }),
+    );
+
+    expect(mapped.items[0]).toMatchObject({ stdout: '', stderr: 'no such file' });
+  });
+
+  /** A tool that cannot stream and succeeded reports on stdout, exactly as the live row did. */
+  it('routes the head of a succeeded non-streaming call to stdout', () => {
+    const mapped = mapChatDetail(
+      detailWith({
+        toolCalls: [{ ...toolCall({ id: 't1', seq: 0, toolName: 'read_file' }), resultHead: 'ok' }],
+      }),
+    );
+
+    expect(mapped.items[0]).toMatchObject({ stdout: 'ok', stderr: '' });
+  });
+
+  /**
+   * `run_shell` is the one tool whose output the runtime streams, so its head interleaves both of
+   * the child's streams and no rule can split it back apart. It stays on stdout even when the call
+   * failed, because that is the honest half of what is known — inventing a split would be the same
+   * class of guess this whole path exists to remove.
+   */
+  it('leaves the head of a failed run_shell call on stdout', () => {
+    const mapped = mapChatDetail(
+      detailWith({
+        toolCalls: [
+          {
+            ...toolCall({ id: 't1', seq: 0, toolName: 'run_shell', status: 'FAILED' }),
+            resultHead: 'building…\nerror: exit 1\n',
+          },
+        ],
+      }),
+    );
+
+    expect(mapped.items[0]).toMatchObject({
+      stdout: 'building…\nerror: exit 1\n',
+      stderr: '',
+    });
   });
 
   /** The start time drives the elapsed timer in the header pill. */

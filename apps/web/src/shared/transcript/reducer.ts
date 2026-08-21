@@ -6,7 +6,7 @@
  * No wall-clock reads happen here: every timestamp comes in through the action's `now` field so
  * the fold stays deterministic and trivially testable with a fake clock.
  */
-import { agentEventSchema, pushedNoticeText, shortSha } from '@agent-hangar/core';
+import { agentEventSchema, isPrepareWarning, pushedNoticeText, shortSha } from '@agent-hangar/core';
 import type { AgentEvent, AgentEventOf, AgentEventType } from '@agent-hangar/core';
 
 import { utf8ByteLength } from './lib/format';
@@ -235,10 +235,29 @@ function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): Tr
       return { ...state, phase: 'preparing', startedAt: Date.parse(event.at) };
 
     case 'prepare.progress':
-      return {
-        ...state,
-        items: upsertNotice(state.items, PREPARE_NOTICE_ID, 'info', event.message),
-      };
+      // A finding is not progress. Progress collapses onto one line and `prepare.done` replaces
+      // that line with the success text, which is right for "Cloning…" and wrong for "the branch
+      // diverged from its remote" — the second is still true when the turn ends, and folding it
+      // into the collapsing line is what made it visible for the few milliseconds between the two
+      // events. A finding gets a line of its own that nothing later writes over.
+      //
+      // Keyed on the finding itself, and upserted rather than pushed, for the reason `recordPush`
+      // gives: a client that reconnects replays the turn from its first event, so the same finding
+      // arrives again, and a repeat of one fact is not a second fact.
+      return isPrepareWarning(event.message)
+        ? {
+            ...state,
+            items: upsertNotice(
+              state.items,
+              `${PREPARE_NOTICE_ID}-finding-${event.message}`,
+              'warning',
+              event.message,
+            ),
+          }
+        : {
+            ...state,
+            items: upsertNotice(state.items, PREPARE_NOTICE_ID, 'info', event.message),
+          };
 
     case 'prepare.done': {
       const durationMs = state.startedAt === null ? undefined : now - state.startedAt;
@@ -302,13 +321,20 @@ function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): Tr
     case 'tool.result': {
       const found = findTool(state.items, event.callId);
       if (found === null) {
+        // A result whose call was never folded in. The stream is capped at `TURN_EVENTS_MAXLEN`,
+        // so a chatty long-running call plus a reconnect can deliver the terminal event of a call
+        // whose opening frame has already been trimmed away. The row still has to appear — the
+        // call happened and its outcome is known — but everything the opening frame carried is
+        // reported as not received rather than filled in with a guess. `startedAt` is the one
+        // exception and it is not a guess: the result states how long the call took, so the
+        // instant it began follows from the instant it ended.
         const created: ToolTranscriptItem = {
           kind: 'tool',
           id: `tool-${event.callId}`,
           callId: event.callId,
-          name: 'run_shell',
-          args: {},
-          seq: 0,
+          name: null,
+          args: undefined,
+          seq: null,
           status: toolCallStatusOf(event.status),
           stdout: '',
           stderr: '',
@@ -316,7 +342,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent, now: number): Tr
           totalBytes: event.bytes,
           exitCode: event.exitCode,
           durationMs: event.durationMs,
-          startedAt: now,
+          startedAt: now - event.durationMs,
         };
         return { ...state, items: [...state.items, created] };
       }

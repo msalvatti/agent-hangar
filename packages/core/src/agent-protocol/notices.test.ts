@@ -9,7 +9,13 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { pushedNoticeText, shortSha, systemNoticeTone } from './notices.ts';
+import {
+  isPrepareWarning,
+  prepareWarningText,
+  pushedNoticeText,
+  shortSha,
+  systemNoticeTone,
+} from './notices.ts';
 
 describe('shortSha', () => {
   /** A full sha is cut to the seven characters a transcript line shows. */
@@ -45,5 +51,28 @@ describe('systemNoticeTone', () => {
     'Push failed',
   ])('classifies %s as a warning', (content) => {
     expect(systemNoticeTone(content)).toBe('warning');
+  });
+});
+
+describe('prepareWarningText / isPrepareWarning', () => {
+  /**
+   * The pair is the whole point: the runtime marks the message and the transcript reads the mark
+   * back, so neither end spells the marker itself and the two cannot drift apart.
+   */
+  it('recognises a message it built', () => {
+    expect(isPrepareWarning(prepareWarningText('the branch diverged'))).toBe(true);
+  });
+
+  /** Ordinary preparation progress is not a finding and must keep collapsing onto one line. */
+  it.each(['Cloning https://github.com/acme/api (branch main)…', 'Resumed agent/x at abcdef1'])(
+    'does not recognise %s',
+    (message) => {
+      expect(isPrepareWarning(message)).toBe(false);
+    },
+  );
+
+  /** The marker is a prefix on the text, so the message the operator reads still starts with it. */
+  it('keeps the message it was given', () => {
+    expect(prepareWarningText('HEAD moved')).toBe('Warning: HEAD moved');
   });
 });

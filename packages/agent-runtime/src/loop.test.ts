@@ -515,6 +515,58 @@ describe('runTurnLoop and limits', () => {
   });
 });
 
+describe('runTurnLoop and what preparation found', () => {
+  /**
+   * Captures what the loop hands the provider, so the assertion is about the conversation the
+   * model is actually shown rather than about anything the loop says it did.
+   *
+   * @param inputs - Array each round-trip's input is appended to.
+   * @returns A provider that answers once and records its input.
+   */
+  function recording(inputs: ModelTurnInput[]): AgentModelProvider {
+    return {
+      name: 'recording',
+      async *stream(input: ModelTurnInput) {
+        inputs.push(input);
+        yield { type: 'text.done', text: 'done' };
+        yield { type: 'response.done', responseId: 'r1', usage: FAKE_USAGE };
+        await Promise.resolve();
+      },
+      listModels: () => Promise.resolve([]),
+    };
+  }
+
+  /**
+   * A work branch that diverged from its remote is a fact about the ground the turn stands on,
+   * and the agent is what can reconcile it — it has git and it is already in the workspace. The
+   * note used to reach the event stream only, so the model planned against a branch nobody had
+   * told it had moved.
+   */
+  it('shows preparation findings to the model', async () => {
+    const inputs: ModelTurnInput[] = [];
+    await run(request('hi'), recording(inputs), {
+      prepareNotes: ['Warning: agent/x and origin/agent/x have diverged'],
+    });
+
+    expect(inputs[0]?.items).toStrictEqual([
+      { role: 'user', content: 'hi' },
+      {
+        role: 'system',
+        content:
+          'Workspace preparation reported:\n- Warning: agent/x and origin/agent/x have diverged',
+      },
+    ]);
+  });
+
+  /** A clean preparation adds nothing, so an ordinary turn pays no context for the mechanism. */
+  it('adds nothing to the conversation when preparation found nothing', async () => {
+    const inputs: ModelTurnInput[] = [];
+    await run(request('hi'), recording(inputs));
+
+    expect(inputs[0]?.items).toStrictEqual([{ role: 'user', content: 'hi' }]);
+  });
+});
+
 describe('runTurnLoop and cancellation', () => {
   it('emits nothing but the cancellation when the turn was already cancelled', async () => {
     // The worker can cancel between preparing the turn and the first step.

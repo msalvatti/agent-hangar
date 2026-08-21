@@ -53,3 +53,35 @@ export function pushedNoticeText(branch: string, sha: string): string {
 export function systemNoticeTone(content: string): SystemNoticeTone {
   return content.startsWith(PUSHED_NOTICE_PREFIX) ? 'success' : 'warning';
 }
+
+/**
+ * Opening of a `prepare.progress` message that reports a state of the checkout rather than a step
+ * of the preparation, and what such a message is recognised by.
+ */
+const PREPARE_WARNING_PREFIX = 'Warning: ';
+
+/**
+ * Marks a preparation message as a finding about the checkout rather than a step of it.
+ *
+ * The distinction is not decoration. Preparation progress collapses into one line — each message
+ * replaces the last, and `prepare.done` replaces them all — because "Cloning…" is worth exactly as
+ * long as it takes to stop being true. A finding is the opposite: the branch diverged from the
+ * remote, or HEAD is not where the host expected, and that is still true when the turn ends. The
+ * transcript keeps a marked message on its own line so the collapse cannot swallow it.
+ *
+ * @param message - What was found, in terms the operator can act on.
+ * @returns The message with the marker the transcript recognises.
+ */
+export function prepareWarningText(message: string): string {
+  return `${PREPARE_WARNING_PREFIX}${message}`;
+}
+
+/**
+ * Reads back whether a `prepare.progress` message is a finding rather than a step.
+ *
+ * @param message - Message carried by the event.
+ * @returns `true` when {@link prepareWarningText} built it.
+ */
+export function isPrepareWarning(message: string): boolean {
+  return message.startsWith(PREPARE_WARNING_PREFIX);
+}
