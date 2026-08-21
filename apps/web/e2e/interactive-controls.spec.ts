@@ -25,11 +25,7 @@ import type { Page } from '@playwright/test';
 
 import { test, expect } from './fixtures';
 import { ChatPage, JobDetailPage, ScheduledPage, SettingsPage, SidebarPage } from './pages';
-import {
-  describeCollisions,
-  findControlsWithoutPointerCursor,
-  findCoveredControls,
-} from './support/interactive-controls';
+import { describeDefects, findUnusableControls } from './support/interactive-controls';
 import { COPY, TEST_IDS } from './support/selectors';
 
 /** Viewport widths spec 10 §9 designs for, with the height used for all of them. */
@@ -57,10 +53,7 @@ const MOCK_JOB = 'Nightly tests';
  * @param where - Screen and width, so a failure names what was on screen.
  */
 async function expectUsableControls(page: Page, where: string): Promise<void> {
-  const collisions = await findCoveredControls(page);
-  expect(describeCollisions(where, collisions)).toEqual([]);
-  const blunt = await findControlsWithoutPointerCursor(page);
-  expect(blunt.map((control) => `${where}: ${control}`)).toEqual([]);
+  expect(describeDefects(where, await findUnusableControls(page))).toEqual([]);
 }
 
 /**
