@@ -12,7 +12,24 @@ import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type * as ClientOnly from '@/shared/lib/client-only';
+import { formatTimestamp, relativeTime } from '@/shared/transcript';
+
 import { RunsTable } from './RunsTable';
+
+/**
+ * The reader's timezone, switchable per test.
+ *
+ * `useLocalTimeZone` reports `null` while the markup is produced and hydrated, and a component
+ * that spells an instant has to say something in that window. jsdom always resolves a zone, so
+ * the only way to reach that path is to stand in for the hook — with exactly what it returns
+ * there, never with something kinder.
+ */
+const readerZone: { value: string | null } = vi.hoisted(() => ({ value: 'UTC' }));
+vi.mock('@/shared/lib/client-only', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClientOnly>()),
+  useLocalTimeZone: () => readerZone.value,
+}));
 
 const finishedRun: RunSummary = {
   id: 'run-1',
@@ -116,5 +133,26 @@ describe('RunsTable', () => {
     });
     const after = screen.getAllByRole('row').map((row) => row.textContent);
     expect(after).not.toEqual(before);
+  });
+
+  // The started cell spells the instant in the reader's own zone once the browser reports one.
+  it('spells the start as a readable local time', () => {
+    render(<RunsTable runs={[finishedRun]} onOpen={vi.fn()} />);
+    const label = formatTimestamp(finishedRun.queuedAt, 'UTC') ?? '';
+    expect(screen.getByRole('button', { name: `Open run from ${label}` })).toBeInTheDocument();
+  });
+
+  // Before the browser reports a zone there is no local time to spell, and the cell is also this
+  // row's accessible name — a blank one would leave the button unnameable. It says how long ago
+  // instead, which is true in every zone.
+  it('names the run by how long ago it started while the reader zone is unknown', () => {
+    readerZone.value = null;
+    try {
+      render(<RunsTable runs={[finishedRun]} onOpen={vi.fn()} />);
+      const label = relativeTime(finishedRun.queuedAt, Date.now());
+      expect(screen.getByRole('button', { name: `Open run from ${label}` })).toBeInTheDocument();
+    } finally {
+      readerZone.value = 'UTC';
+    }
   });
 });

@@ -11,8 +11,9 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
 
+import { useLocalTimeZone } from '@/shared/lib/client-only';
 import { repoLabel } from '@/shared/lib/repo-label';
-import { relativeTime } from '@/shared/transcript';
+import { formatTimestamp, relativeTime } from '@/shared/transcript';
 import { Switch } from '@/shared/ui/switch';
 import { TableCell, TableRow } from '@/shared/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
@@ -43,6 +44,9 @@ export function JobRow({ job, enabled, busy, onToggle, onEdit, onRunNow, onDelet
   // Relative labels are anchored to a single instant captured when the row mounts: reading the
   // clock during render would make the output depend on when React happened to re-render.
   const [now] = useState(() => Date.now());
+  // Only the browser knows the reader's zone; until it reports one there is no local time to
+  // spell. The tooltip cannot be open before then, so it needs no stand-in for that moment.
+  const timeZone = useLocalTimeZone();
 
   return (
     <TableRow
@@ -86,7 +90,7 @@ export function JobRow({ job, enabled, busy, onToggle, onEdit, onRunNow, onDelet
             <TooltipTrigger render={<span className="tabular-nums" />}>
               {relativeTime(job.nextRunAt, now)}
             </TooltipTrigger>
-            <TooltipContent>{new Date(job.nextRunAt).toLocaleString()}</TooltipContent>
+            <TooltipContent>{formatTimestamp(job.nextRunAt, timeZone)}</TooltipContent>
           </Tooltip>
         )}
       </TableCell>

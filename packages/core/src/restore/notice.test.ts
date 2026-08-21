@@ -20,7 +20,7 @@ describe('restorationNotice', () => {
    */
   it('names the work branch when there is one', () => {
     expect(restorationNotice({ at: AT, workBranch: 'agent/018f3a2b' })).toBe(
-      'Workspace recreated from history at 2026-03-01T12:34:56.000Z. Uncommitted changes from the previous workspace are gone; pushed work on `agent/018f3a2b` is checked out.',
+      'Workspace recreated from history at Mar 1, 2026, 12:34 PM UTC. Uncommitted changes from the previous workspace are gone; pushed work on `agent/018f3a2b` is checked out.',
     );
   });
 
@@ -30,7 +30,7 @@ describe('restorationNotice', () => {
    */
   it('says so when there is no pushed work', () => {
     expect(restorationNotice({ at: AT, workBranch: null })).toBe(
-      'Workspace recreated from history at 2026-03-01T12:34:56.000Z. Uncommitted changes from the previous workspace are gone; no pushed work was found, so the base branch is checked out.',
+      'Workspace recreated from history at Mar 1, 2026, 12:34 PM UTC. Uncommitted changes from the previous workspace are gone; no pushed work was found, so the base branch is checked out.',
     );
   });
 

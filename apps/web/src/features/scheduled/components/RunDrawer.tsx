@@ -16,11 +16,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { invalidateQueries } from '@/shared/api/use-api-query';
 import { ErrorCard } from '@/shared/feedback';
+import { useLocalTimeZone } from '@/shared/lib/client-only';
 import {
   StatusPill,
   Transcript,
   createInitialState,
+  formatTimestamp,
   isTerminalPhase,
+  relativeTime,
   useTurnEvents,
 } from '@/shared/transcript';
 import type { CreateEventSource } from '@/shared/transcript';
@@ -57,6 +60,10 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
   const runQuery = useRun(open ? runId : null);
   const { stop, copyId } = useRunActions();
   const [stopDialogOpen, setStopDialogOpen] = useState(false);
+  // The reader's zone, and one instant to measure "ago" against while the browser has not
+  // reported it: reading the clock during render would move the label on every re-render.
+  const timeZone = useLocalTimeZone();
+  const [now] = useState(() => Date.now());
   const seededRunId = useRef<string | null>(null);
   // Set once an `expired` frame closes the stream, cleared once the resulting refetch has been
   // folded back in (or the drawer closes). Distinguishes "waiting on the refetch this expiry
@@ -163,7 +170,7 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
             <SheetTitle>{job?.name ?? 'Run'}</SheetTitle>
             {startedAt != null && (
               <p className="text-muted-foreground text-xs">
-                Started {new Date(startedAt).toLocaleString()}
+                Started {formatTimestamp(startedAt, timeZone) ?? relativeTime(startedAt, now)}
               </p>
             )}
           </div>

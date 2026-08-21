@@ -24,9 +24,24 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { resetScheduledStore } from '@/mocks/scheduled';
 import { server } from '@/mocks/server';
+import type * as ClientOnly from '@/shared/lib/client-only';
 import { createFakeEventSourceFactory } from '@/shared/transcript/testing';
 
 import { RunDrawer } from './RunDrawer';
+
+/**
+ * The reader's timezone, switchable per test.
+ *
+ * `useLocalTimeZone` reports `null` while the markup is produced and hydrated, and a component
+ * that spells an instant has to say something in that window. jsdom always resolves a zone, so
+ * the only way to reach that path is to stand in for the hook — with exactly what it returns
+ * there, never with something kinder.
+ */
+const readerZone: { value: string | null } = vi.hoisted(() => ({ value: 'UTC' }));
+vi.mock('@/shared/lib/client-only', async (importOriginal) => ({
+  ...(await importOriginal<typeof ClientOnly>()),
+  useLocalTimeZone: () => readerZone.value,
+}));
 
 afterEach(() => {
   resetScheduledStore();
@@ -420,5 +435,27 @@ describe('RunDrawer — active run (live stream)', () => {
       expect(instances.length).toBeGreaterThan(0);
     });
     expect(await screen.findByRole('button', { name: 'Stop run' })).toBeInTheDocument();
+  });
+
+  // The header spells the start in the reader's own zone once the browser reports one, rather
+  // than in the machine-readable form the API sends.
+  it('spells the start as a readable local time', async () => {
+    render(<RunDrawer runId="run-nightly-success" job={job} open onOpenChange={vi.fn()} />);
+    const started = await screen.findByText(/^Started /);
+    expect(started.textContent).not.toMatch(/\dT\d/);
+    expect(started.textContent).toMatch(/Started [A-Z][a-z]{2} \d{1,2}, \d{4}/);
+  });
+
+  // Before the browser reports a zone there is no local time to spell, so the header says how
+  // long ago the run started — true in every zone, and never a guess at the reader's.
+  it('reports how long ago it started while the reader zone is unknown', async () => {
+    readerZone.value = null;
+    try {
+      render(<RunDrawer runId="run-nightly-success" job={job} open onOpenChange={vi.fn()} />);
+      const started = await screen.findByText(/^Started /);
+      expect(started.textContent).toMatch(/^Started .*ago$/);
+    } finally {
+      readerZone.value = 'UTC';
+    }
   });
 });
