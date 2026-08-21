@@ -25,6 +25,8 @@
 #   workspace-image.sh --image-digest <tag>        print the digest an existing image carries
 #   workspace-image.sh --status <tag>              current | stale | missing | unverifiable | unavailable
 #   workspace-image.sh --assert-tag <tag> <name>   refuse a tag that is not instance <name>'s
+#   workspace-image.sh --assert-usable <status> <tag>
+#                                                  refuse a status a caller must not start against
 #
 # Runs on macOS bash 3.2.
 set -euo pipefail
@@ -140,6 +142,41 @@ ah_assert_workspace_image_tag() {
   return 3
 }
 
+# Refuses when a status means the caller is about to create containers from an image this checkout
+# cannot vouch for. Kept here rather than in run.sh so every arm — including the one for a word
+# this side does not recognise — is reachable from a test.
+#
+# `current` proceeds because the image matches. `missing` and `unavailable` proceed because there
+# is nothing to be wrong about: no image, or no Docker to create anything with, and both are
+# already reported where they matter. Everything else stops, and an answer that is none of the five
+# stops hardest — a status this script grew and its callers did not is exactly how a check quietly
+# stops checking.
+#
+# @param 1 - Status from ah_workspace_image_status.
+# @param 2 - Image reference, for the message.
+ah_assert_workspace_image_usable() {
+  local status="$1" tag="$2"
+  case "$status" in
+    current|missing|unavailable)
+      return 0
+      ;;
+    stale)
+      echo "error: the workspace image \"$tag\" was not built from this checkout." >&2
+      echo "Every container it creates would run an agent runtime this tree does not contain, and nothing about the run would say so: the turn succeeds and reports a result for a combination of worker and runtime that was never released together." >&2
+      echo "Rebuild it with \"pnpm infra:image\"." >&2
+      ;;
+    unverifiable)
+      echo "error: the workspace image \"$tag\" could not be checked against this checkout: the runtime bundle did not build, so there is no digest to compare it with." >&2
+      echo "The reason is on the line above. \"pnpm install\" if this worktree has no dependencies yet; otherwise the bundle itself does not build, and the image cannot be vouched for until it does." >&2
+      ;;
+    *)
+      echo "error: the workspace image \"$tag\" reported the status \"$status\", which this check does not know how to read." >&2
+      echo "Refusing to guess whether that means the image matches this checkout. See ah_workspace_image_status in infra/scripts/workspace-image.sh." >&2
+      ;;
+  esac
+  return 1
+}
+
 ah_workspace_image_main() {
   case "${1:-}" in
     --digest) ah_workspace_digest ;;
@@ -155,8 +192,12 @@ ah_workspace_image_main() {
       [ $# -eq 3 ] || { echo "usage: workspace-image.sh --assert-tag <tag> <instance>" >&2; return 2; }
       ah_assert_workspace_image_tag "$2" "$3"
       ;;
+    --assert-usable)
+      [ $# -eq 3 ] || { echo "usage: workspace-image.sh --assert-usable <status> <tag>" >&2; return 2; }
+      ah_assert_workspace_image_usable "$2" "$3"
+      ;;
     *)
-      echo "usage: workspace-image.sh [--digest|--image-digest <tag>|--status <tag>|--assert-tag <tag> <instance>]" >&2
+      echo "usage: workspace-image.sh [--digest|--image-digest <tag>|--status <tag>|--assert-tag <tag> <instance>|--assert-usable <status> <tag>]" >&2
       return 2
       ;;
   esac

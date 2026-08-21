@@ -190,6 +190,41 @@ describe('workspace-image.sh --assert-tag', () => {
   });
 });
 
+describe('workspace-image.sh --assert-usable', () => {
+  /**
+   * The three answers a caller may start on. `current` is the image matching; `missing` and
+   * `unavailable` are "there is nothing to be wrong about" — no image, or no Docker to create one
+   * with — and both are already reported where they matter. Refusing these would make the
+   * interface unstartable without Docker, which is a documented way of working on it.
+   */
+  it.each(['current', 'missing', 'unavailable'])('lets a caller start on %s', (status) => {
+    expect(run(['--assert-usable', status, TAG]).status).toBe(0);
+  });
+
+  /** The two that mean the caller is holding an image it cannot vouch for. */
+  it.each([
+    ['stale', 'was not built from this checkout'],
+    ['unverifiable', 'could not be checked against this checkout'],
+  ])('refuses %s', (status, message) => {
+    const result = run(['--assert-usable', status, TAG]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain(message);
+  });
+
+  /**
+   * A word this side does not recognise stops hardest of all. A status the reporting half grows
+   * and the deciding half has not learned is exactly how a check quietly stops checking: the
+   * unknown word would fall through whatever arm happens to be last and be read as permission.
+   * Reachable only because the decision is a function of the status rather than a `case` buried in
+   * `run.sh`, which is why it is one.
+   */
+  it('refuses a status it does not recognise', () => {
+    const result = run(['--assert-usable', 'probably-fine', TAG]);
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('does not know how to read');
+  });
+});
+
 describe('workspace-image.sh and env.sh on the tag', () => {
   /**
    * The tag an instance derives is written in two places — `env.sh` computes it into `.env.local`,
