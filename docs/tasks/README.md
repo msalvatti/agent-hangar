@@ -4,7 +4,7 @@ One file per lane. A lane is the unit of work one isolated subagent executes end
 
 Every task inside a lane file carries a self-contained English agent prompt: an agent dropped into a fresh session with only that prompt, `CLAUDE.md`, and the referenced spec sections can execute it without guessing.
 
-**Where the build stands (2026-08-21).** Every lane below is merged except three. W3-A, wiring and stabilisation, is in review: all six of its tasks are done — the coverage widening, the seam wiring, the end-to-end stabilisation, the real-model smoke, the interface polish pass and the close-out — and its pull request carries the spec 01 §5 evidence. The two mutation lanes are deferred by decision — in the plan, scheduled later, not blocked. The Status column below carries the same value as the lane table in [docs/plan.md §12](../plan.md), which is the authority the moment the two disagree; it also holds the counts, the fixes merged alongside the lanes and the findings routed to W3-A, so none of those is copied here to go stale. Where a lane file's own header disagrees with both, the merged state settles it.
+**Where the build stands (2026-08-21).** Fifteen of the seventeen lanes are merged. W3-A, wiring and stabilisation, closed with all six of its tasks; the two mutation-testing lanes are 🟡 deferred by decision, scheduled later rather than blocked. One success criterion — the ten-minute first run on a *clean* machine — is recorded 🟡 partial: it was measured at 21 seconds, but on a warm one, and a cold dependency install and image build are the costs that measurement cannot cover.
 
 | Wave | Lane | File | Owned area | Depends on | Status |
 |---|---|---|---|---|---|
@@ -21,7 +21,7 @@ Every task inside a lane file carries a self-contained English agent prompt: an 
 | 2 | W2-A | [wave-2a-web-api-sse.md](wave-2a-web-api-sse.md) | `apps/web/app/api`, `apps/web/src/server` | W1-A, W1-E, W1-F | 🟩 |
 | 2 | W2-B 🐳 | [wave-2b-worker.md](wave-2b-worker.md) | `apps/worker/src` | W1-A…W1-F | 🟩 |
 | 2 | W2-C | [wave-2c-e2e.md](wave-2c-e2e.md) | `apps/web/e2e`, `infra/test/gitserver` | W1-G, W1-H | 🟩 |
-| 3 | W3-A 🐳 | [wave-3a-integration.md](wave-3a-integration.md) | any (single agent) | W2-A, W2-B, W2-C | 🟨 6/6 |
+| 3 | W3-A 🐳 | [wave-3a-integration.md](wave-3a-integration.md) | any (single agent) | W2-A, W2-B, W2-C | 🟩 6/6 |
 | 3 | W3-B | [wave-3b-docs.md](wave-3b-docs.md) | `README.md`, `docs/**` | W2-A, W2-B | 🟩 |
 | 4 | W4-A | [wave-4a-stryker-core.md](wave-4a-stryker-core.md) | `packages/core` tests + stryker config | W3-A — but the deferral, not this dependency, is why it is idle | 🟡 |
 | 4 | W4-B | [wave-4b-stryker-runtime.md](wave-4b-stryker-runtime.md) | `packages/agent-runtime` tests + stryker config | W3-A — but the deferral, not this dependency, is why it is idle | 🟡 |

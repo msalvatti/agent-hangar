@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Lane** | W3-A 🐳 (single agent, sequential — touches many paths; the only Docker-integration lane running) |
-| **Status** | 🟨 PR open |
+| **Status** | 🟩 merged |
 | **Progress** | 6/6 tasks |
 | **Branch** | `feat/w3a-integration` · [PR #81](https://github.com/bymaxone/agent-hangar/pull/81) |
 | **Owned paths** | any path (single agent; nothing else runs in `apps/**` concurrently — W3-B owns `README.md` and `docs/**` in parallel and only its own lines of `docs/plan.md` §12 / `docs/tasks/README.md` are touched here) |
