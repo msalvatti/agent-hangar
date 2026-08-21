@@ -123,6 +123,15 @@ export class ScheduledPage {
     const dialog = this.page.getByRole('alertdialog').filter({ hasText: `Delete job ${name}?` });
     await expect(dialog).toBeVisible();
     await dialog.getByRole('button', { name: COPY.deleteJob, exact: true }).click();
+    // The confirmation closing is waited for first, and it is what carries the meaning. The
+    // dialog is modal, so while it stands the rest of the page is marked `aria-hidden` and no
+    // role locator reaches into it: measured live, the table counts zero elements and `row(name)`
+    // counts zero rows for as long as the dialog is open. Asserting the row straight after the
+    // click is therefore a check that cannot fail, and it cannot fail in exactly the case the
+    // screen keeps the dialog open to report — a delete that was refused. The screen closes the
+    // dialog only once `DELETE /api/jobs/:id` has answered, so waiting for it also means the
+    // request is over rather than still in flight when the test ends.
+    await expect(dialog).toHaveCount(0);
     await expect(this.row(name)).toHaveCount(0);
   }
 

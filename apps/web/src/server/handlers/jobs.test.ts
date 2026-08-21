@@ -12,6 +12,7 @@ import {
   jobSummary,
   listJobsResponse,
   nextRunAt,
+  NotFoundError,
   triggerRunResponse,
 } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
@@ -456,6 +457,46 @@ describe('deleteJob', () => {
     const job = await seedJob(harness);
     vi.spyOn(harness.doubles.repos.scheduledJobs, 'delete').mockRejectedValue(
       new Error('database unreachable'),
+    );
+
+    const response = await deleteJob(harness.container, writeRequest('/api/jobs', 'DELETE'), {
+      id: job.id,
+    });
+
+    expect(response.status).toBe(500);
+    expect(harness.doubles.queues.scheduledJobs.schedulers.has(job.id)).toBe(true);
+  });
+
+  /**
+   * A row another request removed in the meantime is the outcome this request asked for, so it
+   * succeeds and — the half that matters — leaves the scheduler removed. Restoring it would
+   * register a repeatable delivery for a job no row describes, which nothing later removes because
+   * the row that named it is gone.
+   */
+  it('succeeds without restoring the scheduler when the row is already gone', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    vi.spyOn(harness.doubles.repos.scheduledJobs, 'delete').mockRejectedValue(
+      new NotFoundError('ScheduledJob', job.id),
+    );
+
+    const response = await deleteJob(harness.container, writeRequest('/api/jobs', 'DELETE'), {
+      id: job.id,
+    });
+
+    expect(response.status).toBe(204);
+    expect(harness.doubles.queues.scheduledJobs.schedulers.size).toBe(0);
+  });
+
+  /**
+   * A missing row reported for a different job is somebody else's failure reaching this handler,
+   * not this delete succeeding, so it keeps the compensation and the failure.
+   */
+  it('still compensates when the missing row is not the job being deleted', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    vi.spyOn(harness.doubles.repos.scheduledJobs, 'delete').mockRejectedValue(
+      new NotFoundError('ScheduledJob', 'a-different-job'),
     );
 
     const response = await deleteJob(harness.container, writeRequest('/api/jobs', 'DELETE'), {

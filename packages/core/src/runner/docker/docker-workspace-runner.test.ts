@@ -326,6 +326,35 @@ describe('DockerWorkspaceRunner.destroy', () => {
   });
 
   /**
+   * Destroying a workspace has several callers by design — the teardown of the turn that owned it,
+   * the collector's orphan pass, the operator's reaper — so two of them can act on the same
+   * container. The daemon answers the second one `409 removal already in progress`, which is this
+   * method's own goal being met by somebody else. Treated as a failure it made the collector
+   * report every concurrently reaped workspace as a failed teardown.
+   */
+  it('resolves when another remover is already destroying the container', async () => {
+    const { runner, docker } = makeRunner();
+    const handle = await createWorkspace(runner);
+    docker.failures.containerRemove = dockerError(409, 'removal already in progress');
+
+    await expect(runner.destroy(handle)).resolves.toBeUndefined();
+  });
+
+  /**
+   * The stop is subject to the same race one call earlier: a container the daemon has already
+   * begun removing refuses to be stopped, and there is nothing left to stop.
+   */
+  it('continues past a stop refused because a removal is under way', async () => {
+    const { runner, docker } = makeRunner();
+    const handle = await createWorkspace(runner);
+    docker.failures.containerStop = dockerError(409, 'removal already in progress');
+
+    await runner.destroy(handle);
+
+    expect(docker.containers.size).toBe(0);
+  });
+
+  /**
    * Same for the remove: a container that stopped but could not be removed still occupies its name
    * and its disk, so the caller has to learn about it.
    */

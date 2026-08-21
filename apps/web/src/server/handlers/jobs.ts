@@ -10,7 +10,9 @@
  * failed create deletes the row it just inserted; a failed edit puts the previous values back,
  * which is exactly what the scheduler that is still registered describes. A delete goes the other
  * way round and removes the scheduler first, because a tick firing between the two steps would
- * otherwise deliver a job whose row is already gone.
+ * otherwise deliver a job whose row is already gone. A delete is also the one operation whose
+ * compensation has a case that must not run: a row that is already gone is the outcome the request
+ * asked for, so it answers success instead of restoring a schedule for a job nothing describes.
  *
  * Two limits, and the first is the one the qualification above is about. Two edits of the *same*
  * job in flight together can finish with the row from one and the scheduler from the other, both
@@ -35,6 +37,7 @@ import {
   jobUpsertRequest,
   listJobsResponse,
   nextRunAt,
+  NotFoundError,
   removeScheduledJob,
   triggerRunResponse,
   upsertScheduledJob,
@@ -331,6 +334,21 @@ export function updateJob(
 }
 
 /**
+ * Whether a delete failed because the row had already gone.
+ *
+ * The identifier is compared rather than only the error type: a not-found raised about some other
+ * row is a failure of this request like any other, and answering success to it would report a job
+ * as deleted that is still there.
+ *
+ * @param error - What the repository rejected with.
+ * @param jobId - The job the request is deleting.
+ * @returns `true` when the repository reported that exact row as missing.
+ */
+function isAlreadyDeleted(error: unknown, jobId: string): boolean {
+  return error instanceof NotFoundError && error.id === jobId;
+}
+
+/**
  * `DELETE /api/jobs/:id` — removes the scheduler and the job with its run history.
  *
  * @param container - The server container.
@@ -352,6 +370,14 @@ export function deleteJob(
     try {
       await container.repos.scheduledJobs.delete(job.id);
     } catch (error) {
+      // A row that is already gone is not a survived delete: another request removed it between
+      // the read above and this write, both halves now say the job does not exist, and that is
+      // the state this request was asking for. Restoring the scheduler here would register a
+      // schedule for a job no row describes any more — a repeatable delivery nothing can ever
+      // satisfy and nothing removes, since the row that named it is gone.
+      if (isAlreadyDeleted(error, job.id)) {
+        return noContent();
+      }
       // The row survived the delete, so it still describes a job that is meant to fire; putting
       // its scheduler back is what keeps the two halves saying the same thing.
       await compensate(container, { jobId: job.id }, COMPENSATE_FAILURE_MESSAGE, () =>
