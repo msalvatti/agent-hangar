@@ -34,6 +34,9 @@ const WIDTHS = [1440, 1024, 768, 375] as const;
 /** Viewport height every width is measured at; tall enough to put whole screens in view. */
 const VIEWPORT_HEIGHT = 900;
 
+/** The narrowest width of the walk, and the only one below the 768 px overlay-drawer breakpoint. */
+const DRAWER_WIDTH = 375;
+
 /** Chats the mock API seeds. */
 const MOCK_CHATS = {
   finished: 'chat-finished',
@@ -183,7 +186,7 @@ test.describe('interactive controls are usable with a pointer', () => {
    * expanded, so the drawer is at its tallest and its footer is pushed against the viewport.
    */
   test('the mobile sidebar drawer keeps its own controls usable', async ({ page }) => {
-    await page.setViewportSize({ width: 375, height: VIEWPORT_HEIGHT });
+    await page.setViewportSize({ width: DRAWER_WIDTH, height: VIEWPORT_HEIGHT });
     const sidebar = new SidebarPage(page);
     await sidebar.goto();
     await page.getByRole('button', { name: 'Open navigation' }).click();

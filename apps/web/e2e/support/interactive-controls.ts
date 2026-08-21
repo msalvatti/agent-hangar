@@ -123,7 +123,7 @@ export interface Collision {
  *
  * @param page - The page to settle.
  */
-export async function settleAnimations(page: Page): Promise<void> {
+async function settleAnimations(page: Page): Promise<void> {
   await page.evaluate(async () => {
     const running = document
       .getAnimations()
