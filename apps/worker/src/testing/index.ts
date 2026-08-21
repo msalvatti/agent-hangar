@@ -4,6 +4,7 @@ export * from './fake-clients.js';
 export * from './fake-queues.js';
 export * from './fake-secrets.js';
 export * from './fake-worker-factory.js';
+export * from './gc-fixtures.js';
 export * from './in-memory-commands.js';
 export * from './in-memory-publisher.js';
 export * from './job-fixtures.js';

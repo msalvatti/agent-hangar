@@ -678,6 +678,10 @@ describe('createRunScheduledJobProcessor', () => {
   it('lets no credential reach the run record or its stream', async () => {
     const container = setupProcessorContainer({
       script: scriptedRuntime([
+        // A branch name is chosen by the agent, so it is a place a credential can be carried out
+        // of the container as surely as a final message is — and it now lands on a column of its
+        // own, which is why this case is scripted here rather than left to the output.
+        { type: 'git.pushed', branch: `agent/job-${OPENAI_CANARY}`, sha: '1111111111111111' },
         {
           type: 'turn.completed',
           usage: { inputTokens: 1, outputTokens: 1 },
@@ -695,6 +699,7 @@ describe('createRunScheduledJobProcessor', () => {
       assertNoCanary(JSON.stringify(runs));
     }).not.toThrow();
     expect(runs[0]?.output).toContain('[REDACTED]');
+    expect(runs[0]?.workBranch).toContain('[REDACTED]');
     expect(() => {
       assertNoCanary(JSON.stringify(container.publisher.records));
     }).not.toThrow();
