@@ -85,6 +85,39 @@ const RECURSIVE_RUN_PATTERN = /(?:^|\s)(?:--recursive|-r)(?:\s|$)/u;
 /** Name of the script that runs a package's default suite. */
 const TEST_SCRIPT = 'test';
 
+/**
+ * Wrapper scripts a root manifest hands its fan-out to.
+ *
+ * `test` and `test:integration` are one line each in `package.json` and the recursive pnpm command
+ * lives in the file they name. Scanning only manifests would therefore report "no fan-out to
+ * check" for both — the guard passing because it had stopped looking, which is the failure its own
+ * message warns about.
+ */
+/**
+ * Reduces one line of a wrapper script to the command a manifest would have carried.
+ *
+ * A manifest's script is a bare command; a shell line is the same command wearing a pipeline, a
+ * redirection and `"$@"`. The parser this feeds understands the first and reports the rest as
+ * undecidable — a verdict that is neither "protected" nor "unprotected", so it would fail the gate
+ * while saying nothing about the flags. Stripping the shell's own punctuation asks the question
+ * that was meant.
+ *
+ * @param line - One line of a wrapper script.
+ * @returns The command with its pipeline tail, redirections and argument forwarding removed.
+ */
+function shellCommandOf(line: string): string {
+  const [head = ''] = line.split('|');
+  return head
+    .replace(/\d?>&?\d?\s*\S*/gu, ' ')
+    .replace(/"\$@"/gu, ' ')
+    .trim();
+}
+
+const DELEGATED_TEST_SCRIPTS: readonly string[] = [
+  'scripts/run-tests.sh',
+  'scripts/run-integration.sh',
+];
+
 /** Prefix of every script that runs one of a package's other suites (`test:integration`, …). */
 const TEST_SCRIPT_PREFIX = 'test:';
 
@@ -699,7 +732,7 @@ describe('the manifests that fan a suite out across workspaces', () => {
    * one invocation, or the command's text — is a different question from this one.
    */
   it('runs every workspace test suite one at a time, and runs all of them', () => {
-    const verdicts = listManifests().flatMap((manifest) =>
+    const fromManifests = listManifests().flatMap((manifest) =>
       Object.entries(readScripts(manifest))
         .map(([name, command]) => ({
           where: `${manifest} → ${name}`,
@@ -708,11 +741,30 @@ describe('the manifests that fan a suite out across workspaces', () => {
         }))
         .filter(({ test, verdict }) => test && verdict !== 'none'),
     );
+    // A manifest that delegates to a shell script moves its fan-out out of reach of the scan
+    // above, and a rule that a file can step outside of by being written somewhere else is not a
+    // rule. Both wrappers are read here for the same reason the manifests are.
+    const fromWrappers = DELEGATED_TEST_SCRIPTS.flatMap((script) =>
+      readFileSync(join(repoRoot, script), 'utf8')
+        .split('\n')
+        .filter((line) => !line.trimStart().startsWith('#'))
+        .map((line) => ({
+          where: `${script} → ${line.trim()}`,
+          verdict: fanOutVerdict(shellCommandOf(line)),
+        }))
+        .filter(({ verdict }) => verdict !== 'none')
+        .map(({ where, verdict }) => ({ where, test: true, verdict })),
+    );
+    const verdicts = [...fromManifests, ...fromWrappers];
     expect(
-      verdicts.map(({ where }) => where),
+      verdicts.length,
       'the scan must still recognise the fan-out it exists for; a guard tightened until it ' +
         'matches nothing passes every manifest for the wrong reason',
-    ).toContain('package.json → test:integration');
+    ).toBeGreaterThan(0);
+    expect(
+      verdicts.map(({ where }) => where).filter((where) => where.includes('run-integration.sh')),
+      'the integration fan-out moved from the manifest into a wrapper; the scan has to follow it',
+    ).not.toEqual([]);
 
     const offenders = verdicts
       .filter(({ verdict }) => verdict !== 'complete')
