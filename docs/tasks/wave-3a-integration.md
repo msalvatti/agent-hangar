@@ -5,7 +5,7 @@
 | **Lane** | W3-A 🐳 (single agent, sequential — touches many paths; the only Docker-integration lane running) |
 | **Status** | 🟨 PR open |
 | **Progress** | 6/6 tasks |
-| **Branch** | `feat/w3a-integration` |
+| **Branch** | `feat/w3a-integration` · [PR #81](https://github.com/bymaxone/agent-hangar/pull/81) |
 | **Owned paths** | any path (single agent; nothing else runs in `apps/**` concurrently — W3-B owns `README.md` and `docs/**` in parallel and only its own lines of `docs/plan.md` §12 / `docs/tasks/README.md` are touched here) |
 | **Depends on** | W2-A, W2-B, W2-C merged (hence every Wave 1 lane and W0) |
 | **Unblocks** | W4-A, W4-B (mutation testing on stable code) |
@@ -541,7 +541,7 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-3a-integration
   The `⚠ auth` on the first is the canary key being refused by OpenAI, which is the honest answer, and it prints its fix. Both were up at the same moment with independent compose projects, databases, Redis instances, port blocks and container prefixes — `agent-hangar-test-4800-{postgres,redis}-1` on 4801/4802 beside `agent-hangar-w3a5-second-{postgres,redis}-1` on 5101/5102, with a workspace container named `ah-ws-test-4800-…` belonging to the first alone. That is S8, observed rather than argued. Stopping the second instance's Redis once turned its row into `✗ 127.0.0.1:5102 · nothing listening` with the fix `pnpm infra:up` and made the script exit non-zero.
 
   **A specification line corrected in passing (R37).** `docs/spec/10-ui-design.md` §3 still named `⌘Enter` as the send binding; the product has sent on plain Enter since PR #57, with `Shift+Enter` for a newline and `⌘/Ctrl+Enter` still sending, which is what `Composer.tsx`, its `aria-keyshortcuts` and its `Send (↵)` tooltip all say. The specification now says the same. `docs/tasks/wave-1g-web-chats.md` keeps its original wording on purpose: a task file records the instruction that was given, not the product.
-- 3A.6 ✅ 2026-08-21 — every gate green and spec 01 §5 answered criterion by criterion: **S2, S3, S4, S5, S6 and S8 met, S1 partial, S7 not claimed.** The close-out re-ran what had no record and cited what did, rather than repeating measurements that were already taken.
+- 3A.6 ✅ 2026-08-21 — PR #81 opened; every gate green and spec 01 §5 answered criterion by criterion: **S2, S3, S4, S5, S6 and S8 met, S1 partial, S7 not claimed.** The close-out re-ran what had no record and cited what did, rather than repeating measurements that were already taken.
 
   **Gates, all on `feat/w3a-integration`.** `pnpm lint`, `pnpm format:check`, `pnpm typecheck`, `pnpm build` — exit 0. `pnpm test -- --coverage` — 100 % lines, branches, functions and statements in all five projects (core 2426 statements, web 3736, worker 1204, agent-runtime 727, scripts 712). `pnpm test:integration` against the compose stack with `DOCKER_AVAILABLE=1` and `CI=1` — 116 tests, none skipped, so the `@db`, `@redis` and `@docker` suites all ran rather than opting out. `pnpm test:e2e -- --retries=0` in **real** mode three consecutive times — 10 passed · 20 skipped · 0 failed each, 31.8 s / 39.8 s / 39.8 s of Playwright. Instances `w3a6-test` (4300) and `test-4800`, each with its own workspace image built from this checkout, so nothing touched the machine's shared `agent-hangar/workspace:dev` tag.
 
