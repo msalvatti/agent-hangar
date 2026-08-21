@@ -398,6 +398,26 @@ describe('run.sh and the workspace image', () => {
   });
 
   /**
+   * Docker stopped altogether must still start the app. The interface is worked on without a
+   * daemon — the README says so — and there is no image to be wrong about: nothing can be created
+   * from one. This is the other half of the refusal above, and the reason the check is not written
+   * as "anything other than current".
+   */
+  it('starts with Docker stopped', () => {
+    const dir = sandbox();
+    sandboxes.push(dir);
+    const log = join(dir, 'log');
+    const shimDir = createShimDir({ log, docker: { availability: 'down' } });
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      env: envWithImage(dir, log, expectedWorkspaceDigest()),
+    });
+    expect(result.status).toBe(0);
+    expect(result.stderr).toContain('Docker is not reachable');
+    expect(readShimLog(log).some((line) => line.startsWith('pnpm exec concurrently'))).toBe(true);
+  });
+
+  /**
    * `--print-only` starts nothing, so it asks Docker nothing either: the mode exists to show what
    * would run, and making it depend on a daemon would break the tests that read the command line.
    */
