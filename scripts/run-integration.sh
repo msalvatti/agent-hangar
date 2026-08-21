@@ -24,7 +24,10 @@
 # status here.
 set -uo pipefail
 
-log=$(mktemp -t ah-integration)
+# An explicit template, not `mktemp -t <prefix>`: that spelling is BSD's, and GNU coreutils
+# rejects it with "too few X's in template" — which would have broken this on every Linux
+# runner while passing on the machine it was written on.
+log=$(mktemp "${TMPDIR:-/tmp}/ah-integration.XXXXXX")
 trap 'rm -f "$log"' EXIT
 
 pnpm --recursive --if-present --sequential --no-bail --no-include-workspace-root run test:integration "$@" 2>&1 | tee "$log"
@@ -37,7 +40,10 @@ fi
 # Vitest's own summary line, one per workspace: "Tests  126 passed (126)" or "Tests  150 skipped".
 # Counting the lines that report a pass answers the only question asked here.
 executed=$(grep -cE '^[[:space:]]*Tests[[:space:]].*[0-9]+ passed' "$log" || true)
-skipped=$(grep -oE '[0-9]+ skipped' "$log" | awk '{ total += $1 } END { print total + 0 }')
+# Only Vitest's `Tests` line: its `Test Files` line reports skipped files with the same words,
+# and counting both told the reader a number that was neither.
+skipped=$(grep -E '^[[:space:]]*Tests[[:space:]]' "$log" | grep -oE '[0-9]+ skipped' \
+  | awk '{ total += $1 } END { print total + 0 }')
 
 if [ "$executed" -gt 0 ]; then
   printf '\nIntegration suites: %s workspace suite(s) executed.\n' "$executed" >&2
