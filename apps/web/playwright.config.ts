@@ -36,8 +36,15 @@ const EXPECT_TIMEOUT_MS = 10_000;
 const WEB_BOOT_TIMEOUT_MS = 180_000;
 
 /**
- * The web server Playwright manages when `E2E_MANAGED_SERVER=1`; otherwise the developer is
- * running it and Playwright only connects.
+ * The web server Playwright manages.
+ *
+ * Managed unconditionally, because `pnpm test:e2e` is one command and the half of the stack it
+ * already brings up — compose, the migrations, the git server, the worker — is of no use without
+ * the server the specs navigate. It used to be opt-in behind a variable nothing documented, so the
+ * documented command started everything except the application and then failed every check with a
+ * refused connection, which reads as a broken product rather than a missing flag. A developer
+ * already running their own server on this port is still not displaced: `reuseExistingServer`
+ * connects to it instead of starting a second one.
  *
  * The worker is not listed here on purpose — see `e2e/support/worker.ts`. It owns no port, a
  * `webServer` entry can only wait on an HTTP status, and an entry pointed at the web server's own
@@ -79,5 +86,5 @@ export default defineConfig({
   projects: [{ name: 'chromium', use: { ...devices['Desktop Chrome'] } }],
   globalSetup: './e2e/global-setup.ts',
   globalTeardown: './e2e/global-teardown.ts',
-  ...(process.env.E2E_MANAGED_SERVER === '1' ? { webServer: managedServers(e2e) } : {}),
+  webServer: managedServers(e2e),
 });

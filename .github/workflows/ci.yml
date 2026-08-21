@@ -213,7 +213,6 @@ jobs:
       # assertions that need a worker, Docker and the local git server. Set this to `real` once
       # the API and the worker are wired end to end; nothing else here has to change.
       E2E_MODE: mock
-      E2E_MANAGED_SERVER: '1'
       # Postgres and Redis are provided as services above, so the harness must not start compose.
       E2E_SKIP_COMPOSE: '1'
       # The docker0 gateway: the address a workspace container reaches the runner's host by.
