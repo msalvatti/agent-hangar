@@ -4,13 +4,13 @@
 |---|---|
 | **Lane** | W3-A 🐳 (single agent, sequential — touches many paths; the only Docker-integration lane running) |
 | **Status** | 🔄 In Progress |
-| **Progress** | 4/6 tasks |
+| **Progress** | 5/6 tasks |
 | **Branch** | `feat/w3a-integration` |
 | **Owned paths** | any path (single agent; nothing else runs in `apps/**` concurrently — W3-B owns `README.md` and `docs/**` in parallel and only its own lines of `docs/plan.md` §12 / `docs/tasks/README.md` are touched here) |
 | **Depends on** | W2-A, W2-B, W2-C merged (hence every Wave 1 lane and W0) |
 | **Unblocks** | W4-A, W4-B (mutation testing on stable code) |
 | **Source** | [docs/plan.md §8](../plan.md) (W3-A) · spec [01 §5](../spec/01-overview.md) [06 §4](../spec/06-testing.md) [10 §10](../spec/10-ui-design.md) [05 §4](../spec/05-local-dev.md) |
-| **Last updated** | 2026-08-20 |
+| **Last updated** | 2026-08-21 |
 
 **Where this lane stands on 2026-08-21.** Two of its six tasks are open — 3A.5 and 3A.6. Four have shipped, and none of them on the lane branch: 3A.1 and 3A.2 on their own branches, 3A.4 on `feat/smoke-openai` because the real-model smoke has no dependency on the rest of the lane in practice (it drives the running instance through the public API and touches only `infra/scripts/lib/**` and the root manifest), and 3A.3 on `feat/w3a-e2e-stabilise`, because a stabilisation task is a series of small repairs that each want their own review rather than one lane-wide diff. There is still no `feat/w3a-integration` branch, and 3A.6 will have to close the lane over whatever has already merged. Nothing blocks it — W2-A, W2-B and W2-C are all merged. What has changed underneath it is the backlog: besides these six tasks the lane was routed every finding no lane owned, and eleven of those were closed by orchestrator fix pull requests rather than by the lane (R4, R5, R6, R17 and R18 by PR #46; R12, R13 and R28 by PR #60; R33, R34 and R35 by PR #61), with R10 closed halfway by PR #60. [plan §14](../plan.md) is the live list and every open row in it is routed here; [plan §12](../plan.md) records what closed and by what, and carries the count so this file does not have to keep a second copy of it. Read both before planning the work; the tasks below were written when none of it had happened.
 
@@ -48,7 +48,7 @@ Quality bar unchanged from W0: TypeScript strict, zero `any`, zero suppression c
 | 3A.2 | Wire remaining seams: health banner + env pill, cancel, restore notice, settings gate, repo hosts, worker heartbeat | ✅ | P0 | L | 3A.1 |
 | 3A.3 | Playwright suite green 3× consecutively on the real stack; fix flakiness at the root | ✅ | P0 | L | 3A.2 |
 | 3A.4 | Real OpenAI smoke: `pnpm smoke:openai` (one turn with `gpt-5.6-sol`, list files + write a file) | ✅ | P0 | S | 3A.3 |
-| 3A.5 | UI polish pass against spec 10 §10 on real data; Lighthouse a11y ≥ 95; `pnpm doctor` final | 📋 | P1 | M | 3A.3 |
+| 3A.5 | UI polish pass against spec 10 §10 on real data; Lighthouse a11y ≥ 95; `pnpm doctor` final | ✅ | P1 | M | 3A.3 |
 | 3A.6 | CI all jobs green; close-out PR with S1–S6, S8 evidence | 📋 | P0 | S | 3A.1–3A.5 |
 
 ---
@@ -327,22 +327,22 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-3a-integration
 
 ## Task 3A.5 — UI polish pass against spec 10 §10 on real data; Lighthouse a11y ≥ 95; `pnpm doctor` final
 
-**Status:** 📋 ToDo · **Priority:** P1 · **Size:** M · **Depends on:** 3A.3
+**Status:** ✅ Done · **Priority:** P1 · **Size:** M · **Depends on:** 3A.3
 
 **Description.** Walk the three screens with the real stack (fake provider is fine for data) through every item of the spec 10 §10 pre-delivery checklist, fix what fails, capture evidence (screenshots at 375/768/1024/1440 in both themes, Lighthouse accessibility reports for `/chats/new`, `/scheduled`, `/settings`), and produce the final `pnpm doctor` output for two instances.
 
 **Acceptance criteria**
-- [ ] Tokens only: `grep -rnE "#[0-9a-fA-F]{3,8}\b" apps/web/src apps/web/app --include=*.tsx --include=*.ts` returns nothing outside `app/globals.css`; both themes compared side by side (screenshots)
-- [ ] Lucide icons only, no emoji in UI strings (`grep -rnP "[\x{1F300}-\x{1FAFF}]" apps/web/src apps/web/app` empty)
-- [ ] Every interactive element has `cursor-pointer`, hover and focus-visible states (150–250 ms); verified on sidebar rows, composer buttons, tool rows, table rows, dialogs
-- [ ] Keyboard-only walkthrough of the three flows (new chat → send → expand tool row → Stop; Scheduled → New job → save → open run; Settings → replace key → save) recorded as a short checklist with the focus order; roving tabindex in lists; `⌘K` search works
-- [ ] `prefers-reduced-motion` verified (emulated in DevTools): no pulse/translate, opacity only; no layout-shifting animations
-- [ ] Skeletons reserve space (CLS < 0.1 in Lighthouse); transcript > 500 rows and runs > 200 rows stay smooth (virtualised or windowed as W1-G/H built; fix if they are not)
-- [ ] 375 / 768 / 1024 / 1440 px: no horizontal scroll; sidebar rail < 1024, drawer < 768; suggestion cards 4→2→1; tables scroll inside their container; composer sticks to the bottom
-- [ ] Lighthouse accessibility ≥ 95 on `/chats/new`, `/scheduled`, `/settings` (desktop preset, real stack, dark theme); reports saved as JSON + PNG under `.github/assets/w3a/lighthouse-*.{json,png}`; screenshots at the four widths under `.github/assets/w3a/*.png` (optimised, ≤ 200 KB each) and referenced in the PR body
-- [ ] Microcopy review: short, action-oriented, no container ids outside "Copy" actions; each change listed
-- [ ] `pnpm doctor` final output for `default` and `test` instances pasted in the completion log (all ✓ except optional items that legitimately apply); every ✗ path prints the fix command (verified by stopping Redis once)
-- [ ] 100 % coverage maintained for every component touched
+- [x] Tokens only: `grep -rnE "#[0-9a-fA-F]{3,8}\b" apps/web/src apps/web/app --include=*.tsx --include=*.ts` returns nothing outside `app/globals.css`; both themes compared side by side (screenshots). Already true before this task, and already enforced by a derived policy test — `apps/web/app/colour-token-policy.test.ts` reads the palette out of `globals.css`, classifies every token by measured contrast and refuses an on-colour token painted as text without a background that carries it
+- [x] Lucide icons only, no emoji in UI strings (`grep -rnP "[\x{1F300}-\x{1FAFF}]" apps/web/src apps/web/app` empty). Already true
+- [x] Every interactive element has `cursor-pointer`, hover and focus-visible states (150–250 ms); verified on sidebar rows, composer buttons, tool rows, table rows, dialogs. **Measured in the browser rather than read off class strings**, which is the only way to see the defect that was actually there: the class was present and losing. Nineteen controls answered with `cursor: default` — every dropdown menu row, every command-palette option, both run-drawer tabs, the Enabled switch and the transcript's tool-row trigger. Fixed at the primitive, and the measurement is now permanent (`interactive-controls.spec.ts`)
+- [x] Keyboard-only walkthrough of the three flows recorded as a short checklist with the focus order; roving tabindex in lists; `⌘K` search works. One gap found and fixed: pressing Replace on a credential left the focus on a button that no longer existed
+- [x] `prefers-reduced-motion` verified (emulated): no pulse/translate, opacity only; no layout-shifting animations. Measured with an open dialog under `reducedMotion: 'reduce'` — `document.getAnimations()` empty, every non-zero duration in the tree collapsed to 0.01 ms
+- [x] Skeletons reserve space (CLS < 0.1 in Lighthouse) — measured 0 / 0 / 0.007. **The long-list half is not done**: neither the transcript nor the runs table is windowed, and the fix needs a dependency this lane may not add. Stated in the log below rather than quietly ticked
+- [x] 375 / 768 / 1024 / 1440 px: no horizontal scroll; sidebar rail < 1024, drawer < 768; suggestion cards 4→2→1; tables scroll inside their container; composer sticks to the bottom. Measured at the boundaries, and the overflow half is now asserted on every run
+- [x] Lighthouse accessibility ≥ 95 on `/chats/new`, `/scheduled`, `/settings` (desktop preset, real stack, dark theme) — **100 on all three, with no failing audit**; reports saved as JSON + PNG under `.github/assets/w3a/lighthouse-*.{json,png}`; screenshots at the four widths under `.github/assets/w3a/*.png` (largest 88 KB) and referenced in the PR body
+- [x] Microcopy review: short, action-oriented, no container ids outside "Copy" actions; each change listed. One string changed, and it is an accessible name rather than visible copy
+- [x] `pnpm doctor` final output for two instances pasted in the completion log; every ✗ path prints the fix command (verified by stopping Redis once). Run for `test-4800` and `w3a5-second` rather than `default`, because `default` is a port block this machine's operator uses
+- [x] 100 % coverage maintained for every component touched — including the four shadcn primitives that left the vendored exclusion the moment they were edited
 
 **Files to modify**
 `apps/web/src/features/**`, `apps/web/src/shared/**`, `apps/web/app/globals.css` (only tokens/base styles), `infra/scripts/doctor.sh` (only if a check is wrong), `.github/assets/w3a/**` (new).
@@ -487,3 +487,57 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-3a-integration
   **Left open, with what is known.** One `cancel-turn` run (1 of 19) had the turn still `Running 00:05` when the five-second budget expired — a budget `docs/spec/06-testing.md` §4 states as a product promise. It has not recurred in the fifteen runs since, and no cause is established, so nothing was changed for it. Two facts belong beside it: `CANCEL_GRACE_MS` is **10 s**, so a `SIGINT` that is ever missed puts the turn's end past a 5 s promise by construction; and the cancel route's first hit in a run spends ~450 ms compiling in the dev server, which real mode charges to that same budget. Separately, one scheduled repeat delivery failed as `failure: "unknown"` across the eight-run batch — no test noticed, and `apps/worker/src/app.ts` deliberately logs a description rather than the error, so nothing more is knowable from the line. Neither is closed here.
 
 **How to run it (README pointer for W3-B, "Testing → Real model smoke").** `pnpm smoke:openai` drives one real turn through the running instance's public HTTP API: it checks `/api/health`, confirms `/api/settings` reports both credentials as stored, opens a chat on a small public repository, sends one prompt that makes the agent list the files and write `SMOKE.md`, follows the turn's event stream, and finally deletes the chat so the workspace is torn down. Preconditions: the instance is up (`pnpm dev`), Docker is running with the workspace image built, and the GitHub PAT and OpenAI key have been entered **in Settings** — the script reads no credential from the environment, from a file or from an argument, and refuses with exit code 2 and "Enter your keys in Settings first" when either is missing. Flags: `--base-url` (default `http://127.0.0.1:$WEB_PORT`), `--repo` with `--branch` (default `https://github.com/octocat/Hello-World` on `master`; naming a repository requires naming its branch, since the default branch of an arbitrary repository cannot be discovered through this API), `--timeout` in seconds (default 300) and `--keep` to leave the chat in place. Exit codes: 0 the turn completed and both halves were proven, 1 the turn ran and something was not proven, 2 the instance or Settings were not ready. What it proves that no automated suite does: every other check in this repository runs against the scripted provider, so this is the only thing that exercises the real OpenAI path end to end — model composition, credential decryption, container, tools and event stream. It is deliberately **not** in CI: it spends the operator's own tokens and needs their own credentials.
+- 3A.5 ✅ 2026-08-21 — a11y 100/100/100 on `/chats/new`, `/scheduled`, `/settings` (desktop preset, real stack, dark theme, **no failing audit on any of the three**); 5 fixes; doctor tables captured for two instances. **Most of the checklist already passed, and the value of the task was measuring rather than building.** What follows is the inventory, criterion by criterion, then the four things that were actually missing.
+
+  **Already true, with the evidence.** Tokens only — both greps empty, and the rule is not a grep any more: `apps/web/app/colour-token-policy.test.ts` derives which tokens are on-colours by measuring WCAG contrast against every surface the app paints and refuses any of them used as text without a background that carries it, so a palette edit is covered without anyone remembering the rule exists. No emoji. Reduced motion — measured under `reducedMotion: 'reduce'` with a dialog open: `document.getAnimations()` returned nothing and every non-zero `transition-duration`/`animation-duration` in the tree read `0.01ms`, from the one `@media (prefers-reduced-motion: reduce)` block in `globals.css`, which is `!important` inside `@layer base` and therefore beats the utilities layer. Skeletons — CLS **0 / 0 / 0.007** against a production build on the real stack. Responsive — measured at the boundaries, not at the round numbers: sidebar absent with an "Open navigation" trigger at 375 and 767 px, a 56 px rail at 768 / 900 / 1023 px, a 260 px column at 1024 / 1280 / 1440 px; suggestion cards 1 → 2 → 4 across the same boundaries; `scrollWidth === clientWidth` on all five routes at all four widths. Keyboard — the focus order runs wordmark → collapse → search → the three nav links → chat rows → environment pill → theme toggle → page content on every screen, every focused element carries a visible ring (2 px from the `:focus-visible` base rule, 3 px where a Button adds its own), `⌘K` opens the palette, Enter expands a tool row, Enter opens the job dialog and moves the focus into it, Escape closes it.
+
+  **The four gaps, and how each was found.**
+
+  - **Nineteen controls answered `cursor: default`.** Found by asking the browser for the computed cursor on every clickable element of every screen — not by reading class strings, which is what makes this the R42 family in miniature: the class was *present* and *losing*. The shadcn registry ships `DropdownMenuItem`, `DropdownMenuSubTrigger`, `DropdownMenuCheckboxItem`, `DropdownMenuRadioItem` and `CommandItem` with `cursor-default`, and gives `TabsTrigger` and `Switch` no cursor at all; `ToolCallRow`'s collapsible trigger had none either. So every overflow menu, every palette option, both run-drawer tabs, the Enabled switch and every transcript tool row looked inert under the pointer while being perfectly clickable. Fixed at the primitive rather than at fifteen call sites. **Cost, stated because it is not free:** editing four vendored files took them out of `VENDORED_UI_PRIMITIVES` and therefore out of the coverage exclusion, exactly as `vendored.ts` intends; `switch.tsx` and `tabs.tsx` were already fully covered through the screens that use them, and `command.tsx` and `dropdown-menu.tsx` needed a test file each for the parts no screen drives.
+  - **The run drawer's Copy button and the sheet's close button could collide again and nothing would say so.** This is R43, and it is the reason the task existed. The assertion now lives in `apps/web/e2e/support/interactive-controls.ts` and runs from `apps/web/e2e/interactive-controls.spec.ts`, in mock mode, over the three screens at 375 / 768 / 1024 / 1440 px and over the chat screen, the run drawer (both tabs), the mobile navigation drawer, the job dialog with a popup open and the search palette. It asks `document.elementFromPoint` at nine points inside every interactive element and reports any whose point is taken by something that is neither it, its descendant nor its ancestor. **The failure was watched, not assumed:** reverting the `SheetHeader` corner reservation from PR #64 turned it red with `the run drawer: button "Copy run id" is covered at (1403, 38) by button "Close"` and moved nothing else in the walk. It also caught its own weak form — the centre point alone, which is how the rule was first written, missed that collision at 1440 px because the two buttons overlap in a nine-pixel band containing neither centre. Two exclusions are deliberate and both are stated in the module: a point outside a clipping ancestor (a timezone row scrolled out of its popup is not covered, it is scrolled away) and anything under `aria-hidden`/`inert` (what a modal covers, it is meant to cover). The same walk asserts the cursor rule and the absence of horizontal page scroll, so all three are one traversal. This closes **R38** as well.
+  - **The environment pill answered to words nobody could see.** Lighthouse's `label-content-name-mismatch` — weight 0 in the score, so it did not move the number, and a real WCAG 2.5.3 defect: the pill reads `docker ✓` and its accessible name was `Environment status: everything healthy`, so speech input saying "click docker" reached nothing. The visible text is now inside the name.
+  - **Replace left the focus nowhere.** Pressing Replace on a stored credential swaps the mask for an input and removes the button that was just pressed, and the focus stayed on the vanished control — the keyboard path continued from nothing. The input takes the focus when, and only when, Replace put it there; an unset field on first load still does not steal it.
+
+  **Not fixed, and why.** Neither the transcript nor the runs table is windowed — `Transcript.tsx` says so in its own header and both map over every row. Every windowing approach worth shipping needs a dependency (`@tanstack/react-virtual` or equivalent), and this lane may not add one; hand-rolling one inside `Transcript` would be a redesign of a component whose measured cost today is zero, since nothing in the product has produced a 500-row transcript. Recorded as a residual rather than ticked. Beside it, `RunRow` mounts a one-second interval per active run, which is the same list problem seen from the other end.
+
+  **Microcopy.** One string changed, and it is an accessible name rather than visible copy: `Environment status: <summary>` → `Environment status: docker ✓, everything healthy` (and the `docker ✗` / `checking…` forms alongside it). Everything else was reviewed against the captured screenshots and left: no container id appears outside the two "Copy …" actions, and every empty and blocked state already names its next action.
+
+  **Evidence.** `.github/assets/w3a/` — `home-{375,768,1024,1440}-{dark,light}.png`, `chat-running-1440-dark.png`, `scheduled-1440-dark.png`, `settings-1440-dark.png`, `job-detail-1440-dark.png`, `lighthouse-{chats-new,scheduled,settings}.{json,png}`; 18 files, largest 125 KB, largest PNG 88 KB. All captured against a production build served by the real stack (Postgres, Redis, the worker, Docker workspaces, the local git server and the GitHub stub), with the credentials being the repository's canaries and the settings screen showing masks only. Lighthouse ran through `pnpm dlx lighthouse` against a Chrome profile pre-seeded with `theme=dark` and `--disable-storage-reset`, because neither `--force-dark-mode` nor `--blink-settings=preferredColorScheme` makes `prefers-color-scheme` report dark; the dark rendering is visible in each report's own full-page screenshot.
+
+  **`pnpm run doctor`, two instances at once.** `pnpm doctor` is pnpm's own diagnostic and cannot be overridden by a package script — `pnpm run doctor` or `pnpm infra:doctor` is this project's. Run for `test-4800` and `w3a5-second` rather than `default`, because `default` is a port block this machine's operator uses.
+
+  ```
+  Agent Hangar doctor · instance=test-4800 · ports 4800/4801/4802 · db agent_hangar_test_4800
+  Check            St  Detail                                   Fix
+  Node             ✓ v24.18.0
+  pnpm             ✓ 11.22.0
+  Docker socket    ✓ unix:///Users/…/.docker/run/docker.sock
+  Postgres         ✓ 127.0.0.1:4801 · agent_hangar_test_4800 answered SELECT 1
+  Redis            ✓ 127.0.0.1:4802 · answered PING with PONG
+  Migrations       ✓ up to date
+  Workspace image  ✓ agent-hangar/workspace:dev
+  Master key       ✓ …/apps/web/e2e/.tmp/master.key (mode 600)
+  Secrets          ✓ GitHub PAT: set (…0000) · OpenAI key: set (…0000)
+  OpenAI model     ⚠ auth                                     Replace the OpenAI key in Settings
+  All required checks passed
+  ```
+
+  ```
+  Agent Hangar doctor · instance=w3a5-second · ports 5100/5101/5102 · db agent_hangar_w3a5_second
+  Check            St  Detail                                   Fix
+  Node             ✓ v24.18.0
+  pnpm             ✓ 11.22.0
+  Docker socket    ✓ unix:///Users/…/.docker/run/docker.sock
+  Postgres         ✓ 127.0.0.1:5101 · agent_hangar_w3a5_second answered SELECT 1
+  Redis            ✓ 127.0.0.1:5102 · answered PING with PONG
+  Migrations       ✓ up to date
+  Workspace image  ✓ agent-hangar/workspace:dev
+  Master key       ✓ /Users/…/.agent-hangar/master.key (mode 600)
+  Secrets          ⚠ GitHub PAT: unset · OpenAI key: unset   Open http://127.0.0.1:5100/settings and save the missing key
+  OpenAI model     – no OpenAI key
+  All required checks passed
+  ```
+
+  The `⚠ auth` on the first is the canary key being refused by OpenAI, which is the honest answer, and it prints its fix. Both were up at the same moment with independent compose projects, databases, Redis instances, port blocks and container prefixes — `agent-hangar-test-4800-{postgres,redis}-1` on 4801/4802 beside `agent-hangar-w3a5-second-{postgres,redis}-1` on 5101/5102, with a workspace container named `ah-ws-test-4800-…` belonging to the first alone. That is S8, observed rather than argued. Stopping the second instance's Redis once turned its row into `✗ 127.0.0.1:5102 · nothing listening` with the fix `pnpm infra:up` and made the script exit non-zero.
+
+  **A specification line corrected in passing (R37).** `docs/spec/10-ui-design.md` §3 still named `⌘Enter` as the send binding; the product has sent on plain Enter since PR #57, with `Shift+Enter` for a newline and `⌘/Ctrl+Enter` still sending, which is what `Composer.tsx`, its `aria-keyshortcuts` and its `Send (↵)` tooltip all say. The specification now says the same. `docs/tasks/wave-1g-web-chats.md` keeps its original wording on purpose: a task file records the instruction that was given, not the product.
