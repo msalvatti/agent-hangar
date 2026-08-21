@@ -59,7 +59,7 @@ All configuration is read from environment variables, validated with Zod at boot
 | `REDIS_URL` | `redis://127.0.0.1:${REDIS_PORT}` | BullMQ + Streams |
 | `COMPOSE_PROJECT_NAME` | `agent-hangar-<instance>` | isolates compose containers, volumes, networks per instance |
 | `MASTER_KEY_PATH` | `~/.agent-hangar/master.key` | secrets master key (shared across instances is fine; DBs differ) |
-| `WORKSPACE_IMAGE` | `agent-hangar/workspace:dev` | image used by the runner |
+| `WORKSPACE_IMAGE` | `agent-hangar/workspace:<instance>` | image used by the runner. Derived like the database and the container prefix, and for the same reason: `pnpm infra:image` writes a tag, so a tag every checkout resolves is a tag every checkout can overwrite — the rebuild would decide what another instance's next container runs |
 | `WORKSPACE_NAME_PREFIX` | `ah-ws-<instance>-` | container names/labels → GC only touches its own instance |
 | `WORKSPACE_IDLE_TTL_MIN` | `30` | idle GC |
 | `WORKER_TURN_CONCURRENCY` | `2` | parallel chat turns |
@@ -146,6 +146,7 @@ Web and worker run **on the host** (fast reload, direct Docker socket access). W
 - Non-root user `agent` (uid 1001), `WORKDIR /workspace`, owned by `agent`.
 - Copies the esbuild bundle of `packages/agent-runtime` to `/opt/agent-runtime/` plus `askpass.sh`, all root-owned so the workspace user cannot replace them. The helper answers only `https://` URLs on the exact allowed host with no explicit port, reading the token from `AH_GIT_TOKEN_FILE` or `GITHUB_TOKEN`. Global `git` config: `credential.helper=""`, `user.name`/`user.email` defaults, `safe.directory /workspace`, `init.defaultBranch main`.
 - No secrets, no `.env`, no source of this repo other than the runtime bundle. `CMD ["sleep","infinity"]` — the container idles and the worker `exec`s turns into it, while a `CMD` (rather than an `ENTRYPOINT`) still lets `docker run <image> node --version` work for CI and the doctor.
+- Carries the label `ah.workspace.digest`: a SHA-256 over the runtime bundle's own bytes plus this `Dockerfile` and `askpass.sh`, passed in as the build argument `AH_WORKSPACE_DIGEST`. `infra/scripts/workspace-image.sh` computes it — rebuilding the bundle in memory from source, so the answer describes the tree rather than whatever a previous build left in `dist/` — and `pnpm dev`, the doctor, `pnpm setup` and the end-to-end pre-step each recompute it from the tree they were started from and refuse an image that does not match. The build itself then asks Docker what the tag resolves to and fails if it is not the digest it meant to write: a fully cached build exits 0 without saying which image the tag ended up on. A commit stamp would not do — a rebuild that consumed stale generated output stamps the current `HEAD` onto older bytes, and uncommitted source shares a commit id with the code it differs from.
 
 ## 6. Conductor integration (bonus, designed in from the start)
 

@@ -9,7 +9,9 @@
  * name prefix rather than by a label, because the prefix is what `resolveInstance` derives and
  * what `pnpm ws:list` already uses.
  */
-import { exec, succeeds } from './process';
+import { z } from 'zod';
+
+import { exec } from './process';
 
 /**
  * Names of the workspace containers of one instance, running or stopped.
@@ -48,11 +50,46 @@ export async function reapWorkspaces(namePrefix: string): Promise<string[]> {
 }
 
 /**
- * Whether an image is present locally.
+ * How far a workspace image can be trusted, as `infra/scripts/workspace-image.sh` reports it.
  *
- * @param image - Image reference.
- * @returns `true` when `docker image inspect` succeeds.
+ * `unverifiable` and `unavailable` are the two ways the question can go unanswered — the image is
+ * there but this tree produced no digest to compare it with, and Docker did not answer at all.
+ * Neither is a failure to answer that can be rounded down to `current`.
  */
-export async function imageExists(image: string): Promise<boolean> {
-  return succeeds('docker', ['image', 'inspect', image]);
+const workspaceImageStatusSchema = z.enum([
+  'current',
+  'stale',
+  'missing',
+  'unverifiable',
+  'unavailable',
+]);
+
+/** How far the workspace image can be trusted for a run started from this tree. */
+export type WorkspaceImageStatus = z.infer<typeof workspaceImageStatusSchema>;
+
+/**
+ * Asks `infra/scripts/workspace-image.sh` how far the workspace image can be trusted.
+ *
+ * A present image is not a current one: `pnpm infra:image` stamps a digest of what it carried into
+ * the image, and the script recomputes that digest from the tree and compares. A run against an
+ * image that lags the checkout does not fail — it succeeds and reports a result for an agent
+ * runtime that exists in no tree, which is the whole reason this is asked before Playwright starts
+ * rather than left to be noticed afterwards.
+ *
+ * The script's output is parsed rather than trusted: this is a process boundary, and a word this
+ * side does not recognise must stop the run instead of being compared away as "not current".
+ *
+ * @param repoRootPath - Absolute path of the repository root.
+ * @param image - Image reference.
+ * @returns The status the script reported.
+ * @throws Error when the script fails, or answers something this side does not recognise.
+ */
+export async function workspaceImageStatus(
+  repoRootPath: string,
+  image: string,
+): Promise<WorkspaceImageStatus> {
+  const { stdout } = await exec('bash', ['infra/scripts/workspace-image.sh', '--status', image], {
+    cwd: repoRootPath,
+  });
+  return workspaceImageStatusSchema.parse(stdout.trim());
 }

@@ -15,6 +15,9 @@ set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
 
+# shellcheck source=/dev/null
+. "$here/workspace-image.sh"
+
 json_mode=0
 case "${1:-}" in
   --json) json_mode=1 ;;
@@ -235,16 +238,37 @@ check_migrations() {
   fi
 }
 
+# Present is not the same as current: an image built from another revision of this checkout runs
+# without complaint and reports results for code that is in no tree, which is precisely the kind of
+# failure a diagnostic exists to name. So the row asks workspace-image.sh, which compares the
+# digest the build stamped against the one this tree produces.
 check_workspace_image() {
   if [ "$docker_ok" != "1" ]; then
     row_status="–"; row_detail="docker unreachable"; row_fix=""
     return 0
   fi
-  if docker image inspect "$WORKSPACE_IMAGE" >/dev/null 2>&1; then
-    row_status="✓"; row_detail="$WORKSPACE_IMAGE"; row_fix=""
-  else
-    row_status="✗"; row_detail="missing"; row_fix="pnpm infra:image"
-  fi
+  case "$(ah_workspace_image_status "$WORKSPACE_IMAGE" 2>/dev/null)" in
+    current)
+      row_status="✓"; row_detail="$WORKSPACE_IMAGE"; row_fix=""
+      ;;
+    stale)
+      row_status="✗"; row_detail="built from other sources"; row_fix="pnpm infra:image"
+      ;;
+    missing)
+      row_status="✗"; row_detail="missing"; row_fix="pnpm infra:image"
+      ;;
+    unverifiable)
+      # Docker answered — the row above gates on that — so the only way the comparison can fail is
+      # the other half: the runtime bundle could not be rebuilt from this tree to hash it. That is
+      # usually a checkout without its dependencies installed, which is a state with a command. Not
+      # a ✗: nothing is known to be wrong with the image, only that the question could not be asked,
+      # and failing the exit code on that would be its own kind of untrue.
+      row_status="–"; row_detail="cannot rebuild the bundle to compare"; row_fix="pnpm install"
+      ;;
+    *)
+      row_status="–"; row_detail="not verified"; row_fix=""
+      ;;
+  esac
 }
 
 # Number of hex characters a master key file holds; `MasterKeyFile` accepts nothing else.

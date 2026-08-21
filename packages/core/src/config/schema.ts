@@ -24,9 +24,6 @@ export const LOG_LEVELS = ['fatal', 'error', 'warn', 'info', 'debug', 'trace', '
 /** Model provider implementations. */
 export const MODEL_PROVIDERS = ['openai', 'fake'] as const;
 
-/** Default workspace image reference. */
-export const DEFAULT_WORKSPACE_IMAGE = 'agent-hangar/workspace:dev';
-
 /** Default OpenAI model id. */
 export const DEFAULT_OPENAI_MODEL = 'gpt-5.6-sol';
 
@@ -161,7 +158,7 @@ export const envSchema = z.object({
   REDIS_URL: z.url({ protocol: /^rediss?$/ }),
   COMPOSE_PROJECT_NAME: z.string().min(1),
   MASTER_KEY_PATH: z.string().min(1).transform(expandHomePrefix),
-  WORKSPACE_IMAGE: z.string().min(1).default(DEFAULT_WORKSPACE_IMAGE),
+  WORKSPACE_IMAGE: z.string().min(1),
   WORKSPACE_NAME_PREFIX: z.string().min(1),
   WORKSPACE_IDLE_TTL_MIN: positiveInt.default(30),
   WORKER_TURN_CONCURRENCY: positiveInt.max(MAX_WORKER_TURN_CONCURRENCY).default(2),
@@ -217,6 +214,7 @@ export function instanceDefaults(instance: InstanceInfo): Record<string, string>
     REDIS_URL: `redis://127.0.0.1:${instance.redisPort}`,
     COMPOSE_PROJECT_NAME: instance.composeProjectName,
     WORKSPACE_NAME_PREFIX: instance.workspaceNamePrefix,
+    WORKSPACE_IMAGE: instance.workspaceImage,
     MASTER_KEY_PATH: defaultMasterKeyPath(),
   };
 }

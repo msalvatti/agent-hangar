@@ -13,6 +13,12 @@
 #   --production  run the built output (`next start`, `node dist/main.js`) instead of the sources
 #   --print-only  print the command instead of running it (used by tests)
 #
+# Refuses to start against a workspace image that was not built from this checkout: the app would
+# come up, take turns and report results produced by an agent runtime that is in no tree. See
+# workspace-image.sh. An image that is simply absent is not refused — that one is already loud
+# everywhere (the worker logs it, /api/health reports it, the UI shows a banner) and a developer
+# working on the UI has no reason to build one.
+#
 # In development NODE_OPTIONS is exported with --conditions=development so every child process
 # resolves @agent-hangar/core from packages/core/src (not the built dist/, which a fresh worktree
 # never has) — the worker's own dev script already asks for the condition directly, but a future
@@ -22,6 +28,9 @@ set -euo pipefail
 
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 root="$(cd "$here/../.." && pwd)"
+
+# shellcheck source=/dev/null
+. "$here/workspace-image.sh"
 
 production=0
 print_only=0
@@ -59,6 +68,12 @@ if [ $print_only -eq 0 ] && [ -f "$MASTER_KEY_PATH.lock" ]; then
     echo "A master key rotation is in progress (pid $rotation_owner). Wait for it to finish before starting Agent Hangar: a process started now would cache the old key and any secret it wrote would be sealed under a key nothing reads again." >&2
     exit 1
   fi
+fi
+
+if [ $print_only -eq 0 ]; then
+  ah_assert_workspace_image_tag "$WORKSPACE_IMAGE" "$AH_INSTANCE" || exit "$?"
+  image_status="$(ah_workspace_image_status "$WORKSPACE_IMAGE")"
+  ah_assert_workspace_image_usable "$image_status" "$WORKSPACE_IMAGE" || exit "$?"
 fi
 
 # 127.0.0.1, not localhost: `next dev`/`next start` are given `-H 127.0.0.1`, so the listener is

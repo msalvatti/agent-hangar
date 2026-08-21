@@ -24,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 import { releasePortBases, reservePortBase } from './port-base.js';
 import { createShimDir, writeExtraShim } from './shims.js';
 import type { DockerShimOptions, PnpmShimOptions } from './shims.js';
+import { expectedWorkspaceDigest, SHIM_BUNDLE_DIGEST } from './workspace-digest.js';
 
 /**
  * The `node:fs` surface this module needs, reached only through this object.
@@ -177,6 +178,12 @@ export function greenEnv(box: Sandbox, extra: Record<string, string> = {}): Reco
     AH_SHIM_SECRETS_LINES: 'GITHUB_PAT=set:ab12\nOPENAI_API_KEY=set:cd34',
     AH_SHIM_OPENAI_LINE: 'ok gpt-5.6-sol',
     AH_SHIM_PROBE_LINES: 'POSTGRES=ok\nREDIS=ok',
+    // The workspace image row compares the digest the image carries against the one this tree
+    // produces, so a green machine is one where the two agree: the `node` shim reports the bundle
+    // digest, the `docker` shim reports the label, and the expected composite is derived
+    // independently in `workspace-digest.ts`.
+    AH_SHIM_BUNDLE_DIGEST: SHIM_BUNDLE_DIGEST,
+    AH_SHIM_IMAGE_DIGEST: expectedWorkspaceDigest(),
     ...extra,
   };
 }

@@ -20,6 +20,9 @@ root=$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)
 here="$root/infra/scripts"
 cd "$root"
 
+# shellcheck source=/dev/null
+. "$here/workspace-image.sh"
+
 force=0
 rebuild_image=0
 skip_doctor=0
@@ -118,13 +121,17 @@ pnpm --filter @agent-hangar/core db:generate
 pnpm --filter @agent-hangar/core db:migrate
 
 log "7/7 Workspace image ($WORKSPACE_IMAGE)"
-if [ $rebuild_image -eq 1 ] || ! docker image inspect "$WORKSPACE_IMAGE" >/dev/null 2>&1; then
+# `present` is not the question — `current` is. An image built from another revision of this
+# checkout satisfies `docker image inspect` and then runs code that is in no tree, so a setup that
+# reported "image present" and changed nothing would be leaving the machine broken in the one way
+# nothing downstream announces. workspace-image.sh answers by comparing digests.
+if [ $rebuild_image -eq 1 ] || [ "$(ah_workspace_image_status "$WORKSPACE_IMAGE")" != "current" ]; then
   # Routed through the `infra:image` script rather than a bare `docker build`: it stages the
   # agent-runtime bundle into the build context before invoking Docker, a step a bare `docker
   # build` here would skip, breaking on a fresh clone that has no `runtime/` directory yet.
   pnpm infra:image
 else
-  echo "workspace image present ($WORKSPACE_IMAGE); use --rebuild-image to force a rebuild"
+  echo "workspace image current with this checkout ($WORKSPACE_IMAGE); use --rebuild-image to force a rebuild"
 fi
 
 echo
