@@ -100,14 +100,13 @@ export function ChatBody({
         className="min-h-0 flex-1"
         renderError={(item) =>
           // `undefined` is a row the live stream produced, and the stream follows one turn: the
-          // one that is still there to retry.
+          // one that is still there to retry. `null` hands an older turn's failure back to the
+          // transcript's own row, which reports it without offering anything.
           item.turnId === undefined || item.turnId === retryableTurnId ? (
             <div ref={errorRef}>
               <TurnErrorCard error={item} onRetry={onRetry} busy={retrying} />
             </div>
-          ) : (
-            <ErrorCard title="Error" message={item.message} code={item.code} variant="compact" />
-          )
+          ) : null
         }
       />
       <div className="px-6 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">

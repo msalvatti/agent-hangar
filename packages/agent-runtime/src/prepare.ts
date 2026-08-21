@@ -570,7 +570,7 @@ async function checkoutWorkBranch(
  *
  * @param repo - Repository section of the turn request.
  * @param deps - Preparation dependencies.
- * @returns The commit and branch the turn starts from.
+ * @returns The commit and branch the turn starts from, and the mismatch when there was one.
  */
 async function verifyHead(repo: TurnRequest['repo'], deps: PrepareDeps): Promise<PrepareOutcome> {
   const options = { cwd: deps.workspaceRoot, env: deps.env };

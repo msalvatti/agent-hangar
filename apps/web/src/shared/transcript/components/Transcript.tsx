@@ -41,6 +41,11 @@ export interface TranscriptProps {
   /**
    * Replaces the default presentation of an `error` row, so a caller that has an action to offer
    * (a retry, a link to Settings) renders the failure once, with its buttons attached.
+   *
+   * Returning `null` leaves that row to the default presentation. A transcript can hold the
+   * failures of several turns while only one of them is still actionable, and without this the
+   * caller would have to restate the default row for the rest — two copies of one presentation,
+   * free to drift apart.
    */
   renderError?: (item: ErrorTranscriptItem) => ReactNode;
   className?: string;
@@ -160,21 +165,24 @@ export function Transcript({
         {isEmpty && phase === 'idle' ? (
           <p className="text-muted-foreground py-12 text-center text-sm">{emptyText}</p>
         ) : (
-          items.map((item) =>
-            // Handled here rather than inside the memoized row so a caller-supplied renderer, whose
+          items.map((item) => {
+            // Asked here rather than inside the memoized row so a caller-supplied renderer, whose
             // closure changes identity every render, cannot defeat the memoization of every other
             // row in the list.
-            item.kind === 'error' && renderError !== undefined ? (
-              <Fragment key={item.id}>{renderError(item)}</Fragment>
-            ) : (
+            const custom =
+              (item.kind === 'error' && renderError !== undefined ? renderError(item) : null) ??
+              null;
+            return custom === null ? (
               <TranscriptRow
                 key={item.id}
                 item={item}
                 readOnly={readOnly}
                 onStopTool={onStopTool}
               />
-            ),
-          )
+            ) : (
+              <Fragment key={item.id}>{custom}</Fragment>
+            );
+          })
         )}
         {showBareCursor && <StreamCursor />}
       </div>

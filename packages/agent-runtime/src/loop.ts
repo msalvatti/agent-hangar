@@ -38,6 +38,9 @@ const DEFAULT_HEARTBEAT_MS = 10_000;
 /** Milliseconds in a minute, for the limit message. */
 const MS_PER_MINUTE = 60_000;
 
+/** Opening of the system item that carries what preparation found. */
+const PREPARE_NOTES_HEADING = 'Workspace preparation reported:';
+
 /** Everything the loop needs for one turn. */
 export interface LoopDeps {
   /** The validated request. */
@@ -107,9 +110,6 @@ interface LoopState {
   /** Stops the heartbeat; called before a terminal event so none can follow it. */
   stopHeartbeat: () => void;
 }
-
-/** Opening of the system item that carries what preparation found. */
-const PREPARE_NOTES_HEADING = 'Workspace preparation reported:';
 
 /** Clock captured at the start of the turn. */
 interface LoopClock {
