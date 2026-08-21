@@ -18,6 +18,7 @@ import { LIVE_RUN_STATUSES } from '../../workspace/lifecycle.ts';
 import type { JobRunStatus } from '../../workspace/types.ts';
 import type { JobRun } from '../entities.ts';
 import type { Prisma, PrismaClient } from '../generated/client.ts';
+import { JOB_RUN_WORKSPACE_KIND } from '../ports.ts';
 import type {
   CreateJobRunInput,
   FinishJobRunInput,
@@ -25,8 +26,45 @@ import type {
   JobRunStatusUpdate,
 } from '../ports.ts';
 
-import { toJobRun, toPrismaJobRunStatus } from './mappers.ts';
+import { NotFoundError, WorkspaceKindMismatchError } from './errors.ts';
+import { asWorkspaceKind, toJobRun, toPrismaJobRunStatus } from './mappers.ts';
 import { translatePrismaError } from './prisma-errors.ts';
+
+/**
+ * Refuses a workspace reference that does not name a job workspace.
+ *
+ * The foreign key says the row exists; it cannot say what kind of row it is, and the kind is the
+ * whole invariant — a run tears its workspace down when it ends, so a run pointed at a chat's
+ * workspace would destroy a container the chat expects to find again. Expressing it as a composite
+ * key would mean carrying the kind on `JobRun` as well, which is a column that can disagree with
+ * the one it copies, so the check is a statement instead.
+ *
+ * A statement is enough here in a way it would not be for a status. `Workspace.kind` is written by
+ * the insert and by nothing else — no repository method accepts it as an update — so the value
+ * read is the value any later statement in this transaction would read, and there is no writer for
+ * a conditional write to arbitrate against.
+ *
+ * @param tx - The transaction the status update runs in.
+ * @param workspaceId - Workspace the run is being pointed at.
+ * @throws NotFoundError When no workspace carries that id.
+ * @throws WorkspaceKindMismatchError When the workspace is not a job workspace.
+ */
+async function assertJobWorkspace(
+  tx: Prisma.TransactionClient,
+  workspaceId: string,
+): Promise<void> {
+  const workspace = await tx.workspace.findUnique({
+    where: { id: workspaceId },
+    select: { kind: true },
+  });
+  if (workspace === null) {
+    throw new NotFoundError('Workspace', workspaceId);
+  }
+  const kind = asWorkspaceKind(workspace.kind);
+  if (kind !== JOB_RUN_WORKSPACE_KIND) {
+    throw new WorkspaceKindMismatchError(workspaceId, JOB_RUN_WORKSPACE_KIND, kind);
+  }
+}
 
 /** Job run rows. */
 export class PrismaJobRunRepository implements JobRunRepository {
@@ -80,6 +118,9 @@ export class PrismaJobRunRepository implements JobRunRepository {
           error?: string | null;
         } = { status: toPrismaJobRunStatus(status) };
         if (update.workspaceId !== undefined) {
+          if (update.workspaceId !== null) {
+            await assertJobWorkspace(tx, update.workspaceId);
+          }
           data.workspaceId = update.workspaceId;
         }
         if (update.error !== undefined) {

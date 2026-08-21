@@ -2,9 +2,9 @@
  * Unit tests for the Job Scheduler wrappers.
  *
  * Layer: unit.
- * Goal: a scheduler is upserted under the job's own id with the contract job name and payload,
- * listing hides the collector's scheduler and normalises absent fields, and applying a plan issues
- * the calls in a deterministic order.
+ * Goal: a scheduler is upserted under the job's own id with the contract job name, payload and
+ * the producers' retention, listing hides the collector's scheduler and normalises absent fields,
+ * and applying a plan issues the calls in a deterministic order.
  * Mocks: an in-memory `SchedulerQueue` that records every call; no Redis.
  */
 import { describe, expect, it } from 'vitest';
@@ -13,6 +13,7 @@ import { GC_CRON, GC_SCHEDULER_KEY } from '../scheduling/keys.ts';
 import type { ReconcilePlan } from '../scheduling/types.ts';
 
 import { JOB_NAMES } from './contracts.ts';
+import { JOB_RETENTION } from './queues.ts';
 import {
   applyReconcilePlan,
   listSchedulers,
@@ -20,7 +21,7 @@ import {
   upsertGcScheduler,
   upsertScheduledJob,
 } from './schedulers.ts';
-import type { SchedulerQueue } from './schedulers.ts';
+import type { SchedulerQueue, SchedulerTemplateRetention } from './schedulers.ts';
 
 /** One recorded call against the fake queue. */
 type RecordedCall =
@@ -53,7 +54,7 @@ class FakeSchedulerQueue implements SchedulerQueue {
   upsertJobScheduler(
     key: string,
     repeat: { pattern: string; tz?: string },
-    template: { name: string; data: unknown },
+    template: { name: string; data: unknown; opts: SchedulerTemplateRetention },
   ): Promise<unknown> {
     this.calls.push({ kind: 'upsert', key, repeat, template });
     this.stored.set(key, { pattern: repeat.pattern, tz: repeat.tz });
@@ -85,8 +86,11 @@ class FakeSchedulerQueue implements SchedulerQueue {
 
 describe('upsertScheduledJob', () => {
   /**
-   * The scheduler key is the job id and the template carries the contract job name plus a
-   * SCHEDULE-triggered payload, which is what the worker matches on when the tick arrives.
+   * The scheduler key is the job id and the template carries the contract job name, a
+   * SCHEDULE-triggered payload — which is what the worker matches on when the tick arrives — and
+   * the retention every producer applies. The retention belongs on the template because that is
+   * the only place it can go: BullMQ mints the tick's job from it, and a job minted without it is
+   * kept for ever.
    */
   it('registers a scheduler under the job id', async () => {
     const queue = new FakeSchedulerQueue();
@@ -99,6 +103,7 @@ describe('upsertScheduledJob', () => {
         template: {
           name: JOB_NAMES.runScheduledJob,
           data: { jobId: 'job-1', trigger: 'SCHEDULE' },
+          opts: JOB_RETENTION,
         },
       },
     ]);
@@ -212,6 +217,8 @@ describe('upsertGcScheduler', () => {
   /**
    * The collector runs on its own key with no timezone: a five-minute interval means the same
    * thing everywhere, and giving it a zone would make it drift across daylight-saving switches.
+   * It is also the fastest scheduler in the application — 288 ticks a day — so it is the one whose
+   * template most needs the retention.
    */
   it('registers the collector scheduler', async () => {
     const queue = new FakeSchedulerQueue();
@@ -221,7 +228,7 @@ describe('upsertGcScheduler', () => {
         kind: 'upsert',
         key: GC_SCHEDULER_KEY,
         repeat: { pattern: GC_CRON },
-        template: { name: JOB_NAMES.reapIdle, data: {} },
+        template: { name: JOB_NAMES.reapIdle, data: {}, opts: JOB_RETENTION },
       },
     ]);
   });

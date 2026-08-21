@@ -8,11 +8,13 @@
  * doubles it backs raise the same ones. Repositories reuse those (re-exported here so callers of
  * this module have a single import) instead of duplicating them under different names, which
  * would let a caller written against one repository implementation fail to catch the same
- * failure raised by the other. The only kind genuinely new to this layer is
- * {@link PersistenceMappingError}, for a stored value that no longer matches its domain union.
+ * failure raised by the other. Two kinds are genuinely new to this layer:
+ * {@link PersistenceMappingError}, for a stored value that no longer matches its domain union, and
+ * {@link WorkspaceKindMismatchError}, for a reference that points at the wrong kind of workspace.
  */
 import { AgentHangarError } from '../../errors.ts';
 import type { AgentHangarErrorOptions } from '../../errors.ts';
+import type { WorkspaceKind } from '../../workspace/types.ts';
 
 export { LiveWorkspaceExistsError, NotFoundError, UniqueViolationError } from '../../errors.ts';
 
@@ -26,5 +28,44 @@ export class PersistenceMappingError extends AgentHangarError {
    */
   constructor(detail: string, options?: AgentHangarErrorOptions) {
     super('PERSISTENCE_MAPPING', detail, options);
+  }
+}
+
+/**
+ * A row was pointed at a workspace of the wrong kind.
+ *
+ * A `JobRun` runs in a workspace of its own — one run, one container, destroyed when the run ends —
+ * and a chat's workspace is the opposite: shared by every turn of the chat and expected to outlive
+ * each of them. Pointing a run at one would make the run's teardown destroy a filesystem the chat
+ * is still using, and would hang the run's tool log off a container that answers to somebody else.
+ * Nothing in the application does this; the error exists so that nothing can begin to.
+ *
+ * It is raised identically by the Prisma repository and by the in-memory double, because a rule
+ * only one of them enforces is a rule that holds in exactly the runs nobody is watching.
+ */
+export class WorkspaceKindMismatchError extends AgentHangarError {
+  override readonly code = 'WORKSPACE_KIND_MISMATCH' as const;
+
+  /** The workspace that was named. */
+  readonly workspaceId: string;
+
+  /**
+   * @param workspaceId - Workspace the reference named.
+   * @param expected - Kind the reference requires.
+   * @param actual - Kind the row actually holds.
+   * @param options - Optional `cause`.
+   */
+  constructor(
+    workspaceId: string,
+    expected: WorkspaceKind,
+    actual: WorkspaceKind,
+    options?: AgentHangarErrorOptions,
+  ) {
+    super(
+      'WORKSPACE_KIND_MISMATCH',
+      `workspace ${workspaceId} is a ${actual} workspace, and a ${expected} one was required`,
+      options,
+    );
+    this.workspaceId = workspaceId;
   }
 }

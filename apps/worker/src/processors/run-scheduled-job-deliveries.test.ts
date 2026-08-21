@@ -30,7 +30,7 @@ import {
   STALLED_RUN_MESSAGE,
   STALLED_RUN_REASON,
 } from './constants.js';
-import { IneligibleRunError } from './run-scheduled-job.js';
+import { IneligibleRunError } from './run-scheduled-job-deliveries.js';
 
 describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
   /**

@@ -54,7 +54,7 @@ export type TurnTerminal =
   | 'cancelled'
   | 'exited'
   | 'timeout'
-  /** The workspace runner itself failed in a way that is worth retrying (daemon unreachable). */
+  /** The workspace runner itself failed as infrastructure rather than as work (daemon unreachable). */
   | 'transport-error'
   /** The workspace runner itself failed in a way a retry would repeat. */
   | 'runner-error'

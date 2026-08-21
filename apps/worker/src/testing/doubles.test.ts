@@ -18,6 +18,13 @@ import { createFakeWorkerFactory } from './fake-worker-factory.js';
 import { InMemoryCommandListener } from './in-memory-commands.js';
 import { InMemoryTurnEventPublisher } from './in-memory-publisher.js';
 import { createTestContainer } from './test-container.js';
+import {
+  heldTurnScript,
+  runTurnOn,
+  seedChatWithTurn,
+  setupProcessorContainer,
+  whenTurnIsExecuting,
+} from './turn-fixtures.js';
 
 describe('InMemoryTurnEventPublisher', () => {
   /**
@@ -296,5 +303,28 @@ describe('createTestContainer', () => {
     expect(container.logs).toHaveLength(1);
     expect(container.logs[0]).toContain('careless');
     expect(container.logs[0]).not.toContain(GITHUB_CANARY);
+  });
+});
+
+describe('whenTurnIsExecuting', () => {
+  /**
+   * The fixture exists so a test can interleave a second processor with a first one that is
+   * already executing, and every caller reads its promise as that moment. Settling earlier makes
+   * the interleaving depend on how many microtasks separate the two, which is a property of the
+   * production code's shape rather than of the race being tested: a `await`-hop added anywhere
+   * between the take and the exec silently turns the interleaving into a coin toss.
+   */
+  it('settles only once the first processor is inside its exec', async () => {
+    const container = setupProcessorContainer({ script: heldTurnScript() });
+    const { turn } = await seedChatWithTurn(container);
+    const executing = whenTurnIsExecuting(container);
+
+    const running = runTurnOn(container, turn.id);
+    await executing;
+
+    expect(container.runner.calls.filter((call) => call.method === 'exec')).toHaveLength(1);
+
+    container.commands.emitCancel(turn.id);
+    await running;
   });
 });

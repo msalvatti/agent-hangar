@@ -8,8 +8,10 @@
  * when present, redacts a non-null `error`; `finish` redacts `output`/`error` only when provided,
  * leaves them untouched when omitted, and names the live statuses in its own `where` so a run that
  * already carries an outcome is not overwritten; `listByJob`/`findRunningByJob` build the expected
- * queries; failures translate through `translatePrismaError`. What that condition produces against
- * a real database is pinned by the shared contract, which no client double can settle.
+ * queries; a workspace reference is checked for kind inside the same transaction and refused when
+ * the row is missing or is a chat's; failures translate through `translatePrismaError`. What that
+ * condition produces against a real database is pinned by the shared contract, which no client
+ * double can settle.
  * Mocks: a Prisma client double exposing only `jobRun.*` — no database.
  */
 import { describe, expect, it, vi } from 'vitest';
@@ -18,7 +20,7 @@ import type { Redactor } from '../../secrets/types.ts';
 import { LIVE_RUN_STATUSES } from '../../workspace/lifecycle.ts';
 import type { PrismaClient } from '../generated/client.ts';
 
-import { NotFoundError, UniqueViolationError } from './errors.ts';
+import { NotFoundError, UniqueViolationError, WorkspaceKindMismatchError } from './errors.ts';
 import { PrismaJobRunRepository } from './job-run.repository.ts';
 
 /** Builds a P2002 error naming the `workspaceId` unique constraint. */
@@ -61,8 +63,14 @@ function fakePrisma(
     updateMany?: ReturnType<typeof vi.fn>;
     updateManyAndReturn?: ReturnType<typeof vi.fn>;
     update?: ReturnType<typeof vi.fn>;
+    workspaceKind?: 'CHAT' | 'JOB' | null;
   } = {},
 ) {
+  const workspaceRow =
+    overrides.workspaceKind === null ? null : { kind: overrides.workspaceKind ?? 'JOB' };
+  const workspace = {
+    findUnique: vi.fn((): Promise<{ kind: string } | null> => Promise.resolve(workspaceRow)),
+  };
   const jobRun = {
     create: overrides.create ?? vi.fn(() => Promise.resolve(runRow)),
     findFirst: vi.fn((): Promise<typeof runRow | null> => Promise.resolve(runRow)),
@@ -77,9 +85,10 @@ function fakePrisma(
   // stub, so the assertions below still see every call the repository makes.
   const client = {
     jobRun,
-    $transaction: <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn({ jobRun }),
+    workspace,
+    $transaction: <T>(fn: (tx: unknown) => Promise<T>): Promise<T> => fn({ jobRun, workspace }),
   } as unknown as PrismaClient;
-  return { client, jobRun };
+  return { client, jobRun, workspace };
 }
 
 describe('PrismaJobRunRepository', () => {
@@ -136,6 +145,7 @@ describe('PrismaJobRunRepository', () => {
     });
   });
 
+  /** Only PREPARING stamps `startedAt`, so no other status pays for the guarded write. */
   it('setStatus(RUNNING) does not call updateMany', async () => {
     const { client, jobRun } = fakePrisma();
     const repo = new PrismaJobRunRepository(client, fakeRedactor);
@@ -271,6 +281,7 @@ describe('PrismaJobRunRepository', () => {
     });
   });
 
+  /** A limit becomes a `take`, so the runs list is bounded by the query rather than in memory. */
   it('listByJob({ limit }) applies a take clause', async () => {
     const { client, jobRun } = fakePrisma();
     const repo = new PrismaJobRunRepository(client, fakeRedactor);
@@ -302,5 +313,37 @@ describe('PrismaJobRunRepository', () => {
     expect(result?.id).toBe('run-1');
     jobRun.findFirst = vi.fn(() => Promise.resolve(null));
     expect(await repo.findRunningByJob('job-1')).toBeNull();
+  });
+
+  /** A run may only be pointed at a job workspace; a chat's is refused before the update runs. */
+  it('setStatus() refuses a chat workspace and never writes the reference', async () => {
+    const { client, jobRun } = fakePrisma({ workspaceKind: 'CHAT' });
+    const repo = new PrismaJobRunRepository(client, fakeRedactor);
+
+    await expect(
+      repo.setStatus('run-1', 'PREPARING', { workspaceId: 'ws-chat' }),
+    ).rejects.toBeInstanceOf(WorkspaceKindMismatchError);
+    expect(jobRun.update).not.toHaveBeenCalled();
+  });
+
+  /** An id no workspace carries is told apart from a workspace of the wrong kind. */
+  it('setStatus() refuses a workspace id no row carries', async () => {
+    const { client, jobRun } = fakePrisma({ workspaceKind: null });
+    const repo = new PrismaJobRunRepository(client, fakeRedactor);
+
+    await expect(
+      repo.setStatus('run-1', 'PREPARING', { workspaceId: 'ws-gone' }),
+    ).rejects.toBeInstanceOf(NotFoundError);
+    expect(jobRun.update).not.toHaveBeenCalled();
+  });
+
+  /** Clearing the reference names no workspace, so nothing is looked up. */
+  it('setStatus() clearing the workspace looks no workspace up', async () => {
+    const { client, workspace } = fakePrisma();
+    const repo = new PrismaJobRunRepository(client, fakeRedactor);
+
+    await repo.setStatus('run-1', 'FAILED', { workspaceId: null });
+
+    expect(workspace.findUnique).not.toHaveBeenCalled();
   });
 });

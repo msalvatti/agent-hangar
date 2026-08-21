@@ -23,7 +23,7 @@ import {
   runTurnOn,
   seedChatWithTurn,
   setupProcessorContainer,
-  whenWorkspaceIsBusy,
+  whenTurnIsExecuting,
 } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
@@ -44,7 +44,7 @@ async function collect(
   name: string,
   data: unknown = {},
 ): Promise<GcResult> {
-  const job: ProcessorJob<unknown> = { id: 'gc-1', name, data, attemptsMade: 0 };
+  const job: ProcessorJob<unknown> = { id: 'gc-1', name, data };
   return createGcProcessor(container)(job);
 }
 
@@ -333,6 +333,63 @@ describe('createGcProcessor', () => {
   });
 
   /**
+   * A delete names the workspace, because the chat id stops naming it: Postgres nulls
+   * `Workspace.chatId` as the chat goes, one step before this job runs. The row is found by the id
+   * the delivery carries and torn down properly, which is what leaves it recorded as destroyed
+   * rather than merely container-less.
+   */
+  it('tears down the workspace a delivery names, after the chat is gone', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 0,
+      withContainer: true,
+    });
+    const chatId = workspace.chatId ?? '';
+    // What the chat's delete does to the row before the teardown ever sees it.
+    await container.repos.chats.deleteIfIdle(chatId);
+
+    const result = await collect(container, JOB_NAMES.destroyChatWorkspace, {
+      chatId,
+      workspaceId: workspace.id,
+    });
+
+    expect(result.reaped).toBe(1);
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('DESTROYED');
+    expect(container.runner.getWorkspace(workspace.id)?.status).toBe('gone');
+    expect(await container.repos.workspaces.listLive()).toHaveLength(0);
+  });
+
+  /**
+   * A delivery whose workspace has already been closed out — a second delete of the same chat, or
+   * a collection pass that got there first — finds no live row and falls back to the containers
+   * the chat's label still names.
+   */
+  it('falls back to the label when the workspace it names is no longer live', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, { status: 'READY', idleMinutes: 0 });
+    const chatId = workspace.chatId ?? '';
+    await container.runner.create({
+      workspaceId: workspace.id,
+      kind: 'CHAT',
+      image: 'image',
+      env: {},
+      limits: { cpus: 1, memoryBytes: 1, pids: 1 },
+      labels: { 'ah.instance': container.config.AH_INSTANCE, 'ah.chat': chatId },
+    });
+    await container.repos.workspaces.setStatus(workspace.id, 'DESTROYED');
+
+    const result = await collect(container, JOB_NAMES.destroyChatWorkspace, {
+      chatId,
+      workspaceId: workspace.id,
+    });
+
+    expect(result.reaped).toBe(0);
+    expect(result.orphansDestroyed).toBe(1);
+    expect(container.runner.getWorkspace(workspace.id)?.status).toBe('gone');
+  });
+
+  /**
    * Deleting a chat cascades its workspace row's reference away before the teardown runs, so the
    * container is only reachable by the label it was created with — and it must still go.
    */
@@ -492,7 +549,7 @@ describe('createGcProcessor', () => {
     await container.repos.workspaces.setStatus(workspace.id, 'READY', {
       runnerRef: handle.runnerRef,
     });
-    const busy = whenWorkspaceIsBusy(container);
+    const busy = whenTurnIsExecuting(container);
     const stored = container.repos.store.workspaces.get(workspace.id);
     if (stored !== undefined) {
       stored.lastActiveAt = new Date(container.clock.now().getTime() - 120 * 60_000);

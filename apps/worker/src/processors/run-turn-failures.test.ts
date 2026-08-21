@@ -30,6 +30,7 @@ import {
 } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
+import { WORKER_ERROR_PREFIX } from './constants.js';
 import { createRunTurnProcessor, WORKSPACE_CONFLICT_CODE } from './run-turn.js';
 
 describe('createRunTurnProcessor, failing a turn', () => {
@@ -325,7 +326,7 @@ describe('createRunTurnProcessor, failing a turn', () => {
   });
 
   /**
-   * An unreachable daemon is the one failure worth retrying, so the job rejects and the workspace
+   * An unreachable daemon is reported as infrastructure, so the job is failed and the workspace
    * is recorded as failed rather than handed to the next turn.
    */
   it('rejects and fails the workspace when the daemon is unreachable', async () => {
@@ -342,10 +343,13 @@ describe('createRunTurnProcessor, failing a turn', () => {
   });
 
   /**
-   * The same is true when the daemon is already unreachable at create time: the job rejects rather
-   * than recording a turn that never had a chance to run.
+   * The same is true when the daemon is already unreachable at create time — and the turn still
+   * ends. Rejecting is how the operator learns the daemon is down, but nothing redelivers the job:
+   * `attempts` is zero and no default job options are declared, so a turn left non-terminal here
+   * would sit `PREPARING` for ever with an empty event stream and a page waiting on it. Measured
+   * before this was so: status `PREPARING`, error `null`, no events at all.
    */
-  it('rejects when the daemon is unreachable while creating the workspace', async () => {
+  it('rejects and still ends the turn when the daemon is unreachable while creating', async () => {
     const container = setupProcessorContainer({
       runner: (options) => new UncreatableRunner(connectionRefused(), options),
     });
@@ -357,10 +361,55 @@ describe('createRunTurnProcessor, failing a turn', () => {
       status: 'FAILED',
       failureReason: 'docker unreachable',
     });
+    const failed = await container.repos.turns.get(turn.id);
+    expect(failed?.status).toBe('FAILED');
+    expect(failed?.error).toContain(WORKER_ERROR_PREFIX);
+    expect(container.publisher.eventsFor(turn.id).at(-1)).toMatchObject({ type: 'turn.failed' });
   });
 
   /**
-   * Any other runner failure would repeat on a retry, so the turn simply fails and the job is
+   * The net is the last thing between the user and a turn that never ends, so it must not become
+   * the thing that hides why. A worker that cannot reach Docker usually cannot reach Postgres
+   * either; the record it fails to write is worth a log line, and the failure the operator has to
+   * see is still the one that started it.
+   */
+  it('reports the original failure when the record it writes cannot be written', async () => {
+    const container = setupProcessorContainer({
+      runner: (options) => new UncreatableRunner(connectionRefused(), options),
+    });
+    const { turn } = await seedChatWithTurn(container);
+    vi.spyOn(container.repos.turns, 'finish').mockRejectedValue(new Error('the database is down'));
+
+    await expect(runTurnOn(container, turn.id)).rejects.toThrow(/ECONNREFUSED/);
+
+    expect(container.logs.join('')).toContain(
+      'recording the outcome of a turn its delivery never finished failed',
+    );
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * A turn the processor did record keeps the record it wrote. The outcome the runtime reported is
+   * the one the user is owed, so the safety net above must not overwrite it — and must not publish
+   * a second terminal event on a stream the UI has already closed.
+   */
+  it('leaves the recorded outcome alone when the exec transport fails', async () => {
+    const container = setupProcessorContainer({
+      runner: (options) => new UnreachableRunner(connectionRefused(), options),
+    });
+    const { turn } = await seedChatWithTurn(container);
+
+    await expect(runTurnOn(container, turn.id)).rejects.toThrow(/unreachable/);
+
+    const failed = await container.repos.turns.get(turn.id);
+    expect(failed?.error).not.toContain(WORKER_ERROR_PREFIX);
+    expect(
+      container.publisher.eventsFor(turn.id).filter((event) => event.type === 'turn.failed'),
+    ).toHaveLength(1);
+  });
+
+  /**
+   * Any other runner failure is a result of the work, so the turn simply fails and the job is
    * acknowledged.
    */
   it('resolves when the runner fails for a reason a retry would repeat', async () => {

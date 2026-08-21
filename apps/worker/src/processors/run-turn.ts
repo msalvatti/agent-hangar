@@ -9,10 +9,13 @@
  * behave identically, and why the restore path is exercised by every long-lived chat rather than
  * only by an archived one.
  *
- * Failure policy: only an unreachable Docker daemon rejects, so BullMQ retries it. Everything else
- * — a missing credential, a missing image, a runtime that exited non-zero — is a failed turn, and
- * a failed turn is a result: retrying it would collect one identical failure per attempt while the
- * user watches.
+ * Failure policy: only an unreachable Docker daemon rejects the job, and rejecting is about who is
+ * told rather than about running the turn again — nothing redelivers it, because `attempts` is zero
+ * and no default job options are declared. Everything else — a missing credential, a missing image,
+ * a runtime that exited non-zero — resolves, because a failed turn is a result rather than a fault
+ * of the machine. Both ways the turn is recorded and its stream ended before the processor returns:
+ * `endUnreportedTurn` is the net under that promise, and Retry is how a turn lost to a transient
+ * failure comes back.
  */
 import {
   buildRestoreContext,
@@ -52,11 +55,17 @@ import {
   REPO_URL_NOT_ALLOWED_CODE,
   REPO_URL_NOT_ALLOWED_MESSAGE,
 } from './provision-workspace.js';
-import { formatRunError, publishCancellation, publishFailure } from './run-outcome.js';
+import {
+  cancelBeforeStart,
+  closeOutTurn,
+  endUnreportedTurn,
+  endUnstartedTurn,
+  formatRunError,
+} from './run-outcome.js';
 import { createToolCallRecorder } from './tool-call-recorder.js';
 import type { ToolCallRecorder } from './tool-call-recorder.js';
 import { executeRuntimeTurn } from './turn-executor.js';
-import type { ExecOutcome, TurnSink, UnreportedOutcome } from './turn-executor.js';
+import type { ExecOutcome, TurnSink } from './turn-executor.js';
 import type { ProcessorDeps, ProcessorJob } from './types.js';
 
 /** Failure code recorded when something else owns the one live workspace of this chat. */
@@ -70,8 +79,6 @@ export const WORKSPACE_CONFLICT_MESSAGE =
 interface TurnDelivery {
   turnId: string;
   chat: Chat;
-  /** How many times BullMQ already delivered this job. */
-  attemptsMade: number;
 }
 
 /** Everything one turn carries from preparation into execution. */
@@ -101,41 +108,29 @@ function handleOf(workspace: Workspace): WorkspaceHandle {
 }
 
 /**
- * Records a turn as failed and tells the UI why.
- *
- * @param deps - Publisher and repositories.
- * @param turnId - The turn.
- * @param code - Machine-readable failure code.
- * @param message - Human-readable detail; already safe to persist.
- */
-async function failTurn(
-  deps: ProcessorDeps,
-  turnId: string,
-  code: string,
-  message: string,
-): Promise<void> {
-  await publishFailure(deps, turnId, code, message);
-  await deps.repos.turns.finish(turnId, 'FAILED', NO_USAGE, formatRunError(code, message));
-}
-
-/**
  * Destroys a workspace whose previous owner never released it.
  *
- * A workspace found in a transient state, or any live workspace on a retried job, belonged to an
- * attempt that is no longer running: its container may still be alive but nothing is reading its
- * exec any more. The model is told, because the filesystem it remembers writing to is gone.
+ * The status is what says so, and it says so on its own. Every status a live workspace can hold
+ * other than `READY` names an owner that is mid-operation: `CREATING` a create that has not
+ * written its next status, `BUSY` an execution, `STOPPING` a teardown. This turn is not that
+ * owner and no other turn of this chat can be, because the chat's claim is held for the whole of
+ * one — so the owner is a process that is gone, its container may still be alive, and nothing is
+ * reading its exec any more. The model is told, because the filesystem it remembers writing to is
+ * gone.
+ *
+ * A `READY` row is the opposite case and is left alone: `READY` is written by the create that
+ * finished and by the release at the end of a turn, so nothing was executing in it when its
+ * process stopped. It is probed for health and reused rather than rebuilt, which is what makes a
+ * long-lived chat cheap. Refining that on how often the job was delivered is what this used to do,
+ * and it was reading a number that never moves: BullMQ increments its stalled counter, never the
+ * attempt count, and nothing here configures `attempts`.
  *
  * @param deps - Runner, repositories and logger.
  * @param chat - The chat whose workspace is inspected.
- * @param attemptsMade - How many times BullMQ already delivered this job.
  */
-async function recoverStalledWorkspace(
-  deps: ProcessorDeps,
-  chat: Chat,
-  attemptsMade: number,
-): Promise<void> {
+async function recoverStalledWorkspace(deps: ProcessorDeps, chat: Chat): Promise<void> {
   const live = await deps.repos.workspaces.findLiveByChat(chat.id);
-  if (live === null || (live.status === 'READY' && attemptsMade === 0)) {
+  if (live === null || live.status === 'READY') {
     return;
   }
   try {
@@ -387,29 +382,6 @@ async function completeTurn(
 }
 
 /**
- * Writes the outcome for a turn whose runtime never reported one.
- *
- * A cancellation that the runtime did not acknowledge is still a cancellation: the user asked for
- * it and the exec is over. Everything else is a failure.
- *
- * @param deps - Publisher and repositories.
- * @param turnId - The turn.
- * @param outcome - What the executor observed.
- */
-async function closeOutTurn(
-  deps: ProcessorDeps,
-  turnId: string,
-  outcome: UnreportedOutcome,
-): Promise<void> {
-  if (outcome.terminal === 'cancelled') {
-    await publishCancellation(deps, turnId);
-    await deps.repos.turns.finish(turnId, 'CANCELLED', NO_USAGE);
-    return;
-  }
-  await failTurn(deps, turnId, outcome.error.code, outcome.error.message);
-}
-
-/**
  * Bumps the chat's ordering key, unless the chat has been deleted underneath this turn.
  *
  * A chat deleted while its last turn was being wound up is not a failure of the wind-up. The turn's
@@ -438,7 +410,8 @@ async function touchSurvivingChat(deps: ProcessorDeps, chatId: string): Promise<
  * @param deps - Repositories and publisher.
  * @param context - The turn being run.
  * @param outcome - What the executor observed.
- * @throws Error When the failure was the Docker daemon being unreachable, so BullMQ retries.
+ * @throws Error When the failure was the Docker daemon being unreachable, which is reported as a
+ *   failed job; the turn is recorded before it is thrown.
  */
 async function finalizeTurn(
   deps: ProcessorDeps,
@@ -480,65 +453,6 @@ async function settleTurn(deps: ProcessorDeps, turnId: string, workspaceId: stri
   if (workspace !== null && workspace.status === 'BUSY') {
     await deps.repos.workspaces.setStatus(workspaceId, 'READY');
   }
-}
-
-/**
- * Records a turn the user stopped before its exec began.
- *
- * The workspace is left as it is: nothing ran in it, so the next message reuses it.
- *
- * @param deps - Publisher and repositories.
- * @param turnId - The turn.
- */
-async function cancelBeforeStart(deps: ProcessorDeps, turnId: string): Promise<void> {
-  await publishCancellation(deps, turnId);
-  await deps.repos.turns.finish(turnId, 'CANCELLED', NO_USAGE);
-}
-
-/**
- * Ends a turn that never started: as the cancellation the user asked for when one arrived, and
- * otherwise as the reason the turn could not begin.
- *
- * Both facts can hold of the same delivery. The user pressed Stop — and `POST /api/turns/:id/cancel`
- * answered `202`, which is a promise about this very row — while the turn was independently going
- * nowhere: its chat was deleted, another turn of the chat holds the workspace, or the workspace
- * could not be prepared. Only one record gets written, and it is `CANCELLED`.
- *
- * The case for `FAILED` is that the turn could not have proceeded whatever the user did, and the
- * reason is worth keeping. It loses the same way it loses for a scheduled run: the `202` told the
- * browser this turn was being stopped, so a row that then reads `FAILED` contradicts the answer the
- * user already has, while the user's own instruction is recorded nowhere else. The conflict message
- * makes it sharper still — it asks the user to send the message again, which is the opposite of
- * what somebody who has just pressed Stop wants to read.
- *
- * Most of these reasons survive the choice: a deleted chat and a lost claim are both on the worker
- * log, and a provisioning failure has written itself onto the workspace row with its reason. One
- * does not — a repository the operator has removed from the allow-list is refused before any row
- * exists and without a log line of its own, so cancelling drops that detail. Accepted knowingly:
- * the operator made that removal deliberately and the user asked for this turn to stop, so neither
- * of them learns anything from a turn row they were never going to read.
- *
- * Either way exactly one terminal event goes out, published before the row is finished, and none of
- * these paths reaches {@link settleTurn}, so no turn is finished twice.
- *
- * @param deps - Publisher and repositories.
- * @param turnId - The turn.
- * @param watch - The turn's cancellation subscription, open since before the first row was read.
- * @param code - Machine-readable failure code, recorded when no cancellation arrived.
- * @param message - Human-readable detail, recorded when no cancellation arrived.
- */
-async function endUnstartedTurn(
-  deps: ProcessorDeps,
-  turnId: string,
-  watch: CancellationWatch,
-  code: string,
-  message: string,
-): Promise<void> {
-  if (watch.requested()) {
-    await cancelBeforeStart(deps, turnId);
-    return;
-  }
-  await failTurn(deps, turnId, code, message);
 }
 
 /**
@@ -625,9 +539,9 @@ async function takeWorkspaceForTurn(
  * the model everything except the one message explaining what happened.
  *
  * @param deps - The processor's collaborators.
- * @param delivery - The turn, its chat and how often it was delivered.
+ * @param delivery - The turn and its chat.
  * @param watch - The cancellation subscription, open since before preparation started.
- * @throws Error When the Docker daemon is unreachable, so BullMQ can redeliver the job.
+ * @throws Error When the Docker daemon is unreachable, which is reported as a failed job.
  */
 async function runWatchedTurn(
   deps: ProcessorDeps,
@@ -636,7 +550,7 @@ async function runWatchedTurn(
 ): Promise<void> {
   const { turnId, chat } = delivery;
   await deps.repos.turns.setStatus(turnId, 'PREPARING');
-  await recoverStalledWorkspace(deps, chat, delivery.attemptsMade);
+  await recoverStalledWorkspace(deps, chat);
 
   const messages = await deps.repos.messages.listByChat(chat.id);
   const ensured = await ensureWorkspace(deps, chat, messages);
@@ -688,14 +602,12 @@ async function runWatchedTurn(
  *
  * @param deps - The processor's collaborators.
  * @param turnId - The turn named by the delivery.
- * @param attemptsMade - How many times BullMQ already delivered this job.
  * @param watch - The cancellation subscription, open since before the first row was read.
- * @throws Error When the Docker daemon is unreachable, so BullMQ can redeliver the job.
+ * @throws Error When the Docker daemon is unreachable, which is reported as a failed job.
  */
 async function runDeliveredTurn(
   deps: ProcessorDeps,
   turnId: string,
-  attemptsMade: number,
   watch: CancellationWatch,
 ): Promise<void> {
   const turn = await deps.repos.turns.get(turnId);
@@ -726,7 +638,7 @@ async function runDeliveredTurn(
     return;
   }
   try {
-    await runWatchedTurn(deps, { turnId, chat, attemptsMade }, watch);
+    await runWatchedTurn(deps, { turnId, chat }, watch);
   } finally {
     deps.claims.release(claimKey);
   }
@@ -773,7 +685,12 @@ export function createRunTurnProcessor(
       // reaches nobody while the caller is told the worker will act on it.
       const watch = await openCancellationWatch(deps, turnId);
       try {
-        await runDeliveredTurn(deps, turnId, job.attemptsMade, watch);
+        await runDeliveredTurn(deps, turnId, watch);
+      } catch (error) {
+        // The failure is still reported to BullMQ, and to the operator through the worker log;
+        // what this adds is the record the user is owed for a turn nothing else finished.
+        await endUnreportedTurn(deps, turnId);
+        throw error;
       } finally {
         await watch.close();
       }

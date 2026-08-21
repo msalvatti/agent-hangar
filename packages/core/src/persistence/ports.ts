@@ -302,9 +302,25 @@ export interface CreateJobRunInput {
   scheduledFor: Date;
 }
 
+/**
+ * Kind of workspace a `JobRun` may point at.
+ *
+ * A run gets a container of its own and destroys it when it ends, so the reference has to name a
+ * workspace built for that. A chat's workspace is the opposite: shared by every turn of the chat
+ * and expected to survive them, so a run pointed at one would destroy a filesystem still in use.
+ * Every implementation of {@link JobRunRepository} refuses the reference, and refuses it the same
+ * way — a rule only one of them enforced would hold exactly in the runs nobody watches.
+ */
+export const JOB_RUN_WORKSPACE_KIND: WorkspaceKind = 'JOB';
+
 /** Optional fields written together with a run status change. */
 export interface JobRunStatusUpdate {
-  /** Unique across runs: a run never reuses a workspace. */
+  /**
+   * Unique across runs: a run never reuses a workspace.
+   *
+   * Must name a {@link JOB_RUN_WORKSPACE_KIND} workspace; anything else is refused with
+   * `WorkspaceKindMismatchError`, and an id no workspace carries with `NotFoundError`.
+   */
   workspaceId?: string | null;
   /** Redacted on write. */
   error?: string | null;

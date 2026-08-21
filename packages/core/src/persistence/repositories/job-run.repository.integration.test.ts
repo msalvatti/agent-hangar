@@ -10,7 +10,8 @@
  * scheduled job raises `NotFoundError('ScheduledJob', …)`; a `setStatus` whose status update
  * fails rolls the `startedAt` stamp back with it. The shared conditional-`finish` contract runs
  * against this implementation too, so "the first outcome is the record" is pinned here and on the
- * double from one source.
+ * double from one source, and so does the workspace-kind contract, so "a run's workspace is a job
+ * workspace" is pinned the same way.
  * Mocks: none — a real compose Postgres.
  */
 import { beforeEach, expect, it } from 'vitest';
@@ -20,6 +21,7 @@ import { GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.ts';
 import type { PrismaClient } from '../generated/client.ts';
 import { connectTestDb, describeDb, rawSelect, sqlTemplate, truncateAll } from '../testing/db.ts';
 import { describeRunFinishContract } from '../testing/run-finish-contract.ts';
+import { describeRunWorkspaceKindContract } from '../testing/run-workspace-kind-contract.ts';
 
 import { NotFoundError, UniqueViolationError } from './errors.ts';
 import { PrismaJobRunRepository } from './job-run.repository.ts';
@@ -293,5 +295,47 @@ describeDb('PrismaJobRunRepository', () => {
       })) !== null,
     statusOf: async (id) =>
       (await new PrismaJobRunRepository(client, testRedactor).get(id))?.status ?? null,
+  });
+
+  describeRunWorkspaceKindContract('PrismaJobRunRepository', {
+    seedRun: async () => {
+      const run = await new PrismaJobRunRepository(client, testRedactor).create({
+        jobId,
+        trigger: 'SCHEDULE',
+        model: 'gpt-5.6-sol',
+        scheduledFor: new Date(),
+      });
+      return run.id;
+    },
+    seedWorkspace: async (kind) => {
+      const chat =
+        kind === 'CHAT'
+          ? await client.chat.create({
+              data: {
+                title: 'Owner of the shared workspace',
+                repoUrl: 'https://github.com/acme/repo',
+                baseBranch: 'main',
+              },
+            })
+          : null;
+      const workspace = await client.workspace.create({
+        data: {
+          kind,
+          chatId: chat?.id ?? null,
+          runnerKind: 'docker',
+          image: 'agent-hangar/workspace:dev',
+          repoUrl: 'https://github.com/acme/repo',
+          branch: 'main',
+        },
+      });
+      return workspace.id;
+    },
+    attach: async (runId, workspaceId) => {
+      await new PrismaJobRunRepository(client, testRedactor).setStatus(runId, 'PREPARING', {
+        workspaceId,
+      });
+    },
+    workspaceIdOf: async (runId) =>
+      (await new PrismaJobRunRepository(client, testRedactor).get(runId))?.workspaceId ?? null,
   });
 });

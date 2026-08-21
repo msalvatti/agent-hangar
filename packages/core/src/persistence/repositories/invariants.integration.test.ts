@@ -246,11 +246,18 @@ describeDb('persistence invariants', () => {
     expect(await client.toolCallLog.count({ where: { jobRunId: run.id } })).toBe(0);
   });
 
-  /** Deleting a Workspace removes its ToolCallLogs and nulls Turn/JobRun workspaceId. */
+  /**
+   * Deleting a Workspace removes its ToolCallLogs and nulls Turn/JobRun workspaceId.
+   *
+   * A turn and a run are given a workspace each rather than sharing one: a run's workspace has to
+   * be a `JOB` workspace, and a turn's is its chat's. Sharing one made the cascade easy to state
+   * and the state impossible — the earlier version of this test held a `JobRun` pointing at a
+   * chat's workspace, which is the arrangement `WorkspaceKindMismatchError` now refuses.
+   */
   it('deleting a Workspace removes its ToolCallLogs and nulls Turn/JobRun workspaceId', async () => {
     const repos = createRepositories(client, testRedactor);
     const chatId = await seedChat(client);
-    const workspace = await repos.workspaces.create({
+    const chatWorkspace = await repos.workspaces.create({
       kind: 'CHAT',
       chatId,
       runnerKind: 'docker',
@@ -258,8 +265,15 @@ describeDb('persistence invariants', () => {
       repoUrl: 'https://github.com/acme/repo',
       branch: 'main',
     });
+    const runWorkspace = await repos.workspaces.create({
+      kind: 'JOB',
+      runnerKind: 'docker',
+      image: 'agent-hangar/workspace:dev',
+      repoUrl: 'https://github.com/acme/repo',
+      branch: 'main',
+    });
     const turn = await repos.turns.create({ chatId, model: 'gpt-5.6-sol' });
-    await repos.turns.setStatus(turn.id, 'RUNNING', { workspaceId: workspace.id });
+    await repos.turns.setStatus(turn.id, 'RUNNING', { workspaceId: chatWorkspace.id });
     const job = await repos.scheduledJobs.create({
       name: 'Nightly',
       cron: '0 0 * * *',
@@ -275,17 +289,18 @@ describeDb('persistence invariants', () => {
       model: 'gpt-5.6-sol',
       scheduledFor: new Date(),
     });
-    await repos.jobRuns.setStatus(run.id, 'RUNNING', { workspaceId: workspace.id });
+    await repos.jobRuns.setStatus(run.id, 'RUNNING', { workspaceId: runWorkspace.id });
     await repos.toolCalls.start({
-      workspaceId: workspace.id,
+      workspaceId: chatWorkspace.id,
       turnId: turn.id,
       callId: 'call-1',
       seq: 1,
       toolName: 'run_shell',
       args: {},
     });
-    await client.workspace.delete({ where: { id: workspace.id } });
-    expect(await client.toolCallLog.count({ where: { workspaceId: workspace.id } })).toBe(0);
+    await client.workspace.delete({ where: { id: chatWorkspace.id } });
+    await client.workspace.delete({ where: { id: runWorkspace.id } });
+    expect(await client.toolCallLog.count({ where: { workspaceId: chatWorkspace.id } })).toBe(0);
     const reloadedTurn = await repos.turns.get(turn.id);
     const reloadedRun = await repos.jobRuns.get(run.id);
     expect(reloadedTurn?.workspaceId).toBeNull();

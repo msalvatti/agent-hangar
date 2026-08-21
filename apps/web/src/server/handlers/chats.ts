@@ -506,7 +506,13 @@ export function deleteChat(
       throw new ResourceNotFoundError('Chat not found');
     }
     if (live !== null) {
-      await enqueueDestroyChatWorkspace(container.queues.workspaceGc, { chatId: chat.id });
+      // The workspace is named, not just its chat: `deleteIfIdle` has already run, and the delete
+      // clears `Workspace.chatId` on its way through, so the chat id no longer reaches the row
+      // this job is about.
+      await enqueueDestroyChatWorkspace(container.queues.workspaceGc, {
+        chatId: chat.id,
+        workspaceId: live.id,
+      });
     }
     return noContent();
   });

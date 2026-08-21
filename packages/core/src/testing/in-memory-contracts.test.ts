@@ -13,6 +13,7 @@ import { beforeEach } from 'vitest';
 
 import { describeChatDeleteContract } from '../persistence/testing/chat-delete-contract.ts';
 import { describeRunFinishContract } from '../persistence/testing/run-finish-contract.ts';
+import { describeRunWorkspaceKindContract } from '../persistence/testing/run-workspace-kind-contract.ts';
 
 import { FakeClock } from './fake-clock.ts';
 import { createInMemoryRepositories } from './in-memory-repositories.ts';
@@ -95,4 +96,33 @@ describeRunFinishContract('InMemoryJobRunRepository', {
       usage: { inputTokens: 0, outputTokens: 0, stepCount: 0 },
     })) !== null,
   statusOf: async (id) => (await repos.jobRuns.get(id))?.status ?? null,
+});
+
+describeRunWorkspaceKindContract('InMemoryJobRunRepository', {
+  seedRun: async () => {
+    const job = await seedJob();
+    const run = await repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'SCHEDULE',
+      model: 'm',
+      scheduledFor: T0,
+    });
+    return run.id;
+  },
+  seedWorkspace: async (kind) => {
+    const chat = kind === 'CHAT' ? await seedChat() : null;
+    const workspace = await repos.workspaces.create({
+      kind,
+      ...(chat === null ? {} : { chatId: chat.id }),
+      runnerKind: 'fake',
+      image: 'image',
+      repoUrl: 'https://github.com/acme/w',
+      branch: 'main',
+    });
+    return workspace.id;
+  },
+  attach: async (runId, workspaceId) => {
+    await repos.jobRuns.setStatus(runId, 'PREPARING', { workspaceId });
+  },
+  workspaceIdOf: async (runId) => (await repos.jobRuns.get(runId))?.workspaceId ?? null,
 });

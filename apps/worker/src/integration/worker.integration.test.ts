@@ -2,10 +2,11 @@
  * End-to-end tests of the worker against real Docker, Postgres and Redis.
  *
  * Layer: integration (`@docker @db @redis`).
- * Goal: prove the four flows the unit suite can only simulate — a turn that really clones a
- * repository and runs the bundled runtime in a container, the collector reclaiming an idle
- * workspace and an orphan container, a restored turn cloning into a brand-new workspace, and a
- * scheduled run whose container is destroyed when it finishes. The model is the only fake.
+ * Goal: prove the flows the unit suite can only simulate — a turn that really clones a repository
+ * and runs the bundled runtime in a container, the collector reclaiming an idle workspace and an
+ * orphan container, a restored turn cloning into a brand-new workspace, a scheduled run whose
+ * container is destroyed when it finishes, and a deleted chat leaving neither a container nor a
+ * row that claims to have one. The model is the only fake.
  * Mocks: `AGENT_MODEL_PROVIDER=fake` inside the container; everything else is production wiring.
  */
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -13,6 +14,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import {
+  destroyChatWorkspacePayload,
   JOB_NAMES,
   WORKER_HEARTBEAT_TTL_SEC,
   workerHeartbeatKey,
@@ -22,7 +24,7 @@ import type { Chat } from '@agent-hangar/core';
 import { assertNoCanary } from '@agent-hangar/core/testing';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 
-import { LABELS } from '../processors/constants.js';
+import { LABELS, WORKSPACE_LIMITS } from '../processors/constants.js';
 
 import { describeDocker } from './describe-docker.js';
 import {
@@ -37,6 +39,9 @@ const CREATE_PROMPT = 'list files and create NOTES.md';
 
 /** Prompt it answers by reading that file back. */
 const READ_PROMPT = 'show NOTES.md';
+
+/** How long a row is polled for after its container is already gone. */
+const ROW_SETTLE_MS = 10_000;
 
 describeDocker('worker end-to-end', () => {
   let harness: IntegrationHarness;
@@ -301,7 +306,6 @@ describeDocker('worker end-to-end', () => {
       id: 'manual',
       name: JOB_NAMES.runScheduledJob,
       data: { jobId: job.id, trigger: 'MANUAL' },
-      attemptsMade: 0,
     });
 
     const runs = await repos.jobRuns.listByJob(job.id);
@@ -317,5 +321,75 @@ describeDocker('worker end-to-end', () => {
       status: 'CANCELLED',
       usage: { inputTokens: 0, outputTokens: 0, stepCount: 0 },
     });
+  });
+
+  /**
+   * Deleting a chat must leave nothing claiming to be live. The chat's cascade sets
+   * `Workspace.chatId` to null — the column is `SetNull` — so by the time the teardown job runs,
+   * the chat can no longer name the row: the job has to carry the workspace's own id, and the
+   * consumer has to use it. Measured on a real database before this was so: the container was
+   * removed by the consumer's label sweep, which writes no row, and the workspace stayed `READY`
+   * pointing at a container that no longer existed.
+   *
+   * Everything here is production wiring — the real repositories against Postgres, the real
+   * producer, the real queue and the real consumer — because the defect lives precisely in what
+   * the database does to the row between two of those steps.
+   */
+  it('leaves no live row behind when a chat with a workspace is deleted', async () => {
+    const { repos, queues, runner } = harness.container;
+    const deleted = await repos.chats.create({
+      title: 'Deleted while it had a workspace',
+      repoUrl: TEST_REPO_URL,
+      baseBranch: TEST_REPO_BRANCH,
+    });
+    const workspace = await repos.workspaces.create({
+      kind: 'CHAT',
+      chatId: deleted.id,
+      runnerKind: runner.kind,
+      image: harness.config.WORKSPACE_IMAGE,
+      repoUrl: TEST_REPO_URL,
+      branch: TEST_REPO_BRANCH,
+    });
+    const handle = await runner.create({
+      workspaceId: workspace.id,
+      kind: 'CHAT',
+      image: harness.config.WORKSPACE_IMAGE,
+      env: {},
+      limits: WORKSPACE_LIMITS,
+      labels: {
+        [LABELS.instance]: harness.config.AH_INSTANCE,
+        [LABELS.workspace]: workspace.id,
+        [LABELS.kind]: 'CHAT',
+        [LABELS.chat]: deleted.id,
+      },
+    });
+    await repos.workspaces.setStatus(workspace.id, 'READY', { runnerRef: handle.runnerRef });
+
+    // Exactly what the delete handler does, in the order it does it: read the live workspace,
+    // delete the chat, then enqueue the teardown for the workspace it read.
+    const live = await repos.workspaces.findLiveByChat(deleted.id);
+    expect(await repos.chats.deleteIfIdle(deleted.id)).toBe('DELETED');
+    expect((await repos.workspaces.get(workspace.id))?.chatId).toBeNull();
+    await queues.workspaceGc.add(
+      JOB_NAMES.destroyChatWorkspace,
+      destroyChatWorkspacePayload.parse({ chatId: deleted.id, workspaceId: live?.id }),
+      { jobId: `destroy-${deleted.id}` },
+    );
+
+    await harness.waitFor("the deleted chat's container to be removed", async () => {
+      const handles = await runner.list({
+        [LABELS.instance]: harness.config.AH_INSTANCE,
+        [LABELS.workspace]: workspace.id,
+      });
+      return handles.length === 0;
+    });
+
+    await expect
+      .poll(async () => (await repos.workspaces.get(workspace.id))?.status, {
+        timeout: ROW_SETTLE_MS,
+      })
+      .toBe('DESTROYED');
+    expect((await repos.workspaces.get(workspace.id))?.destroyedAt).not.toBeNull();
+    expect((await repos.workspaces.listLive()).map((row) => row.id)).not.toContain(workspace.id);
   });
 });

@@ -10,19 +10,34 @@
  *
  * The queue is accepted through {@link SchedulerQueue}, a structural subset of BullMQ's `Queue`,
  * so unit tests can drive the logic without Redis while the real queue satisfies it unchanged.
+ *
+ * Every template registered here carries the producers' retention. A scheduler is a job factory,
+ * and BullMQ keeps whatever a job's own options say to keep: a template that says nothing keeps
+ * every job it ever produced. The collector's scheduler alone is 288 records a day, so the
+ * difference between stating the bound and omitting it is a queue that stays the size of its
+ * backlog and one that grows for as long as the instance lives.
  */
 import { GC_CRON, GC_SCHEDULER_KEY, toSchedulerKey } from '../scheduling/keys.ts';
 import type { ExistingScheduler } from '../scheduling/reconcile.ts';
 import type { ReconcilePlan } from '../scheduling/types.ts';
 
 import { JOB_NAMES, reapIdlePayload, runScheduledJobPayload } from './contracts.ts';
+import { JOB_RETENTION } from './queues.ts';
+
+/** Retention BullMQ applies to every job a scheduler mints; the producers' bound, not a copy. */
+export interface SchedulerTemplateRetention {
+  /** Completed jobs kept, as a count. */
+  removeOnComplete: number;
+  /** Failed jobs kept, as a count. */
+  removeOnFail: number;
+}
 
 /** What a scheduler wrapper needs from a queue; BullMQ's `Queue` satisfies it. */
 export interface SchedulerQueue {
   upsertJobScheduler(
     key: string,
     repeat: { pattern: string; tz?: string },
-    template: { name: string; data: unknown },
+    template: { name: string; data: unknown; opts: SchedulerTemplateRetention },
   ): Promise<unknown>;
   removeJobScheduler(key: string): Promise<boolean>;
   getJobSchedulers(): Promise<
@@ -53,7 +68,7 @@ export async function upsertScheduledJob(
   await queue.upsertJobScheduler(
     toSchedulerKey(job.id),
     { pattern: job.cron, tz: job.timezone },
-    { name: JOB_NAMES.runScheduledJob, data },
+    { name: JOB_NAMES.runScheduledJob, data, opts: JOB_RETENTION },
   );
 }
 
@@ -131,6 +146,6 @@ export async function upsertGcScheduler(queue: SchedulerQueue): Promise<void> {
   await queue.upsertJobScheduler(
     GC_SCHEDULER_KEY,
     { pattern: GC_CRON },
-    { name: JOB_NAMES.reapIdle, data },
+    { name: JOB_NAMES.reapIdle, data, opts: JOB_RETENTION },
   );
 }

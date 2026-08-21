@@ -238,7 +238,9 @@ describe('TurnRepository', () => {
     expect((await repos.turns.create({ chatId: chat.id, model: 'gpt' })).queueJobId).toBeNull();
 
     clock.advance(1000);
-    const preparing = await repos.turns.setStatus(turn.id, 'PREPARING', { workspaceId: 'w1' });
+    const preparing = await repos.turns.setStatus(turn.id, 'PREPARING', {
+      workspaceId: 'w1',
+    });
     expect(preparing.startedAt).toEqual(clock.now());
     expect(preparing.workspaceId).toBe('w1');
     clock.advance(1000);
@@ -550,6 +552,14 @@ describe('JobRunRepository', () => {
    */
   it('tracks runs with unique workspace ids and overlap lookups', async () => {
     const job = await seedJob();
+    // A real row, because a run's workspace reference is checked for kind as well as uniqueness.
+    const { id: jobWorkspaceId } = await repos.workspaces.create({
+      kind: 'JOB',
+      runnerKind: 'fake',
+      image: 'image',
+      repoUrl: 'https://github.com/acme/w',
+      branch: 'main',
+    });
     const first = await repos.jobRuns.create({
       jobId: job.id,
       trigger: 'SCHEDULE',
@@ -565,7 +575,9 @@ describe('JobRunRepository', () => {
     expect(await repos.jobRuns.findRunningByJob(job.id)).toBeNull();
 
     clock.advance(1000);
-    const preparing = await repos.jobRuns.setStatus(first.id, 'PREPARING', { workspaceId: 'w1' });
+    const preparing = await repos.jobRuns.setStatus(first.id, 'PREPARING', {
+      workspaceId: jobWorkspaceId,
+    });
     expect(preparing.startedAt).toEqual(clock.now());
     expect((await repos.jobRuns.findRunningByJob(job.id))?.id).toBe(first.id);
     const running = await repos.jobRuns.setStatus(first.id, 'RUNNING');
@@ -579,7 +591,7 @@ describe('JobRunRepository', () => {
       scheduledFor: clock.now(),
     });
     await expect(
-      repos.jobRuns.setStatus(second.id, 'PREPARING', { workspaceId: 'w1' }),
+      repos.jobRuns.setStatus(second.id, 'PREPARING', { workspaceId: jobWorkspaceId }),
     ).rejects.toThrow(UniqueViolationError);
     await repos.jobRuns.setStatus(second.id, 'FAILED', {
       error: 'previous run still running',
@@ -587,8 +599,9 @@ describe('JobRunRepository', () => {
     });
     expect((await repos.jobRuns.get(second.id))?.error).toBe('previous run still running');
     expect(
-      (await repos.jobRuns.setStatus(first.id, 'RUNNING', { workspaceId: 'w1' })).workspaceId,
-    ).toBe('w1');
+      (await repos.jobRuns.setStatus(first.id, 'RUNNING', { workspaceId: jobWorkspaceId }))
+        .workspaceId,
+    ).toBe(jobWorkspaceId);
 
     const finished = await repos.jobRuns.finish(first.id, {
       status: 'SUCCEEDED',
