@@ -16,8 +16,8 @@ destroyed together with everything written into it.
 | Git configuration | `credential.helper=""`, `GIT_ASKPASS=/opt/agent-runtime/askpass.sh`, `GIT_TERMINAL_PROMPT=0`, `init.defaultBranch=main`, `/workspace` marked a safe directory |
 | Idle command      | `CMD ["sleep", "infinity"]` — the container idles and the worker `exec`s turns into it                                                                        |
 
-`CMD` rather than `ENTRYPOINT` so `docker run agent-hangar/workspace:dev node --version` still works
-for diagnostics while the runner's `exec` path is unaffected.
+`CMD` rather than `ENTRYPOINT` so `docker run "$WORKSPACE_IMAGE" node --version` still works for
+diagnostics while the runner's `exec` path is unaffected.
 
 The image contains **no secrets, no `.env` and no source of this repository** other than the runtime
 bundle. Credentials arrive as container environment at `create` time.
@@ -25,13 +25,25 @@ bundle. Credentials arrive as container environment at `create` time.
 ## Build
 
 ```bash
-pnpm infra:image   # honours WORKSPACE_IMAGE from .env.local
+pnpm infra:image   # builds this instance's tag: agent-hangar/workspace:<instance>
 ```
 
-There is no bare `docker build -t agent-hangar/workspace:dev infra/workspace` equivalent: the
-runtime bundle below is staged into the build context by `pnpm infra:image` itself, not by
-Docker, so a bare `docker build` here fails on a fresh clone that has no `runtime/` directory yet.
-`infra/scripts/setup.sh` already goes through `pnpm infra:image` for the same reason.
+The tag carries the instance, the way the database name and the container prefix do, so a rebuild in
+one checkout cannot decide what another checkout's next container is created from. `WORKSPACE_IMAGE`
+exported in the shell still names the tag to build — the end-to-end harness builds the image of the
+instance it is about to run — but nothing derives a tag two instances share.
+
+There is no bare `docker build -t <tag> infra/workspace` equivalent, for two reasons: the runtime
+bundle below is staged into the build context by `pnpm infra:image` itself, not by Docker, so a bare
+build fails on a fresh clone that has no `runtime/` directory yet; and the build argument
+`AH_WORKSPACE_DIGEST` would be empty, which leaves the image carrying no digest and therefore
+unusable — `pnpm dev`, the doctor and the end-to-end pre-step all read that label to decide whether
+the image matches the tree they were started from, and an image that cannot be shown to match one is
+refused. `infra/scripts/setup.sh` goes through `pnpm infra:image` for the same reasons.
+
+The build ends by asking Docker what the tag resolves to and failing if it is not the digest it meant
+to write. A build whose every layer is cached prints `CACHED` and exits 0, which says nothing about
+which image the tag ended up on; this does.
 
 A warm-cache rebuild takes a few seconds; a cold build is dominated by the `apt-get` layer and stays
 well under three minutes.
@@ -126,9 +138,11 @@ line above as load-bearing.
 ## How to verify
 
 ```bash
-docker run --rm agent-hangar/workspace:dev id -u                       # 1001
-docker image inspect agent-hangar/workspace:dev --format '{{json .Config}}' | jq '.User, .WorkingDir, .Cmd, .Labels'
-docker image inspect agent-hangar/workspace:dev --format '{{json .Config}}' | grep -Ei 'token|secret|api_key'   # no output
+eval "$(bash infra/scripts/env.sh --print-effective)"                   # $WORKSPACE_IMAGE
+docker run --rm "$WORKSPACE_IMAGE" id -u                               # 1001
+docker image inspect "$WORKSPACE_IMAGE" --format '{{json .Config}}' | jq '.User, .WorkingDir, .Cmd, .Labels'
+docker image inspect "$WORKSPACE_IMAGE" --format '{{json .Config}}' | grep -Ei 'token|secret|api_key'   # no output
+bash infra/scripts/workspace-image.sh --status "$WORKSPACE_IMAGE"      # current
 DOCKER_AVAILABLE=1 pnpm --filter @agent-hangar/core test:integration    # the @docker suite
 ```
 
