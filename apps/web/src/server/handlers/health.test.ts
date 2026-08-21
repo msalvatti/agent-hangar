@@ -12,6 +12,7 @@ import { healthResponse, workerHeartbeatKey } from '@agent-hangar/core';
 import type { WorkerHeartbeat } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
+import { readRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
 import { TIMED_OUT } from '../timeout';
@@ -62,7 +63,7 @@ async function writeHeartbeat(
 async function report(
   harness: TestContainer,
 ): Promise<{ status: number; body: ReturnType<typeof healthResponse.parse> }> {
-  const response = await getHealth(harness.container);
+  const response = await getHealth(harness.container, readRequest('/api/health'));
   return { status: response.status, body: healthResponse.parse(await response.json()) };
 }
 
@@ -168,7 +169,7 @@ describe('getHealth', () => {
     harness.doubles.prisma.queryFailure = refused;
     vi.spyOn(harness.doubles.redis, 'ping').mockRejectedValue(refused);
 
-    const response = await getHealth(harness.container);
+    const response = await getHealth(harness.container, readRequest('/api/health'));
     const text = await response.text();
     expect(text).not.toContain('hunter2');
     const body = healthResponse.parse(JSON.parse(text));
@@ -187,7 +188,7 @@ describe('getHealth', () => {
     try {
       const harness = createTestContainer({ now: NOW });
       harness.doubles.prisma.shouldHang = true;
-      const pending = getHealth(harness.container);
+      const pending = getHealth(harness.container, readRequest('/api/health'));
       await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS);
       const body = healthResponse.parse(await (await pending).json());
       expect(body.checks.db).toEqual({ ok: false, detail: TIMED_OUT });
@@ -210,7 +211,7 @@ describe('getHealth', () => {
           // Never settles; the probe's own timer is what ends the wait.
         }),
       );
-      const pending = getHealth(harness.container);
+      const pending = getHealth(harness.container, readRequest('/api/health'));
       await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS);
       const body = healthResponse.parse(await (await pending).json());
       expect(body.checks.worker.detail).toBe(WORKER_SILENT);

@@ -82,7 +82,7 @@ import {
   withErrorHandling,
 } from '../http';
 import { allowedRepoHosts, assertRepoUrlAllowed } from '../repo-url';
-import { assertSameOrigin } from '../same-origin';
+import { assertKnownHost, assertSameOrigin } from '../same-origin';
 
 import { compensate } from './compensate';
 import { dispatchTurn } from './dispatch';
@@ -248,6 +248,7 @@ export function createChat(container: ServerContainer, request: Request): Promis
  */
 export function listChats(container: ServerContainer, request: Request): Promise<Response> {
   return withErrorHandling(container, async () => {
+    assertKnownHost(request);
     const query = parseQuery(request.url, listChatsQuery);
     const chats = await container.repos.chats.list(query.status);
     const summaries = await Promise.all(
@@ -263,16 +264,17 @@ export function listChats(container: ServerContainer, request: Request): Promise
  * `GET /api/chats/:id` — the chat with its messages, turns, tool calls and live workspace.
  *
  * @param container - The server container.
- * @param _request - The incoming request; this route reads nothing from it.
+ * @param request - The incoming request; only its addressed host is read.
  * @param params - Resolved path parameters.
  * @returns `200` with the detail, or `404`.
  */
 export function getChat(
   container: ServerContainer,
-  _request: Request,
+  request: Request,
   params: ChatParams,
 ): Promise<Response> {
   return withErrorHandling(container, async () => {
+    assertKnownHost(request);
     const chat = await requireChat(container, params.id);
     // The mapper already parsed the value against `chatDetail`; parsing it again here would only
     // repeat the work.

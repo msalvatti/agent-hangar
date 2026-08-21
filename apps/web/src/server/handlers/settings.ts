@@ -25,7 +25,7 @@ import type { z } from 'zod';
 import type { ServerContainer } from '../container';
 import { ApiHttpError, failureName, ResourceNotFoundError } from '../errors';
 import { jsonResponse, noContent, parseJsonBody, withErrorHandling } from '../http';
-import { assertSameOrigin } from '../same-origin';
+import { assertKnownHost, assertSameOrigin } from '../same-origin';
 
 /** Headers every settings response carries; a masked credential must never sit in a cache. */
 const NO_STORE = { 'Cache-Control': 'no-store' } as const;
@@ -71,10 +71,12 @@ function toStatusView(status: SecretStatus): z.input<typeof settingsStatus>['git
  * `GET /api/settings` — which credentials are stored, masked to their last four characters.
  *
  * @param container - The server container.
+ * @param request - The incoming request; only its addressed host is read.
  * @returns `200` with the masked status and the configured model.
  */
-export function getSettings(container: ServerContainer): Promise<Response> {
+export function getSettings(container: ServerContainer, request: Request): Promise<Response> {
   return withErrorHandling(container, async () => {
+    assertKnownHost(request);
     const status = await container.secrets.status();
     return jsonResponse(
       settingsStatus,

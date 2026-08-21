@@ -59,7 +59,7 @@ import type { ServerContainer } from '../container';
 import { ResourceNotFoundError } from '../errors';
 import { jsonResponse, noContent, parseJsonBody, withErrorHandling } from '../http';
 import { allowedRepoHosts, assertRepoUrlAllowed } from '../repo-url';
-import { assertSameOrigin } from '../same-origin';
+import { assertKnownHost, assertSameOrigin } from '../same-origin';
 
 import { compensate } from './compensate';
 import { NO_USAGE, requireSecrets } from './guards';
@@ -283,10 +283,12 @@ export function createJob(container: ServerContainer, request: Request): Promise
  * `GET /api/jobs` — every scheduled job, newest first.
  *
  * @param container - The server container.
+ * @param request - The incoming request; only its addressed host is read.
  * @returns `200` with the job summaries.
  */
-export function listJobs(container: ServerContainer): Promise<Response> {
+export function listJobs(container: ServerContainer, request: Request): Promise<Response> {
   return withErrorHandling(container, async () => {
+    assertKnownHost(request);
     const jobs = await container.repos.scheduledJobs.list();
     const summaries = await Promise.all(
       jobs.map(async (job) => toJobSummary(job, await lastRunStatus(container, job.id))),
@@ -299,18 +301,19 @@ export function listJobs(container: ServerContainer): Promise<Response> {
  * `GET /api/jobs/:id` — one scheduled job.
  *
  * @param container - The server container.
- * @param _request - The incoming request; this route reads nothing from it.
+ * @param request - The incoming request; only its addressed host is read.
  * @param params - Resolved path parameters.
  * @returns `200` with the job summary, or `404`.
  */
 export function getJob(
   container: ServerContainer,
-  _request: Request,
+  request: Request,
   params: JobParams,
 ): Promise<Response> {
-  return withErrorHandling(container, async () =>
-    jobResponse(container, await requireJob(container, params.id)),
-  );
+  return withErrorHandling(container, async () => {
+    assertKnownHost(request);
+    return jobResponse(container, await requireJob(container, params.id));
+  });
 }
 
 /**

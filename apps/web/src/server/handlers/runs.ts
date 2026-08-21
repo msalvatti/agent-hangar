@@ -43,7 +43,7 @@ import type { JobRun } from '@agent-hangar/core';
 import type { ServerContainer } from '../container';
 import { ConflictError, ResourceNotFoundError } from '../errors';
 import { json, jsonResponse, withErrorHandling } from '../http';
-import { assertSameOrigin } from '../same-origin';
+import { assertKnownHost, assertSameOrigin } from '../same-origin';
 
 import { askWorkerToCancel, removeQueuedJob } from './cancel';
 import { compensate } from './compensate';
@@ -71,16 +71,17 @@ export interface RunParams {
  * `GET /api/jobs/:id/runs` — the run history of one job, newest first.
  *
  * @param container - The server container.
- * @param _request - The incoming request; this route reads nothing from it.
+ * @param request - The incoming request; only its addressed host is read.
  * @param params - Resolved path parameters (the job id).
  * @returns `200` with the run summaries, or `404` when the job is unknown.
  */
 export function listRuns(
   container: ServerContainer,
-  _request: Request,
+  request: Request,
   params: RunParams,
 ): Promise<Response> {
   return withErrorHandling(container, async () => {
+    assertKnownHost(request);
     if ((await container.repos.scheduledJobs.get(params.id)) === null) {
       throw new ResourceNotFoundError('Scheduled job not found');
     }
@@ -93,16 +94,17 @@ export function listRuns(
  * `GET /api/runs/:id` — one run with its output and tool calls.
  *
  * @param container - The server container.
- * @param _request - The incoming request; this route reads nothing from it.
+ * @param request - The incoming request; only its addressed host is read.
  * @param params - Resolved path parameters (the run id).
  * @returns `200` with the run detail, or `404`.
  */
 export function getRun(
   container: ServerContainer,
-  _request: Request,
+  request: Request,
   params: RunParams,
 ): Promise<Response> {
   return withErrorHandling(container, async () => {
+    assertKnownHost(request);
     const run = await container.repos.jobRuns.get(params.id);
     if (run === null) {
       throw new ResourceNotFoundError('Run not found');
