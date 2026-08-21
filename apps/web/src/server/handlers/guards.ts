@@ -15,6 +15,7 @@
  * before the other read, which contradicts itself — so they cannot. Checking only beforehand
  * breaks exactly that, and lets a message and a retry, or a retry and an archive, both go through.
  */
+import { LIVE_RUN_STATUSES } from '@agent-hangar/core';
 import type { SecretKey, UsageTotals } from '@agent-hangar/core';
 
 import type { ServerContainer } from '../container';
@@ -28,8 +29,17 @@ import { ConflictError, ResourceNotFoundError } from '../errors';
  */
 export const NO_USAGE: UsageTotals = { inputTokens: 0, outputTokens: 0, stepCount: 0 };
 
-/** Turn and run statuses that mean work is already under way. */
-export const LIVE_STATUSES: readonly string[] = ['QUEUED', 'PREPARING', 'RUNNING'];
+/**
+ * Turn and run statuses that mean work is already under way.
+ *
+ * Re-exported from the lifecycle tables rather than listed again here: the same set decides whether
+ * a conditional chat delete may run, and two copies of it are two chances for a route and the
+ * database to disagree about what "live" means.
+ */
+export const LIVE_STATUSES: readonly string[] = LIVE_RUN_STATUSES;
+
+/** Why an operation is refused while a turn of the chat is queued or executing. */
+export const LIVE_TURN_REFUSAL = 'Wait for the running turn to finish or cancel it';
 
 /** Credentials a turn cannot start without: one to clone with, one to think with. */
 const REQUIRED_SECRETS: readonly SecretKey[] = ['GITHUB_PAT', 'OPENAI_API_KEY'];
@@ -76,7 +86,7 @@ export function isLive(status: string | undefined): boolean {
 export async function requireNoLiveTurn(container: ServerContainer, chatId: string): Promise<void> {
   const turns = await container.repos.turns.listByChat(chatId);
   if (turns.some((turn) => isLive(turn.status))) {
-    throw new ConflictError('TURN_IN_PROGRESS', 'Wait for the running turn to finish or cancel it');
+    throw new ConflictError('TURN_IN_PROGRESS', LIVE_TURN_REFUSAL);
   }
 }
 

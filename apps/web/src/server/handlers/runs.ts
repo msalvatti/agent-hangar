@@ -14,31 +14,38 @@
  * `404` whenever a lookup missed for some other reason. Each id is resolved by the repository that
  * owns it: a `Turn.id` here is a `404`, exactly as a `JobRun.id` is at `/api/turns/:id/cancel`.
  *
- * The guarantee still has one window in it, and it is still the worker's rather than this route's
- * — but the worker now closes it as far as a run's identity allows rather than leaving it open. A
- * run this process can still take off the queue is closed here outright. Once the worker has taken
- * the delivery, this route only publishes, and the scheduled-job processor's cancellation
- * subscription is already open by the time that publish could arrive: for a manual run, whose id
- * exists before it is ever enqueued (the row this route reads is created first), the worker
- * subscribes before it reads anything of its own; for a scheduled tick, whose id does not exist
- * until the worker creates its row, the subscription opens the instant that row does, which is the
- * earliest a subscriber could possibly exist. A `202` here means the request reached a listener
- * already in place, not that it was published into a gap nobody was watching.
+ * A run this process can still take off the queue is closed here outright. Once the worker has
+ * taken the delivery, this route publishes the request — and then takes the run terminal itself,
+ * conditionally, so a `202` is a promise about the row rather than only about the message. The
+ * scheduled-job processor's cancellation subscription is already open by the time that publish
+ * could arrive: for a manual run, whose id exists before it is ever enqueued (the row this route
+ * reads is created first), the worker subscribes before it reads anything of its own; for a
+ * scheduled tick, whose id does not exist until the worker creates its row, the subscription opens
+ * the instant that row does, which is the earliest a subscriber could possibly exist. So the
+ * publish always reaches a listener already in place — but reaching one was never enough on its
+ * own, and `./cancel.ts` holds the step that makes the `202` a promise about the row and the
+ * argument for it.
+ *
+ * Two prices, named rather than hidden. A run recorded `CANCELLED` while its container is still
+ * being torn down no longer counts as the overlapping run a fresh tick backs off from, so a tick
+ * landing in those seconds starts a second workspace instead of skipping — one extra container for
+ * the length of a teardown that is already under way, against a run whose recorded outcome
+ * contradicts the answer its user was given. And the worker publishes a run's terminal event before
+ * it persists the outcome, so a drawer watching the stream at that moment can be shown the
+ * `turn.completed` or `turn.failed` the worker was about to write while the row already says
+ * `CANCELLED`. Nothing republishes to correct it: the stream is a live view of what the container
+ * did, the row is the record of what the run *is*, and every reader that outlives the stream reads
+ * the row.
  */
-import {
-  isTerminalRunStatus,
-  listRunsResponse,
-  okResponse,
-  turnCommand,
-  turnCommandChannel,
-} from '@agent-hangar/core';
+import { isTerminalRunStatus, listRunsResponse, okResponse } from '@agent-hangar/core';
+import type { JobRun } from '@agent-hangar/core';
 
 import type { ServerContainer } from '../container';
 import { ConflictError, ResourceNotFoundError } from '../errors';
 import { json, jsonResponse, withErrorHandling } from '../http';
 import { assertSameOrigin } from '../same-origin';
 
-import { CANCEL_REQUESTED_STATUS, removeQueuedJob } from './cancel';
+import { askWorkerToCancel, removeQueuedJob } from './cancel';
 import { compensate } from './compensate';
 import { NO_USAGE } from './guards';
 import { enqueueManualRun } from './manual-run';
@@ -51,6 +58,9 @@ import { toRunDetail, toRunSummary } from './mappers';
  * than a query parameter no client could send. Fifty rows cover the table the UI renders.
  */
 export const RUNS_PAGE_SIZE = 50;
+
+/** What a caller is told when the run it named has already reached an outcome. */
+const RUN_ALREADY_FINISHED = 'This run has already finished';
 
 /** Path parameters of the run routes. */
 export interface RunParams {
@@ -124,6 +134,8 @@ export function getRun(
  * @param request - The incoming request.
  * @param params - Resolved path parameters (the run id).
  * @returns `200` when the run was cancelled outright, `202` when the worker was asked to stop it.
+ * @throws ConflictError 409 `RUN_NOT_CANCELLABLE` when the run had already finished, whether it was
+ *   already finished when this request read it or finished while the request was in flight.
  * @throws Error When the terminal status could not be written after the delivery was removed; the
  *   delivery is put back first, so a retry of the request finds the same state it started from.
  */
@@ -138,27 +150,40 @@ export function cancelRun(
     if (run === null) {
       throw new ResourceNotFoundError('Run not found');
     }
+    // Read first only to answer a finished run without touching the queue; the write below is
+    // what actually decides, and it re-tests this on the row rather than trusting the snapshot.
     if (isTerminalRunStatus(run.status)) {
-      throw new ConflictError('RUN_NOT_CANCELLABLE', 'This run has already finished');
+      throw new ConflictError('RUN_NOT_CANCELLABLE', RUN_ALREADY_FINISHED);
     }
     if (
       run.status === 'QUEUED' &&
       (await removeQueuedJob(container.queues.scheduledJobs, run.id))
     ) {
+      let cancelled: JobRun | null;
       try {
-        await container.repos.jobRuns.finish(run.id, { status: 'CANCELLED', usage: NO_USAGE });
+        cancelled = await container.repos.jobRuns.finish(run.id, {
+          status: 'CANCELLED',
+          usage: NO_USAGE,
+        });
       } catch (error) {
         await compensate(container, { runId: run.id }, 'could not undo a partial run cancel', () =>
           enqueueManualRun(container.queues.scheduledJobs, { jobId: run.jobId, runId: run.id }),
         );
         throw error;
       }
+      // Losing here is not a half-done cancel to undo: the run already carries an outcome, so the
+      // delivery that was taken off the queue has nothing left to do.
+      if (cancelled === null) {
+        throw new ConflictError('RUN_NOT_CANCELLABLE', RUN_ALREADY_FINISHED);
+      }
       return jsonResponse(okResponse, { ok: true });
     }
-    await container.redis.publish(
-      turnCommandChannel(run.id),
-      JSON.stringify(turnCommand.parse({ type: 'cancel' })),
-    );
-    return jsonResponse(okResponse, { ok: true }, { status: CANCEL_REQUESTED_STATUS });
+    return askWorkerToCancel(container, {
+      id: run.id,
+      finish: () =>
+        container.repos.jobRuns.finish(run.id, { status: 'CANCELLED', usage: NO_USAGE }),
+      code: 'RUN_NOT_CANCELLABLE',
+      message: RUN_ALREADY_FINISHED,
+    });
   });
 }

@@ -76,6 +76,18 @@ export function isTerminalRunStatus(status: RunStatus): boolean {
 }
 
 /**
+ * Turn and job-run statuses that mean work is queued or executing.
+ *
+ * Derived from {@link RUN_TRANSITIONS} rather than listed a second time, so it cannot disagree
+ * with the table every status write is checked against: a state that gains or loses a successor
+ * changes here in the same edit. It is what a conditional write arbitrates on — a chat delete
+ * refusing while a turn of that chat is live — and what the route guards read.
+ */
+export const LIVE_RUN_STATUSES: readonly RunStatus[] = (
+  Object.keys(RUN_TRANSITIONS) as RunStatus[]
+).filter((status) => !isTerminalRunStatus(status));
+
+/**
  * Reports whether a table allows a transition.
  *
  * @param table - Transition table to consult.

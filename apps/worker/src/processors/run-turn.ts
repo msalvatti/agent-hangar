@@ -35,6 +35,7 @@ import type {
 } from '@agent-hangar/core';
 
 import { chatClaimKey, turnClaimKey } from '../claims.js';
+import { isMissingRow } from '../errors.js';
 
 import { openCancellationWatch } from './cancellation.js';
 import type { CancellationWatch } from './cancellation.js';
@@ -409,6 +410,29 @@ async function closeOutTurn(
 }
 
 /**
+ * Bumps the chat's ordering key, unless the chat has been deleted underneath this turn.
+ *
+ * A chat deleted while its last turn was being wound up is not a failure of the wind-up. The turn's
+ * outcome is written before the workspace is released, so `DELETE /api/chats/:id` — which refuses
+ * only while a turn is live — becomes allowed the instant the outcome lands and can commit before
+ * this bump. Treating the row's absence as an error made that ordinary sequence fail the delivery,
+ * which BullMQ then redelivered for a turn that was already finished.
+ *
+ * @param deps - Repositories and logger.
+ * @param chatId - The chat.
+ */
+async function touchSurvivingChat(deps: ProcessorDeps, chatId: string): Promise<void> {
+  try {
+    await deps.repos.chats.touch(chatId);
+  } catch (error) {
+    if (!isMissingRow(error, 'Chat', chatId)) {
+      throw error;
+    }
+    deps.logger.info({ chatId }, 'chat was deleted while its turn was being wound up');
+  }
+}
+
+/**
  * Records the outcome the runtime did not describe itself, and releases the workspace.
  *
  * @param deps - Repositories and publisher.
@@ -432,7 +456,7 @@ async function finalizeTurn(
   }
   await deps.repos.workspaces.setStatus(context.workspace.id, 'READY');
   await deps.repos.workspaces.markActive(context.workspace.id);
-  await deps.repos.chats.touch(context.chat.id);
+  await touchSurvivingChat(deps, context.chat.id);
 }
 
 /**

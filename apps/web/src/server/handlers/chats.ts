@@ -88,6 +88,7 @@ import { compensate } from './compensate';
 import { dispatchTurn } from './dispatch';
 import {
   CLAIM_RELEASED,
+  LIVE_TURN_REFUSAL,
   NO_USAGE,
   requireNoLiveTurn,
   requireSecrets,
@@ -174,10 +175,39 @@ async function readChatDetail(
 }
 
 /**
+ * Gives a turn claim back after a write that was supposed to follow it failed.
+ *
+ * The turn is left `CANCELLED` rather than deleted: the row is what a concurrent request reads to
+ * decide whether the chat's single work slot is free, and a status it can no longer act on is what
+ * frees it.
+ *
+ * @param container - The server container.
+ * @param chatId - Chat the claim was made against.
+ * @param turnId - The claim to release.
+ * @returns Resolves once the claim is back, or once the failure to give it back has been logged.
+ */
+async function releaseTurnClaim(
+  container: ServerContainer,
+  chatId: string,
+  turnId: string,
+): Promise<void> {
+  await compensate(container, { chatId, turnId }, 'could not release a chat turn claim', () =>
+    container.repos.turns.finish(turnId, 'CANCELLED', NO_USAGE, CLAIM_RELEASED),
+  );
+}
+
+/**
  * `POST /api/chats` — creates a chat, its first message and its first turn, then enqueues it.
  *
  * The turn is claimed and dispatched without the check {@link postMessage} runs, because the chat
  * id is minted by this request: no other request can name it until this one has answered.
+ *
+ * The turn is created before the prompt rather than after it, so the prompt can name the turn that
+ * answers it. Every other writer of a message already passes that id; a prompt written without one
+ * is a row nothing can ever repair, because no later write knows which turn it belonged to.
+ * Ordering the two the other way round is what made the id unavailable, and the price of the swap
+ * is a claim to give back when the append fails — the same shape, and the same helper,
+ * {@link postMessage} already uses.
  *
  * @param container - The server container.
  * @param request - The incoming request.
@@ -194,8 +224,14 @@ export function createChat(container: ServerContainer, request: Request): Promis
       repoUrl: body.repoUrl,
       baseBranch: body.baseBranch,
     });
-    await container.repos.messages.append(chat.id, 'USER', body.prompt);
-    const turn = await dispatchTurn(container, await claimTurn(container, chat.id));
+    const turn = await claimTurn(container, chat.id);
+    try {
+      await container.repos.messages.append(chat.id, 'USER', body.prompt, turn.id);
+    } catch (error) {
+      await releaseTurnClaim(container, chat.id, turn.id);
+      throw error;
+    }
+    await dispatchTurn(container, turn);
     return jsonResponse(createChatResponse, { chatId: chat.id, turnId: turn.id }, { status: 201 });
   });
 }
@@ -308,14 +344,9 @@ export function postMessage(
       await requireSoleClaim(container, chat.id, turn.id);
       await requireStillActive(container, chat.id);
       await container.repos.chats.touch(chat.id);
-      await container.repos.messages.append(chat.id, 'USER', body.prompt);
+      await container.repos.messages.append(chat.id, 'USER', body.prompt, turn.id);
     } catch (error) {
-      await compensate(
-        container,
-        { chatId: chat.id, turnId: turn.id },
-        'could not release a chat turn claim',
-        () => container.repos.turns.finish(turn.id, 'CANCELLED', NO_USAGE, CLAIM_RELEASED),
-      );
+      await releaseTurnClaim(container, chat.id, turn.id);
       throw error;
     }
     await dispatchTurn(container, turn);
@@ -434,6 +465,15 @@ export function restoreChat(
  * before the delete because the cascade clears the workspace's chat reference, and the job is sent
  * only when there was one to tear down.
  *
+ * "No live turn" is carried inside the delete rather than checked ahead of it. Read first and
+ * deleted afterwards, the condition described a chat as it was one round trip ago: a message
+ * arriving in that window writes its `QUEUED` turn, passes both of its own re-reads because the
+ * chat is still there and still `ACTIVE`, is answered `201` — and then the cascade removes the very
+ * turn it was told it owned. Naming the condition in the statement hands the decision to the
+ * database, so the claim and the delete cannot both succeed: whichever commits first is seen by the
+ * other. The turn read that used to stand in for this is gone rather than kept alongside it; a
+ * precondition checked in two places is a precondition one caller can satisfy in neither.
+ *
  * The limit is the far side of the same window: an enqueue that fails after the delete committed
  * answers 500 with the row gone and the container still running. There is nothing to compensate —
  * the chat cannot be put back — so the residue is a workspace row whose chat reference is now null
@@ -444,6 +484,8 @@ export function restoreChat(
  * @param request - The incoming request.
  * @param params - Resolved path parameters.
  * @returns `204`.
+ * @throws ConflictError 409 `TURN_IN_PROGRESS` when a turn of the chat is queued or executing.
+ * @throws ResourceNotFoundError 404 when there is no such chat, before or after the read.
  */
 export function deleteChat(
   container: ServerContainer,
@@ -453,9 +495,14 @@ export function deleteChat(
   return withErrorHandling(container, async () => {
     assertSameOrigin(request);
     const chat = await requireChat(container, params.id);
-    await requireNoLiveTurn(container, chat.id);
     const live = await container.repos.workspaces.findLiveByChat(chat.id);
-    await container.repos.chats.delete(chat.id);
+    const outcome = await container.repos.chats.deleteIfIdle(chat.id);
+    if (outcome === 'LIVE_TURN') {
+      throw new ConflictError('TURN_IN_PROGRESS', LIVE_TURN_REFUSAL);
+    }
+    if (outcome === 'MISSING') {
+      throw new ResourceNotFoundError('Chat not found');
+    }
     if (live !== null) {
       await enqueueDestroyChatWorkspace(container.queues.workspaceGc, { chatId: chat.id });
     }

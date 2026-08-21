@@ -9,9 +9,12 @@
  * Postgres foreign-key violation P2003 (not P2025), translated to `NotFoundError('ScheduledJob',
  * jobId)` so callers see what `InMemoryJobRunRepository` raises. `setStatus` runs its guarded
  * `startedAt` stamp and the status update in one transaction, so a failing status update never
- * leaves a QUEUED run that looks started.
+ * leaves a QUEUED run that looks started. `finish` is the one conditional write here: it names the
+ * live statuses in its own `where`, so a run that already carries an outcome is not overwritten by
+ * a second writer and that writer is told it lost.
  */
 import type { Redactor } from '../../secrets/types.ts';
+import { LIVE_RUN_STATUSES } from '../../workspace/lifecycle.ts';
 import type { JobRunStatus } from '../../workspace/types.ts';
 import type { JobRun } from '../entities.ts';
 import type { Prisma, PrismaClient } from '../generated/client.ts';
@@ -90,29 +93,38 @@ export class PrismaJobRunRepository implements JobRunRepository {
     }
   }
 
-  /** @inheritDoc */
-  async finish(id: string, input: FinishJobRunInput): Promise<JobRun> {
-    try {
-      const row = await this.prisma.jobRun.update({
-        where: { id },
-        data: {
-          status: toPrismaJobRunStatus(input.status),
-          inputTokens: input.usage.inputTokens,
-          outputTokens: input.usage.outputTokens,
-          stepCount: input.usage.stepCount,
-          finishedAt: new Date(),
-          ...(input.output === undefined
-            ? {}
-            : { output: input.output === null ? null : this.redactor.redact(input.output) }),
-          ...(input.error === undefined
-            ? {}
-            : { error: input.error === null ? null : this.redactor.redact(input.error) }),
-        },
-      });
-      return toJobRun(row);
-    } catch (error) {
-      translatePrismaError(error, { entity: 'JobRun', id });
-    }
+  /**
+   * @inheritDoc
+   *
+   * The precondition belongs in the `where` clause, so Postgres decides whether this writer is the
+   * first one instead of the caller deciding it from a status it read earlier. A run that already
+   * holds an outcome then matches nothing, which is an ordinary answer rather than the P2025 a
+   * plain `update` would raise.
+   *
+   * `updateManyAndReturn` rather than an `updateMany` followed by a read, which is the shape
+   * `claimStatus` settled on: the row a caller is handed has to be the one this statement wrote. A
+   * second round trip would answer `null` for a run this call had genuinely terminalised, once the
+   * cascade from a deleted job removed it in between.
+   */
+  async finish(id: string, input: FinishJobRunInput): Promise<JobRun | null> {
+    const rows = await this.prisma.jobRun.updateManyAndReturn({
+      where: { id, status: { in: LIVE_RUN_STATUSES.map(toPrismaJobRunStatus) } },
+      data: {
+        status: toPrismaJobRunStatus(input.status),
+        inputTokens: input.usage.inputTokens,
+        outputTokens: input.usage.outputTokens,
+        stepCount: input.usage.stepCount,
+        finishedAt: new Date(),
+        ...(input.output === undefined
+          ? {}
+          : { output: input.output === null ? null : this.redactor.redact(input.output) }),
+        ...(input.error === undefined
+          ? {}
+          : { error: input.error === null ? null : this.redactor.redact(input.error) }),
+      },
+    });
+    const row = rows[0];
+    return row === undefined ? null : toJobRun(row);
   }
 
   /** @inheritDoc */

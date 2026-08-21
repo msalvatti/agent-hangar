@@ -5,14 +5,17 @@
  * Goal: `create` starts a turn QUEUED; `setStatus` stamps `startedAt` only on PREPARING and only
  * via the guarded `updateMany` (never touching an already-set `startedAt`), applies each optional
  * field only when present, redacts a non-null `error` and passes a null `error` through unchanged;
- * `finish` sets usage/finishedAt and redacts `error` only when provided; `requeue` moves a FAILED
- * turn back to QUEUED through a conditional `updateMany` and answers null when nothing matched;
- * failures translate through `translatePrismaError`.
+ * `finish` sets usage/finishedAt, redacts `error` only when provided, and names the live statuses
+ * in its own `where` so a row that already carries an outcome is not overwritten; `requeue` moves a
+ * FAILED turn back to QUEUED through a conditional `updateMany` and answers null when nothing
+ * matched; failures translate through `translatePrismaError`. What those conditions produce against
+ * a real database is pinned by the shared contract, which no client double can settle.
  * Mocks: a Prisma client double exposing only `turn.*` — no database.
  */
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Redactor } from '../../secrets/types.ts';
+import { LIVE_RUN_STATUSES } from '../../workspace/lifecycle.ts';
 import type { PrismaClient } from '../generated/client.ts';
 
 import { NotFoundError } from './errors.ts';
@@ -51,6 +54,7 @@ function fakePrisma(
   overrides: {
     create?: ReturnType<typeof vi.fn>;
     updateMany?: ReturnType<typeof vi.fn>;
+    updateManyAndReturn?: ReturnType<typeof vi.fn>;
     update?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
@@ -59,6 +63,7 @@ function fakePrisma(
     findUnique: vi.fn(() => Promise.resolve(turnRow)),
     findMany: vi.fn(() => Promise.resolve([turnRow])),
     updateMany: overrides.updateMany ?? vi.fn(() => Promise.resolve({ count: 1 })),
+    updateManyAndReturn: overrides.updateManyAndReturn ?? vi.fn(() => Promise.resolve([turnRow])),
     update: overrides.update ?? vi.fn(() => Promise.resolve(turnRow)),
   };
   // `setStatus` runs its guarded timestamp write and its status update inside one
@@ -172,13 +177,18 @@ describe('PrismaTurnRepository', () => {
     await expect(repo.setStatus('missing', 'RUNNING')).rejects.toBeInstanceOf(NotFoundError);
   });
 
-  /** finish() sets usage, finishedAt and status; error omitted leaves the column untouched. */
+  /**
+   * finish() sets usage, finishedAt and status; error omitted leaves the column untouched. The
+   * live statuses travel in the `where`, which is what makes the write conditional: an `update`
+   * by id would satisfy every other assertion here and still overwrite an outcome somebody else
+   * had already recorded.
+   */
   it('finish() sets usage and finishedAt without an error field when omitted', async () => {
     const { client, turn } = fakePrisma();
     const repo = new PrismaTurnRepository(client, fakeRedactor);
     await repo.finish('turn-1', 'SUCCEEDED', { inputTokens: 1, outputTokens: 2, stepCount: 3 });
-    expect(turn.update).toHaveBeenCalledWith({
-      where: { id: 'turn-1' },
+    expect(turn.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: 'turn-1', status: { in: [...LIVE_RUN_STATUSES] } },
       data: {
         status: 'SUCCEEDED',
         inputTokens: 1,
@@ -199,8 +209,8 @@ describe('PrismaTurnRepository', () => {
       { inputTokens: 0, outputTokens: 0, stepCount: 1 },
       'boom',
     );
-    expect(turn.update).toHaveBeenCalledWith({
-      where: { id: 'turn-1' },
+    expect(turn.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: 'turn-1', status: { in: [...LIVE_RUN_STATUSES] } },
       data: {
         status: 'FAILED',
         inputTokens: 0,
@@ -212,13 +222,21 @@ describe('PrismaTurnRepository', () => {
     });
   });
 
-  /** A failure inside finish() also translates through translatePrismaError. */
-  it('finish() translates a missing row to NotFoundError', async () => {
-    const { client } = fakePrisma({ update: vi.fn(() => Promise.reject(p2025())) });
+  /**
+   * Nothing matched, so nothing was recorded and the caller is told so. It is answered rather than
+   * thrown because losing a race is an outcome the caller has to handle, not a fault: the same
+   * reasoning `requeue` already followed.
+   */
+  it('finish() answers null when no live row matched', async () => {
+    const { client } = fakePrisma({ updateManyAndReturn: vi.fn(() => Promise.resolve([])) });
     const repo = new PrismaTurnRepository(client, fakeRedactor);
-    await expect(
-      repo.finish('missing', 'SUCCEEDED', { inputTokens: 0, outputTokens: 0, stepCount: 0 }),
-    ).rejects.toBeInstanceOf(NotFoundError);
+    expect(
+      await repo.finish('missing', 'SUCCEEDED', {
+        inputTokens: 0,
+        outputTokens: 0,
+        stepCount: 0,
+      }),
+    ).toBeNull();
   });
 
   /**
@@ -232,7 +250,7 @@ describe('PrismaTurnRepository', () => {
 
     const requeued = await repo.requeue('turn-1');
 
-    expect(turn.updateMany).toHaveBeenCalledWith({
+    expect(turn.updateManyAndReturn).toHaveBeenCalledWith({
       where: { id: 'turn-1', status: 'FAILED' },
       data: {
         status: 'QUEUED',
@@ -244,7 +262,10 @@ describe('PrismaTurnRepository', () => {
         stepCount: 0,
       },
     });
-    expect(turn.findUnique).toHaveBeenCalledWith({ where: { id: 'turn-1' } });
+    // The row comes back from the statement that wrote it, so nothing re-reads it: a second round
+    // trip could answer `null` for a turn this call had genuinely requeued, once a cascade removed
+    // it in between.
+    expect(turn.findUnique).not.toHaveBeenCalled();
     expect(requeued?.id).toBe('turn-1');
   });
 
@@ -253,7 +274,9 @@ describe('PrismaTurnRepository', () => {
    * not retryable" is an ordinary answer the route turns into a 409, not a failure of the store.
    */
   it('requeue() answers null when no row matched the FAILED condition', async () => {
-    const { client, turn } = fakePrisma({ updateMany: vi.fn(() => Promise.resolve({ count: 0 })) });
+    const { client, turn } = fakePrisma({
+      updateManyAndReturn: vi.fn(() => Promise.resolve([])),
+    });
     const repo = new PrismaTurnRepository(client, fakeRedactor);
 
     expect(await repo.requeue('turn-1')).toBeNull();

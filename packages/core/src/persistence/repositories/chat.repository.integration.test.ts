@@ -4,8 +4,11 @@
  * Layer: integration.
  * Goal: create/getById round-trips every field; `list` orders by `updatedAt` desc and filters by
  * status; `setStatus` stamps/clears `archivedAt`; `updateRestoreHints` changes only the field
- * present; `delete` cascades messages/turns and nulls a workspace's `chatId`; unknown ids throw
- * `NotFoundError`; a canary in the title never reaches the stored row, on create or on rename.
+ * present; `deleteIfIdle` cascades messages/turns and nulls a workspace's `chatId`; an unknown id
+ * throws `NotFoundError` from `setStatus` and is reported as `MISSING` by the delete; a canary in
+ * the title never reaches the stored row, on create or on rename. The shared `deleteIfIdle`
+ * contract runs against this implementation too, so the arbitration rules are pinned here and on
+ * the double from one source.
  * Mocks: none — a real compose Postgres (`AH_ALLOW_DESTRUCTIVE_TESTS=1`, a test-named database).
  */
 import { beforeEach, expect, it } from 'vitest';
@@ -13,6 +16,7 @@ import { beforeEach, expect, it } from 'vitest';
 import type { Redactor } from '../../secrets/types.ts';
 import { assertNoCanary, GITHUB_CANARY } from '../../testing/canaries.ts';
 import type { PrismaClient } from '../generated/client.ts';
+import { describeChatDeleteContract } from '../testing/chat-delete-contract.ts';
 import {
   connectTestDb,
   countRows,
@@ -128,8 +132,8 @@ describeDb('PrismaChatRepository', () => {
     expect(updated.lastPushedSha).toBe('sha1');
   });
 
-  /** delete() cascades messages/turns and nulls the chatId of a workspace it owned. */
-  it('delete() cascades messages and turns, and nulls a workspace chatId', async () => {
+  /** deleteIfIdle() cascades messages/turns and nulls the chatId of a workspace it owned. */
+  it('deleteIfIdle() cascades messages and turns, and nulls a workspace chatId', async () => {
     const repo = new PrismaChatRepository(client, testRedactor);
     const chat = await repo.create({
       title: 'X',
@@ -139,7 +143,11 @@ describeDb('PrismaChatRepository', () => {
     await client.message.create({
       data: { chatId: chat.id, seq: 1, role: 'USER', content: 'hi' },
     });
-    const turn = await client.turn.create({ data: { chatId: chat.id, model: 'gpt-5.6-sol' } });
+    // Finished, because a live turn is exactly what the delete refuses; the cascade this test is
+    // about is the same either way.
+    const turn = await client.turn.create({
+      data: { chatId: chat.id, model: 'gpt-5.6-sol', status: 'SUCCEEDED' },
+    });
     const workspace = await client.workspace.create({
       data: {
         kind: 'CHAT',
@@ -150,7 +158,7 @@ describeDb('PrismaChatRepository', () => {
         branch: 'main',
       },
     });
-    await repo.delete(chat.id);
+    expect(await repo.deleteIfIdle(chat.id)).toBe('DELETED');
     expect(await countRows(client, 'Message')).toBe(0);
     expect(await countRows(client, 'Turn')).toBe(0);
     void turn;
@@ -160,10 +168,30 @@ describeDb('PrismaChatRepository', () => {
     expect(remainingWorkspace.chatId).toBeNull();
   });
 
-  /** setStatus/delete on an unknown id throw NotFoundError. */
-  it('setStatus() and delete() on an unknown id throw NotFoundError', async () => {
+  /** setStatus on an unknown id throws; the conditional delete reports it instead. */
+  it('setStatus() on an unknown id throws NotFoundError and deleteIfIdle() reports MISSING', async () => {
     const repo = new PrismaChatRepository(client, testRedactor);
     await expect(repo.setStatus('missing', 'ARCHIVED')).rejects.toBeInstanceOf(NotFoundError);
-    await expect(repo.delete('missing')).rejects.toBeInstanceOf(NotFoundError);
+    expect(await repo.deleteIfIdle('missing')).toBe('MISSING');
+  });
+});
+
+describeDb('PrismaChatRepository', () => {
+  beforeEach(async () => {
+    client = connectTestDb();
+    await truncateAll(client);
+  });
+
+  describeChatDeleteContract('PrismaChatRepository', {
+    repository: () => new PrismaChatRepository(client, testRedactor),
+    seed: () =>
+      new PrismaChatRepository(client, testRedactor).create({
+        title: 'X',
+        repoUrl: 'https://github.com/a/a',
+        baseBranch: 'main',
+      }),
+    addTurn: async (chatId, status) => {
+      await client.turn.create({ data: { chatId, model: 'gpt-5.6-sol', status } });
+    },
   });
 });

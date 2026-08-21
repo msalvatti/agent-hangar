@@ -5,23 +5,21 @@
  * Goal: `create` starts a run QUEUED and translates a missing scheduled-job parent (P2003) to
  * `NotFoundError('ScheduledJob', jobId)`; `setStatus` stamps
  * `startedAt` only on PREPARING via a guarded `updateMany`, applies `workspaceId`/`error` only
- * when present, redacts a non-null `error`; `finish` redacts `output`/`error` only when provided
- * and leaves them untouched when omitted; `listByJob`/`findRunningByJob` build the expected
- * queries; failures translate through `translatePrismaError`.
+ * when present, redacts a non-null `error`; `finish` redacts `output`/`error` only when provided,
+ * leaves them untouched when omitted, and names the live statuses in its own `where` so a run that
+ * already carries an outcome is not overwritten; `listByJob`/`findRunningByJob` build the expected
+ * queries; failures translate through `translatePrismaError`. What that condition produces against
+ * a real database is pinned by the shared contract, which no client double can settle.
  * Mocks: a Prisma client double exposing only `jobRun.*` — no database.
  */
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Redactor } from '../../secrets/types.ts';
+import { LIVE_RUN_STATUSES } from '../../workspace/lifecycle.ts';
 import type { PrismaClient } from '../generated/client.ts';
 
 import { NotFoundError, UniqueViolationError } from './errors.ts';
 import { PrismaJobRunRepository } from './job-run.repository.ts';
-
-/** Builds a P2025 (record not found) error shaped like `PrismaClientKnownRequestError`. */
-function p2025(): Error & { code: string } {
-  return Object.assign(new Error('Record not found'), { code: 'P2025' });
-}
 
 /** Builds a P2002 error naming the `workspaceId` unique constraint. */
 function p2002Workspace(): Error & { code: string; meta: { target: string[] } } {
@@ -61,6 +59,7 @@ function fakePrisma(
   overrides: {
     create?: ReturnType<typeof vi.fn>;
     updateMany?: ReturnType<typeof vi.fn>;
+    updateManyAndReturn?: ReturnType<typeof vi.fn>;
     update?: ReturnType<typeof vi.fn>;
   } = {},
 ) {
@@ -70,6 +69,7 @@ function fakePrisma(
     findMany: vi.fn(() => Promise.resolve([runRow])),
     findUnique: vi.fn((): Promise<typeof runRow | null> => Promise.resolve(runRow)),
     updateMany: overrides.updateMany ?? vi.fn(() => Promise.resolve({ count: 1 })),
+    updateManyAndReturn: overrides.updateManyAndReturn ?? vi.fn(() => Promise.resolve([runRow])),
     update: overrides.update ?? vi.fn(() => Promise.resolve(runRow)),
   };
   // `setStatus` runs its guarded timestamp write and its status update inside one
@@ -179,7 +179,11 @@ describe('PrismaJobRunRepository', () => {
     ).rejects.toBeInstanceOf(UniqueViolationError);
   });
 
-  /** finish() sets usage/finishedAt without output/error fields when both are omitted. */
+  /**
+   * finish() sets usage/finishedAt without output/error fields when both are omitted, and carries
+   * the live statuses in its `where`: an `update` by id would satisfy every other assertion here
+   * and still overwrite an outcome somebody else had already recorded.
+   */
   it('finish() omits output/error entirely when not provided', async () => {
     const { client, jobRun } = fakePrisma();
     const repo = new PrismaJobRunRepository(client, fakeRedactor);
@@ -187,8 +191,8 @@ describe('PrismaJobRunRepository', () => {
       status: 'SUCCEEDED',
       usage: { inputTokens: 1, outputTokens: 2, stepCount: 1 },
     });
-    expect(jobRun.update).toHaveBeenCalledWith({
-      where: { id: 'run-1' },
+    expect(jobRun.updateManyAndReturn).toHaveBeenCalledWith({
+      where: { id: 'run-1', status: { in: [...LIVE_RUN_STATUSES] } },
       data: {
         status: 'SUCCEEDED',
         inputTokens: 1,
@@ -209,8 +213,8 @@ describe('PrismaJobRunRepository', () => {
       output: 'done',
       error: 'boom',
     });
-    expect(jobRun.update).toHaveBeenLastCalledWith({
-      where: { id: 'run-1' },
+    expect(jobRun.updateManyAndReturn).toHaveBeenLastCalledWith({
+      where: { id: 'run-1', status: { in: [...LIVE_RUN_STATUSES] } },
       data: {
         status: 'FAILED',
         inputTokens: 0,
@@ -227,8 +231,8 @@ describe('PrismaJobRunRepository', () => {
       output: null,
       error: null,
     });
-    expect(jobRun.update).toHaveBeenLastCalledWith({
-      where: { id: 'run-1' },
+    expect(jobRun.updateManyAndReturn).toHaveBeenLastCalledWith({
+      where: { id: 'run-1', status: { in: [...LIVE_RUN_STATUSES] } },
       data: {
         status: 'FAILED',
         inputTokens: 0,
@@ -241,16 +245,19 @@ describe('PrismaJobRunRepository', () => {
     });
   });
 
-  /** finish() translates a missing row to NotFoundError. */
-  it('finish() translates a missing row to NotFoundError', async () => {
-    const { client } = fakePrisma({ update: vi.fn(() => Promise.reject(p2025())) });
+  /**
+   * Nothing matched, so nothing was recorded and the caller is told so rather than being handed an
+   * exception: losing a race is an outcome a caller handles, not a fault.
+   */
+  it('finish() answers null when no live row matched', async () => {
+    const { client } = fakePrisma({ updateManyAndReturn: vi.fn(() => Promise.resolve([])) });
     const repo = new PrismaJobRunRepository(client, fakeRedactor);
-    await expect(
-      repo.finish('missing', {
+    expect(
+      await repo.finish('missing', {
         status: 'SUCCEEDED',
         usage: { inputTokens: 0, outputTokens: 0, stepCount: 0 },
       }),
-    ).rejects.toBeInstanceOf(NotFoundError);
+    ).toBeNull();
   });
 
   /** listByJob() orders newest first and applies limit only when present. */

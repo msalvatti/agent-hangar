@@ -8,14 +8,21 @@
  * `create` and `rename` are the only two ways a title enters, and both go through the `Redactor`.
  * `repoUrl`, `baseBranch`, `workBranch` and `lastPushedSha` are identifiers and are never
  * redacted — the lane rule forbids redacting those.
+ *
+ * `deleteIfIdle` is the one write here that arbitrates rather than overwrites: the "no live turn"
+ * precondition travels inside the `DELETE` as a subquery over `Turn`, so a turn committed before
+ * the statement began is seen by it and the delete matches nothing. Reading the turns first and
+ * deleting by id would leave the decision in the application, which is the race the method exists
+ * to remove.
  */
 import type { Redactor } from '../../secrets/types.ts';
+import { LIVE_RUN_STATUSES } from '../../workspace/lifecycle.ts';
 import type { ChatStatus } from '../../workspace/types.ts';
 import type { Chat } from '../entities.ts';
 import type { PrismaClient } from '../generated/client.ts';
-import type { ChatRepository, CreateChatInput, RestoreHints } from '../ports.ts';
+import type { ChatDeleteOutcome, ChatRepository, CreateChatInput, RestoreHints } from '../ports.ts';
 
-import { toChat, toPrismaChatStatus } from './mappers.ts';
+import { toChat, toPrismaChatStatus, toPrismaTurnStatus } from './mappers.ts';
 import { translatePrismaError } from './prisma-errors.ts';
 
 /** Chat rows. */
@@ -87,13 +94,24 @@ export class PrismaChatRepository implements ChatRepository {
     await this.update(id, {});
   }
 
-  /** @inheritDoc */
-  async delete(id: string): Promise<void> {
-    try {
-      await this.prisma.chat.delete({ where: { id } });
-    } catch (error) {
-      translatePrismaError(error, { entity: 'Chat', id });
+  /**
+   * @inheritDoc
+   *
+   * A `deleteMany` rather than a `delete`, because only the plural form accepts a filter beyond
+   * the primary key; the id is still unique, so it removes one row or none. The follow-up read
+   * runs only when nothing matched, and is what tells a chat held by a live turn apart from a
+   * chat that is no longer there — two answers the caller owes its user differently.
+   */
+  async deleteIfIdle(id: string): Promise<ChatDeleteOutcome> {
+    const live = LIVE_RUN_STATUSES.map(toPrismaTurnStatus);
+    const { count } = await this.prisma.chat.deleteMany({
+      where: { id, turns: { none: { status: { in: live } } } },
+    });
+    if (count > 0) {
+      return 'DELETED';
     }
+    const row = await this.prisma.chat.findUnique({ where: { id }, select: { id: true } });
+    return row === null ? 'MISSING' : 'LIVE_TURN';
   }
 
   /**

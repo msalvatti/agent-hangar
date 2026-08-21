@@ -8,7 +8,9 @@
  * per the port (`get` → null, `setStatus` → `NotFoundError`, `create` on a missing chat →
  * `NotFoundError('Chat', …)`); a `setStatus` whose status update fails rolls the `startedAt` stamp
  * back with it; `requeue` returns a FAILED turn to QUEUED with the failed attempt cleared and
- * leaves every other status untouched.
+ * leaves every other status untouched. The shared conditional-`finish` contract runs against this
+ * implementation too, so "the first outcome is the record" is pinned here and on the double from
+ * one source.
  * Mocks: none — a real compose Postgres.
  */
 import { beforeEach, expect, it } from 'vitest';
@@ -24,6 +26,7 @@ import {
   sqlTemplate,
   truncateAll,
 } from '../testing/db.ts';
+import { describeRunFinishContract } from '../testing/run-finish-contract.ts';
 
 import { NotFoundError } from './errors.ts';
 import { PrismaTurnRepository } from './turn.repository.ts';
@@ -108,11 +111,13 @@ describeDb('PrismaTurnRepository', () => {
       outputTokens: 20,
       stepCount: 3,
     });
-    expect(finished.status).toBe('SUCCEEDED');
-    expect(finished.inputTokens).toBe(10);
-    expect(finished.outputTokens).toBe(20);
-    expect(finished.stepCount).toBe(3);
-    expect(finished.finishedAt).not.toBeNull();
+    expect(finished).toMatchObject({
+      status: 'SUCCEEDED',
+      inputTokens: 10,
+      outputTokens: 20,
+      stepCount: 3,
+    });
+    expect(finished?.finishedAt).not.toBeNull();
   });
 
   /** finish(FAILED) with an error containing a canary stores it redacted. */
@@ -206,5 +211,28 @@ describeDb('PrismaTurnRepository', () => {
     const repo = new PrismaTurnRepository(client, testRedactor);
     expect(await repo.get('missing')).toBeNull();
     await expect(repo.setStatus('missing', 'RUNNING')).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describeDb('PrismaTurnRepository', () => {
+  beforeEach(async () => {
+    client = connectTestDb();
+    await truncateAll(client);
+  });
+
+  describeRunFinishContract('PrismaTurnRepository', {
+    seed: async (status) => {
+      const repo = new PrismaTurnRepository(client, testRedactor);
+      const turn = await repo.create({ chatId: await seedChat(client), model: 'gpt-5.6-sol' });
+      return status === 'QUEUED' ? turn.id : (await repo.setStatus(turn.id, status)).id;
+    },
+    finish: async (id, status) =>
+      (await new PrismaTurnRepository(client, testRedactor).finish(id, status, {
+        inputTokens: 0,
+        outputTokens: 0,
+        stepCount: 0,
+      })) !== null,
+    statusOf: async (id) =>
+      (await new PrismaTurnRepository(client, testRedactor).get(id))?.status ?? null,
   });
 });

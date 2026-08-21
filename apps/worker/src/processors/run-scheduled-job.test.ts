@@ -8,7 +8,7 @@
  * entitled to drive is the subject of `run-scheduled-job-deliveries.test.ts`.
  * Mocks: the shared processor fixtures over in-memory repositories and the fake runner.
  */
-import { DEFAULT_JOB_TURN_LIMITS, JOB_NAMES, nextRunAt } from '@agent-hangar/core';
+import { DEFAULT_JOB_TURN_LIMITS, JOB_NAMES, nextRunAt, NotFoundError } from '@agent-hangar/core';
 import type { WorkspaceSpec } from '@agent-hangar/core';
 import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { describe, expect, it, vi } from 'vitest';
@@ -427,6 +427,55 @@ describe('createRunScheduledJobProcessor', () => {
     );
 
     await expect(run(container, delivery(job.id))).rejects.toThrow(/database is down/);
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * A terminal run status does not mean this processor has finished with the run: the outcome is
+   * written while the container is still up, and the teardown that follows destroys it, marks the
+   * workspace `DESTROYED` and records the run times. A caller that waits for the status and then
+   * deletes the job — which the API allows the moment the run is terminal — therefore lands in the
+   * middle of that teardown. The delete is driven from inside the teardown itself, at the
+   * workspace write that genuinely precedes the run-times update, so the window is the real one.
+   * Before, the run-times write raised on the row that was no longer there and failed the whole
+   * delivery over a sequence the API permits.
+   */
+  it('survives the job being deleted while its run is torn down', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const setStatus = container.repos.workspaces.setStatus.bind(container.repos.workspaces);
+    let deleted = false;
+    vi.spyOn(container.repos.workspaces, 'setStatus').mockImplementation(
+      async (id, status, update) => {
+        const written = await setStatus(id, status, update);
+        if (status === 'DESTROYED' && !deleted) {
+          deleted = true;
+          await container.repos.scheduledJobs.delete(job.id);
+        }
+        return written;
+      },
+    );
+
+    await expect(run(container, delivery(job.id))).resolves.toBeUndefined();
+
+    expect(await container.repos.scheduledJobs.get(job.id)).toBeNull();
+    expect(container.logs.join('')).toContain('scheduled job was deleted while its run');
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * The other side of that branch: a row reported missing under some *other* identifier is not the
+   * delete this teardown is willing to absorb, so it still fails the delivery. Comparing the type
+   * alone would turn a write that went to the wrong row into a silent success.
+   */
+  it('still fails when the missing row is not the job being torn down', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    vi.spyOn(container.repos.scheduledJobs, 'setRunTimes').mockRejectedValue(
+      new NotFoundError('ScheduledJob', 'some-other-job'),
+    );
+
+    await expect(run(container, delivery(job.id))).rejects.toBeInstanceOf(NotFoundError);
     vi.restoreAllMocks();
   });
 

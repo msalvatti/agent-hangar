@@ -29,11 +29,9 @@ import {
   buildJobTurnRequest,
   decideOverlap,
   defaultWorkBranch,
-  InvalidCronError,
   isLiveWorkspaceStatus,
   isTerminalRunStatus,
   JOB_WORK_BRANCH_PREFIX,
-  nextRunAt,
   runScheduledJobPayload,
 } from '@agent-hangar/core';
 import type {
@@ -64,6 +62,7 @@ import {
 import { buildTurnInstructions } from './instructions.js';
 import { provisionWorkspace, takeReadyWorkspace } from './provision-workspace.js';
 import { cancelRun, failRun, formatRunError } from './run-outcome.js';
+import { updateRunTimes } from './run-times.js';
 import { createToolCallRecorder } from './tool-call-recorder.js';
 import type { ToolCallRecorder } from './tool-call-recorder.js';
 import { executeRuntimeTurn } from './turn-executor.js';
@@ -257,29 +256,6 @@ function makeJobRunSink(deps: ProcessorDeps, runId: string, recorder: ToolCallRe
       }
     },
   };
-}
-
-/**
- * Recomputes when the job should next fire.
- *
- * A cron the parser rejects cannot happen for a row the API validated, but the worker must not
- * crash on one: a single bad row would stop every tick of every job.
- *
- * @param deps - Repositories, clock and logger.
- * @param job - The job definition.
- */
-async function updateRunTimes(deps: ProcessorDeps, job: ScheduledJob): Promise<void> {
-  const lastRunAt = deps.clock.now();
-  try {
-    const next = nextRunAt({ cron: job.cron, timezone: job.timezone }, lastRunAt);
-    await deps.repos.scheduledJobs.setRunTimes(job.id, { lastRunAt, nextRunAt: next });
-  } catch (error) {
-    if (!(error instanceof InvalidCronError)) {
-      throw error;
-    }
-    deps.logger.warn({ jobId: job.id }, 'cannot compute the next run of an invalid schedule');
-    await deps.repos.scheduledJobs.setRunTimes(job.id, { lastRunAt });
-  }
 }
 
 /**

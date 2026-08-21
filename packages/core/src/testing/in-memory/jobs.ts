@@ -15,6 +15,7 @@ import type {
   ScheduledJobRepository,
   UpdateScheduledJobInput,
 } from '../../persistence/ports.ts';
+import { LIVE_RUN_STATUSES } from '../../workspace/lifecycle.ts';
 import type { JobRunStatus } from '../../workspace/types.ts';
 
 import type { InMemoryStore } from './store.ts';
@@ -150,8 +151,11 @@ export class InMemoryJobRunRepository implements JobRunRepository {
     return { ...run };
   }
 
-  async finish(id: string, input: FinishJobRunInput): Promise<JobRun> {
-    const run = this.store.require(this.store.jobRuns, 'JobRun', id);
+  async finish(id: string, input: FinishJobRunInput): Promise<JobRun | null> {
+    const run = this.store.jobRuns.get(id);
+    if (run === undefined || !LIVE_RUN_STATUSES.includes(run.status)) {
+      return null;
+    }
     Object.assign(run, {
       status: input.status,
       output: input.output ?? run.output,

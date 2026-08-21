@@ -8,7 +8,7 @@
  * the workspace taken between this turn's read of it and its conditional `BUSY` write.
  * Mocks: the shared processor fixtures, plus a repository double that always loses the create race.
  */
-import { LiveWorkspaceExistsError } from '@agent-hangar/core';
+import { LiveWorkspaceExistsError, NotFoundError } from '@agent-hangar/core';
 import type { ExecSpec, Repositories, Workspace, WorkspaceRepository } from '@agent-hangar/core';
 import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { describe, expect, it, vi } from 'vitest';
@@ -615,5 +615,50 @@ describe('createRunTurnProcessor, racing another writer of the same chat', () =>
     expect([...container.repos.store.workspaces.values()][0]?.status).toBe('STOPPING');
     expect(container.logs.join('')).toContain("another writer took this chat's workspace first");
     vi.restoreAllMocks();
+  });
+});
+
+describe('createRunTurnProcessor, winding a turn up under a delete', () => {
+  /**
+   * A terminal turn status does not mean this processor has finished with the turn: the outcome is
+   * written while the workspace is still `BUSY`, and the wind-up that follows releases it and bumps
+   * the chat's ordering key. `DELETE /api/chats/:id` refuses only while a turn is live, so it
+   * becomes allowed the instant the outcome lands and can commit before that bump. The delete is
+   * driven from inside the wind-up, at the workspace write that genuinely precedes the bump, and it
+   * goes through the same conditional delete the route calls — which answers `DELETED`, proving the
+   * caller was entitled to it. Before, the bump raised on the row that was no longer there and
+   * failed the delivery, which BullMQ then redelivered for a turn that had already finished.
+   */
+  it('survives the chat being deleted the moment its turn finished', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
+    const { chat, turn } = await seedChatWithTurn(container);
+    const outcomes: string[] = [];
+    const markActive = container.repos.workspaces.markActive.bind(container.repos.workspaces);
+    vi.spyOn(container.repos.workspaces, 'markActive').mockImplementation(async (id: string) => {
+      await markActive(id);
+      if (outcomes.length === 0) {
+        outcomes.push(await container.repos.chats.deleteIfIdle(chat.id));
+      }
+    });
+
+    await expect(runTurnOn(container, turn.id)).resolves.toBeUndefined();
+
+    expect(outcomes).toEqual(['DELETED']);
+    expect(container.logs.join('')).toContain('chat was deleted while its turn was being wound up');
+  });
+
+  /**
+   * The other side of that branch: a row reported missing under some *other* identifier is not the
+   * delete this wind-up is willing to absorb, so it still fails the delivery. Comparing the type
+   * alone would turn a write that went to the wrong row into a silent success.
+   */
+  it('still fails when the missing row is not the chat being wound up', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
+    const { turn } = await seedChatWithTurn(container);
+    vi.spyOn(container.repos.chats, 'touch').mockRejectedValue(
+      new NotFoundError('Chat', 'some-other-chat'),
+    );
+
+    await expect(runTurnOn(container, turn.id)).rejects.toBeInstanceOf(NotFoundError);
   });
 });

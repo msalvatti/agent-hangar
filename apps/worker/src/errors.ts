@@ -1,5 +1,6 @@
 /**
- * Telling an infrastructure failure apart from a failure of the work itself.
+ * Telling an infrastructure failure apart from a failure of the work itself, and from a row that a
+ * concurrent delete removed.
  *
  * Layer: utility.
  *
@@ -12,6 +13,7 @@
  * can separate a driver code from a credential — `SUPERSECRETPW` is as much a bare identifier as
  * `ECONNREFUSED` — so nothing carried in by the error is ever echoed, only matched.
  */
+import { NotFoundError } from '@agent-hangar/core';
 
 /**
  * Error codes that mean the worker could not reach the Docker daemon.
@@ -75,4 +77,21 @@ export function isTransportError(error: unknown): boolean {
     current = current instanceof Error ? current.cause : undefined;
   }
   return false;
+}
+
+/**
+ * Reports whether a failure is exactly "the row this write named is no longer there".
+ *
+ * The entity and the identifier are compared, never only the error type: a not-found raised about
+ * some other row is a failure like any other, and treating it as the expected one would swallow
+ * a write that went to the wrong place. It is the same test `handlers/jobs.ts` applies before it
+ * calls a delete already done.
+ *
+ * @param error - The value a repository rejected with.
+ * @param entity - Entity type the caller was writing to, e.g. `ScheduledJob`.
+ * @param id - Identifier the caller named.
+ * @returns `true` when the repository reported that exact row as missing.
+ */
+export function isMissingRow(error: unknown, entity: string, id: string): boolean {
+  return error instanceof NotFoundError && error.entity === entity && error.id === id;
 }
