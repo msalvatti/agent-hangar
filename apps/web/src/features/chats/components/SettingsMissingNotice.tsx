@@ -4,10 +4,9 @@
  * Layer: feature (component).
  */
 import { KeyRound } from 'lucide-react';
-import Link from 'next/link';
 
 import { cn } from '@/shared/lib/cn';
-import { Button } from '@/shared/ui/button';
+import { ButtonLink } from '@/shared/ui/button-link';
 import { Card, CardContent } from '@/shared/ui/card';
 
 /** Props of {@link SettingsMissingNotice}. */
@@ -26,9 +25,9 @@ export function SettingsMissingNotice({ className }: SettingsMissingNoticeProps)
       <CardContent className="flex flex-col items-start gap-3 sm:flex-row sm:items-center">
         <KeyRound aria-hidden="true" className="text-warning size-[18px] shrink-0" />
         <p className="flex-1 text-sm">Add your GitHub token and OpenAI key in Settings to start.</p>
-        <Button render={<Link href="/settings" />} variant="outline" size="sm">
+        <ButtonLink href="/settings" variant="outline" size="sm">
           Open Settings
-        </Button>
+        </ButtonLink>
       </CardContent>
     </Card>
   );

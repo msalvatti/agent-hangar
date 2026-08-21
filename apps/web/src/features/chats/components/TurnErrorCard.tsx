@@ -5,10 +5,9 @@
  */
 'use client';
 
-import Link from 'next/link';
-
 import { ErrorCard } from '@/shared/feedback';
 import { Button } from '@/shared/ui/button';
+import { ButtonLink } from '@/shared/ui/button-link';
 
 import { describeTurnError, README_IMAGE_HREF } from '../lib/turn-error';
 import type { TurnErrorAction } from '../lib/turn-error';
@@ -37,16 +36,16 @@ export interface TurnErrorCardProps {
 function secondaryAction(action: TurnErrorAction) {
   if (action === 'settings') {
     return (
-      <Button render={<Link href="/settings" />} variant="outline" size="sm">
+      <ButtonLink href="/settings" variant="outline" size="sm">
         Open Settings
-      </Button>
+      </ButtonLink>
     );
   }
   if (action === 'readme') {
     return (
-      <Button render={<Link href={README_IMAGE_HREF} />} variant="outline" size="sm">
+      <ButtonLink href={README_IMAGE_HREF} variant="outline" size="sm">
         Read setup guide
-      </Button>
+      </ButtonLink>
     );
   }
   return null;
