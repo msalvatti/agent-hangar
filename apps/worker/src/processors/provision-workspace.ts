@@ -279,7 +279,8 @@ async function resolveWorkspaceOrigin(
  * @param workspaceId - The row the create was for.
  * @param error - What the runner rejected with.
  * @returns The failure result, for the two kinds a retry would only repeat.
- * @throws unknown The original error when the daemon was unreachable, so BullMQ retries the job.
+ * @throws unknown The original error when the daemon was unreachable, so the job is failed rather
+ *   than the workspace; nothing redelivers it, so the caller records the turn or run first.
  */
 async function failedCreate(
   deps: ProcessorDeps,
@@ -385,7 +386,8 @@ async function recordReadyWorkspace(
  * @returns The ready workspace, or why it could not be created.
  * @throws LiveWorkspaceExistsError When the chat already has a live workspace; the caller decides
  *   whether that is a race to reuse or a bug.
- * @throws Error When the Docker daemon is unreachable, so BullMQ retries the job.
+ * @throws Error When the Docker daemon is unreachable, so the job is failed rather than the
+ *   workspace; nothing redelivers it, so the caller records the turn or run first.
  */
 export async function provisionWorkspace(
   deps: ProcessorDeps,

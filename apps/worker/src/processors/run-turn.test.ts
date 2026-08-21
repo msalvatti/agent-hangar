@@ -26,7 +26,7 @@ import {
   setupProcessorContainer,
   TickingClock,
   UnhealthyRunner,
-  whenWorkspaceIsBusy,
+  whenTurnIsExecuting,
 } from '../testing/index.js';
 
 import { STALLED_RECOVERY_NOTE, STALLED_RECOVERY_REASON } from './constants.js';
@@ -246,11 +246,12 @@ describe('createRunTurnProcessor, ensuring a workspace', () => {
   });
 
   /**
-   * A retried delivery cannot trust the workspace either, even when it looks ready: the attempt
-   * that left it behind is no longer reading its exec. A runner that refuses to destroy it must
-   * not stop the recovery.
+   * A workspace left `STOPPING` belonged to a teardown that died after committing to destroy the
+   * container, so the recovery finishes what it started — and a runner that refuses to destroy it
+   * must not stop the row being closed out, because a row nothing can close out is a chat that can
+   * never run another turn.
    */
-  it('recovers on a retry and survives a failed destroy', async () => {
+  it('recovers a workspace left mid-teardown and survives a failed destroy', async () => {
     const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
     const { chat, turn } = await seedChatWithTurn(container);
     const stale = await container.repos.workspaces.create({
@@ -262,9 +263,10 @@ describe('createRunTurnProcessor, ensuring a workspace', () => {
       branch: 'main',
     });
     await container.repos.workspaces.setStatus(stale.id, 'READY', { runnerRef: 'ref-1' });
+    await container.repos.workspaces.setStatus(stale.id, 'STOPPING');
     vi.spyOn(container.runner, 'destroy').mockRejectedValueOnce(new Error('daemon busy'));
 
-    await runTurnOn(container, turn.id, 1);
+    await runTurnOn(container, turn.id);
 
     expect(await container.repos.workspaces.get(stale.id)).toMatchObject({ status: 'DESTROYED' });
     expect(container.logs.join('')).toContain('destroying a stalled workspace failed');
@@ -331,7 +333,7 @@ describe('createRunTurnProcessor, two turns of one chat', () => {
     const container = setupProcessorContainer({ script: heldTurnScript() });
     const { chat, turn } = await seedChatWithTurn(container);
     const second = await container.repos.turns.create({ chatId: chat.id, model: 'test-model' });
-    const busy = whenWorkspaceIsBusy(container);
+    const busy = whenTurnIsExecuting(container);
 
     const first = runTurnOn(container, turn.id);
     await busy;
@@ -361,7 +363,7 @@ describe('createRunTurnProcessor, two turns of one chat', () => {
     const container = setupProcessorContainer({ script: heldTurnScript() });
     const { chat, turn } = await seedChatWithTurn(container);
     const second = await container.repos.turns.create({ chatId: chat.id, model: 'test-model' });
-    const busy = whenWorkspaceIsBusy(container);
+    const busy = whenTurnIsExecuting(container);
 
     const first = runTurnOn(container, turn.id);
     await busy;
@@ -423,11 +425,11 @@ describe('createRunTurnProcessor, one job delivered twice', () => {
   it('leaves the running turn alone when its own job is redelivered', async () => {
     const container = setupProcessorContainer({ script: heldTurnScript() });
     const { turn } = await seedChatWithTurn(container);
-    const busy = whenWorkspaceIsBusy(container);
+    const busy = whenTurnIsExecuting(container);
 
     const first = runTurnOn(container, turn.id);
     await busy;
-    await runTurnOn(container, turn.id, 1);
+    await runTurnOn(container, turn.id);
 
     const during = await container.repos.turns.get(turn.id);
     expect(during === null ? true : isTerminalRunStatus(during.status)).toBe(false);

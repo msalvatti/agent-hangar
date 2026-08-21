@@ -58,7 +58,6 @@ describe('createRunScheduledJobProcessor', () => {
             id: 'gc-1',
             name: JOB_NAMES.reapIdle,
             data: {},
-            attemptsMade: 0,
           });
         }
         return row;
@@ -536,7 +535,7 @@ describe('createRunScheduledJobProcessor', () => {
   });
 
   /**
-   * An unreachable daemon rejects the job so BullMQ retries it, and the teardown still runs.
+   * An unreachable daemon fails the job, and the teardown still runs.
    */
   it('rejects when the daemon is unreachable', async () => {
     const container = setupProcessorContainer({

@@ -53,8 +53,26 @@ export const runScheduledJobPayload = z.object({
 /** `workspace-gc` / `reap-idle` payload (none). */
 export const reapIdlePayload = z.object({});
 
-/** `workspace-gc` / `destroy-chat-workspace` payload (archive destroys the live workspace). */
-export const destroyChatWorkspacePayload = z.object({ chatId: z.string().min(1) });
+/**
+ * `workspace-gc` / `destroy-chat-workspace` payload (archive and delete destroy the live
+ * workspace).
+ *
+ * `workspaceId` is what the consumer addresses the row by, and it is on the payload because the
+ * chat id stops being able to name it. `Workspace.chatId` is `SetNull` on the chat's delete, so a
+ * delete clears the reference in the very step that precedes this job: a consumer looking the row
+ * up by chat would find nothing, destroy the container by its label and leave the row reading
+ * `READY` with a reference to a container that no longer exists. The producer holds the workspace
+ * already — it read it to decide whether to enqueue at all — so it names it.
+ *
+ * The field is optional because a producer that has not been taught to send it must not have its
+ * job rejected: a rejected delivery is a container nothing reclaims, which is worse than the
+ * chat-scoped fallback the consumer keeps for exactly that case. `chatId` stays required — it is
+ * the job's deduplication id, and it is what the consumer's fallback and every log line name.
+ */
+export const destroyChatWorkspacePayload = z.object({
+  chatId: z.string().min(1),
+  workspaceId: z.string().min(1).optional(),
+});
 
 /** Payload of `run-turn`. */
 export type RunTurnPayload = z.infer<typeof runTurnPayload>;

@@ -3,8 +3,8 @@
  *
  * Layer: integration.
  * Goal: against a real Redis, an upsert creates exactly one scheduler per job and updating a cron
- * replaces it rather than adding a second, removal deletes it, and a reconciliation plan converges
- * in one application.
+ * replaces it rather than adding a second, removal deletes it, a reconciliation plan converges in
+ * one application, and the job BullMQ mints from a scheduler carries the producers' retention.
  * Mocks: none — needs `REDIS_URL`. Fails loudly when `CI=1` and Redis is unreachable; skips with
  * an instruction locally. Every run uses its own key prefix and obliterates the queue afterwards.
  */
@@ -16,7 +16,7 @@ import { reconcile } from '../scheduling/reconcile.ts';
 import type { ReconcilableJob } from '../scheduling/reconcile.ts';
 
 import { QUEUE_NAMES } from './contracts.ts';
-import { closeConnection, createQueue, createQueueConnection } from './queues.ts';
+import { closeConnection, createQueue, createQueueConnection, JOB_RETENTION } from './queues.ts';
 import { describeRedis, pingOrFail, uniquePrefix } from './redis.integration-helper.ts';
 import {
   applyReconcilePlan,
@@ -104,6 +104,32 @@ describeRedis('@redis job schedulers', (url) => {
       const second = await applyReconcilePlan(queue, reconcile(jobs, await listSchedulers(queue)));
       expect(second).toEqual({ upserted: [], removed: [] });
       expect((await listSchedulers(queue)).map((entry) => entry.key)).toEqual(['job-b', 'job-c']);
+    },
+    TEST_TIMEOUT_MS,
+  );
+
+  /**
+   * A scheduler is a job factory, and the jobs it mints inherit the template's options and nothing
+   * else — so this is the only place the bound on a repeating job's history can be set, and the
+   * only place it can be observed. Reading it off the delayed job BullMQ actually created is what
+   * distinguishes "the template says so" from "Redis has it": a template field the library ignored
+   * would leave this job unbounded while every unit assertion still passed.
+   */
+  it(
+    "mints delayed jobs that carry the producers' retention",
+    async () => {
+      await upsertScheduledJob(queue, { id: 'job-retained', cron: '0 5 * * *', timezone: 'UTC' });
+
+      const delayed = await queue.getDelayed();
+      const minted = delayed.find(
+        (job) => (job.data as { jobId?: string }).jobId === 'job-retained',
+      );
+      expect(minted?.opts).toMatchObject({
+        removeOnComplete: JOB_RETENTION.removeOnComplete,
+        removeOnFail: JOB_RETENTION.removeOnFail,
+      });
+
+      await removeScheduledJob(queue, 'job-retained');
     },
     TEST_TIMEOUT_MS,
   );

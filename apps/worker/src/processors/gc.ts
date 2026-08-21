@@ -13,11 +13,17 @@
  */
 import {
   destroyChatWorkspacePayload,
+  isLiveWorkspaceStatus,
   JOB_NAMES,
   planOrphanReconcile,
   selectIdleWorkspaces,
 } from '@agent-hangar/core';
-import type { Workspace, WorkspaceHandle, WorkspaceStatus } from '@agent-hangar/core';
+import type {
+  DestroyChatWorkspacePayload,
+  Workspace,
+  WorkspaceHandle,
+  WorkspaceStatus,
+} from '@agent-hangar/core';
 
 import { workspaceClaimKey } from '../claims.js';
 
@@ -342,11 +348,38 @@ async function reapIdle(deps: ProcessorDeps): Promise<GcResult> {
 }
 
 /**
- * Destroys the live workspace of a chat that was archived.
+ * Finds the live workspace a `destroy-chat-workspace` delivery is about.
  *
- * The archive runs on its own queue, so it can arrive while a turn of the chat is executing. Unlike
+ * @param deps - Repositories.
+ * @param payload - The chat, and the workspace when the producer named one.
+ * @returns The workspace to tear down, or `null` when there is no live row to act on.
+ */
+async function findWorkspaceToDestroy(
+  deps: ProcessorDeps,
+  payload: DestroyChatWorkspacePayload,
+): Promise<Workspace | null> {
+  if (payload.workspaceId === undefined) {
+    return deps.repos.workspaces.findLiveByChat(payload.chatId);
+  }
+  const workspace = await deps.repos.workspaces.get(payload.workspaceId);
+  return workspace !== null && isLiveWorkspaceStatus(workspace.status) ? workspace : null;
+}
+
+/**
+ * Destroys the live workspace of a chat that was archived or deleted.
+ *
+ * The row is addressed by the id the delivery carries, and falls back to the chat only when the
+ * delivery carries none. That order is the whole point: a *delete* clears `Workspace.chatId` in the
+ * step before this job runs, because the column is `SetNull` on the chat's cascade — so a lookup by
+ * chat finds nothing for exactly the deliveries that most need to find something. What that used to
+ * leave behind was measured: the container was destroyed by the label sweep below, which writes no
+ * row, and the workspace stayed `READY` with a reference to a container that no longer existed —
+ * a row claiming to be live with nothing to claim, reclaimed only by a later collection pass that
+ * recorded it as a missing container rather than as the teardown it was.
+ *
+ * This job runs on its own queue, so it can arrive while a turn of the chat is executing. Unlike
  * the idle pass, which selects only `READY` rows, this one hands the teardown whatever live
- * workspace the chat has — so the teardown's own rule that only a `READY` workspace may be taken is
+ * workspace it found — so the teardown's own rule that only a `READY` workspace may be taken is
  * what protects the running turn, and the claim taken here only saves this worker the work. A
  * container removed mid-exec fails a turn the user is watching, and the archive loses nothing by
  * waiting: the chat takes no further turn, so the workspace falls idle and the collector reaps it
@@ -356,11 +389,15 @@ async function reapIdle(deps: ProcessorDeps): Promise<GcResult> {
  * is forced here, because forcing it is what would destroy a filesystem somebody is using.
  *
  * @param deps - Runner, repositories, claims and logger.
- * @param chatId - The archived chat.
+ * @param payload - The chat, and the workspace when the producer named one.
  * @returns What the pass changed.
  */
-async function destroyChatWorkspace(deps: ProcessorDeps, chatId: string): Promise<GcResult> {
-  const workspace = await deps.repos.workspaces.findLiveByChat(chatId);
+async function destroyChatWorkspace(
+  deps: ProcessorDeps,
+  payload: DestroyChatWorkspacePayload,
+): Promise<GcResult> {
+  const { chatId } = payload;
+  const workspace = await findWorkspaceToDestroy(deps, payload);
   if (workspace !== null) {
     const key = workspaceClaimKey(workspace);
     if (!deps.claims.claim(key)) {
@@ -415,8 +452,7 @@ export function createGcProcessor(
       return reapIdle(deps);
     }
     if (job.name === JOB_NAMES.destroyChatWorkspace) {
-      const { chatId } = destroyChatWorkspacePayload.parse(job.data);
-      return destroyChatWorkspace(deps, chatId);
+      return destroyChatWorkspace(deps, destroyChatWorkspacePayload.parse(job.data));
     }
     deps.logger.warn({ name: job.name }, 'unknown workspace-gc job');
     return Promise.resolve(NOTHING);

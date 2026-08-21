@@ -8,10 +8,14 @@
  * second copy of "an enabled job that prints the date" would be a second place for the two halves
  * to drift apart.
  */
-import type { AgentEvent, ScheduledJob, WorkspaceHandle } from '@agent-hangar/core';
+import type {
+  AgentEvent,
+  RunScheduledJobPayload,
+  ScheduledJob,
+  WorkspaceHandle,
+} from '@agent-hangar/core';
 
 import { createRunScheduledJobProcessor } from '../processors/run-scheduled-job.js';
-import type { ScheduledDelivery } from '../processors/run-scheduled-job.js';
 import type { ProcessorJob } from '../processors/types.js';
 
 import type { TestContainer } from './test-container.js';
@@ -89,14 +93,13 @@ export async function seedJob(
  */
 export function jobDelivery(
   jobId: string,
-  trigger: ScheduledDelivery['trigger'] = 'SCHEDULE',
+  trigger: RunScheduledJobPayload['trigger'] = 'SCHEDULE',
   extra: { timestamp?: number; runId?: string; stalledCounter?: number } = {},
-): ProcessorJob<ScheduledDelivery> {
+): ProcessorJob<RunScheduledJobPayload> {
   return {
     id: 'delivery-1',
     name: 'run-scheduled-job',
     data: { jobId, trigger, ...(extra.runId === undefined ? {} : { runId: extra.runId }) },
-    attemptsMade: 0,
     ...(extra.stalledCounter === undefined ? {} : { stalledCounter: extra.stalledCounter }),
     ...(extra.timestamp === undefined ? {} : { timestamp: extra.timestamp }),
   };
@@ -110,7 +113,7 @@ export function jobDelivery(
  */
 export async function runScheduledJobOn(
   container: TestContainer,
-  delivery: ProcessorJob<ScheduledDelivery>,
+  delivery: ProcessorJob<RunScheduledJobPayload>,
 ): Promise<void> {
   await createRunScheduledJobProcessor(container)(delivery);
 }

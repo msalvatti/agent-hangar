@@ -1,10 +1,14 @@
 /**
- * In-memory `ScheduledJobRepository` and `JobRunRepository` (unique `JobRun.workspaceId`).
+ * In-memory `ScheduledJobRepository` and `JobRunRepository`.
  *
  * Layer: test double.
+ *
+ * `JobRun.workspaceId` carries two rules, and both are enforced here as well as in Postgres: it is
+ * unique across runs, and it names a workspace of the kind a run may use.
  */
-import { UniqueViolationError } from '../../errors.ts';
+import { NotFoundError, UniqueViolationError } from '../../errors.ts';
 import type { JobRun, ScheduledJob } from '../../persistence/entities.ts';
+import { JOB_RUN_WORKSPACE_KIND } from '../../persistence/ports.ts';
 import type {
   CreateJobRunInput,
   CreateScheduledJobInput,
@@ -15,6 +19,7 @@ import type {
   ScheduledJobRepository,
   UpdateScheduledJobInput,
 } from '../../persistence/ports.ts';
+import { WorkspaceKindMismatchError } from '../../persistence/repositories/errors.ts';
 import { LIVE_RUN_STATUSES } from '../../workspace/lifecycle.ts';
 import type { JobRunStatus } from '../../workspace/types.ts';
 
@@ -131,6 +136,17 @@ export class InMemoryJobRunRepository implements JobRunRepository {
     const run = this.store.require(this.store.jobRuns, 'JobRun', id);
     if (update.workspaceId !== undefined && update.workspaceId !== null) {
       const workspaceId = update.workspaceId;
+      // Both rules the Prisma repository applies, in the order it applies them: a run's workspace
+      // is a job workspace, and no two runs share one. The kind is checked here rather than only
+      // there because this double is what most suites run against, so a rule Postgres alone
+      // enforced would hold only in the runs nobody is watching.
+      const workspace = this.store.workspaces.get(workspaceId);
+      if (workspace === undefined) {
+        throw new NotFoundError('Workspace', workspaceId);
+      }
+      if (workspace.kind !== JOB_RUN_WORKSPACE_KIND) {
+        throw new WorkspaceKindMismatchError(workspaceId, JOB_RUN_WORKSPACE_KIND, workspace.kind);
+      }
       const taken = [...this.store.jobRuns.values()].some(
         (other) => other.id !== id && other.workspaceId === workspaceId,
       );

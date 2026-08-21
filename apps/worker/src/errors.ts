@@ -4,10 +4,15 @@
  *
  * Layer: utility.
  *
- * The distinction decides whether a processor rejects or resolves. A Docker daemon that is not
- * listening is worth retrying, because the next attempt may find it back; a runtime that exited
- * non-zero is not, because the next attempt would do exactly the same thing and the user would
- * collect one failed turn per retry.
+ * The distinction decides whether a processor rejects or resolves, and rejecting is about who is
+ * told rather than about running the work again: nothing redelivers a rejected job here.
+ * `attempts` defaults to zero, no producer sets it and no default job options are declared, so the
+ * only redelivery configured anywhere is stalled recovery, for a job whose worker stopped renewing
+ * its lock. A Docker daemon that is not listening is therefore reported as a failed job, which is
+ * how the operator learns the daemon is down and is not something the user did; a runtime that
+ * exited non-zero is a result of the work itself, so the job resolves and the turn carries the
+ * failure. Either way the turn is recorded and its stream is ended before the processor returns —
+ * a rejection that left the turn open would strand it, because no second delivery is coming.
  *
  * Security: classification is a membership test against literals written in this file. No pattern
  * can separate a driver code from a credential — `SUPERSECRETPW` is as much a bare identifier as
@@ -65,7 +70,8 @@ function readCode(error: unknown): string | undefined {
  * and puts the socket error underneath.
  *
  * @param error - The value a runner call rejected with.
- * @returns `true` when the worker should reject the job so BullMQ retries it.
+ * @returns `true` when the worker should reject the job, reporting infrastructure rather than
+ *   work; nothing redelivers it.
  */
 export function isTransportError(error: unknown): boolean {
   let current: unknown = error;

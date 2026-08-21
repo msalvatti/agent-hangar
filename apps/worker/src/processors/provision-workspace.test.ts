@@ -510,7 +510,7 @@ describe('provisionWorkspace', () => {
   });
 
   /**
-   * An unreachable daemon is the one failure worth retrying, so it is rethrown after the row is
+   * An unreachable daemon is reported as infrastructure, so it is rethrown after the row is
    * closed out rather than reported as a result.
    */
   it('rethrows an unreachable daemon after closing the row out', async () => {

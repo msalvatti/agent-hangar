@@ -13,6 +13,7 @@
  * has exactly one place it can be forgotten and that place is covered by tests.
  */
 import {
+  TURN_EVENT_FIELD,
   TURN_EVENTS_MAXLEN,
   TURN_EVENTS_TTL_SECONDS,
   turnEventsStreamKey,
@@ -33,10 +34,10 @@ export const EVENT_STREAM_TTL_SECONDS = TURN_EVENTS_TTL_SECONDS;
 /**
  * Name of the single stream field carrying one JSON-encoded event.
  *
- * The web app reads it back by this exact name, so the two must agree; it is spelled here until
- * the shared queue contract carries the constant itself.
+ * The web app reads it back by this exact name, so the two must agree; it comes from the shared
+ * queue contract and is re-exported rather than redefined.
  */
-export const TURN_EVENT_FIELD = 'event';
+export { TURN_EVENT_FIELD };
 
 /**
  * The transaction builder the publisher drives; ioredis' `ChainableCommander` satisfies it.

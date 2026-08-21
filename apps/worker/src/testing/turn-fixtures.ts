@@ -209,26 +209,35 @@ export interface ProcessorSetupOptions {
 }
 
 /**
- * Reports the moment a workspace is marked `BUSY`.
+ * Reports the moment a processor is executing inside its workspace.
  *
  * A processor takes its workspace and starts executing in it, and a test that wants to interleave
  * a second processor with the first needs a point to interleave at. This is that point: once it
- * settles, the first processor owns a container and is inside its exec, which is the state every
- * race over a live workspace starts from.
+ * settles, the first processor owns a container and has an exec stream open on it, which is the
+ * state every race over a live workspace starts from.
  *
- * @param container - The container whose repositories are observed.
- * @returns A promise settling when some workspace of this container goes `BUSY`.
+ * It observes the exec rather than the `BUSY` status write, because those are two different
+ * moments and only the later one is what callers assert against. Everything between them is
+ * microtasks, so a promise settling on the status write is ordered against the exec by how many
+ * `await` hops the production code happens to place in between — a number that changes when the
+ * take is routed through one more function, with no behavioural difference at all. Settling on
+ * the first event the exec stream yields makes the claim the callers read a fact instead.
+ *
+ * @param container - The container whose runner is observed.
+ * @returns A promise settling when some exec of this container has started.
  */
-export function whenWorkspaceIsBusy(container: TestContainer): Promise<void> {
-  const repository = container.repos.workspaces;
-  const setStatus = repository.setStatus.bind(repository);
+export function whenTurnIsExecuting(container: TestContainer): Promise<void> {
+  const runner = container.runner;
+  const exec = runner.exec.bind(runner);
   return new Promise<void>((resolve) => {
-    repository.setStatus = async (id, status, update) => {
-      const row = await setStatus(id, status, update);
-      if (status === 'BUSY') {
+    runner.exec = async function* (
+      handle: WorkspaceHandle,
+      spec: ExecSpec,
+    ): AsyncIterable<ExecEvent> {
+      for await (const event of exec(handle, spec)) {
         resolve();
+        yield event;
       }
-      return row;
     };
   });
 }
@@ -326,11 +335,10 @@ export async function seedChatWithTurn(
  * Builds the structural part of a BullMQ delivery of `run-turn`.
  *
  * @param turnId - The turn to run.
- * @param attemptsMade - How many times BullMQ already delivered it.
  * @returns The job.
  */
-export function turnJob(turnId: string, attemptsMade = 0): ProcessorJob<RunTurnPayload> {
-  return { id: turnId, name: 'run-turn', data: { turnId }, attemptsMade };
+export function turnJob(turnId: string): ProcessorJob<RunTurnPayload> {
+  return { id: turnId, name: 'run-turn', data: { turnId } };
 }
 
 /**
@@ -338,12 +346,7 @@ export function turnJob(turnId: string, attemptsMade = 0): ProcessorJob<RunTurnP
  *
  * @param container - The test container, which satisfies `ProcessorDeps`.
  * @param turnId - The turn to run.
- * @param attemptsMade - How many times BullMQ already delivered it.
  */
-export async function runTurnOn(
-  container: TestContainer,
-  turnId: string,
-  attemptsMade = 0,
-): Promise<void> {
-  await createRunTurnProcessor(container)(turnJob(turnId, attemptsMade));
+export async function runTurnOn(container: TestContainer, turnId: string): Promise<void> {
+  await createRunTurnProcessor(container)(turnJob(turnId));
 }

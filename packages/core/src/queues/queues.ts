@@ -198,8 +198,15 @@ function reliabilityOptions(opts: WorkerReliabilityOptions): WorkerReliabilityOp
   };
 }
 
-/** Job options shared by every producer: deterministic id plus bounded retention. */
-const RETENTION = {
+/**
+ * Job options shared by every producer: deterministic id plus bounded retention.
+ *
+ * Exported because a job scheduler needs the same bound and must not restate it. A scheduler
+ * registers a *template* rather than a job, and BullMQ applies that template's options to every
+ * job it mints from it — so a template without these is how a repeating job accumulates one
+ * retained record per tick, for ever, in the queue the producers keep bounded.
+ */
+export const JOB_RETENTION = {
   removeOnComplete: KEEP_COMPLETED_JOBS,
   removeOnFail: KEEP_FAILED_JOBS,
 } as const;
@@ -234,7 +241,7 @@ const DESTROY_RETENTION = {
  */
 export async function enqueueRunTurn(queue: Queue, payload: RunTurnPayload): Promise<string> {
   const data = runTurnPayload.parse(payload);
-  await queue.add(JOB_NAMES.runTurn, data, { jobId: data.turnId, ...RETENTION });
+  await queue.add(JOB_NAMES.runTurn, data, { jobId: data.turnId, ...JOB_RETENTION });
   return data.turnId;
 }
 
@@ -311,7 +318,7 @@ export async function enqueueManualJobRun(
   payload: { jobId: string },
 ): Promise<string> {
   const data = runScheduledJobPayload.parse({ jobId: payload.jobId, trigger: 'MANUAL' });
-  const job = await queue.add(JOB_NAMES.runScheduledJob, data, RETENTION);
+  const job = await queue.add(JOB_NAMES.runScheduledJob, data, JOB_RETENTION);
   if (job.id === undefined) {
     throw new ConfigError('Redis accepted the manual run but returned no job id');
   }
