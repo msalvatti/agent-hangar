@@ -368,6 +368,27 @@ describe('createRunTurnProcessor, failing a turn', () => {
   });
 
   /**
+   * The net is the last thing between the user and a turn that never ends, so it must not become
+   * the thing that hides why. A worker that cannot reach Docker usually cannot reach Postgres
+   * either; the record it fails to write is worth a log line, and the failure the operator has to
+   * see is still the one that started it.
+   */
+  it('reports the original failure when the record it writes cannot be written', async () => {
+    const container = setupProcessorContainer({
+      runner: (options) => new UncreatableRunner(connectionRefused(), options),
+    });
+    const { turn } = await seedChatWithTurn(container);
+    vi.spyOn(container.repos.turns, 'finish').mockRejectedValue(new Error('the database is down'));
+
+    await expect(runTurnOn(container, turn.id)).rejects.toThrow(/ECONNREFUSED/);
+
+    expect(container.logs.join('')).toContain(
+      'recording the outcome of a turn its delivery never finished failed',
+    );
+    vi.restoreAllMocks();
+  });
+
+  /**
    * A turn the processor did record keeps the record it wrote. The outcome the runtime reported is
    * the one the user is owed, so the safety net above must not overwrite it — and must not publish
    * a second terminal event on a stream the UI has already closed.

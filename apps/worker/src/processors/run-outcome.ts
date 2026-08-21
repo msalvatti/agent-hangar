@@ -13,7 +13,7 @@
  * Nothing here decides *whether* a run has ended — that belongs to the processor that was driving
  * it. These are the writers it calls once it has decided.
  */
-import { isTerminalRunStatus } from '@agent-hangar/core';
+import { describeClientFailure, isTerminalRunStatus } from '@agent-hangar/core';
 import type { AgentEvent } from '@agent-hangar/core';
 
 import type { CancellationWatch } from './cancellation.js';
@@ -252,13 +252,28 @@ export async function endUnstartedTurn(
  * one the runtime reported is the one the user is owed. This is the net under the rest, not a
  * second opinion about them: it writes only when nothing else did.
  *
- * @param deps - Publisher and repositories.
+ * It never throws. The caller is on its way to rethrowing the failure that brought it here, and
+ * that failure is the one the operator has to see — a net that replaced it with its own would
+ * report Postgres being unreachable for a turn that stopped because Docker was. The reason a
+ * write here fails is almost always the same outage as the reason there is a turn to close, so
+ * the second failure is described into the log and the first one is left to travel.
+ *
+ * @param deps - Publisher, repositories and logger.
  * @param turnId - The turn the delivery was about.
  */
 export async function endUnreportedTurn(deps: ProcessorDeps, turnId: string): Promise<void> {
-  const turn = await deps.repos.turns.get(turnId);
-  if (turn === null || isTerminalRunStatus(turn.status)) {
-    return;
+  try {
+    const turn = await deps.repos.turns.get(turnId);
+    if (turn === null || isTerminalRunStatus(turn.status)) {
+      return;
+    }
+    await failTurn(deps, turnId, WORKER_ERROR_PREFIX, UNREPORTED_TURN_MESSAGE);
+  } catch (error) {
+    // Described rather than logged whole: a driver builds its message from the connection string
+    // it was configured with, password included.
+    deps.logger.error(
+      { failure: describeClientFailure(error), turnId },
+      'recording the outcome of a turn its delivery never finished failed',
+    );
   }
-  await failTurn(deps, turnId, WORKER_ERROR_PREFIX, UNREPORTED_TURN_MESSAGE);
 }

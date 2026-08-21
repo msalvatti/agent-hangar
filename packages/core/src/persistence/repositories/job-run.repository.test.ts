@@ -145,6 +145,7 @@ describe('PrismaJobRunRepository', () => {
     });
   });
 
+  /** Only PREPARING stamps `startedAt`, so no other status pays for the guarded write. */
   it('setStatus(RUNNING) does not call updateMany', async () => {
     const { client, jobRun } = fakePrisma();
     const repo = new PrismaJobRunRepository(client, fakeRedactor);
@@ -280,6 +281,7 @@ describe('PrismaJobRunRepository', () => {
     });
   });
 
+  /** A limit becomes a `take`, so the runs list is bounded by the query rather than in memory. */
   it('listByJob({ limit }) applies a take clause', async () => {
     const { client, jobRun } = fakePrisma();
     const repo = new PrismaJobRunRepository(client, fakeRedactor);
