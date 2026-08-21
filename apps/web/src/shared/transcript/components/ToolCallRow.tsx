@@ -100,7 +100,7 @@ export function ToolCallRow({ item, defaultOpen = false, onStop, className }: To
     >
       <Collapsible open={open} onOpenChange={setOpen}>
         <div className="hover:bg-muted/50 flex h-11 items-center gap-2 rounded-md px-2 transition-colors">
-          <CollapsibleTrigger className="flex min-w-0 flex-1 items-center gap-2 text-left">
+          <CollapsibleTrigger className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 text-left">
             <ChevronRight
               aria-hidden="true"
               className={cn(
