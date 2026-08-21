@@ -52,6 +52,7 @@ function expectedFor(env: Record<string, string>): Record<string, string> {
     REDIS_URL: `redis://127.0.0.1:${String(info.redisPort)}`,
     COMPOSE_PROJECT_NAME: info.composeProjectName,
     WORKSPACE_NAME_PREFIX: info.workspaceNamePrefix,
+    WORKSPACE_IMAGE: info.workspaceImage,
   };
 }
 
@@ -83,7 +84,6 @@ describe('infra/scripts/env.sh', () => {
   it('prints the documented static defaults', () => {
     const printed = printEnv({});
     expect(printed).toMatchObject({
-      WORKSPACE_IMAGE: 'agent-hangar/workspace:dev',
       WORKSPACE_IDLE_TTL_MIN: '30',
       WORKER_TURN_CONCURRENCY: '2',
       OPENAI_MODEL: 'gpt-5.6-sol',
@@ -286,6 +286,7 @@ describe('env.sh and loadConfig on the identity block', () => {
     expect(config.POSTGRES_DB).toBe(info.postgresDb);
     expect(config.COMPOSE_PROJECT_NAME).toBe(info.composeProjectName);
     expect(config.WORKSPACE_NAME_PREFIX).toBe(info.workspaceNamePrefix);
+    expect(config.WORKSPACE_IMAGE).toBe(info.workspaceImage);
     expect(config.DATABASE_URL).toBe(
       `postgresql://${COMPOSE_DB_CREDENTIALS}@127.0.0.1:${String(info.postgresPort)}/${info.postgresDb}`,
     );

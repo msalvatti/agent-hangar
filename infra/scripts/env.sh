@@ -104,9 +104,13 @@ ah_resolve_env() {
   REDIS_URL="redis://127.0.0.1:${REDIS_PORT}"
   COMPOSE_PROJECT_NAME="agent-hangar-${AH_INSTANCE}"
   WORKSPACE_NAME_PREFIX="ah-ws-${AH_INSTANCE}-"
+  # The image tag is identity for the same reason the compose project and the container prefix
+  # are: `pnpm infra:image` writes a tag, so a tag every checkout on the machine resolves is a tag
+  # every checkout can overwrite, and the rebuild retargets what the others' next containers are
+  # created from without failing anything.
+  WORKSPACE_IMAGE="agent-hangar/workspace:${AH_INSTANCE}"
   # Configuration block. These name what an instance runs with, not which instance it is, so an
   # explicit value wins over the default and no two instances can collide through one.
-  WORKSPACE_IMAGE="${WORKSPACE_IMAGE:-agent-hangar/workspace:dev}"
   MASTER_KEY_PATH="${MASTER_KEY_PATH:-$HOME/.agent-hangar/master.key}"
   WORKSPACE_IDLE_TTL_MIN="${WORKSPACE_IDLE_TTL_MIN:-30}"
   WORKER_TURN_CONCURRENCY="${WORKER_TURN_CONCURRENCY:-2}"

@@ -24,6 +24,7 @@ const INSTANCE_ACTING_SCRIPTS = [
   'archive.sh',
   'db-prune.sh',
   'doctor.sh',
+  'image.sh',
   'rotate-key.sh',
   'run.sh',
   'ws.sh',
@@ -34,7 +35,7 @@ describe('instance resolution call sites', () => {
    * The rule the destructive defect came from: `archive.sh` resolved its instance from the shell
    * while `setup.sh` wrote and read the checkout's env file, so archiving a checkout configured
    * for one instance tore down another's compose stack. Each script has its own behavioural test
-   * for that; this one is what stops a seventh script — or a revert of any of these six — from
+   * for that; this one is what stops the next script — or a revert of any of these — from
    * reintroducing the split without failing anything else.
    */
   it.each(INSTANCE_ACTING_SCRIPTS)('%s resolves the instance through --print-checked', (name) => {

@@ -23,6 +23,25 @@ export const MIN_PORT_BASE = 1024;
 /** Highest port base accepted so that `base + 9` still fits the 10-port block. */
 export const MAX_PORT_BASE = 65_000;
 
+/** Repository half of the workspace image reference; the tag is the instance name. */
+export const WORKSPACE_IMAGE_REPOSITORY = 'agent-hangar/workspace';
+
+/**
+ * Workspace image reference of an instance.
+ *
+ * The tag carries the instance for the same reason the database name, the compose project and the
+ * container prefix do: `pnpm infra:image` writes a tag, and a tag every checkout on the machine
+ * resolves is one every checkout can overwrite. A rebuild elsewhere then decides what this
+ * instance's next container executes, without failing anything — the run reports a result for a
+ * combination of worker and runtime that was never released together.
+ *
+ * @param instance - Slugified instance name.
+ * @returns The image reference workspace containers of that instance are created from.
+ */
+export function workspaceImageFor(instance: string): string {
+  return `${WORKSPACE_IMAGE_REPOSITORY}:${instance}`;
+}
+
 /** Environment keys read by {@link resolveInstance}. */
 export interface InstanceEnv {
   AH_INSTANCE?: string | undefined;
@@ -49,6 +68,8 @@ export interface InstanceInfo {
   composeProjectName: string;
   /** `ah-ws-<instance>-`. */
   workspaceNamePrefix: string;
+  /** `agent-hangar/workspace:<instance>`. */
+  workspaceImage: string;
 }
 
 /**
@@ -110,5 +131,6 @@ export function resolveInstance(options: { env?: InstanceEnv } = {}): InstanceIn
     postgresDb: `agent_hangar_${instance.replaceAll('-', '_')}`,
     composeProjectName: `agent-hangar-${instance}`,
     workspaceNamePrefix: `ah-ws-${instance}-`,
+    workspaceImage: workspaceImageFor(instance),
   };
 }

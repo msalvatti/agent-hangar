@@ -9,7 +9,7 @@
  * name prefix rather than by a label, because the prefix is what `resolveInstance` derives and
  * what `pnpm ws:list` already uses.
  */
-import { exec, succeeds } from './process';
+import { exec } from './process';
 
 /**
  * Names of the workspace containers of one instance, running or stopped.
@@ -48,11 +48,21 @@ export async function reapWorkspaces(namePrefix: string): Promise<string[]> {
 }
 
 /**
- * Whether an image is present locally.
+ * How far the workspace image can be trusted for a run started from this tree.
  *
+ * A present image is not a current one: `pnpm infra:image` stamps a digest of what it carried into
+ * the image, and `infra/scripts/workspace-image.sh` recomputes that digest from the tree and
+ * compares. A run against an image that lags the checkout does not fail — it succeeds and reports
+ * a result for an agent runtime that exists in no tree, which is the whole reason this is asked
+ * before Playwright starts rather than left to be noticed afterwards.
+ *
+ * @param repoRootPath - Absolute path of the repository root.
  * @param image - Image reference.
- * @returns `true` when `docker image inspect` succeeds.
+ * @returns `current`, `stale`, `missing`, or `unavailable` when the question could not be asked.
  */
-export async function imageExists(image: string): Promise<boolean> {
-  return succeeds('docker', ['image', 'inspect', image]);
+export async function workspaceImageStatus(repoRootPath: string, image: string): Promise<string> {
+  const { stdout } = await exec('bash', ['infra/scripts/workspace-image.sh', '--status', image], {
+    cwd: repoRootPath,
+  });
+  return stdout.trim();
 }

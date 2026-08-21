@@ -20,7 +20,7 @@
  * whoever already started them — that is how CI runs, with both as job services.
  * `E2E_SKIP_BUILD=1` reuses the build already in `.next`, for a developer iterating on one spec.
  */
-import { imageExists } from './docker';
+import { workspaceImageStatus } from './docker';
 import { repoRoot, resolveE2eEnv, webRoot } from './env';
 import type { E2eEnv } from './env';
 import { startGitServer } from './gitserver';
@@ -57,6 +57,39 @@ async function composeUp(env: E2eEnv): Promise<void> {
         REDIS_PORT: String(env.redisPort),
       },
     },
+  );
+}
+
+/**
+ * Refuses to start a real run against an image that is missing or does not carry this tree.
+ *
+ * A stale image is the failure this checks for, and it is worse than a missing one: nothing about
+ * the run announces it. The suite comes up, the specs pass or fail, and what they measured was an
+ * agent runtime that is in no tree — measured once, when a rebuild in another checkout retargeted
+ * the shared tag a minute into a run and the recorded failure described a combination of worker
+ * and runtime that had never existed together.
+ *
+ * `unavailable` is refused too. It means the question could not be asked, and a harness that
+ * treated "could not check" as "checked and fine" would be exactly the kind of vacuous pass the
+ * readiness gate below already exists to prevent.
+ *
+ * @param env - The resolved environment.
+ * @throws Error naming the command that fixes it.
+ */
+async function assertWorkspaceImage(env: E2eEnv): Promise<void> {
+  const status = await workspaceImageStatus(repoRoot(), env.workspaceImage);
+  if (status === 'current') {
+    return;
+  }
+  const reason =
+    status === 'missing'
+      ? 'is missing'
+      : status === 'stale'
+        ? 'was not built from this checkout, so the run would measure a runtime this tree does not contain'
+        : 'could not be verified against this checkout';
+  throw new Error(
+    `Workspace image "${env.workspaceImage}" ${reason}. Build it with: ` +
+      `WORKSPACE_IMAGE=${env.workspaceImage} pnpm infra:image`,
   );
 }
 
@@ -98,11 +131,7 @@ export async function prepareStack(
     await composeUp(env);
   }
   await migrate(env);
-  if (!(await imageExists(env.workspaceImage))) {
-    throw new Error(
-      `Workspace image "${env.workspaceImage}" is missing. Build it with: pnpm infra:image`,
-    );
-  }
+  await assertWorkspaceImage(env);
   const gitServer = await startGitServer({
     port: env.gitServerPort,
     instance: env.instance,

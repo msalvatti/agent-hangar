@@ -2,8 +2,8 @@
  * Unit tests for instance resolution.
  *
  * Layer: unit.
- * Goal: precedence `AH_*` → `CONDUCTOR_*` → defaults, the derived ports/db/compose/prefix values,
- * slugify rules, and port-base validation.
+ * Goal: precedence `AH_*` → `CONDUCTOR_*` → defaults, the derived ports/db/compose/prefix/image
+ * values, slugify rules, and port-base validation.
  * Mocks: none (the environment is passed explicitly).
  */
 import { describe, expect, it } from 'vitest';
@@ -16,6 +16,8 @@ import {
   INSTANCE_SLUG_MAX_LENGTH,
   resolveInstance,
   slugifyInstance,
+  WORKSPACE_IMAGE_REPOSITORY,
+  workspaceImageFor,
 } from './instance.ts';
 
 describe('slugifyInstance', () => {
@@ -39,6 +41,17 @@ describe('slugifyInstance', () => {
   });
 });
 
+describe('workspaceImageFor', () => {
+  /**
+   * The tag is the instance name, so no two instances name the same image and `pnpm infra:image`
+   * in one checkout cannot retarget what another checkout's next container is created from.
+   */
+  it('tags the shared repository with the instance', () => {
+    expect(workspaceImageFor('default')).toBe(`${WORKSPACE_IMAGE_REPOSITORY}:default`);
+    expect(workspaceImageFor('feat-x')).toBe('agent-hangar/workspace:feat-x');
+  });
+});
+
 describe('resolveInstance', () => {
   /**
    * Nothing configured: the `default` instance on the 3000 block with the documented derived
@@ -54,6 +67,7 @@ describe('resolveInstance', () => {
       postgresDb: 'agent_hangar_default',
       composeProjectName: 'agent-hangar-default',
       workspaceNamePrefix: 'ah-ws-default-',
+      workspaceImage: 'agent-hangar/workspace:default',
     });
   });
 
@@ -70,6 +84,7 @@ describe('resolveInstance', () => {
       postgresDb: 'agent_hangar_feat_x',
       composeProjectName: 'agent-hangar-feat-x',
       workspaceNamePrefix: 'ah-ws-feat-x-',
+      workspaceImage: 'agent-hangar/workspace:feat-x',
     });
   });
 

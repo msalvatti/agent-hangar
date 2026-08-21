@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import Dockerode from 'dockerode';
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
+import { resolveInstance } from '../../config/instance.ts';
 import { WorkspaceImageMissing } from '../../errors.ts';
 import { assertNoCanary, GITHUB_CANARY } from '../../testing/canaries.ts';
 import type { ExecEvent, WorkspaceHandle, WorkspaceSpec } from '../types.ts';
@@ -34,7 +35,7 @@ const INSTANCE = 'test';
 const NAME_PREFIX = 'ah-ws-test-';
 
 /** Image under test; overridable so the suite can run against a differently tagged build. */
-const IMAGE = process.env.WORKSPACE_IMAGE ?? 'agent-hangar/workspace:dev';
+const IMAGE = process.env.WORKSPACE_IMAGE ?? resolveInstance().workspaceImage;
 
 /** Memory ceiling applied to every workspace of this suite (512 MiB). */
 const MEMORY_BYTES = 536_870_912;

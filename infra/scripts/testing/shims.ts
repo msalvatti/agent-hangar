@@ -55,6 +55,17 @@ export interface DockerShimOptions {
   execExitCode?: number;
 }
 
+/**
+ * Environment variable the `docker` shim reads the workspace image's digest label from.
+ *
+ * Read at spawn time rather than baked into the shim, because a test's expected digest is
+ * computed from the repository's own files and is not known when the shim directory is created.
+ */
+export const SHIM_IMAGE_DIGEST_VAR = 'AH_SHIM_IMAGE_DIGEST';
+
+/** Environment variable the `node` shim answers `scripts/bundle-digest.mjs` from. */
+export const SHIM_BUNDLE_DIGEST_VAR = 'AH_SHIM_BUNDLE_DIGEST';
+
 /** Canned behaviour of the shimmed `pnpm` executable. */
 export interface PnpmShimOptions {
   /** Printed for `pnpm -v`. Default `'11.22.0'`. */
@@ -147,6 +158,11 @@ case "\${1:-}" in
     exit ${infoExit}
     ;;
   image)
+    # \`docker image inspect --format …\` is how the digest label is read; without the flag the
+    # call is only asking whether the image is there at all.
+    if printf '%s\\n' "$*" | grep -q -- '--format'; then
+      printf '%s\\n' "\${AH_SHIM_IMAGE_DIGEST:-}"
+    fi
     exit ${imageExit}
     ;;
   ps)
@@ -261,6 +277,12 @@ log="\${AH_SHIM_LOG:?AH_SHIM_LOG is not set}"
 printf '%s\\n' "node $*" >> "$log"
 if [ "\${1:-}" = '-v' ]; then
   printf '%s\\n' '${nodeVersion}'
+  exit 0
+fi
+# The one script the infra scripts run through \`node\`: it prints the digest of the runtime
+# bundle this tree produces, which a test names instead of building a real bundle.
+if printf '%s\\n' "$*" | grep -q 'bundle-digest.mjs'; then
+  printf '%s\\n' "\${AH_SHIM_BUNDLE_DIGEST:-}"
   exit 0
 fi
 exit 0

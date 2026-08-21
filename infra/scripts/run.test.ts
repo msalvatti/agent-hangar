@@ -5,7 +5,8 @@
  * Goal: instance/port derivation flows into the printed URL and the `--print-only` command line,
  * `AH_*` beats `CONDUCTOR_*`, the env file is created only when absent, `--production` runs
  * the built output on the instance's own port with the development resolution condition off, and
- * the app refuses to start while a master key rotation holds its lock.
+ * the app refuses to start while a master key rotation holds its lock or against a workspace image
+ * that was not built from this checkout.
  * Mocks: docker/pnpm/openssl/node/concurrently via `infra/scripts/testing/shims.ts`.
  */
 import { spawnSync } from 'node:child_process';
@@ -17,6 +18,7 @@ import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { createShimDir, readShimLog, spawnScript } from './testing/shims.js';
+import { expectedWorkspaceDigest, SHIM_BUNDLE_DIGEST } from './testing/workspace-digest.js';
 
 const scriptPath = fileURLToPath(new URL('./run.sh', import.meta.url));
 
@@ -290,5 +292,131 @@ describe('run.sh during a master key rotation', () => {
 
     expect(result.status).toBe(0);
     expect(result.stdout).toContain('worker');
+  });
+});
+
+describe('run.sh and the workspace image', () => {
+  /**
+   * Builds the environment of a run whose workspace image is present and reports a chosen digest.
+   *
+   * @param dir - Sandbox directory used as HOME and for the env file.
+   * @param log - Shim log path.
+   * @param imageDigest - Digest the image carries.
+   * @returns The environment for {@link spawnScript}.
+   */
+  function envWithImage(dir: string, log: string, imageDigest: string): Record<string, string> {
+    return {
+      HOME: dir,
+      AH_ENV_FILE: join(dir, '.env.local'),
+      AH_SHIM_LOG: log,
+      AH_SHIM_BUNDLE_DIGEST: SHIM_BUNDLE_DIGEST,
+      AH_SHIM_IMAGE_DIGEST: imageDigest,
+    };
+  }
+
+  /**
+   * The refusal this check exists for. An image built from another revision starts containers that
+   * run an agent runtime this tree does not contain, and nothing downstream says so: the turn
+   * succeeds, and the result describes a combination of worker and runtime that was never released
+   * together. Measured — a rebuild in a second checkout retargeted the shared tag a minute into a
+   * run. So the app does not start, and the message names the one command that fixes it.
+   */
+  it('refuses to start against an image built from other sources', () => {
+    const dir = sandbox();
+    sandboxes.push(dir);
+    const log = join(dir, 'log');
+    const shimDir = createShimDir({ log, docker: { image: 'present' } });
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      env: envWithImage(dir, log, 'c'.repeat(64)),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('was not built from this checkout');
+    expect(result.stderr).toContain('pnpm infra:image');
+    expect(readShimLog(log).some((line) => line.startsWith('pnpm exec concurrently'))).toBe(false);
+  });
+
+  /** An image that carries this tree is the case the check is silent about. */
+  it('starts against an image built from this checkout', () => {
+    const dir = sandbox();
+    sandboxes.push(dir);
+    const log = join(dir, 'log');
+    const shimDir = createShimDir({ log, docker: { image: 'present' } });
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      env: envWithImage(dir, log, expectedWorkspaceDigest()),
+    });
+    expect(result.status).toBe(0);
+    expect(readShimLog(log).some((line) => line.startsWith('pnpm exec concurrently'))).toBe(true);
+  });
+
+  /**
+   * A missing image is not refused. It is already loud everywhere it matters — the worker logs it,
+   * `/api/health` reports it and the UI shows a banner — and a developer working on the interface
+   * has no reason to build one. Refusing here would only make the interface unstartable without
+   * Docker.
+   */
+  it('starts with no workspace image at all', () => {
+    const dir = sandbox();
+    sandboxes.push(dir);
+    const log = join(dir, 'log');
+    const shimDir = createShimDir({ log, docker: { image: 'missing' } });
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      env: envWithImage(dir, log, expectedWorkspaceDigest()),
+    });
+    expect(result.status).toBe(0);
+    expect(readShimLog(log).some((line) => line.startsWith('pnpm exec concurrently'))).toBe(true);
+  });
+
+  /**
+   * `--print-only` starts nothing, so it asks Docker nothing either: the mode exists to show what
+   * would run, and making it depend on a daemon would break the tests that read the command line.
+   */
+  it('asks Docker nothing in --print-only mode', () => {
+    const dir = sandbox();
+    sandboxes.push(dir);
+    const log = join(dir, 'log');
+    const shimDir = createShimDir({ log, docker: { image: 'present' } });
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--print-only'],
+      env: envWithImage(dir, log, 'c'.repeat(64)),
+    });
+    expect(result.status).toBe(0);
+    expect(readShimLog(log).some((line) => line.startsWith('docker'))).toBe(false);
+  });
+
+  /**
+   * An env file written before the image tag carried the instance still names the machine-global
+   * one, and honouring it would leave the collision this closes in place. The refusal names the
+   * tag the instance derives and both ways to get there.
+   */
+  it('refuses an env file that records another instance-wide image tag', () => {
+    const dir = sandbox();
+    sandboxes.push(dir);
+    const log = join(dir, 'log');
+    const envFile = join(dir, '.env.local');
+    const shimDir = createShimDir({ log, docker: { image: 'present' } });
+    spawnScript(scriptPath, {
+      shimDir,
+      args: ['--print-only'],
+      env: envWithImage(dir, log, expectedWorkspaceDigest()),
+    });
+    writeFileSync(
+      envFile,
+      readFileSync(envFile, 'utf8').replace(
+        'WORKSPACE_IMAGE="agent-hangar/workspace:default"',
+        'WORKSPACE_IMAGE="agent-hangar/workspace:dev"',
+      ),
+    );
+
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      env: envWithImage(dir, log, expectedWorkspaceDigest()),
+    });
+    expect(result.status).toBe(3);
+    expect(result.stderr).toContain('agent-hangar/workspace:default');
+    expect(result.stderr).toContain('pnpm run setup --force');
   });
 });

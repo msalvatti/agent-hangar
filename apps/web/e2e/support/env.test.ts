@@ -8,12 +8,10 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_PORT_BASE, PORT_OFFSETS, PROMPTS, TEST_INSTANCE } from './constants';
 import {
   DEFAULT_GITSERVER_HOST,
-  DEFAULT_WORKSPACE_IMAGE,
   gitServerBindAddress,
   instanceForPortBase,
   repoRoot,
   resolveE2eEnv,
-  resolveWorkspaceImage,
   serverEnv,
   webRoot,
 } from './env';
@@ -38,7 +36,7 @@ describe('resolveE2eEnv', () => {
     expect(env.redisUrl).toBe(`redis://127.0.0.1:${String(DEFAULT_PORT_BASE + 2)}`);
     expect(env.gitServerHost).toBe(DEFAULT_GITSERVER_HOST);
     expect(env.gitServerBindAddress).toBe('127.0.0.1');
-    expect(env.workspaceImage).toBe(DEFAULT_WORKSPACE_IMAGE);
+    expect(env.workspaceImage).toBe(`agent-hangar/workspace:${TEST_INSTANCE}`);
     expect(env.repoUrl).toBe(
       `http://${DEFAULT_GITSERVER_HOST}:${String(DEFAULT_PORT_BASE + 7)}/e2e/sample.git`,
     );
@@ -98,8 +96,8 @@ describe('resolveE2eEnv', () => {
   it('resolves absolute paths inside the suite', () => {
     const env = resolveE2eEnv({ E2E_MODE: 'mock' });
     expect(env.fakeScriptPath.endsWith('/e2e/fake-provider/script.json')).toBe(true);
-    expect(env.masterKeyPath.endsWith('/e2e/.tmp/master.key')).toBe(true);
-    expect(env.tmpDir.endsWith('/e2e/.tmp')).toBe(true);
+    expect(env.masterKeyPath.endsWith(`/e2e/.tmp/${TEST_INSTANCE}/master.key`)).toBe(true);
+    expect(env.tmpDir.endsWith(`/e2e/.tmp/${TEST_INSTANCE}`)).toBe(true);
   });
 });
 
@@ -147,7 +145,40 @@ describe('instanceForPortBase', () => {
     expect(other.postgresDb).not.toBe(one.postgresDb);
     expect(other.composeProjectName).not.toBe(one.composeProjectName);
     expect(other.workspaceNamePrefix).not.toBe(one.workspaceNamePrefix);
-    expect(other.tmpDir).toBe(one.tmpDir);
+    expect(other.workspaceImage).not.toBe(one.workspaceImage);
+    expect(other.tmpDir).not.toBe(one.tmpDir);
+    expect(other.masterKeyPath).not.toBe(one.masterKeyPath);
+  });
+
+  /**
+   * The image tag is derived rather than demanded: a run on a moved port block used to be refused
+   * outright because the only tag it could have named was the machine-global one, which another
+   * checkout could rebuild mid-run. The tag now carries the instance, so the isolation the port
+   * base promises extends to what the containers execute.
+   */
+  it('derives a workspace image tag from the instance', () => {
+    expect(resolveE2eEnv({ E2E_MODE: 'real', E2E_PORT_BASE: '4100' }).workspaceImage).toBe(
+      'agent-hangar/workspace:test-4100',
+    );
+  });
+
+  /** An explicit tag still wins, for a caller that built the image somewhere else. */
+  it('honours an explicit workspace image', () => {
+    expect(
+      resolveE2eEnv({ E2E_MODE: 'real', WORKSPACE_IMAGE: 'agent-hangar/workspace:ci' })
+        .workspaceImage,
+    ).toBe('agent-hangar/workspace:ci');
+  });
+
+  /**
+   * The scratch directory holds the master key, the stack state and the worker log, so two runs
+   * sharing it is two runs overwriting each other's key and adopting each other's worker pid —
+   * the isolation the instance gives the ports, stopping short of the harness's own files.
+   */
+  it('puts the run scratch directory under the instance', () => {
+    const env = resolveE2eEnv({ E2E_MODE: 'real', E2E_PORT_BASE: '4100' });
+    expect(env.tmpDir.endsWith('/e2e/.tmp/test-4100')).toBe(true);
+    expect(env.masterKeyPath).toBe(`${env.tmpDir}/master.key`);
   });
 });
 
@@ -235,57 +266,5 @@ describe('prompts', () => {
   it('keeps every prompt distinct', () => {
     const prompts = Object.values(PROMPTS);
     expect(new Set(prompts).size).toBe(prompts.length);
-  });
-});
-
-describe('resolveWorkspaceImage', () => {
-  /** An explicit tag is what the caller asked for, whatever the port block. */
-  it('uses an explicit image whenever one is named', () => {
-    const image = resolveWorkspaceImage({
-      mode: 'real',
-      portBase: 4200,
-      instance: 'test-4200',
-      override: 'agent-hangar/workspace:w2c',
-    });
-    expect(image).toBe('agent-hangar/workspace:w2c');
-  });
-
-  /** The default port block is the single-checkout case, where the shared tag is nobody else's. */
-  it('falls back to the shared image on the default port block', () => {
-    const image = resolveWorkspaceImage({
-      mode: 'real',
-      portBase: DEFAULT_PORT_BASE,
-      instance: TEST_INSTANCE,
-      override: undefined,
-    });
-    expect(image).toBe(DEFAULT_WORKSPACE_IMAGE);
-  });
-
-  /**
-   * Moving the port block isolates ports, database and containers but not the image tag, which no
-   * instance name reaches: another checkout rebuilding it changes what these containers execute
-   * mid-run. The refusal names the command that builds a private tag rather than failing later
-   * with a measurement nobody can trust.
-   */
-  it('refuses a real run on a moved port block that named no image', () => {
-    expect(() =>
-      resolveWorkspaceImage({
-        mode: 'real',
-        portBase: 4200,
-        instance: 'test-4200',
-        override: undefined,
-      }),
-    ).toThrow(/WORKSPACE_IMAGE=agent-hangar\/workspace:test-4200 pnpm infra:image/);
-  });
-
-  /** A mock run starts no container, so the image it would have used is not a fact about it. */
-  it('allows a mock run on a moved port block without an image', () => {
-    const image = resolveWorkspaceImage({
-      mode: 'mock',
-      portBase: 4200,
-      instance: 'test-4200',
-      override: undefined,
-    });
-    expect(image).toBe(DEFAULT_WORKSPACE_IMAGE);
   });
 });

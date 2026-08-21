@@ -301,7 +301,10 @@ jobs:
       # `--no-experimental-detect-module` disables Node's module-syntax heuristic, so this only
       # succeeds because /opt/agent-runtime/package.json declares `"type": "module"` — proving the
       # manifest was actually copied and is effective, not merely that cli.js happens to run.
-      - run: docker run --rm agent-hangar/workspace:dev node --no-experimental-detect-module /opt/agent-runtime/cli.js --version
+      - name: Run the bundled runtime from the image
+        run: |
+          eval "$(bash infra/scripts/env.sh --print)"
+          docker run --rm "$WORKSPACE_IMAGE" node --no-experimental-detect-module /opt/agent-runtime/cli.js --version
 
   secret-scan:
     name: secret-scan

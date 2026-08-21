@@ -23,6 +23,7 @@ import {
   writeExtraShim,
   writeGnuStatShim,
 } from './testing/shims.js';
+import { expectedWorkspaceDigest, SHIM_BUNDLE_DIGEST } from './testing/workspace-digest.js';
 
 const scriptPath = fileURLToPath(new URL('./setup.sh', import.meta.url));
 
@@ -79,6 +80,11 @@ function baseEnv(f: Fixture, extra: Record<string, string> = {}): Record<string,
     AH_ENV_FILE: f.envFile,
     MASTER_KEY_PATH: f.keyPath,
     AH_SHIM_LOG: f.log,
+    // Step 7 asks whether the image is *current*, not merely present: the `node` shim reports the
+    // bundle digest of this tree and the `docker` shim reports the label the image carries, so
+    // these two agreeing is what "the image needs no rebuild" means.
+    AH_SHIM_BUNDLE_DIGEST: SHIM_BUNDLE_DIGEST,
+    AH_SHIM_IMAGE_DIGEST: expectedWorkspaceDigest(),
     ...extra,
   };
 }
@@ -141,8 +147,8 @@ describe('setup.sh first run', () => {
 
 describe('setup.sh second run', () => {
   /**
-   * A second run neither regenerates the master key nor rebuilds the (now present) image, and
-   * leaves the env file byte-for-byte unchanged.
+   * A second run neither regenerates the master key nor rebuilds the (now present and current)
+   * image, and leaves the env file byte-for-byte unchanged.
    */
   it('is idempotent: no key regeneration, no image rebuild, env file untouched', () => {
     const f = fixture();
@@ -180,6 +186,24 @@ describe('setup.sh second run', () => {
       env: baseEnv(f),
     });
     expect(readFileSync(f.envFile, 'utf8')).not.toContain('stale marker');
+  });
+
+  /**
+   * An image that is present but was built from other sources is rebuilt without being asked.
+   * Reporting "workspace image present" and changing nothing would leave the machine in the one
+   * broken state nothing downstream announces: containers created from that image run code that is
+   * in no tree, and every turn taken through them succeeds.
+   */
+  it('rebuilds an image that is present but does not carry this tree', () => {
+    const f = fixture();
+    const shimDir = createShimDir({ log: f.log, docker: { image: 'present' } });
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--skip-doctor'],
+      env: baseEnv(f, { AH_SHIM_IMAGE_DIGEST: 'c'.repeat(64) }),
+    });
+    expect(result.status).toBe(0);
+    expect(readShimLog(f.log).some((line) => line.includes('infra:image'))).toBe(true);
   });
 
   /**

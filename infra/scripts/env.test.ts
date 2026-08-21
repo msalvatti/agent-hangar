@@ -65,6 +65,7 @@ const IDENTITY_FOR_3100: Record<string, string> = {
   REDIS_URL: 'redis://127.0.0.1:3102',
   COMPOSE_PROJECT_NAME: 'agent-hangar-feat-x',
   WORKSPACE_NAME_PREFIX: 'ah-ws-feat-x-',
+  WORKSPACE_IMAGE: 'agent-hangar/workspace:feat-x',
 };
 
 describe('env.sh instance isolation', () => {
@@ -90,8 +91,12 @@ describe('env.sh instance isolation', () => {
 
   /**
    * The same rule holds for every other identity variable: exporting a conflicting WEB_PORT,
-   * POSTGRES_DB, DATABASE_URL, REDIS_URL, COMPOSE_PROJECT_NAME or WORKSPACE_NAME_PREFIX changes
-   * nothing. Only AH_INSTANCE and AH_PORT_BASE move them.
+   * POSTGRES_DB, DATABASE_URL, REDIS_URL, COMPOSE_PROJECT_NAME, WORKSPACE_NAME_PREFIX or
+   * WORKSPACE_IMAGE changes nothing. Only AH_INSTANCE and AH_PORT_BASE move them.
+   *
+   * `WORKSPACE_IMAGE` joined that list rather than staying configuration: `pnpm infra:image`
+   * writes a tag, so a tag every checkout on the machine resolves is a tag every checkout can
+   * overwrite, and the rebuild silently decides what another instance's next container runs.
    */
   it('ignores every other exported identity variable', () => {
     const printed = printEnv({
@@ -103,6 +108,7 @@ describe('env.sh instance isolation', () => {
       REDIS_URL: 'redis://127.0.0.1:3002',
       COMPOSE_PROJECT_NAME: 'agent-hangar-default',
       WORKSPACE_NAME_PREFIX: 'ah-ws-default-',
+      WORKSPACE_IMAGE: 'agent-hangar/workspace:default',
     });
 
     expect(printed).toMatchObject(IDENTITY_FOR_3100);
@@ -117,7 +123,6 @@ describe('env.sh instance isolation', () => {
     const printed = printEnv({
       AH_INSTANCE: 'feat-x',
       AH_PORT_BASE: '3100',
-      WORKSPACE_IMAGE: 'agent-hangar/workspace:test',
       MASTER_KEY_PATH: '/tmp/ah-test/master.key',
       WORKSPACE_IDLE_TTL_MIN: '5',
       WORKER_TURN_CONCURRENCY: '7',
@@ -127,7 +132,6 @@ describe('env.sh instance isolation', () => {
     });
 
     expect(printed).toMatchObject({
-      WORKSPACE_IMAGE: 'agent-hangar/workspace:test',
       MASTER_KEY_PATH: '/tmp/ah-test/master.key',
       WORKSPACE_IDLE_TTL_MIN: '5',
       WORKER_TURN_CONCURRENCY: '7',

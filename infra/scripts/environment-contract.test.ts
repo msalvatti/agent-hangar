@@ -113,3 +113,25 @@ describe('printed URLs', () => {
     expect(wrong).toEqual([]);
   });
 });
+
+describe('workspace image tag', () => {
+  /**
+   * The tag is the instance's, always derived and never written down. It used to be a constant,
+   * which made it machine-global: `pnpm infra:image` in one checkout retargeted the tag every
+   * other checkout resolves at container creation, so a rebuild here decided what a run there
+   * executed — measured, and the failure it produced described a combination of worker and runtime
+   * that existed in no tree. `env.sh` derives it and `workspace-image.sh` refuses a tag that is not
+   * the instance's; this is what stops a third script from spelling one out again, which no
+   * behavioural test would catch because a constant tag works perfectly on one checkout.
+   *
+   * A tag is derived when the colon is followed by a shell expansion (`$`) or, in prose, by the
+   * placeholder the derivation is described with (`<instance>`). Anything else is a constant.
+   */
+  it.each(shellScripts())(
+    '%s derives the workspace image tag rather than naming one',
+    (_n, src) => {
+      const constants = [...src.matchAll(/agent-hangar\/workspace:(?![$<])\S*/g)].map((m) => m[0]);
+      expect(constants).toEqual([]);
+    },
+  );
+});

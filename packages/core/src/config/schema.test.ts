@@ -45,7 +45,7 @@ describe('loadConfig', () => {
       REDIS_URL: 'redis://127.0.0.1:3002',
       COMPOSE_PROJECT_NAME: 'agent-hangar-default',
       MASTER_KEY_PATH: join(homedir(), '.agent-hangar', 'master.key'),
-      WORKSPACE_IMAGE: 'agent-hangar/workspace:dev',
+      WORKSPACE_IMAGE: 'agent-hangar/workspace:default',
       WORKSPACE_NAME_PREFIX: 'ah-ws-default-',
       WORKSPACE_IDLE_TTL_MIN: 30,
       WORKER_TURN_CONCURRENCY: 2,
@@ -252,6 +252,7 @@ describe('helpers', () => {
         'REDIS_PORT',
         'REDIS_URL',
         'WEB_PORT',
+        'WORKSPACE_IMAGE',
         'WORKSPACE_NAME_PREFIX',
       ].sort(),
     );

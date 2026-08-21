@@ -49,6 +49,18 @@ COPY --chmod=755 runtime/cli.js /opt/agent-runtime/cli.js
 COPY --chmod=644 runtime/cli.js.map /opt/agent-runtime/cli.js.map
 COPY --chmod=644 runtime/package.json /opt/agent-runtime/package.json
 
+# Digest of the tree this image was built from: the bundle's own bytes plus the two files of this
+# build context that are not generated. `infra/scripts/workspace-image.sh` computes it, and every
+# command that is about to use the image recomputes it from its own tree and compares — which is
+# how an image that silently lags its checkout is caught, rather than being discovered later
+# through an error that names the code instead of the image.
+#
+# Declared with no default, so an image built by anything that does not pass it carries an empty
+# label and reads as stale. This is the last instruction that changes, so a digest-only change
+# rebuilds one layer.
+ARG AH_WORKSPACE_DIGEST
+LABEL ah.workspace.digest="$AH_WORKSPACE_DIGEST"
+
 WORKDIR /workspace
 # CMD (not ENTRYPOINT) so the worker can exec into an idling container while `docker run <image> node --version` still works.
 CMD ["sleep", "infinity"]

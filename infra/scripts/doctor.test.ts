@@ -219,6 +219,34 @@ describe('doctor.sh — required failures', () => {
   });
 
   /**
+   * The workspace image is present but was built from other sources. Present is not the question
+   * the row answers: an image that lags the checkout starts containers running code that is in no
+   * tree, and every turn taken through them succeeds, so nothing else on the machine reports it.
+   * The fix is the same one command.
+   */
+  it('reports a workspace image built from other sources with pnpm infra:image', async () => {
+    const box = await sandbox();
+    const shimDir = greenShims(box);
+    const helper = helperShim(shimDir);
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(box, {
+        AH_DOCTOR_HELPER_CMD: helper,
+        AH_SHIM_IMAGE_DIGEST: 'c'.repeat(64),
+      }),
+    });
+    expect(result.status).toBe(1);
+    const rows = JSON.parse(result.stdout) as { check: string; status: string; fix: string }[];
+    expect(rows.find((row) => row.check === 'Workspace image')).toEqual({
+      check: 'Workspace image',
+      status: '✗',
+      detail: 'built from other sources',
+      fix: 'pnpm infra:image',
+    });
+  });
+
+  /**
    * A master key file with mode 644 is refused with `chmod 600`, and the Secrets row is skipped.
    */
   it('reports a wrongly-permissioned master key with chmod 600', async () => {
