@@ -7,6 +7,11 @@
  * the chat loses nothing by being rebuilt from history on its next message — which is exactly why
  * the collector is also what keeps the restore path exercised on every long-lived chat.
  *
+ * The same sentence is why the pass reconciles in three directions rather than one: a container no
+ * row points at, a row no container answers for, and a row whose owner committed to destroying its
+ * container and then never did. All three cost the same memory, and none of them is reported by
+ * anything the user can see.
+ *
  * Everything it destroys is selected by the `ah.instance` label. Several checkouts of this project
  * run side by side on one Docker daemon, so a collector that matched anything broader would reap
  * another instance's live workspace.
@@ -39,6 +44,8 @@ export interface GcResult {
   orphansDestroyed: number;
   /** Live rows closed out because their container is gone. */
   goneMarked: number;
+  /** Containers destroyed on behalf of a teardown that never came back for them. */
+  teardownsFinished: number;
 }
 
 /** `Workspace.failureReason` written for a row whose container no longer exists. */
@@ -48,7 +55,12 @@ export const CONTAINER_MISSING_REASON = 'container missing';
 export const ABANDONED_TEARDOWN_REASON = 'teardown abandoned';
 
 /** Nothing collected. */
-const NOTHING: GcResult = { reaped: 0, orphansDestroyed: 0, goneMarked: 0 };
+const NOTHING: GcResult = {
+  reaped: 0,
+  orphansDestroyed: 0,
+  goneMarked: 0,
+  teardownsFinished: 0,
+};
 
 /**
  * Live statuses whose row a reconciliation pass may close out when its container is missing.
@@ -125,6 +137,12 @@ function abandonedReason(workspace: Workspace): string | null {
  * needs the database and nothing else — which only helps if nothing ahead of it needs more, and a
  * daemon that is down is the likeliest reason a worker died holding these rows. `prepareBoot` is
  * where that ordering is kept, and where it is asserted.
+ *
+ * This is no longer the only thing that reclaims such a row: {@link finishAbandonedTeardowns} does
+ * it in the steady state, for the case a boot cannot help with at all — a teardown that abandoned
+ * its row while its process kept running. The two are not redundant. Boot is the cheaper answer
+ * where it applies, because it needs no daemon and can close out a row while Docker is down, which
+ * is the likeliest reason the last incarnation died.
  *
  * @param deps - Repositories, claims and logger.
  * @returns How many rows were closed out.
@@ -258,24 +276,124 @@ async function closeOutGoneRows(
 }
 
 /**
+ * Finishes the teardowns whose process never came back for the container.
+ *
+ * This is the case the two passes above cannot reach between them. A row is `STOPPING` and its
+ * container is still listed, so it is neither an orphan — a live row points at it — nor a row whose
+ * container is gone. Nothing else can take it either: a teardown refuses anything that is not
+ * `READY`, and so does the idle selection. Until this existed, the only thing that reclaimed such a
+ * row was the next worker boot, so a teardown that lost its process left a container holding its
+ * memory ceiling for as long as the worker kept running.
+ *
+ * It is safe for the same reason `STOPPING` is safe to name in {@link RECONCILABLE_STATUSES}, and
+ * that reason is about what the row's owner has committed to rather than about how old the row is.
+ * A teardown reaches `STOPPING` only after deciding to destroy the container, and writes
+ * `DESTROYED` or `FAILED` next. So finishing the job on its behalf is the thing it was going to do:
+ * where the owner is really gone this is the whole repair, and in the case this project keeps
+ * arguing about — a second worker on one instance — both writers want the same terminal state and
+ * `destroy` is idempotent. What must never be done to a row whose owner is *executing* inside the
+ * container is done to none of them: `BUSY` is not named here, and could not be, because its owner
+ * has committed to the opposite. Any status added here needs a safety argument of its own.
+ *
+ * Age is not consulted, which is what keeps this out of the trap the port-base allocator fell into.
+ * The in-process claim is what stands in for it: every teardown holds its workspace's claim across
+ * the whole sequence, so a claim that can be taken here is a row no teardown of this process is
+ * running. That is a fact rather than an estimate, and it is the reason this may run in the steady
+ * state where an age threshold may not.
+ *
+ * @param deps - Runner, repositories, claims, redactor and logger.
+ * @param live - The live rows, already read.
+ * @param gone - Ids the reconcile plan reported as having no container; those are already closed
+ *   out by {@link closeOutGoneRows} and have nothing left to destroy.
+ * @returns How many containers were destroyed on an abandoned teardown's behalf.
+ */
+async function finishAbandonedTeardowns(
+  deps: ProcessorDeps,
+  live: readonly Workspace[],
+  gone: ReadonlySet<string>,
+): Promise<number> {
+  let finished = 0;
+  for (const workspace of live.filter((row) => row.status === 'STOPPING' && !gone.has(row.id))) {
+    const key = workspaceClaimKey(workspace);
+    if (!deps.claims.claim(key)) {
+      deps.logger.info(
+        { workspaceId: workspace.id },
+        'a teardown is still running; its workspace is left for the next pass',
+      );
+      continue;
+    }
+    try {
+      finished += (await destroyForAbandonedTeardown(deps, workspace)) ? 1 : 0;
+    } finally {
+      deps.claims.release(key);
+    }
+  }
+  return finished;
+}
+
+/**
+ * Destroys one abandoned teardown's container and writes the terminal status it never wrote.
+ *
+ * The status is claimed rather than set, so a teardown that came back after all — the cross-process
+ * case — leaves the row exactly once, whichever of the two writers the database lets through. Both
+ * are writing a terminal status, so the row reads the same either way.
+ *
+ * @param deps - Runner, repositories, redactor and logger.
+ * @param workspace - The `STOPPING` row whose container is still there.
+ * @returns `true` when the container is gone.
+ */
+async function destroyForAbandonedTeardown(
+  deps: ProcessorDeps,
+  workspace: Workspace,
+): Promise<boolean> {
+  try {
+    await deps.runner.destroy({
+      workspaceId: workspace.id,
+      runnerRef: workspace.runnerRef ?? '',
+    });
+  } catch (error) {
+    const failureReason = deps.redactor.redact(
+      error instanceof Error ? error.message : String(error),
+    );
+    await deps.repos.workspaces.claimStatus(workspace.id, 'STOPPING', 'FAILED', { failureReason });
+    deps.logger.error(
+      { err: error, workspaceId: workspace.id },
+      'finishing an abandoned teardown failed',
+    );
+    return false;
+  }
+  await deps.repos.workspaces.claimStatus(workspace.id, 'STOPPING', 'DESTROYED', {
+    failureReason: ABANDONED_TEARDOWN_REASON,
+  });
+  deps.logger.warn(
+    { workspaceId: workspace.id },
+    'finished a teardown whose process never came back for the container',
+  );
+  return true;
+}
+
+/**
  * Destroys containers this instance owns that no live row points at, and closes out the reverse.
  *
  * @param deps - Runner, repositories and logger.
  * @param live - The live rows, already read.
- * @returns How many orphans were destroyed and how many rows were closed out.
+ * @returns How many orphans were destroyed, how many rows were closed out, and how many teardowns
+ *   were finished on an absent owner's behalf.
  */
 async function reconcileOrphans(
   deps: ProcessorDeps,
   live: readonly Workspace[],
-): Promise<Pick<GcResult, 'orphansDestroyed' | 'goneMarked'>> {
+): Promise<Pick<GcResult, 'orphansDestroyed' | 'goneMarked' | 'teardownsFinished'>> {
   const runnerHandles = await deps.runner.list({ [LABELS.instance]: deps.config.AH_INSTANCE });
   const plan = planOrphanReconcile({
     runnerHandles,
     dbLive: live.map((workspace) => ({ id: workspace.id, runnerRef: workspace.runnerRef })),
   });
+  const gone = new Set(plan.markGone);
   const orphansDestroyed = await destroyOrphans(deps, plan.destroyOrphans);
-  const goneMarked = await closeOutGoneRows(deps, live, new Set(plan.markGone));
-  return { orphansDestroyed, goneMarked };
+  const goneMarked = await closeOutGoneRows(deps, live, gone);
+  const teardownsFinished = await finishAbandonedTeardowns(deps, live, gone);
+  return { orphansDestroyed, goneMarked, teardownsFinished };
 }
 
 /**
@@ -385,8 +503,9 @@ async function findWorkspaceToDestroy(
  * waiting: the chat takes no further turn, so the workspace falls idle and the collector reaps it
  * on a later pass. The same holds for the two live statuses nobody can hand over either: a
  * workspace still being created finishes and then falls idle, and one left `STOPPING` by a
- * teardown that died is reclaimed by the reconciliation above once its container is gone. Neither
- * is forced here, because forcing it is what would destroy a filesystem somebody is using.
+ * teardown that died is finished by the reconciliation above, which destroys the container its
+ * owner had already committed to destroying. Neither is forced here, because forcing it is what
+ * would destroy a filesystem somebody is using.
  *
  * @param deps - Runner, repositories, claims and logger.
  * @param payload - The chat, and the workspace when the producer named one.

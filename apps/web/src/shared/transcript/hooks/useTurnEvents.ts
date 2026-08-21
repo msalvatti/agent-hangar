@@ -59,12 +59,33 @@ export interface UseTurnEventsOptions {
   now?: () => number;
 }
 
+/** How a manual reconnect chooses its resume point. */
+export interface ReconnectOptions {
+  /**
+   * Opens the stream with no resume point at all, replaying everything the server still holds.
+   *
+   * The default is to resume from the last event id the reducer folded in, which is right only
+   * while the connection being reopened is the *same* stream that id came from. It is not, in two
+   * cases: following a newly queued turn opens a different stream whose entries the reducer has
+   * never seen, and recovering from a server-declared expiry replaces the transcript with the
+   * persisted record, which the old position no longer describes. Offering a resume point there
+   * asks the server to continue from a frame it never wrote, which it cannot honour and — since it
+   * cannot tell that case from a trimmed one — will answer by expiring the stream.
+   */
+  fromStart?: boolean;
+}
+
 /** Result of {@link useTurnEvents}. */
 export interface UseTurnEventsResult {
   state: TranscriptState;
   dispatch: Dispatch<TranscriptAction>;
-  /** Closes the current connection (if any) and reopens it from the last known event id. */
-  reconnect: () => void;
+  /**
+   * Closes the current connection (if any) and reopens it.
+   *
+   * @param options - Pass `fromStart` when the stream being opened is not the one the current
+   *   resume point came from.
+   */
+  reconnect: (options?: ReconnectOptions) => void;
 }
 
 function parseFrame(raw: string): AgentEvent {
@@ -174,11 +195,14 @@ export function useTurnEvents(options: UseTurnEventsOptions): UseTurnEventsResul
     [url],
   );
 
-  const reconnect = useCallback(() => {
-    sourceRef.current?.close();
-    dispatch({ type: 'connection', connection: 'reconnecting' });
-    openConnection(stateRef.current.lastEventId);
-  }, [openConnection]);
+  const reconnect = useCallback(
+    (options: ReconnectOptions = {}) => {
+      sourceRef.current?.close();
+      dispatch({ type: 'connection', connection: 'reconnecting' });
+      openConnection(options.fromStart === true ? null : stateRef.current.lastEventId);
+    },
+    [openConnection],
+  );
 
   useEffect(() => {
     if (!enabled || url === null) {

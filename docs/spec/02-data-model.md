@@ -27,7 +27,7 @@ erDiagram
 | `Turn` | One user prompt → one agent execution in a workspace. Tracks status, timing, usage, error. | Forever |
 | `Workspace` | Metadata about a container: id, image, status, which chat/job run it served. Never holds state needed for restore. | Forever as a record; container itself is short-lived |
 | `ScheduledJob` | Cron definition + prompt + repo/branch + enabled flag. Mirrors a BullMQ Job Scheduler keyed by `id`. | Until deleted |
-| `JobRun` | One execution of a `ScheduledJob` in a fresh workspace, with recorded output. | Forever |
+| `JobRun` | One execution of a `ScheduledJob` in a fresh workspace, with recorded output and, when it pushed, the branch and commit it pushed to. | Forever |
 | `ToolCallLog` | Every tool call executed by the agent, with **redacted** arguments and a truncated result. | Forever |
 | `Secret` | Encrypted credential envelope (`GITHUB_PAT`, `OPENAI_API_KEY`). | Until replaced/removed |
 
@@ -139,7 +139,7 @@ enum WorkspaceStatus {
   CREATING
   READY
   BUSY        // a turn or job run is executing inside
-  STOPPING
+  STOPPING    // a teardown has committed to destroying the container; only DESTROYED/FAILED follow
   DESTROYED
   FAILED
 }
@@ -215,6 +215,8 @@ model JobRun {
   model         String
   output        String?                           // final assistant message, redacted
   error         String?                           // redacted
+  workBranch    String?                           // branch the run pushed to, as git reported it
+  lastPushedSha String?                           // commit at that branch's head after the push
   inputTokens   Int?
   outputTokens  Int?
   stepCount     Int           @default(0)
@@ -282,11 +284,12 @@ model Secret {
 
 ## 3. Invariants (enforced in domain code and tested)
 
-1. **Redact before write.** Every `String`/`Json` column that can carry agent or tool output (`Message.content`, `Turn.error`, `Workspace.failureReason`, `JobRun.output/error`, `ToolCallLog.args/resultHead`) passes through `redact()` in the repository layer. Repositories are the only writers.
+1. **Redact before write.** Every `String`/`Json` column that can carry agent or tool output (`Message.content`, `Turn.error`, `Workspace.failureReason`, `JobRun.output/error`, `ToolCallLog.args/resultHead`) passes through `redact()` in the repository layer. Repositories are the only writers. Four columns are deliberately outside that list and stay outside it: `Chat.workBranch`/`lastPushedSha` and `JobRun.workBranch`/`lastPushedSha`. They do not carry model or tool output — they carry a branch name and a commit id the runner read back out of git after the push, so there is nothing in them a redactor could find, and passing them through one would only risk mangling a ref that later has to match.
 2. **One live workspace per chat.** At most one `Workspace` with `status IN (CREATING, READY, BUSY, STOPPING)` per `chatId` (partial unique index in the migration: `CREATE UNIQUE INDEX ... ON "Workspace"("chatId") WHERE status IN (...)`).
 3. **Job runs never reuse workspaces.** `JobRun.workspaceId` is unique and the workspace `kind = JOB`; the worker destroys it in a `finally`.
 4. **Secrets table is append-or-replace.** There is never more than one row per key; removing a secret deletes the row. Plaintext never enters Prisma — `Secret` rows are created by `SecretsService`, which returns only `last4` to callers outside the worker's injection path.
 5. **Message sequence is gap-free per chat** (`seq` assigned in a transaction with `SELECT max(seq)`), because the restore context is rebuilt from ordered messages.
+6. **A run's push record is both columns or neither.** `JobRun.workBranch` and `JobRun.lastPushedSha` are written by one statement, from one `git.pushed` event, and the API reports a half-filled pair as no push at all — a branch with no commit describes nothing. The last push of a run is the record: a run may push more than once, and only the newest describes the branch as it stands. These columns are **not** restore hints, unlike the identically named ones on `Chat`: a run always starts in a fresh workspace from the job's prompt, so nothing is ever rebuilt from them. They exist because a run's container is destroyed the moment it ends and its event stream is discarded an hour later, so the branch a scheduled coding job produced would otherwise be recoverable from nowhere in the application.
 
 ## 4. What "workspace context" must be persisted for faithful restore
 
@@ -300,10 +303,12 @@ A restored chat must behave as if the workspace never disappeared, within the li
 | Tool-call history summary | `ToolCallLog` → compacted into `TOOL_SUMMARY` messages at turn end (`"ran `pnpm test` → exit 0 (12 s)"`, `"wrote src/auth.ts (+42/-3)"`) | Lets the model know what it already did without replaying full outputs |
 | Restoration notice | Generated `SYSTEM` message on restore: *"Workspace recreated from history at <time>. Uncommitted changes from the previous workspace are gone; pushed work on `<workBranch>` is checked out."* | Keeps the model honest about filesystem state |
 
+A run has no equivalent of this table and is given none. A `Message` exists to feed the model's history window, and a run has no history — it always starts fresh from the job's prompt — so a run-shaped message channel would be a table with a writer and no reader. What a run does keep is a fact rather than a conversation: `workBranch`/`lastPushedSha`, from which its drawer rebuilds the same push line a chat's `SYSTEM` message carries.
+
 Not persisted (by design): the container filesystem, shell history, installed dependencies. The agent re-installs as needed; this is the price of "cattle, not pets" and is stated in the UI when a chat is restored.
 
 ## 5. Retention
 
 - `Chat`/`Message`/`Turn`/`JobRun`/`ToolCallLog`: kept indefinitely (local app, user's own data). "Delete chat" and "Delete job" cascade.
 - `Workspace` rows for destroyed containers are kept (audit trail); a `pnpm db:prune` script can drop rows older than 30 days.
-- Redis Streams used for SSE replay expire after 1 hour; they are a cache, never the source of truth.
+- Redis Streams used for SSE replay expire after 1 hour and are capped at `TURN_EVENTS_MAXLEN` entries, so a long turn can outrun the window before the hour is up; they are a cache, never the source of truth, and the events route says so rather than serving a partial replay as a whole one.

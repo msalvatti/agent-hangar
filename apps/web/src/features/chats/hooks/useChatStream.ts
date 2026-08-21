@@ -37,7 +37,8 @@ export interface UseChatStreamResult extends UseTurnEventsResult {
  *
  * @param chatId - Chat id.
  * @param mapped - The persisted transcript, remapped on every refetch.
- * @param refetch - Reloads the persisted chat; called once when the server expires the stream.
+ * @param refetch - Reloads the persisted chat; called once when the server can no longer serve the
+ *   client's position in the stream.
  * @param createEventSource - `EventSource` factory, injectable for tests.
  * @returns The transcript state, its dispatch, the followed turn and a way to change it.
  */
@@ -61,6 +62,11 @@ export function useChatStream(
   // The SSE route is per chat, not per turn, so following a newly queued turn does not change the
   // url the hook watches: the connection has to be reopened explicitly. Going from "no turn" to a
   // turn already opens it (the url flips from `null`), and going back to none closes it.
+  //
+  // It reopens from the start, because the new turn writes to a stream of its own and the reducer's
+  // resume point names an entry of the turn before it. Asking to continue from an id the new stream
+  // never contained is unanswerable, and the server treats an absent resume point as a window it
+  // can no longer serve.
   const followedRef = useRef(activeTurnId);
   useEffect(() => {
     const previous = followedRef.current;
@@ -68,7 +74,7 @@ export function useChatStream(
     if (previous === null || activeTurnId === null || previous === activeTurnId) {
       return;
     }
-    reconnect();
+    reconnect({ fromStart: true });
   }, [activeTurnId, reconnect]);
 
   useEffect(() => {
@@ -100,14 +106,37 @@ export function useChatStream(
   }, [activeTurnId, state.phase]);
 
   const expiredRef = useRef(false);
+  const recoveringFromExpiry = useRef(false);
   useEffect(() => {
     if (state.connection !== 'expired' || expiredRef.current) {
       return;
     }
-    // The server dropped the replay window; the persisted chat is now the only complete record.
+    // The server can no longer serve the client's position — the replay cache is gone, or it was
+    // trimmed past the resume point — so the persisted chat is the only complete record left.
     expiredRef.current = true;
+    recoveringFromExpiry.current = true;
     void refetch();
   }, [state.connection, refetch]);
+
+  // Reconciles the screen with the record the refusal-triggered refetch above just reloaded. Fires
+  // once that refetch actually lands — `mapped` changing identity is how a memoized value signals a
+  // new persisted snapshot — and only while `recoveringFromExpiry` marks that the change is the one
+  // this recovery is waiting for rather than some unrelated refetch.
+  //
+  // The reseed the effect above performs is necessary but not sufficient: the url is built from the
+  // chat id, which has not changed, so it stays the same string and the connection effect never
+  // reopens on its own. `reconnect` is what actually asks for a new stream, and it asks from the
+  // start: the only position the reducer holds is the one the server just refused. A chat whose
+  // refetched record shows no live turn is left alone — a finished turn has nothing left to stream.
+  useEffect(() => {
+    if (!recoveringFromExpiry.current || seededFrom.current !== mapped) {
+      return;
+    }
+    recoveringFromExpiry.current = false;
+    if (mapped.activeTurnId !== null) {
+      reconnect({ fromStart: true });
+    }
+  }, [mapped, reconnect]);
 
   const followTurn = useCallback((turnId: string) => {
     expiredRef.current = false;

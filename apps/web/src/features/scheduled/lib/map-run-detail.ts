@@ -3,7 +3,7 @@
  *
  * Layer: service (adapter).
  */
-import { toolNameSchema } from '@agent-hangar/core';
+import { pushedNoticeText, toolNameSchema } from '@agent-hangar/core';
 import type { JobSummary, RunDetail, ToolCallView } from '@agent-hangar/core';
 
 import { TURN_CANCELLED_NOTICE, utf8ByteLength } from '@/shared/transcript';
@@ -100,6 +100,20 @@ export function mapRunDetail(detail: RunDetail, job?: JobSummary): MappedRun {
 
   for (const call of detail.toolCalls) {
     items.push(toToolItem(call));
+  }
+
+  // A run's container is destroyed the moment it ends and its event stream is discarded an hour
+  // later, so the branch it pushed to lives on the run's row and nowhere else. It is placed here for
+  // the same reason a chat's push notice lands here: the push happened after the work and before the
+  // answer that reports it. The wording is the one the live stream shows, so the drawer reads the
+  // same either side of a reload.
+  if (detail.push !== null) {
+    items.push({
+      kind: 'notice',
+      id: `git-${detail.push.sha}`,
+      tone: 'success',
+      text: pushedNoticeText(detail.push.branch, detail.push.sha),
+    });
   }
 
   if (detail.output !== null) {

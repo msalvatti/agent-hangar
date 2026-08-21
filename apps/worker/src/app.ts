@@ -19,7 +19,7 @@ import type { Redis } from 'ioredis';
 import type { ContainerDatabase, WorkerContainer, WorkerRedisClient } from './container.js';
 import { startHeartbeat } from './heartbeat.js';
 import type { RunningHeartbeat } from './heartbeat.js';
-import { LABELS, SHUTDOWN_GRACE_MS, WORKER_RELIABILITY } from './processors/constants.js';
+import { SHUTDOWN_GRACE_MS, WORKER_RELIABILITY } from './processors/constants.js';
 import { createGcProcessor, recoverAbandonedWorkspaces } from './processors/gc.js';
 import { createRunScheduledJobProcessor } from './processors/run-scheduled-job.js';
 import { createRunTurnProcessor } from './processors/run-turn.js';
@@ -66,14 +66,9 @@ export interface CreateWorkerOptions<TRedis> {
  *
  * @param runner - The workspace runner.
  * @param image - Image reference from the configuration.
- * @param instance - Instance name, used as the label selector of the reachability probe.
  * @returns `true` when a workspace can be created from the image.
  */
-export type ImageProbe = (
-  runner: WorkspaceRunner,
-  image: string,
-  instance: string,
-) => Promise<boolean>;
+export type ImageProbe = (runner: WorkspaceRunner, image: string) => Promise<boolean>;
 
 /** How the application builds what it cannot build itself. */
 export interface StartWorkerFactories<TRedis> {
@@ -89,7 +84,7 @@ export interface StartWorkerFactories<TRedis> {
     processor: (job: ProcessorJob<TData>) => Promise<unknown>,
     options: CreateWorkerOptions<TRedis>,
   ): WorkerLike;
-  /** Image presence check; defaults to {@link probeRunnerReachable}. */
+  /** Image presence check; defaults to {@link probeWorkspaceImage}. */
   checkImage?: ImageProbe;
 }
 
@@ -100,23 +95,20 @@ export interface RunningWorker {
 }
 
 /**
- * Proves the runner answers, and defers the image check to the first workspace.
+ * Asks the host whether the workspace image is there.
  *
- * The `WorkspaceRunner` port exposes no image lookup, so nothing cheaper than creating a container
- * can prove the image exists. Listing this instance's workspaces proves the daemon is reachable,
- * which is the half of the check that is worth failing loudly about at boot; the other half is
- * raised by `create` as `WorkspaceImageMissing`, carrying the command that builds it. A contract
- * change request asks the Docker runner for an `imageExists` so this can become a real check.
+ * One call answers both halves of the boot check, and they are deliberately not alike. An image
+ * the host does not have resolves `false`, which is reported and not fatal: the operator builds it
+ * from the health card's banner while the process keeps running. A host that could not be asked at
+ * all rejects, which takes the boot down — that is the daemon being unreachable, and reporting it
+ * as a missing image would tell an operator to rebuild something they already have.
  *
  * @param runner - The workspace runner.
- * @param _image - Image reference; unused until the runner can look one up.
- * @param instance - Instance name, used as the label selector.
- * @returns `true` whenever the daemon answered.
+ * @param image - Image reference from the configuration.
+ * @returns `true` when the host has the image.
+ * @throws unknown Whatever the runner rejected with when the host could not be asked.
  */
-export const probeRunnerReachable: ImageProbe = async (runner, _image, instance) => {
-  await runner.list({ [LABELS.instance]: instance });
-  return true;
-};
+export const probeWorkspaceImage: ImageProbe = (runner, image) => runner.imageExists(image);
 
 /** The real wiring, used by `main.ts`. */
 export const defaultWorkerFactories: StartWorkerFactories<Redis> = {
@@ -212,7 +204,7 @@ function createShutdown(
  *    process exists to consume Redis queues, and a worker that started without its schedulers would
  *    silently never fire a cron job.
  * 3. Probing the runner needs Docker. Its two halves are deliberately not alike, and
- *    {@link probeRunnerReachable} is where that is argued: a *missing image* is reported and not
+ *    {@link probeWorkspaceImage} is where that is argued: a *missing image* is reported and not
  *    fatal, because the user fixes it from the health card's banner while the process keeps
  *    running, whereas an *unreachable daemon* rejects and takes the boot down.
  *
@@ -235,7 +227,7 @@ async function prepareBoot<TDatabase extends ContainerDatabase, TRedis extends W
     logger.warn({ recovered }, 'closed out workspaces the last incarnation was still holding');
   }
   await reconcileSchedulers(container);
-  if (!(await probe(container.runner, config.WORKSPACE_IMAGE, config.AH_INSTANCE))) {
+  if (!(await probe(container.runner, config.WORKSPACE_IMAGE))) {
     logger.error(
       { image: config.WORKSPACE_IMAGE },
       'workspace image missing — build it with: pnpm infra:image',
@@ -258,7 +250,7 @@ export async function startWorker<
   factories: StartWorkerFactories<TRedis>,
 ): Promise<RunningWorker> {
   const { config, logger } = container;
-  await prepareBoot(container, factories.checkImage ?? probeRunnerReachable);
+  await prepareBoot(container, factories.checkImage ?? probeWorkspaceImage);
   const heartbeat = await startHeartbeat(container);
 
   const options = { connection: container.redis.worker, ...WORKER_RELIABILITY };

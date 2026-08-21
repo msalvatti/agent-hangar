@@ -129,9 +129,10 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
   //
   // Reseeding is necessary but not sufficient: `eventsUrl` is built from the run id, which has
   // not changed, so it stays the same string and the connection effect never reopens on its own.
-  // `reconnect()` is what actually asks for a new stream, resuming from the cursor the fresh
-  // reducer state now carries — without it the run would sit fully caught up on history but with
-  // no way to receive whatever happens next.
+  // `reconnect()` is what actually asks for a new stream — without it the run would sit fully
+  // caught up on history but with no way to receive whatever happens next. It asks from the start:
+  // the reducer's resume point is the position the server just said it cannot serve, so offering it
+  // again would be answered with the same refusal.
   useEffect(() => {
     if (!recoveringFromExpiry.current || mapped === null) {
       return;
@@ -139,7 +140,7 @@ export function RunDrawer({ runId, job, open, onOpenChange, createEventSource }:
     recoveringFromExpiry.current = false;
     dispatch({ type: 'reset', items: mapped.items, phase: mapped.phase });
     if (isActivePhase(mapped.phase)) {
-      reconnect();
+      reconnect({ fromStart: true });
     }
   }, [mapped, dispatch, reconnect]);
 

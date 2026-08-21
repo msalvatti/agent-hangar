@@ -51,8 +51,6 @@ import { createTurnEventPublisher } from './events.js';
 import type { EventStreamRedis, TurnEventPublisher } from './events.js';
 import { fakeProviderScriptEnv } from './fake-provider-script.js';
 import type { HeartbeatRedis } from './heartbeat.js';
-import { createImageStatus } from './image-status.js';
-import type { WorkspaceImageStatus } from './image-status.js';
 import { createLogger } from './logger.js';
 import type { WorkerQueues } from './queues.js';
 
@@ -102,8 +100,6 @@ export interface WorkerContainer<
   publisher: TurnEventPublisher;
   commands: CommandListener;
   queues: WorkerQueues;
-  /** What the last workspace create said about the image; published in the health heartbeat. */
-  imageStatus: WorkspaceImageStatus;
   /**
    * Extra variables every workspace container is created with, on top of its credentials.
    *
@@ -347,7 +343,6 @@ export function createContainer<
     publisher: createTurnEventPublisher(queueConnection),
     commands: createCommandListener(subscriber, logger),
     queues,
-    imageStatus: createImageStatus(),
     fakeProviderEnv,
     claims: createWorkspaceClaims(),
     close: createClose(

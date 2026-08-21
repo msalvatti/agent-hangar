@@ -57,6 +57,8 @@ interface MockRun {
   startedAt: string | null;
   finishedAt: string | null;
   output: string | null;
+  /** Where the run pushed, recorded when its stream reports one; `null` when it pushed nothing. */
+  push: { branch: string; sha: string } | null;
   toolCalls: ToolCallView[];
 }
 
@@ -146,6 +148,7 @@ function seedRuns(): MockRun[] {
       startedAt: isoMinutesAgo(121),
       finishedAt: isoMinutesAgo(120),
       output: 'Ran the test suite; all tests passed.',
+      push: { branch: 'agent/job-nightly', sha: '1a2b3c4d5e6f7788' },
       toolCalls: seedToolCalls('run-nightly-success', 'SUCCEEDED'),
     },
     {
@@ -162,6 +165,7 @@ function seedRuns(): MockRun[] {
       startedAt: isoMinutesAgo(2),
       finishedAt: null,
       output: null,
+      push: null,
       toolCalls: seedToolCalls('run-nightly-running', 'RUNNING'),
     },
     {
@@ -178,6 +182,7 @@ function seedRuns(): MockRun[] {
       startedAt: isoMinutesAgo(6 * 24 * 60 - 1),
       finishedAt: isoMinutesAgo(6 * 24 * 60 - 2),
       output: null,
+      push: null,
       toolCalls: [],
     },
     {
@@ -194,6 +199,7 @@ function seedRuns(): MockRun[] {
       startedAt: null,
       finishedAt: isoMinutesAgo(4 * 24 * 60),
       output: null,
+      push: null,
       toolCalls: [],
     },
     {
@@ -210,6 +216,7 @@ function seedRuns(): MockRun[] {
       startedAt: isoMinutesAgo(11),
       finishedAt: isoMinutesAgo(10),
       output: 'Updated CHANGELOG.md with 3 merged pull requests.',
+      push: { branch: 'agent/job-changelog', sha: '9f8e7d6c5b4a3322' },
       toolCalls: [],
     },
     {
@@ -226,6 +233,7 @@ function seedRuns(): MockRun[] {
       startedAt: isoMinutesAgo(3 * 24 * 60 - 1),
       finishedAt: isoMinutesAgo(3 * 24 * 60 - 2),
       output: 'Updated CHANGELOG.md manually.',
+      push: null,
       toolCalls: [],
     },
   ];
@@ -284,6 +292,7 @@ function toRunDetail(run: MockRun): RunDetail {
   return {
     run: toRunSummary(run),
     output: run.output,
+    push: run.push,
     toolCalls: run.toolCalls,
   };
 }
@@ -366,6 +375,25 @@ function settleRun(run: MockRun, outcome: StreamOutcome): MockRun {
 }
 
 /**
+ * Reads the push one scripted frame reports, if any.
+ *
+ * The real worker writes this onto the run's row as the frame goes by, because a run's container
+ * and its event stream both outlive the fact by less than the run's record does. A store that only
+ * streamed it would show the line live and lose it on reload, which is the behaviour this mock
+ * exists to keep out of the doubles.
+ *
+ * @param data - The frame's `data` field.
+ * @returns Where the run pushed, or `null` for any other frame.
+ */
+function pushFromFrame(data: unknown): { branch: string; sha: string } | null {
+  const parsed = agentEventSchema.safeParse(data);
+  if (!parsed.success || parsed.data.type !== 'git.pushed') {
+    return null;
+  }
+  return { branch: parsed.data.branch, sha: parsed.data.sha };
+}
+
+/**
  * Settles a run to its scripted outcome at the moment the terminal frame is actually delivered,
  * not the moment its stream is requested. A cancel that lands while the script is still playing
  * back must win: this only applies the outcome if the run is still active when the frame fires,
@@ -376,12 +404,19 @@ function settleRun(run: MockRun, outcome: StreamOutcome): MockRun {
  * @param frame - The frame `createSseResponse` just enqueued.
  */
 function settleOnTerminalFrame(runId: string, frame: SseScriptFrame): void {
-  const outcome = outcomeFromFrame(frame.data);
-  if (outcome === null) {
-    return;
-  }
+  // Read once per frame, after whatever an earlier frame of the same stream already wrote: a push
+  // recorded a frame ago is on this copy, so settling from it never drops it.
   const current = findRun(runId);
   if (current === undefined || !isActiveRunStatus(current.status)) {
+    return;
+  }
+  const push = pushFromFrame(frame.data);
+  if (push !== null) {
+    runs = runs.map((candidate) => (candidate.id === runId ? { ...candidate, push } : candidate));
+    return;
+  }
+  const outcome = outcomeFromFrame(frame.data);
+  if (outcome === null) {
     return;
   }
   const settled = settleRun(current, outcome);
@@ -472,6 +507,7 @@ export const scheduledHandlers = [
         startedAt: null,
         finishedAt: now,
         output: null,
+        push: null,
         toolCalls: [],
       };
       runs = [...runs, skipped];
@@ -494,6 +530,7 @@ export const scheduledHandlers = [
       startedAt: now,
       finishedAt: null,
       output: null,
+      push: null,
       toolCalls: [],
     };
     runs = [...runs, started];

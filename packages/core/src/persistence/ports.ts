@@ -336,10 +336,31 @@ export interface FinishJobRunInput {
   error?: string | null;
 }
 
+/** Where a run's work ended up, as git reported it after the push. */
+export interface JobRunPush {
+  /** Branch the push landed on. */
+  workBranch: string;
+  /** Commit at that branch's head. */
+  lastPushedSha: string;
+}
+
 /** Job run rows. */
 export interface JobRunRepository {
   /** Creates a `QUEUED` run. */
   create(input: CreateJobRunInput): Promise<JobRun>;
+  /**
+   * Records where the run pushed, overwriting whatever an earlier push of the same run recorded.
+   *
+   * A run may push more than once, and the last push is the one that describes the branch as it
+   * stands, which is what the run's record is for. Unlike a chat's restore hints, nothing is ever
+   * rebuilt from this: a run always starts in a fresh workspace from the job's prompt.
+   *
+   * @param id - Run that pushed.
+   * @param push - Branch and commit git reported.
+   * @returns The updated run.
+   * @throws NotFoundError When no run carries that id.
+   */
+  recordPush(id: string, push: JobRunPush): Promise<JobRun>;
   /** Sets the status; `PREPARING` stamps `startedAt` when unset. */
   setStatus(id: string, status: JobRunStatus, update?: JobRunStatusUpdate): Promise<JobRun>;
   /**

@@ -13,6 +13,7 @@ import type {
   CreateJobRunInput,
   CreateScheduledJobInput,
   FinishJobRunInput,
+  JobRunPush,
   JobRunRepository,
   JobRunStatusUpdate,
   RunTimes,
@@ -116,6 +117,8 @@ export class InMemoryJobRunRepository implements JobRunRepository {
       model: input.model,
       output: null,
       error: null,
+      workBranch: null,
+      lastPushedSha: null,
       inputTokens: null,
       outputTokens: null,
       stepCount: 0,
@@ -125,6 +128,13 @@ export class InMemoryJobRunRepository implements JobRunRepository {
       finishedAt: null,
     };
     this.store.jobRuns.set(run.id, run);
+    return { ...run };
+  }
+
+  async recordPush(id: string, push: JobRunPush): Promise<JobRun> {
+    const run = this.store.require(this.store.jobRuns, 'JobRun', id);
+    run.workBranch = push.workBranch;
+    run.lastPushedSha = push.lastPushedSha;
     return { ...run };
   }
 

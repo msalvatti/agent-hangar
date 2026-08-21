@@ -22,7 +22,6 @@ import {
 import type { AppConfig, Clock, WorkerHeartbeat, WorkspaceRunner } from '@agent-hangar/core';
 import type { Logger } from 'pino';
 
-import type { WorkspaceImageStatus } from './image-status.js';
 import { LABELS } from './processors/constants.js';
 
 /** Seconds to milliseconds. */
@@ -47,7 +46,6 @@ export interface HeartbeatDeps {
   clock: Clock;
   logger: Logger;
   runner: WorkspaceRunner;
-  imageStatus: WorkspaceImageStatus;
   redis: { queue: HeartbeatRedis };
 }
 
@@ -55,16 +53,25 @@ export interface HeartbeatDeps {
  * Takes one set of readings and publishes them.
  *
  * A daemon that does not answer is a reading, not a failure: the whole point of the key is to let
- * the UI say "Docker is down" rather than to make the worker fall over.
+ * the UI say "Docker is down" rather than to make the worker fall over. Both readings come from
+ * the same attempt for that reason — whatever the runner could not answer leaves the card saying
+ * Docker is down, which is the fact an operator acts on, rather than reporting an image as absent
+ * when nothing was in a position to look for it.
  *
- * @param deps - Runner, Redis, clock, image status and logger.
+ * The image is asked for on every beat rather than remembered from the last workspace create. What
+ * the card shows is then true of the host now, including before anything has ever been created —
+ * which is exactly when an operator who has not run `pnpm infra:image` is looking at it.
+ *
+ * @param deps - Runner, Redis, clock and logger.
  * @returns What was published.
  */
 export async function writeHeartbeat(deps: HeartbeatDeps): Promise<WorkerHeartbeat> {
   let dockerOk = true;
   let containers = 0;
+  let imagePresent = false;
   try {
     containers = (await deps.runner.list({ [LABELS.instance]: deps.config.AH_INSTANCE })).length;
+    imagePresent = await deps.runner.imageExists(deps.config.WORKSPACE_IMAGE);
   } catch (error) {
     dockerOk = false;
     deps.logger.warn(
@@ -75,7 +82,7 @@ export async function writeHeartbeat(deps: HeartbeatDeps): Promise<WorkerHeartbe
   const heartbeat = workerHeartbeatSchema.parse({
     at: deps.clock.now().toISOString(),
     dockerOk,
-    imagePresent: dockerOk && deps.imageStatus.present(),
+    imagePresent,
     containers,
   });
   await deps.redis.queue.set(
@@ -100,7 +107,7 @@ export interface RunningHeartbeat {
  * rather than thrown: the worker's job is to run turns, and it must not exit because a health key
  * could not be refreshed.
  *
- * @param deps - Runner, Redis, clock, image status and logger.
+ * @param deps - Runner, Redis, clock and logger.
  * @returns A handle that stops the rewrites.
  */
 export async function startHeartbeat(deps: HeartbeatDeps): Promise<RunningHeartbeat> {

@@ -3,7 +3,8 @@
  *
  * Layer: unit.
  * Goal: `create` starts a run QUEUED and translates a missing scheduled-job parent (P2003) to
- * `NotFoundError('ScheduledJob', jobId)`; `setStatus` stamps
+ * `NotFoundError('ScheduledJob', jobId)`; `recordPush` writes both push columns and names the run
+ * when there is no such row; `setStatus` stamps
  * `startedAt` only on PREPARING via a guarded `updateMany`, applies `workspaceId`/`error` only
  * when present, redacts a non-null `error`; `finish` redacts `output`/`error` only when provided,
  * leaves them untouched when omitted, and names the live statuses in its own `where` so a run that
@@ -111,6 +112,52 @@ describe('PrismaJobRunRepository', () => {
         status: 'QUEUED',
       },
     });
+  });
+
+  /**
+   * The push is written to the two columns the reader maps, and the caller is handed the run as it
+   * now stands rather than the row it passed in.
+   */
+  it('recordPush() writes both columns and returns the mapped run', async () => {
+    const update = vi.fn(() =>
+      Promise.resolve({
+        ...runRow,
+        workBranch: 'agent/job-2f7c11a0',
+        lastPushedSha: 'c0ffee1234567890',
+      }),
+    );
+    const { client } = fakePrisma({ update });
+    const repo = new PrismaJobRunRepository(client, fakeRedactor);
+
+    const run = await repo.recordPush('run-1', {
+      workBranch: 'agent/job-2f7c11a0',
+      lastPushedSha: 'c0ffee1234567890',
+    });
+
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'run-1' },
+      data: { workBranch: 'agent/job-2f7c11a0', lastPushedSha: 'c0ffee1234567890' },
+    });
+    expect(run).toMatchObject({
+      id: 'run-1',
+      workBranch: 'agent/job-2f7c11a0',
+      lastPushedSha: 'c0ffee1234567890',
+    });
+  });
+
+  /**
+   * A push for a run the database does not have names the run, not the scheduled job: the worker
+   * reaches this with a run id it created itself, so the missing row is the thing the caller has
+   * to be told about.
+   */
+  it('recordPush() translates a missing run to NotFoundError naming the run', async () => {
+    const p2025 = Object.assign(new Error('Record to update not found'), { code: 'P2025' });
+    const { client } = fakePrisma({ update: vi.fn(() => Promise.reject(p2025)) });
+    const repo = new PrismaJobRunRepository(client, fakeRedactor);
+
+    await expect(
+      repo.recordPush('run-gone', { workBranch: 'agent/job-x', lastPushedSha: 'deadbeefdeadbeef' }),
+    ).rejects.toBeInstanceOf(NotFoundError);
   });
 
   /** Postgres reports a missing parent as P2003, translated to NotFoundError('ScheduledJob', id). */

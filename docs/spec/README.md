@@ -29,3 +29,14 @@ match what is enforced, not left as originally written. 05's doctor description 
 resolution paragraph are further corrected against `fix/instance-resolution`: the checkout's
 `.env.local` now decides which instance a command acts on, not the shell, and a shell that
 disagrees is refused rather than obeyed or ignored.
+
+Revision: 2026-08-21 — four routed findings closed against the code, and the documents corrected
+to match rather than left describing what they replaced. 02's `JobRun` gains `workBranch` and
+`lastPushedSha` with the invariant that governs them, and the reason a run is given columns rather
+than the message channel R46 named; 03's `WorkspaceRunner` gains `imageExists`, its health row
+says the image is read on every beat rather than remembered, its `reap-idle` row names three
+reconciliation arms rather than two, and its SSE framing paragraph records that a resume point the
+stream no longer holds is refused; 04's scheduled-run flow records the push write and its edge
+cases record both the refusal and the crash-mid-teardown case; 10's "replay fills the gap
+silently" is corrected — it fills it silently only while the stream still holds the client's
+position, and admits the gap otherwise. 01, 06 and 07 follow the same four changes.

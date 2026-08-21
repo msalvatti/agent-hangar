@@ -10,6 +10,7 @@
  * Mocks: none — the persisted payload and the replayed events are written out as the API and the
  * runtime produce them.
  */
+import { pushedNoticeText } from '@agent-hangar/core';
 import type { AgentEvent, JobSummary, RunDetail } from '@agent-hangar/core';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
@@ -60,6 +61,7 @@ function runningRun(): RunDetail {
       finishedAt: null,
     },
     output: null,
+    push: null,
     toolCalls: [
       {
         id: 'tool-1',
@@ -136,8 +138,9 @@ describe('reopening a run drawer mid-run', () => {
   });
 
   /**
-   * One row for the one call the run made. A job run has no message channel, so nothing but the
-   * tool calls can double here — which is why this file asserts only that.
+   * One row for the one call the run made, and one line for the one push it made. A run still has
+   * no message channel — the push is a column on its row rather than a message — so these are the
+   * two things a reopened drawer can double, and both are asserted here.
    */
   it('renders one row per tool call after the replay', () => {
     const state = reopenThenReplay(runningRun(), replayedRun());
@@ -146,6 +149,31 @@ describe('reopening a run drawer mid-run', () => {
 
     expect(document.querySelectorAll('[data-item-kind="tool"]')).toHaveLength(1);
     expect(screen.getAllByText('run_shell')).toHaveLength(1);
+  });
+
+  /**
+   * The reopened drawer seeds the push from the run's record and then replays the `git.pushed`
+   * frame that produced it. The seeded line and the live one are the same fact, so exactly one row
+   * may survive the fold — the same rule the live reducer already applies to a push it sees twice.
+   */
+  it('renders one push line when the record and the replay both carry it', () => {
+    const pushed = { branch: 'agent/job-1', sha: 'c0ffee1234567890' } as const;
+    const detail: RunDetail = {
+      ...runningRun(),
+      push: { branch: pushed.branch, sha: pushed.sha },
+    };
+
+    const state = reopenThenReplay(detail, [
+      ...replayedRun(),
+      { type: 'git.pushed', branch: pushed.branch, sha: pushed.sha },
+    ]);
+
+    const text = pushedNoticeText(pushed.branch, pushed.sha);
+    expect(state.items.filter((item) => item.kind === 'notice' && item.text === text)).toHaveLength(
+      1,
+    );
+    render(<Transcript items={state.items} phase={state.phase} />);
+    expect(screen.getAllByText(text)).toHaveLength(1);
   });
 
   /**

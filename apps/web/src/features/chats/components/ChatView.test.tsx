@@ -569,6 +569,92 @@ describe('ChatView', () => {
     expect(await screen.findByLabelText('Prompt')).toBeInTheDocument();
   });
 
+  // The server refuses a resume point it can no longer serve — the replay window was trimmed past
+  // the client's position — and that can reach a turn that is still running. Reloading the
+  // persisted chat is only half of the recovery: the url is per chat and never changes, so nothing
+  // reopens the connection unless this screen does, and a running turn would sit frozen on the last
+  // frame it saw. The reopened stream offers no resume point, because the only position the reducer
+  // holds is the one the server just refused.
+  it('reopens the stream from the start when the server refuses the resume point', async () => {
+    const { instances } = renderChat('chat-running');
+    const source = await firstSource(instances);
+    act(() => {
+      source.open();
+      source.emit('assistant.delta', { type: 'assistant.delta', text: 'partial' }, '42-0');
+      source.emit('expired', {}, '42-0');
+    });
+
+    await waitFor(() => {
+      expect(instances.length).toBeGreaterThan(1);
+    });
+    const reopened = instances[1];
+    expect(reopened?.lastEventId).toBeUndefined();
+    act(() => {
+      reopened?.open();
+      reopened?.emit(
+        'turn.completed',
+        {
+          type: 'turn.completed',
+          usage: { inputTokens: 1, outputTokens: 1 },
+          steps: 1,
+          finalMessage: 'Resumed after the refusal.',
+        },
+        '43-0',
+      );
+    });
+    expect(await screen.findByText('Resumed after the refusal.')).toBeInTheDocument();
+  });
+
+  // The refetch a refusal triggers can also reveal that the turn finished while the stream was
+  // dead. Reconciling that must not reopen anything: a finished turn has nothing left to stream,
+  // and a second connection for it would be answered with the same refusal for ever.
+  it('does not reopen the stream when the refetched chat has no live turn', async () => {
+    const { instances } = renderChat('chat-running');
+    const source = await firstSource(instances);
+    failStoredTurn('chat-running', 'turn-running-1');
+    act(() => {
+      source.open();
+      source.emit('assistant.delta', { type: 'assistant.delta', text: 'partial' }, '42-0');
+      source.emit('expired', {}, '42-0');
+    });
+
+    // The refetched chat is what the screen settles on: its newest turn is the failed one, so the
+    // failure it recorded is on screen and the stream is not followed any more.
+    expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(instances).toHaveLength(1);
+  });
+
+  // A follow-up turn writes to a stream of its own, so the position the reducer carries over from
+  // the turn that just finished names an entry that stream never had. Offering it asks the server
+  // to continue from a frame it did not write, which it answers by refusing to serve the client at
+  // all — so the follow-up's connection has to start clean.
+  it('opens a followed turn with no resume point', async () => {
+    const { instances } = renderChat('chat-running');
+    const source = await firstSource(instances);
+    act(() => {
+      source.open();
+      source.emit(
+        'turn.completed',
+        {
+          type: 'turn.completed',
+          usage: { inputTokens: 1, outputTokens: 1 },
+          steps: 1,
+          finalMessage: 'First answer.',
+        },
+        '42-0',
+      );
+    });
+    await screen.findByText('First answer.');
+
+    await userEvent.type(screen.getByLabelText('Prompt'), 'And now add a test.');
+    await userEvent.click(screen.getByRole('button', { name: 'Send' }));
+
+    await waitFor(() => {
+      expect(instances.length).toBeGreaterThan(1);
+    });
+    expect(instances.at(-1)?.lastEventId).toBeUndefined();
+  });
+
   // Clicking the failed pill brings the error card into view.
   it('scrolls to the error from the failed pill', async () => {
     const scrollIntoView = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {

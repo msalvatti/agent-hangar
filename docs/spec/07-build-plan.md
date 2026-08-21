@@ -26,7 +26,7 @@ Phases are sized for autonomous agent execution (one PR each, ≤ ~1 day of agen
 
 ## Phase 1 — Walking skeleton (one chat, one container, one round-trip)
 
-**Scope.** `WorkspaceRunner` interface + `DockerWorkspaceRunner` (create/exec/destroy/health/list; snapshot stub returning git-less summary); `AgentModelProvider` + `OpenAIModelProvider` (Responses API streaming, text only + function tools wiring); agent protocol types + NDJSON codec; agent-runtime `turn` command with **no tools yet** (prompt in, streamed answer out); minimal `SecretsService` (encrypt/decrypt/set/reveal/status — hardening later) and Settings page with the two fields (save + last4); `POST /api/chats`, `GET /api/chats/:id`, `POST /messages`, SSE `events` route with Redis Streams replay; worker `run-turn` processor (ensure workspace → exec → persist → publish); chat UI: sidebar with chat list, New chat empty state, composer, transcript with streaming assistant text and status pill (per [10](10-ui-design.md), functional not final).
+**Scope.** `WorkspaceRunner` interface + `DockerWorkspaceRunner` (create/exec/destroy/health/list/imageExists; snapshot stub returning git-less summary); `AgentModelProvider` + `OpenAIModelProvider` (Responses API streaming, text only + function tools wiring); agent protocol types + NDJSON codec; agent-runtime `turn` command with **no tools yet** (prompt in, streamed answer out); minimal `SecretsService` (encrypt/decrypt/set/reveal/status — hardening later) and Settings page with the two fields (save + last4); `POST /api/chats`, `GET /api/chats/:id`, `POST /messages`, SSE `events` route with Redis Streams replay; worker `run-turn` processor (ensure workspace → exec → persist → publish); chat UI: sidebar with chat list, New chat empty state, composer, transcript with streaming assistant text and status pill (per [10](10-ui-design.md), functional not final).
 
 **Files touched.** `packages/core/src/{runner/**,model/**,agent-protocol/**,secrets/**,persistence/repositories/**,testing/**}`, `packages/agent-runtime/src/{cli.ts,loop.ts,protocol.ts}`, `infra/workspace/Dockerfile`, `apps/worker/src/{processors/run-turn.ts,queues.ts,events.ts}`, `apps/web/app/{(app)/layout.tsx,(app)/chats/**,(app)/settings/**,api/chats/**,api/settings/**}`, `apps/web/lib/{sse.ts,api.ts}`.
 
@@ -52,7 +52,7 @@ Phases are sized for autonomous agent execution (one PR each, ≤ ~1 day of agen
 
 **Tests that must pass.** Unit: cron validation/DST/next-run, reconcile diff, overlap policy. Integration: scheduler upsert/remove/reconcile against Redis; processor creates and destroys a workspace per run with real Docker. E2E: `scheduled-job-run`.
 
-**DONE.** A job on `* * * * *` produces a new `JobRun` each minute, each with its own container that no longer exists after the run; disabling stops it; Run now works; UI shows output; CI green.
+**DONE.** A job on `* * * * *` produces a new `JobRun` each minute, each with its own container that no longer exists after the run; disabling stops it; Run now works; UI shows output, and the branch a run pushed to after a reload; CI green.
 
 ## Phase 4 — Settings & secrets hardening
 

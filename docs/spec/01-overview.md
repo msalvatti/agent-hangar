@@ -58,7 +58,7 @@ See [09 Non-goals](09-non-goals.md): multi-user auth, cloud deployment, multiple
 | S3 | Archive → restore reproduces repo checkout and full conversation in a new container | Playwright E2E `archive-restore` |
 | S4 | A scheduled job with a one-minute cron creates a new workspace per run, records output, and leaves no container behind | Playwright E2E `schedule-run` + integration test on runner |
 | S5 | Secrets: ciphertext only in Postgres; UI shows last 4; `grep` of logs and container image for the plaintext finds nothing | Unit tests on crypto + redaction; E2E `settings-mask`; CI secret-scan step |
-| S6 | Live streaming of agent output via SSE with reconnect/replay | Integration test on the events endpoint |
+| S6 | Live streaming of agent output via SSE with reconnect/replay, and an honest refusal when the replay window no longer covers the client | Integration tests on the events endpoint against real Redis, including one that trims past the resume point |
 | S7 | Mutation score ≥ 80% on `packages/core` (secrets, scheduling, workspace lifecycle) enforced in CI | Stryker gate |
 | S8 | Two Conductor workspaces run concurrently with independent DB, Redis keyspace, ports, and container names | Manual verification + `pnpm infra:doctor` output |
 
@@ -117,7 +117,7 @@ flowchart LR
 |---|---|---|---|
 | Runner | `WorkspaceRunner` interface, one impl `DockerWorkspaceRunner` (dockerode) | Podman, direct `docker` CLI | dockerode talks to the Docker Engine API over the socket — the same API surface a remote/cloud runner would wrap. The interface is the migration seam. |
 | Agent ↔ host transport | `docker exec` + NDJSON over stdin/stdout | HTTP server inside each container with published port | No per-workspace port allocation, no host networking quirks on macOS, works unchanged for a cloud runner that offers an exec primitive. Cancellation is a signal. |
-| Streaming to browser | Server-Sent Events | WebSocket | Client only listens. SSE is plain HTTP, reconnects natively, and `Last-Event-ID` replay maps directly onto Redis Streams. |
+| Streaming to browser | Server-Sent Events | WebSocket | Client only listens. SSE is plain HTTP, reconnects natively, and `Last-Event-ID` replay maps directly onto Redis Streams — which are bounded, so a resume point already trimmed away is refused and the page falls back to the persisted transcript. |
 | Scheduling/queue | BullMQ 6 + Redis 8 (Job Schedulers) | pg-boss (Postgres only, fewer moving parts) | BullMQ has mature, tested repeatable-job support (`upsertJobScheduler`), clean separation of queue from state, and is proven at volume. pg-boss would remove Redis but couples queue load to the state DB and has weaker cron semantics. Redis is also the SSE fan-out bus, so it earns its place twice. |
 | State | Postgres 18 + Prisma 7 | SQLite | Concurrent writers (web + worker), JSON columns for redacted tool args, and a direct path to RDS in the cloud. |
 | Secrets | AES-256-GCM via `node:crypto`, master key file outside repo | OS keychain, Vault | No extra dependency, deterministic tests, and the same envelope pattern maps to KMS/Secrets Manager later. |
@@ -160,7 +160,7 @@ flowchart LR
 | R2 | Docker socket not reachable on the user's machine (Docker Desktop's `/var/run/docker.sock` symlink is opt-in) | MEDIUM | Runner resolves `DOCKER_HOST` → `~/.docker/run/docker.sock` → `/var/run/docker.sock`; `pnpm infra:doctor` prints the fix. |
 | R3 | Agent runs away (infinite tool loop, huge output, long shell command) | MEDIUM | Hard limits per turn: max steps, max wall-clock, per-command timeout, output truncation; cancel button sends SIGINT. |
 | R4 | Secret leaks through tool output (e.g. `env` command) | MEDIUM | Redaction pass on every tool result and every persisted string using known secret values + token-shape regexes; secrets also not exported to the shell tool's environment — only `GIT_ASKPASS` helper sees the PAT. |
-| R5 | SSE connection buffered or dropped by dev tooling | LOW | No compression on the events route, heartbeat every 15 s, Redis Streams replay via `Last-Event-ID`. |
+| R5 | SSE connection buffered or dropped by dev tooling | LOW | No compression on the events route, heartbeat every 15 s, Redis Streams replay via `Last-Event-ID`, and a resume point the stream no longer holds refused rather than half-served. |
 | R6 | BullMQ Job Scheduler drift between DB and Redis (job edited while worker down) | LOW | Worker reconciles all enabled `ScheduledJob` rows → schedulers on boot; scheduler key = job id. |
 | R7 | OpenAI model id retired | LOW | Model id in env; provider exposes a `listModels()` check used by `pnpm infra:doctor`. |
 

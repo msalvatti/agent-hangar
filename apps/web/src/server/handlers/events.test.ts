@@ -119,16 +119,20 @@ describe('chatEvents', () => {
     const harness = createTestContainer();
     const { chatId, turnId } = await seedChat(harness);
     const key = turnEventsStreamKey(turnId);
-    await harness.doubles.redis.xadd(key, 'event', '{"type":"turn.cancelled"}');
+    // Both ids name entries the stream still holds, so the choice between them is the only thing
+    // the replay bound can be reporting: a resume point that is not there any more is refused
+    // before any replay is attempted.
+    const older = await harness.doubles.redis.xadd(key, 'event', '{"type":"step.started"}');
+    const newer = await harness.doubles.redis.xadd(key, 'event', '{"type":"turn.cancelled"}');
     const spy = vi.spyOn(FakeRedis.prototype, 'xrange');
 
     const response = await chatEvents(
       harness.container,
-      stream(`/api/chats/${chatId}/events?from=1-1`, { 'last-event-id': '9-9' }),
+      stream(`/api/chats/${chatId}/events?from=${older}`, { 'last-event-id': newer }),
       { id: chatId },
     );
     await vi.waitFor(() => {
-      expect(spy).toHaveBeenCalledWith(key, '(9-9', '+');
+      expect(spy).toHaveBeenCalledWith(key, `(${newer}`, '+');
     });
     await drain(response);
   });

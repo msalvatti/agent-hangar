@@ -34,6 +34,7 @@ export { AGENT_EVENT_TYPES, compareStreamIds, isTerminalPhase, transcriptReducer
 
 export type {
   CreateEventSource,
+  ReconnectOptions,
   UseTurnEventsOptions,
   UseTurnEventsResult,
 } from './hooks/useTurnEvents';

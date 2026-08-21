@@ -71,6 +71,12 @@ export interface WorkspaceRunner {
   /** Human-readable runner id stored on Workspace.runnerKind ("docker"). */
   readonly kind: string;
 
+  /**
+   * Whether the host has an image, without starting anything. Rejects when the host could not be
+   * asked at all, which is not the same as absence and must not be reported as it.
+   */
+  imageExists(image: string): Promise<boolean>;
+
   /** Create and start an isolated workspace. Resolves when the container accepts exec. */
   create(spec: WorkspaceSpec, opts?: { signal?: AbortSignal }): Promise<WorkspaceHandle>;
 
@@ -101,9 +107,10 @@ export interface WorkspaceRunner {
 - Socket resolution order: `DOCKER_HOST` → `~/.docker/run/docker.sock` → `/var/run/docker.sock`.
 - Container: `--name ah-ws-<instance>-<workspaceId>`, `--user agent`, `--workdir /workspace`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--pids-limit`, `--memory`, `--cpus`, tmpfs `/tmp`, no volumes, no Docker socket, bridge network (egress only). Labels: `ah.instance`, `ah.workspace`, `ah.kind`, `ah.chat|ah.jobRun`.
 - `create` pulls/builds nothing: the image must exist (`pnpm infra:image`). Missing image → typed error `WorkspaceImageMissing` with the exact command to run.
+- `imageExists` is that same check, asked without creating anything: it answers `false` for exactly the image `create` would reject, and raises anything else. The worker's boot probe and its health heartbeat both use it, which is what keeps the health card and the error a turn would hit from disagreeing.
 - `exec` uses Docker exec with attached stdin, demuxes stdout/stderr, honours `timeoutMs` by sending `KILL` and yielding `exit { code: null, signal: 'TIMEOUT' }`.
 - `destroy` = stop (10 s grace) + remove with volumes. 404 is success.
-- `list` queries by labels; used by GC to reap orphans after a worker crash.
+- `list` queries by labels; used by GC to reap orphans after a worker crash. It is no longer doing double duty as the boot reachability probe — `imageExists` proves reachability and image presence in one call.
 
 ## 2. `AgentModelProvider`
 
@@ -251,17 +258,19 @@ All JSON; Zod-validated; errors `{ error: { code, message } }`.
 | `POST /api/chats/:id/archive` · `/restore` | Status change; archive destroys live workspace; restore creates on next message (or immediately if `?warm=1`) |
 | `POST /api/turns/:id/cancel` | Stop a chat turn: remove the queued job, or signal INT via worker (through a Redis command channel). Either way the route records the cancellation on the turn itself, conditionally on it still being live, and answers `409` when it is not — so an accepted stop is never overwritten by the outcome the worker was about to write |
 | `DELETE /api/chats/:id` | Cascade delete, refused with `409 TURN_IN_PROGRESS` while a turn of the chat is live; the condition is part of the delete statement, so a message claiming the chat at the same moment cannot be undone by it |
-| `GET /api/chats/:id/events` | **SSE** — live `AgentEvent`s for the chat; supports `Last-Event-ID` |
+| `GET /api/chats/:id/events` | **SSE** — live `AgentEvent`s for the chat; resumes from `Last-Event-ID` (or `?from=`), and answers `event: expired` when it cannot serve that position |
 | `GET /api/jobs` · `POST /api/jobs` · `PATCH /api/jobs/:id` · `DELETE /api/jobs/:id` | CRUD; upserts/removes the BullMQ Job Scheduler |
 | `POST /api/jobs/:id/run` | Manual trigger → JobRun |
-| `GET /api/jobs/:id/runs` · `GET /api/runs/:id` | Run history and detail (output, tool calls) |
-| `GET /api/runs/:id/events` | **SSE** for a running job run |
+| `GET /api/jobs/:id/runs` · `GET /api/runs/:id` | Run history and detail (output, tool calls, and where the run pushed when it pushed at all — detail only, since a run that pushed nothing is the common case and the history table has no room for it) |
+| `GET /api/runs/:id/events` | **SSE** for a running job run; same resume and `expired` rules |
 | `POST /api/runs/:id/cancel` | Stop a job run; same two shapes as the turn cancel, addressed by `JobRun.id` |
 | `GET /api/settings` | `{ githubPat: { set, last4 }, openaiKey: { set, last4 }, model }` |
 | `PUT /api/settings/:key` · `DELETE /api/settings/:key` | Save (encrypts) / remove |
-| `GET /api/health` | DB, Redis and worker reachability, Docker reachability, image present. Docker and the image are the worker's own readings, taken from its heartbeat, so a silent worker reports `worker: false` and leaves those two unknown rather than blaming the daemon; the worker check carries `lastSeenAt` when it is alive |
+| `GET /api/health` | DB, Redis and worker reachability, Docker reachability, image present. Docker and the image are the worker's own readings, taken from its heartbeat — the image is asked of the host on every beat, not remembered from the last workspace it created, so the card is true of a checkout where nothing has ever run. A host that answered the container listing but could not be asked about the image reports Docker as down rather than the image as absent: an operator told to rebuild an image they already have is worse off than one told the daemon is unwell. A silent worker reports `worker: false` and leaves both unknown rather than blaming the daemon; the worker check carries `lastSeenAt` when it is alive |
 
 **SSE framing:** `id: <redis-stream-id>`, `event: <AgentEvent.type>`, `data: <json>`. Heartbeat comment `: ping` every 15 s. No compression. Reconnect replays from `Last-Event-ID` via `XRANGE` on `events:turn:<turnId>` (1 h TTL), then tails with `XREAD BLOCK`.
+
+The resume point is verified before it is honoured. The stream is capped at `TURN_EVENTS_MAXLEN` entries, so a chatty turn plus a slow reconnect can outrun the window; `XRANGE` from a bound below the oldest surviving entry answers with the surviving suffix and reports nothing about what came before it, which would deliver a `tool.result` whose opening `tool.call` the client never saw. A resume point the stream no longer holds is therefore answered with the `expired` event and the connection closes — the same signal an expired key sends, because it asks the client for the same thing: refetch the persisted transcript, which is the only complete record left. There is nothing better on offer, since every entry the stream still holds is newer than the cursor and a full replay would return the same set. The client reopens without a resume point after reseeding, and does the same when it starts following a newly queued turn, whose stream is a different key its cursor never named.
 
 ## 5. Queue contracts (BullMQ)
 
@@ -269,7 +278,7 @@ All JSON; Zod-validated; errors `{ error: { code, message } }`.
 |---|---|---|---|
 | `chat-turns` | `run-turn` | `{ turnId }` | web → worker. Concurrency `WORKER_TURN_CONCURRENCY` (default 2). `jobId = turnId` for idempotency. |
 | `scheduled-jobs` | `run-scheduled-job` | `{ jobId }` | Job Scheduler (`upsertJobScheduler(jobId, { pattern: cron, tz }, …)`) → worker. Also `POST /run` adds a one-off job with `trigger: MANUAL`. |
-| `workspace-gc` | `reap-idle` | `{}` | Job Scheduler every 5 min → worker: destroy `READY` workspaces idle > `WORKSPACE_IDLE_TTL_MIN`; reconcile orphan containers via `runner.list()`. |
+| `workspace-gc` | `reap-idle` | `{}` | Job Scheduler every 5 min → worker: destroy `READY` workspaces idle > `WORKSPACE_IDLE_TTL_MIN`; then reconcile in three directions via `runner.list()` — a container no live row points at is destroyed, a live row whose container is gone is closed out, and a row left `STOPPING` by a teardown that never came back has its container destroyed and the row closed out on that teardown's behalf. The last of the three is safe for the same reason `STOPPING` may be closed out at all: its owner had already committed to destroying that container, so finishing the job agrees with it. `BUSY` is never touched here, because its owner has committed to the opposite. |
 
 Worker connections use `maxRetriesPerRequest: null` (required by BullMQ workers); queue producers use defaults. Scheduler keys equal `ScheduledJob.id`; the worker reconciles DB ↔ schedulers on boot.
 

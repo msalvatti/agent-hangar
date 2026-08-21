@@ -274,6 +274,9 @@ describe('RunDrawer — active run (live stream)', () => {
       throw new Error('expected a fake EventSource instance');
     }
     first.open();
+    // A frame first, so the reducer really holds a position: without one there would be no resume
+    // point for the reopened connection to be wrong about.
+    first.emit('assistant.delta', { type: 'assistant.delta', text: 'partial' }, '42-0');
     first.emit('expired', {});
 
     await waitFor(() => {
@@ -283,6 +286,9 @@ describe('RunDrawer — active run (live stream)', () => {
     if (second === undefined) {
       throw new Error('expected the drawer to open a second EventSource after the expiry');
     }
+    // The position the reducer holds is the one the server just refused to serve, so the reopened
+    // connection offers none and takes whatever the stream still has.
+    expect(second.lastEventId).toBeUndefined();
     second.open();
     second.emit(
       'turn.completed',
@@ -395,6 +401,7 @@ describe('RunDrawer — active run (live stream)', () => {
             finishedAt: null,
           },
           output: null,
+          push: null,
           toolCalls: [],
         }),
       ),

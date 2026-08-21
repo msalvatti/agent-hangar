@@ -287,7 +287,7 @@ describe('createGcProcessor', () => {
 
     const result = await collect(container, JOB_NAMES.destroyChatWorkspace, { chatId });
 
-    expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0 });
+    expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0, teardownsFinished: 0 });
     expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
     expect(container.runner.getWorkspace(workspace.id)?.status).toBe('running');
     expect(container.logs.join('')).toContain('left for the idle collector');
@@ -309,7 +309,7 @@ describe('createGcProcessor', () => {
 
     const result = await collect(container, JOB_NAMES.destroyChatWorkspace, { chatId });
 
-    expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0 });
+    expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0, teardownsFinished: 0 });
     expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
     expect(container.runner.getWorkspace(workspace.id)?.status).toBe('running');
     expect(await container.repos.messages.listByChat(chatId)).toHaveLength(0);
@@ -328,7 +328,7 @@ describe('createGcProcessor', () => {
 
     const result = await collect(container, JOB_NAMES.destroyChatWorkspace, { chatId: chat.id });
 
-    expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0 });
+    expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0, teardownsFinished: 0 });
     expect(container.logs.join('')).toContain('chat had no live workspace');
   });
 
@@ -481,6 +481,109 @@ describe('createGcProcessor', () => {
   });
 
   /**
+   * A teardown that lost its process after committing to `STOPPING`, but before its container was
+   * gone, is the one live row nothing else can take: a teardown refuses it because it is not
+   * `READY`, the idle selection refuses it for the same reason, and the reconciliation above
+   * refuses it because its container is still listed and so is not missing. The pass finishes what
+   * its owner had already decided to do, and the container really goes.
+   */
+  it('destroys the container of a teardown that never came back for it', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 1,
+      withContainer: true,
+    });
+    await container.repos.workspaces.setStatus(workspace.id, 'STOPPING');
+
+    const result = await collect(container, JOB_NAMES.reapIdle);
+
+    expect(container.runner.getWorkspace(workspace.id)?.status).toBe('gone');
+    expect(result.teardownsFinished).toBe(1);
+    expect(await container.repos.workspaces.get(workspace.id)).toMatchObject({
+      status: 'DESTROYED',
+      failureReason: ABANDONED_TEARDOWN_REASON,
+    });
+  });
+
+  /**
+   * A container the daemon still refuses to remove leaves a row that would otherwise stay live for
+   * ever, so the failure is recorded on the row and the container becomes an orphan the next pass
+   * keeps trying. What must not happen is a second live row nobody can take.
+   */
+  it('records the failure when an abandoned teardown cannot be finished', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 1,
+      withContainer: true,
+    });
+    await container.repos.workspaces.setStatus(workspace.id, 'STOPPING');
+    vi.spyOn(container.runner, 'destroy').mockRejectedValue(new Error('daemon is busy'));
+
+    const result = await collect(container, JOB_NAMES.reapIdle);
+
+    expect(result.teardownsFinished).toBe(0);
+    expect(await container.repos.workspaces.get(workspace.id)).toMatchObject({
+      status: 'FAILED',
+      failureReason: 'daemon is busy',
+    });
+    expect(container.logs.join('')).toContain('finishing an abandoned teardown failed');
+  });
+
+  /**
+   * A `STOPPING` row whose reference was never written still has a container the label sweep can
+   * see, and a runner that rejects with something that is not an `Error` still has to leave a
+   * readable reason on the row rather than `[object Object]`.
+   */
+  it('records a non-Error refusal for a stopping row with no runner reference', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 1,
+      withContainer: true,
+    });
+    const row = container.repos.store.workspaces.get(workspace.id);
+    if (row !== undefined) {
+      row.runnerRef = null;
+    }
+    await container.repos.workspaces.setStatus(workspace.id, 'STOPPING');
+    vi.spyOn(container.runner, 'destroy').mockRejectedValue('daemon said no');
+
+    const result = await collect(container, JOB_NAMES.reapIdle);
+
+    expect(result.teardownsFinished).toBe(0);
+    expect(await container.repos.workspaces.get(workspace.id)).toMatchObject({
+      status: 'FAILED',
+      failureReason: 'daemon said no',
+    });
+  });
+
+  /**
+   * A teardown of this process holds its workspace's claim for the whole sequence, so a claim this
+   * pass cannot take is a container somebody is in the middle of destroying. Taking it anyway would
+   * make the pass race the owner it exists to stand in for.
+   */
+  it('leaves a stopping row whose teardown is still running', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 1,
+      withContainer: true,
+    });
+    await container.repos.workspaces.setStatus(workspace.id, 'STOPPING');
+    const row = await container.repos.workspaces.get(workspace.id);
+    expect(container.claims.claim(workspaceClaimKey(row ?? workspace))).toBe(true);
+
+    const result = await collect(container, JOB_NAMES.reapIdle);
+
+    expect(result.teardownsFinished).toBe(0);
+    expect(container.runner.getWorkspace(workspace.id)?.status).toBe('running');
+    expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('STOPPING');
+    expect(container.logs.join('')).toContain('a teardown is still running');
+  });
+
+  /**
    * The rows this pass closes out were listed before the runner was asked what it still holds, and
    * a turn can take one in between. The close-out names the status the listing reported, so the
    * row a turn took is left holding what that turn wrote instead of being marked `DESTROYED` under
@@ -628,7 +731,7 @@ describe('createGcProcessor', () => {
 
     const result = await collect(container, 'compact-everything');
 
-    expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0 });
+    expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0, teardownsFinished: 0 });
     expect(container.logs.join('')).toContain('unknown workspace-gc job');
   });
 });
