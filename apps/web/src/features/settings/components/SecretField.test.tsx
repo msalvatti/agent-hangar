@@ -5,7 +5,7 @@
  * Goal: every state renders correctly (loading, unset, set, replacing, saving, error); Save is
  * disabled until the input is valid and Enter submits; after a save the input clears and the mask
  * shows the new last4 while the full secret never appears in the DOM; Replace switches to an
- * input and Cancel returns to the mask; Remove opens the confirmation dialog; the error is wired
+ * input that takes the focus, and Cancel returns to the mask; Remove opens the confirmation dialog; the error is wired
  * via `aria-describedby`/`aria-invalid`; the input is `type="password"` with `autoComplete="off"`.
  * Mocks: none — callbacks are `vi.fn()`.
  */
@@ -271,6 +271,10 @@ describe('SecretField — set', () => {
     );
     await user.click(screen.getByRole('button', { name: 'Replace' }));
     const input = screen.getByPlaceholderText(field.placeholder);
+    // Replace is a request to type, and the button that was under the pointer is gone once it is
+    // pressed. A keyboard path that ended there would have to hunt for the field it just asked
+    // for, so the field takes the focus itself.
+    expect(input).toHaveFocus();
     await user.type(input, GITHUB_CANARY);
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(screen.queryByPlaceholderText(field.placeholder)).not.toBeInTheDocument();
