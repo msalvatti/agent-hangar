@@ -195,7 +195,7 @@ Project components: `AppSidebar`, `ChatList`, `Composer` (+ `RepoPicker`, `Branc
 | Loading | Skeletons matching final layout (sidebar rows, table rows, transcript blocks); never spinners for page loads. Buttons show inline spinner + disabled. |
 | Empty | Icon (Lucide, 32 px, muted) + one-line headline + one-line help + primary action. |
 | Error | Inline `ErrorCard` near the cause; toast only for background failures; every error has a next action. |
-| Streaming | Cursor block `▍` at end of assistant text; running tool row pulse; header pill elapsed timer. |
+| Streaming | Cursor block `▍` at end of assistant text; running tool row pulse; header pill elapsed timer. The composer is locked for the duration and says so — the API refuses a second turn with `TURN_IN_PROGRESS`, and a disabled textarea receives no key events, so an unexplained lock reads as a composer that has stopped working. |
 | Offline / infra down | Sidebar footer pill turns destructive; composer notice explains which dependency is down (from `/api/health`). |
 
 ## 7. Motion

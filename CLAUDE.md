@@ -149,6 +149,14 @@ time, `NODE_OPTIONS=--max-old-space-size=4096`.
   (`GITHUB_CANARY`, `OPENAI_CANARY`) — the only secret-shaped strings allowed anywhere.
 - `dockerode` only under `packages/core/src/runner/docker/**`; `node:crypto` (never bare `crypto`),
   `crypto.randomUUID()` (never `uuid`/`nanoid`).
+- **No check that cannot fail.** A class name in an attribute, a console line, a symbol's presence,
+  the order a double happens to return — none of these is the outcome the code exists to produce,
+  and every one of them has been measured here passing against deliberately broken code. Assert the
+  outcome, in an environment that can produce it: jsdom lays nothing out and resolves no
+  stylesheet, so anything about size, position, cursor or colour belongs in `apps/web/e2e`, which
+  owns a real engine. A double may not be kinder than the thing it stands in for. A new check earns
+  its place by being **watched to fail** against the unfixed code, and the failure it printed is
+  worth quoting in the pull request.
 - `docs/` is hand-authored Markdown and is excluded from Prettier; edit only your own rows.
 
 ## Pointers
