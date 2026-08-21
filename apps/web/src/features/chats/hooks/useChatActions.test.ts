@@ -9,6 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { server } from '@/mocks/server';
 import { store } from '@/mocks/store';
 
+import { useChat } from './useChat';
 import { useChatActions } from './useChatActions';
 
 const push = vi.fn();
@@ -21,6 +22,9 @@ describe('useChatActions', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    // The request counter below subscribes to the shared server; left attached it would keep
+    // counting into the next test's total.
+    server.events.removeAllListeners();
   });
 
   // Archiving flips the stored status and says so.
@@ -149,5 +153,65 @@ describe('useChatActions', () => {
       await pending;
     });
     expect(result.current.busy.archive).toBe(false);
+  });
+
+  /**
+   * Counts requests for one chat's detail while a hook that reads it stays mounted.
+   *
+   * @param id - Chat id whose detail requests are counted.
+   * @returns The mounted hooks and a live counter.
+   */
+  function renderWithDetailCounter(id: string): {
+    actions: { current: ReturnType<typeof useChatActions> };
+    detailRequests: () => number;
+  } {
+    let count = 0;
+    server.events.on('request:start', ({ request }) => {
+      if (request.method === 'GET' && new URL(request.url).pathname === `/api/chats/${id}`) {
+        count += 1;
+      }
+    });
+    const { result } = renderHook(() => ({ chat: useChat(id), actions: useChatActions(id) }));
+    return {
+      actions: {
+        get current() {
+          return result.current.actions;
+        },
+      },
+      detailRequests: () => count,
+    };
+  }
+
+  // Cancelling must not refetch the chat: the turn's event stream is the fresher record of the
+  // turn on screen, and persistence trails it — the turn is cancelled the moment the request is
+  // accepted, while the tool call it interrupted is only closed when the runtime reports back. A
+  // refetch inside that window reseeds the transcript with a tool row still reading "running" and
+  // closes the stream that would have corrected it, which is what left a spinner on screen for
+  // the rest of the page's life.
+  it('does not refetch the chat when a turn is cancelled', async () => {
+    const { actions, detailRequests } = renderWithDetailCounter('chat-running');
+    await waitFor(() => {
+      expect(detailRequests()).toBe(1);
+    });
+    await act(async () => {
+      await actions.current.cancel('turn-running-1');
+    });
+    expect(detailRequests()).toBe(1);
+  });
+
+  // Every other action changes the chat outside any stream, so its result exists nowhere else and
+  // the detail has to be fetched again. This is the counterpart of the check above: without it,
+  // suppressing the refetch for all actions would pass just as well.
+  it('refetches the chat when it is renamed', async () => {
+    const { actions, detailRequests } = renderWithDetailCounter('chat-finished');
+    await waitFor(() => {
+      expect(detailRequests()).toBe(1);
+    });
+    await act(async () => {
+      await actions.current.rename('Renamed while mounted');
+    });
+    await waitFor(() => {
+      expect(detailRequests()).toBe(2);
+    });
   });
 });

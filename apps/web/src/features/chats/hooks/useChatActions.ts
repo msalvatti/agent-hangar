@@ -4,7 +4,9 @@
  * Layer: feature (hook).
  *
  * Every action follows the same shape — call the endpoint, refresh the lists that show the chat,
- * confirm with a toast — so they are built from one runner instead of repeating it six times.
+ * confirm with a toast — so they are built from one runner instead of repeating it six times. What
+ * differs between them is only whether the chat's own detail is refetched afterwards; see
+ * {@link STREAM_DELIVERS_OUTCOME}.
  */
 'use client';
 
@@ -25,6 +27,23 @@ import {
 
 /** Actions that report a busy state. */
 export type ChatActionName = 'archive' | 'restore' | 'remove' | 'rename' | 'cancel';
+
+/**
+ * Actions whose outcome the running turn's event stream reports by itself.
+ *
+ * Refetching the chat reseeds the transcript from persistence, and while a turn is still running
+ * persistence trails the stream: the turn is marked cancelled the moment the request is accepted,
+ * but the tool call it interrupted is only closed when the runtime reports the result. A refetch
+ * inside that window replaces the rows the stream has already delivered with staler ones and —
+ * because a chat whose turn has ended has no turn to follow — closes the connection that would
+ * have corrected them, so an interrupted tool call is left reading "running" until the page is
+ * loaded again. The lists are still refreshed: they render each chat's dot from the persisted
+ * status and no stream reaches them.
+ *
+ * Only cancellation is in this position. Archiving, restoring, renaming and deleting change the
+ * chat outside any stream, so their result exists nowhere else and has to be fetched.
+ */
+const STREAM_DELIVERS_OUTCOME: ReadonlySet<ChatActionName> = new Set<ChatActionName>(['cancel']);
 
 /** Result of {@link useChatActions}. */
 export interface UseChatActionsResult {
@@ -54,7 +73,9 @@ export function useChatActions(id: string): UseChatActionsResult {
       try {
         await action();
         invalidateQueries(['chats']);
-        invalidateQueries(['chat', id]);
+        if (!STREAM_DELIVERS_OUTCOME.has(name)) {
+          invalidateQueries(['chat', id]);
+        }
         toast.success(success);
       } catch (reason) {
         toast.error(maskSecretShapes(reason instanceof Error ? reason.message : String(reason)));
