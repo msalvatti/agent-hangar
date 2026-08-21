@@ -1,10 +1,10 @@
 /**
- * Creating one workspace container with the credentials a turn needs.
+ * Creating one workspace container for a turn to run in.
  *
  * Layer: service.
  *
  * Shared by chat turns and scheduled runs so that "how a workspace is born" has one description:
- * a row first, then the credentials, then the container, then the row again. Writing the row
+ * a row first, then the container, then the row again. Writing the row
  * before the container is what makes an interrupted create discoverable — the garbage collector
  * reconciles both directions, by workspace id rather than by container reference, because the id
  * is the only identifier both sides have before the container exists.
@@ -16,20 +16,18 @@
  * the gone sweep touches either, and nothing reclaims them. The reference exists only in this
  * call, so the container is destroyed here rather than left to a collector that will never see it.
  *
- * Security: this is the only function in the application that holds a decrypted credential. The
- * two plaintexts live in local constants, go into the environment of the `create` call and into
- * the redactor, and are referenced nowhere else — not on the result, not in a log record, and not
- * in the message of a failure. Failures are reported by the typed error the runner raised, whose
- * messages are built from ids and image names only. The environment of that call carries nothing
- * else of the sort: the one block added to it is resolved from configuration at boot and holds no
- * credential.
+ * Security: nothing here is decrypted. A credential belongs to one execution and reaches the
+ * container as a file placed immediately before the runtime starts — see `workspace-credentials.ts`
+ * — because a workspace outlives the turn that built it, and anything handed over at create time
+ * would stay readable inside it for as long as it stands. What this function asks of the secrets
+ * service is only whether the two are configured at all, so an operator who has set neither is told
+ * before a container is built rather than after.
  *
- * Being that single point is also why the forge allow-list is applied again here. The write routes
- * check a repository URL when a chat or a job is created, but the URL is then stored and cloned by
- * every later turn, so a forge the operator has since removed from `ALLOWED_REPO_HOSTS` would keep
- * receiving the PAT through rows that were legitimate when they were written. The check therefore
- * belongs where the credential is revealed rather than only where the row is written, and it runs
- * before the reveal so a repository that is no longer allowed never decrypts anything.
+ * The forge allow-list is applied again here for the reason it always was: the write routes check a
+ * repository URL when a chat or a job is created, but the URL is then stored and cloned by every
+ * later turn, so a forge the operator has since removed from `ALLOWED_REPO_HOSTS` would keep
+ * receiving the PAT through rows that were legitimate when they were written. It runs before the
+ * container exists, so a repository that is no longer allowed never gets one.
  *
  * That same check is what the container is bound to. It yields one origin, and the container is
  * told that origin and nothing else: the askpass helper releases the PAT only for it, and the
@@ -53,25 +51,26 @@ import type { Workspace, WorkspaceHandle, WorkspaceKind } from '@agent-hangar/co
 
 import { isTransportError } from '../errors.js';
 
-import { ALLOWED_ORIGIN_PATH, ASKPASS_PATH, LABELS, WORKSPACE_LIMITS } from './constants.js';
+import {
+  ALLOWED_ORIGIN_PATH,
+  ASKPASS_PATH,
+  LABELS,
+  SECRETS_MISSING_CODE,
+  SECRETS_MISSING_MESSAGE,
+  SECRETS_MISSING_REASON,
+  WORKSPACE_LIMITS,
+} from './constants.js';
 import type { ProcessorDeps } from './types.js';
 
 /** Why a workspace could not be provisioned. */
 export type ProvisionFailureReason =
   | 'repo_url_not_allowed'
-  | 'secrets_missing'
+  | typeof SECRETS_MISSING_CODE
   | 'workspace_image_missing'
   | 'workspace_create_failed';
 
 /** `Workspace.failureReason` written when the container could not be recorded on its row. */
 export const UNRECORDED_WORKSPACE_REASON = 'container reference was never recorded';
-
-/** `Workspace.failureReason` written when a credential was not configured. */
-export const SECRETS_MISSING_REASON = 'secrets missing';
-
-/** What the user is told to do when a credential is not configured. */
-export const SECRETS_MISSING_MESSAGE =
-  'Configure the GitHub PAT and the OpenAI API key in Settings, then try again.';
 
 /** `Workspace.failureReason` written when the repository is not on the configured forge list. */
 export const REPO_URL_NOT_ALLOWED_REASON = 'repository host is not allowed';
@@ -310,8 +309,8 @@ async function failedCreate(
  * Destroys a container whose reference is about to be lost, and closes its row out.
  *
  * Both steps are best-effort and independent: the row write is the one that just failed, so it may
- * well fail again, and the container must go regardless — it is the expensive half, and its
- * environment holds both revealed credentials.
+ * well fail again, and the container must go regardless — it is the expensive half, and a workspace
+ * nothing can address is a workspace nothing will ever reclaim.
  *
  * @param deps - Runner, repositories and logger.
  * @param workspaceId - The row whose container was never recorded.
@@ -378,7 +377,7 @@ async function recordReadyWorkspace(
  * Creates a workspace row and the container behind it.
  *
  * The repository is measured against the configured forge list first, so a stored URL that the
- * operator has since stopped allowing is refused before any credential is decrypted.
+ * operator has since stopped allowing is refused before a container exists.
  *
  * @param deps - The processor's collaborators.
  * @param input - What the workspace serves.
@@ -398,18 +397,16 @@ export async function provisionWorkspace(
     return decision.refusal;
   }
 
-  const pat = await deps.secrets.reveal('GITHUB_PAT');
-  const apiKey = await deps.secrets.reveal('OPENAI_API_KEY');
-  if (pat === null || apiKey === null) {
+  const stored = await deps.secrets.status();
+  if (!stored.GITHUB_PAT.set || !stored.OPENAI_API_KEY.set) {
     return failWorkspace(
       deps,
       workspace.id,
-      'secrets_missing',
+      SECRETS_MISSING_CODE,
       SECRETS_MISSING_MESSAGE,
       SECRETS_MISSING_REASON,
     );
   }
-  deps.redactor.register([pat, apiKey]);
 
   let handle: WorkspaceHandle;
   try {
@@ -418,11 +415,9 @@ export async function provisionWorkspace(
       kind: input.kind,
       image: deps.config.WORKSPACE_IMAGE,
       env: {
-        // Spread first so nothing an extra block carries can shadow a credential or the provider
-        // selection below it.
+        // Spread first so nothing an extra block carries can shadow the provider selection below
+        // it.
         ...deps.fakeProviderEnv,
-        GITHUB_TOKEN: pat,
-        OPENAI_API_KEY: apiKey,
         GIT_ASKPASS: ASKPASS_PATH,
         OPENAI_MODEL: deps.config.OPENAI_MODEL,
         AGENT_MODEL_PROVIDER: deps.config.AGENT_MODEL_PROVIDER,

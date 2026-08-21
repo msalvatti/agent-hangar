@@ -29,12 +29,12 @@ sequenceDiagram
   W->>Q: consume run-turn
   W->>PG: Turn → PREPARING; find live Workspace for chat (none)
   W->>PG: INSERT Workspace(CREATING, kind CHAT)
-  W->>W: secrets.reveal(GITHUB_PAT, OPENAI_API_KEY); redactor.register(values)
-  W->>R: create({image, env: {GITHUB_TOKEN, OPENAI_API_KEY, GIT_ASKPASS…}, limits, labels})
+  W->>R: create({image, env: {GIT_ASKPASS…}, limits, labels}) — no credential in the environment
   R-->>W: handle {containerId}
   W->>PG: Workspace → READY (runnerRef = containerId)
   W->>PG: build TurnRequest: instructions + history window + repo + limits, prepare.clone=true
-  W->>R: exec(handle, node cli.js turn, stdin=TurnRequest)
+  W->>W: secrets.reveal(GITHUB_PAT, OPENAI_API_KEY); redactor.register(values)
+  W->>R: exec(handle, node cli.js turn, stdin=TurnRequest, files=[credentials.json])
   R->>C: docker exec (stdin NDJSON)
 
   C->>GH: git clone --branch base (PAT via GIT_ASKPASS)
@@ -200,14 +200,14 @@ sequenceDiagram
   WEB-->>UI: 200 {set:true, last4:"abcd"}
   UI-->>U: field shows ••••••••abcd, "Replace" / "Remove"
 
-  Note over W,C: INJECT (per workspace create)
+  Note over W,C: INJECT (per turn, never per workspace: a chat's container outlives the turn)
   W->>S: reveal('GITHUB_PAT'), reveal('OPENAI_API_KEY')
   S->>PG: SELECT row; decrypt with authTag verification
   S-->>W: plaintext (in memory only)
   W->>W: redactor.register([pat, key])
-  W->>R: create({env:{GITHUB_TOKEN:pat, OPENAI_API_KEY:key, GIT_ASKPASS:'/opt/agent-runtime/askpass.sh'}})
-  R->>C: container env at start (never in image layers, never in repo)
-  Note over C: run_shell child processes receive a scrubbed env (no GITHUB_TOKEN/OPENAI_API_KEY); git obtains the token via GIT_ASKPASS
+  W->>R: exec(handle, …, files=[{path:'/opt/agent-runtime/handoff/credentials.json'}])
+  R->>C: placed root-owned just before the runtime starts (never in the env, never in image layers, never in repo)
+  Note over C: the runtime reads it once and unlinks it before the agent runs anything; run_shell child processes get a scrubbed env and git obtains the token via GIT_ASKPASS from a private tmpfs file
 
   Note over C,L: REDACT (every write)
   C-->>W: AgentEvent (runtime already redacted by shape)

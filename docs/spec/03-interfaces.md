@@ -185,7 +185,7 @@ node /opt/agent-runtime/cli.js turn
 
 **Transport:** NDJSON. One `TurnRequest` object on stdin, then stdin closes. Events stream on stdout, one JSON object per line. stderr carries runtime diagnostics (redacted, forwarded to worker logs at debug level). Exit code 0 = turn completed (even if the agent's task failed), non-zero = runtime failure. Cancellation = `runner.signal(handle, execRef, 'INT')`; the runtime aborts the model stream and the current tool and emits `turn.cancelled`.
 
-Secrets reach the runtime only through the container environment (`OPENAI_API_KEY`, `GITHUB_TOKEN`) — never through the protocol.
+Secrets never travel through the protocol. They reach the runtime as a file the runner places for that one execution — `/opt/agent-runtime/handoff/credentials.json`, holding `githubToken` and `openaiApiKey` — which the runtime reads and unlinks before it reads stdin. The container environment carries no credential: it is readable through `/proc/1/environ` by every process of the workspace for as long as the container lives.
 
 ```ts
 // packages/core/src/agent-protocol/types.ts  (shared by worker and runtime; Zod schemas alongside)

@@ -58,15 +58,21 @@ export interface DrainedExec {
 /**
  * Builds a workspace spec.
  *
+ * The environment carries a canary under an ordinary name. No credential travels this way any
+ * more — they are placed per execution as {@link WorkspaceSpec.files} — but the runner must still
+ * never echo an environment value into an error or a serialisation, because the operator's own
+ * configuration is in it and the daemon is handed the whole map. A canary is simply the value a
+ * leak assertion can recognise.
+ *
  * @param overrides - Fields to replace on the baseline chat spec.
- * @returns A complete spec whose environment carries the GitHub canary.
+ * @returns A complete spec.
  */
 export function fixtureSpec(overrides: Partial<WorkspaceSpec> = {}): WorkspaceSpec {
   return {
     workspaceId: 'ws-1',
     kind: 'CHAT',
     image: FIXTURE_IMAGE,
-    env: { GITHUB_TOKEN: GITHUB_CANARY },
+    env: { AH_FIXTURE_VALUE: GITHUB_CANARY },
     limits: { cpus: 1, memoryBytes: 536_870_912, pids: 256 },
     labels: { 'ah.chat': 'chat-1' },
     ...overrides,

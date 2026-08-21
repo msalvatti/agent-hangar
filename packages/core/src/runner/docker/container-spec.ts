@@ -18,6 +18,22 @@ import { DockerRunnerError } from './errors.ts';
 /** Unprivileged user baked into the workspace image (uid 1001). */
 export const WORKSPACE_USER = 'agent';
 
+/**
+ * Directory the files of an exec are placed into.
+ *
+ * The image creates it owned by the workspace user, and that ownership is the point: Docker
+ * extracts an uploaded archive as root, and unlinking a root-owned file is governed by the write
+ * bit of the directory holding it. A credential placed for one execution has to be removable by
+ * the process that reads it, or the file would simply become the exposure the environment was.
+ *
+ * It is not one of the tmpfs mounts below, and cannot be: Docker's archive API writes through the
+ * container's root filesystem on the host, so anything uploaded to a path a tmpfs is mounted over
+ * lands underneath the mount and is invisible to every process in the container. What is placed
+ * here therefore reaches the container's writable layer, which `destroy` removes with the
+ * container — measured, not assumed.
+ */
+export const WORKSPACE_HANDOFF_DIR = '/opt/agent-runtime/handoff';
+
 /** Directory the repository is checked out into, and the default working directory. */
 export const WORKSPACE_DIR = '/workspace';
 
@@ -73,8 +89,8 @@ export interface ContainerSpecOptions {
  * Encodes an environment map as Docker's `KEY=VALUE` array.
  *
  * Keys are validated because they end up in the container's process environment verbatim; values
- * are never validated, never logged and never echoed in an error — they carry the GitHub PAT and
- * the OpenAI key.
+ * are never validated, never logged and never echoed in an error: the environment carries no
+ * credential any more, but it does carry whatever configuration the operator wrote.
  *
  * @param env - Environment to encode.
  * @returns One `KEY=VALUE` entry per key, in insertion order.
@@ -148,7 +164,7 @@ function toNanoCpus(cpus: number): number {
  * `/tmp` and the absence of any mount keep the container's writable state inside its own layer,
  * which `destroy` removes with `{ v: true }`.
  *
- * @param spec - Workspace to create, including the secrets that go into its environment.
+ * @param spec - Workspace to create.
  * @param opts - Instance naming and scoping.
  * @returns Options ready for `docker.createContainer`.
  * @throws DockerRunnerError when the id, a limit or an environment key is invalid.

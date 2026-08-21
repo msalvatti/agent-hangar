@@ -3,10 +3,11 @@
  *
  * Layer: domain.
  *
- * The container environment carries the GitHub PAT and the OpenAI key because that is the only
- * channel the worker has for them. Anything the agent runs must not inherit either: the model
- * chooses those commands after reading untrusted repository content, and `printenv` or a crafted
- * build script would otherwise hand a credential straight back through tool output.
+ * No credential reaches this process as a variable — they arrive as a file the runtime reads and
+ * unlinks at start-up — and none may leave it as one either. The model chooses the commands the
+ * agent runs after reading untrusted repository content, and `printenv` or a crafted build script
+ * would hand a credential straight back through tool output. The two names are scrubbed anyway:
+ * this is the boundary that has to hold whatever the process it inherits from was started with.
  *
  * Git still needs the token, so it is written to a private file on the container's tmpfs and named
  * to `askpass.sh` through `AH_GIT_TOKEN_FILE`. The helper releases it only for the approved host
@@ -71,18 +72,11 @@ export function createChildEnv(
  * Writes the GitHub token to a private file so the askpass helper can read it without the token
  * being present in any child environment.
  *
- * @param parent - The runtime's own environment.
+ * @param token - The turn's GitHub credential.
  * @param directory - Private directory to hold the file; created if missing.
- * @returns The file path, or `null` when no token is configured.
+ * @returns The file path.
  */
-export async function materializeGitToken(
-  parent: Readonly<Record<string, string | undefined>>,
-  directory: string,
-): Promise<string | null> {
-  const token = parent.GITHUB_TOKEN;
-  if (token === undefined || token === '') {
-    return null;
-  }
+export async function materializeGitToken(token: string, directory: string): Promise<string> {
   await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
   const file = path.join(directory, TOKEN_FILE_NAME);
   await writeFile(file, token, { mode: PRIVATE_FILE_MODE });
@@ -97,7 +91,8 @@ export async function materializeGitToken(
 /**
  * Removes the token file at the end of a turn.
  *
- * @param file - Path returned by {@link materializeGitToken}, or `null` when none was written.
+ * @param file - Path returned by {@link materializeGitToken}, or `null` when the turn ended
+ *   before one was written.
  */
 export async function removeGitToken(file: string | null): Promise<void> {
   if (file === null) {

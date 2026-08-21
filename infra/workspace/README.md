@@ -6,21 +6,25 @@ destroyed together with everything written into it.
 
 ## What is in the image
 
-|                   |                                                                                                                                                               |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Base              | `node:24-bookworm-slim`                                                                                                                                       |
-| Tools             | `git`, `ca-certificates`, `ripgrep`, `jq`, `python3`, `build-essential`, `curl`, `corepack` (pnpm, yarn)                                                      |
-| User              | `agent`, uid 1001, non-root                                                                                                                                   |
-| Working directory | `/workspace`, owned by `agent` — where the repository is cloned                                                                                               |
-| Runtime directory | `/opt/agent-runtime`, **root-owned and read-only to `agent`** — holds `askpass.sh` and, later, the agent runtime bundle                                       |
-| Git configuration | `credential.helper=""`, `GIT_ASKPASS=/opt/agent-runtime/askpass.sh`, `GIT_TERMINAL_PROMPT=0`, `init.defaultBranch=main`, `/workspace` marked a safe directory |
-| Idle command      | `CMD ["sleep", "infinity"]` — the container idles and the worker `exec`s turns into it                                                                        |
+|                   |                                                                                                                                                                                          |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Base              | `node:24-bookworm-slim`                                                                                                                                                                  |
+| Tools             | `git`, `ca-certificates`, `ripgrep`, `jq`, `python3`, `build-essential`, `curl`, `corepack` (pnpm, yarn)                                                                                 |
+| User              | `agent`, uid 1001, non-root                                                                                                                                                              |
+| Working directory | `/workspace`, owned by `agent` — where the repository is cloned                                                                                                                          |
+| Runtime directory | `/opt/agent-runtime`, **root-owned and read-only to `agent`** — holds `askpass.sh` and the agent runtime bundle                                                                          |
+| Handoff directory | `/opt/agent-runtime/handoff`, mode `0700` and owned by `agent` — where the host places the credentials of one turn, and the only thing under `/opt/agent-runtime` that `agent` may write |
+| Git configuration | `credential.helper=""`, `GIT_ASKPASS=/opt/agent-runtime/askpass.sh`, `GIT_TERMINAL_PROMPT=0`, `init.defaultBranch=main`, `/workspace` marked a safe directory                            |
+| Idle command      | `CMD ["sleep", "infinity"]` — the container idles and the worker `exec`s turns into it                                                                                                   |
 
 `CMD` rather than `ENTRYPOINT` so `docker run "$WORKSPACE_IMAGE" node --version` still works for
 diagnostics while the runner's `exec` path is unaffected.
 
 The image contains **no secrets, no `.env` and no source of this repository** other than the runtime
-bundle. Credentials arrive as container environment at `create` time.
+bundle. Credentials do not arrive as container environment: they are placed as a file in the handoff
+directory immediately before each turn's runtime process starts, and the runtime reads them once and
+unlinks the file before the agent runs anything — see [askpass and the token
+file](#askpass-and-the-token-file).
 
 ## Build
 
@@ -78,10 +82,13 @@ git makes inside the workspace — including the ones the agent itself triggers.
 
 - A prompt containing `Username` is answered with `x-access-token` (GitHub's fixed username for
   token authentication).
-- Any other prompt is answered with the token, read from **`AH_GIT_TOKEN_FILE`** when that variable
-  names a readable file, otherwise from **`GITHUB_TOKEN`**. The file exists so the agent runtime can
-  keep the PAT out of the environment it hands to the shell tool's children while git, running with
-  that same scrubbed environment, can still authenticate.
+- Any other prompt is answered with the token, read from the file named by **`AH_GIT_TOKEN_FILE`**
+  and from nowhere else. The agent runtime writes that file on the container's tmpfs for the
+  duration of a turn and unlinks it at the end, which is what lets git authenticate while running
+  with the scrubbed environment the shell tool's children get. **There is no `GITHUB_TOKEN`
+  fallback:** nothing puts the PAT in an environment any more, and a fallback to a variable would
+  be a fallback to whatever the workspace chose to set — the shell tool runs a command the model
+  wrote, and one assignment in front of a git command is all it would take.
 - Credentials are released **only** for the origin in `/opt/agent-runtime/allowed-origin`, which
   the runner writes — root-owned, before the container starts — from the repository URL the
   workspace was created for, after measuring it against `ALLOWED_REPO_HOSTS`. The prompt is reduced
@@ -113,24 +120,74 @@ git makes inside the workspace — including the ones the agent itself triggers.
 - Every refusal prints nothing on stdout and exits non-zero, so git fails authentication instead of
   reading an empty line as a valid password. An absent or empty token fails the same way.
 
+## Where the credentials come from
+
+The worker reveals the GitHub PAT and the OpenAI key once per turn and hands them to the container
+as a single file:
+
+|                |                                                                                 |
+| -------------- | ------------------------------------------------------------------------------- |
+| Path           | `/opt/agent-runtime/handoff/credentials.json`                                   |
+| Content        | `{"githubToken":"…","openaiApiKey":"…"}`                                        |
+| Placed by      | the runner, through Docker's archive API, immediately before the runtime `exec` |
+| Owner and mode | `root:root`, `0644`, inside a `0700` directory owned by `agent`                 |
+| Removed by     | the runtime, as it starts, before the agent can run anything                    |
+
+Root ownership makes it unforgeable; the directory's ownership is what makes it **removable** —
+unlink is governed by the directory's write bit, not by the file's owner — and the removal is the
+whole point. A credential in the container's environment is readable through `/proc/1/environ` by
+every process of the workspace for as long as the container lives, and a chat's container outlives
+the turn that created it; a credential in a file that is gone by the time the agent's first command
+runs is not.
+
+The handoff directory is deliberately **not** a tmpfs. Docker's archive API writes through the
+container's root filesystem on the host, so a file uploaded to a path a tmpfs is mounted over lands
+underneath the mount and no process in the container ever sees it. The residual is that the bytes
+touch the container's writable layer, which is removed with the container.
+
+One window this does not cover: if the runtime is killed between the placement and the read — the
+worker's exec timeout firing immediately, or the container being stopped — the file is left where
+it was put. The next turn's runtime reads and unlinks whatever it finds there before the agent runs
+anything, and `destroy` removes the container's storage, so it is bounded by the next turn or the
+teardown rather than left indefinitely.
+
+The window the unlink leaves open is a race, and it is worth being exact about who can enter it.
+Every process in the workspace runs as `agent` — the same uid that owns the handoff directory — so
+`0700` keeps out other users and the workspace has none: the shell tool can list that directory and
+read what is in it. The permission bits are not what protects the credential; the unlink is. And a
+turn is not the boundary a reader might assume. `run_shell` starts each command in its own process
+group and kills that group on a timeout or a cancellation, but a command that exits normally after
+backgrounding detached work leaves that work running, and a chat reuses its container for every
+turn. So a poller left behind by an earlier turn can watch the directory and win the race against
+the runtime's read. Bounding that further means keeping the credential outside the container and
+mediating git from the worker — the process model R1 records as out of scope for a build the
+specification requires to authenticate with a personal access token.
+
+A runtime that cannot read the file, cannot remove it, or finds it incomplete emits
+`turn.failed { code: "credentials" }` and exits non-zero rather than starting a turn with an empty
+token — an empty password handed to git turns a misconfiguration into an authentication failure
+against the real forge.
+
 ## Security properties
 
 Some are baked into the image, the rest are applied by the runner at `create` time. They are listed
 together because they only make sense as one posture.
 
-| Property                                                                            | Where it comes from  |
-| ----------------------------------------------------------------------------------- | -------------------- |
-| Runs as uid 1001, never root                                                        | image (`USER agent`) |
-| No credential in any layer or in `Config.Env`                                       | image                |
-| `/opt/agent-runtime` root-owned — `agent` cannot replace `askpass.sh` or the bundle | image                |
-| All Linux capabilities dropped (`--cap-drop ALL`)                                   | runner               |
-| `no-new-privileges`                                                                 | runner               |
-| CPU, memory and PIDs ceilings                                                       | runner               |
-| `/tmp` on a tmpfs                                                                   | runner               |
-| No bind mount, no volume, **no Docker socket**                                      | runner               |
-| Bridge network (egress only, no inbound)                                            | runner               |
-| A real init as PID 1 (`--init`) — signals reach the process, orphans are reaped     | runner               |
-| Labelled `ah.instance`, `ah.workspace`, `ah.kind` for scoped discovery and reaping  | runner               |
+| Property                                                                                                                                                                                        | Where it comes from  |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------- |
+| Runs as uid 1001, never root                                                                                                                                                                    | image (`USER agent`) |
+| No credential in any layer or in `Config.Env`                                                                                                                                                   | image                |
+| No credential in the container's environment either — `/proc/1/environ` carries configuration only                                                                                              | runner               |
+| `/opt/agent-runtime` root-owned — `agent` cannot replace `askpass.sh` or the bundle                                                                                                             | image                |
+| `/opt/agent-runtime/handoff` owned by `agent`, mode `0700` — so the runtime can unlink what it reads. The mode excludes other users, and the workspace has none that matter: see the race below | image                |
+| All Linux capabilities dropped (`--cap-drop ALL`)                                                                                                                                               | runner               |
+| `no-new-privileges`                                                                                                                                                                             | runner               |
+| CPU, memory and PIDs ceilings                                                                                                                                                                   | runner               |
+| `/tmp` on a tmpfs                                                                                                                                                                               | runner               |
+| No bind mount, no volume, **no Docker socket**                                                                                                                                                  | runner               |
+| Bridge network (egress only, no inbound)                                                                                                                                                        | runner               |
+| A real init as PID 1 (`--init`) — signals reach the process, orphans are reaped                                                                                                                 | runner               |
+| Labelled `ah.instance`, `ah.workspace`, `ah.kind` for scoped discovery and reaping                                                                                                              | runner               |
 
 The container runs code chosen by a language model reading untrusted repository content. Treat every
 line above as load-bearing.
@@ -147,16 +204,21 @@ DOCKER_AVAILABLE=1 pnpm --filter @agent-hangar/core test:integration    # the @d
 ```
 
 The `@docker` suite is the real check: it creates workspaces against the local daemon and asserts the
-limits, the hardening flags, the absence of mounts, filesystem isolation between two workspaces, and
-that the injected credentials never reach the image.
+limits, the hardening flags, the absence of mounts, filesystem isolation between two workspaces, that
+the injected environment never reaches the image, and that a credential placed for one execution is
+readable and removable by the workspace user and leaves nothing behind. The worker's own
+`@docker @db @redis` suite goes one step further and searches a container that has just completed a
+real turn for the credentials it ran with.
 
 ## Troubleshooting
 
-| Symptom                                         | Cause and fix                                                                                                                         |
-| ----------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
-| `WorkspaceImageMissing`                         | The image has not been built on this host. Run `pnpm infra:image`. Nothing is ever pulled or built implicitly.                        |
-| `cannot inspect image …`                        | The daemon is unreachable. The runner looks for it in this order: `DOCKER_HOST`, `~/.docker/run/docker.sock`, `/var/run/docker.sock`. |
-| `DOCKER_TLS_VERIFY is not supported …`          | The runner speaks to a unix socket or plain TCP only; point `DOCKER_HOST` at one of those.                                            |
-| `container name already exists for workspace …` | A previous container of that workspace was never removed. `pnpm ws:list` / `pnpm ws:reap`.                                            |
-| `workspace did not become ready`                | The container started but never accepted an exec. Check `docker logs ah-ws-<instance>-<workspaceId>`.                                 |
-| `askpass: refusing to release credentials …`    | Working as intended: something asked for the token for a host other than the approved one.                                            |
+| Symptom                                         | Cause and fix                                                                                                                                                         |
+| ----------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `WorkspaceImageMissing`                         | The image has not been built on this host. Run `pnpm infra:image`. Nothing is ever pulled or built implicitly.                                                        |
+| `cannot inspect image …`                        | The daemon is unreachable. The runner looks for it in this order: `DOCKER_HOST`, `~/.docker/run/docker.sock`, `/var/run/docker.sock`.                                 |
+| `DOCKER_TLS_VERIFY is not supported …`          | The runner speaks to a unix socket or plain TCP only; point `DOCKER_HOST` at one of those.                                                                            |
+| `container name already exists for workspace …` | A previous container of that workspace was never removed. `pnpm ws:list` / `pnpm ws:reap`.                                                                            |
+| `workspace did not become ready`                | The container started but never accepted an exec. Check `docker logs ah-ws-<instance>-<workspaceId>`.                                                                 |
+| `askpass: refusing to release credentials …`    | Working as intended: something asked for the token for a host other than the approved one.                                                                            |
+| `askpass: no GitHub token available`            | The turn's token file is gone or was never written — the turn has ended, or the runtime never started. It is not a fallback to a variable; there is none.             |
+| `turn.failed { code: "credentials" }`           | The credentials file was not placed, could not be removed, or was incomplete. Check the worker's log for the create, and that both credentials are saved in Settings. |

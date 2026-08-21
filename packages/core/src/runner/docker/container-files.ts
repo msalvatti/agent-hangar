@@ -9,9 +9,13 @@
  * Ownership is the whole point. Docker extracts an uploaded archive as root and honours the
  * `uid`/`gid` in each tar header, so an entry written as uid 0 lands root-owned inside a container
  * whose own user is unprivileged. That is what makes the file unforgeable from inside: the
- * workspace user can read it and cannot replace it, and because the parent directory is root-owned
- * too, it cannot unlink it and write a new one either — unlink is governed by the directory's
- * write bit, not by the file's owner.
+ * workspace user can read it and cannot replace it.
+ *
+ * Whether it can also be removed is decided by the directory, not by the file: unlink is governed
+ * by the directory's write bit, not by the file's owner. A policy the workspace must live under
+ * goes into a root-owned directory, where it can do neither. A credential handed to one process
+ * goes into a directory the workspace user owns, precisely so that process can take it away again
+ * the moment it has read it.
  */
 import { buffer } from 'node:stream/consumers';
 

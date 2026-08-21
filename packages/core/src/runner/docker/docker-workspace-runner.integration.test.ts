@@ -5,8 +5,9 @@
  * Goal: prove against a real daemon what the unit suite can only prove against a fake — that the
  * container is actually created with the hardening flags and the resource ceilings, that exec
  * really streams, really accepts stdin, really honours a timeout and a signal, that two workspaces
- * really cannot see each other's filesystem, and that the credentials injected as container
- * environment never end up in the image.
+ * really cannot see each other's filesystem, and that a credential placed for one execution lands
+ * where the process that needs it can read it and remove it while never entering the environment
+ * any process of the container can read back.
  * Mocks: none. Requires `DOCKER_AVAILABLE=1` and the image built by `pnpm infra:image`.
  *
  * Every test destroys the containers it created; `afterAll` reaps anything left behind under the
@@ -19,7 +20,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { resolveInstance } from '../../config/instance.ts';
 import { WorkspaceImageMissing } from '../../errors.ts';
-import { assertNoCanary, GITHUB_CANARY } from '../../testing/canaries.ts';
+import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.ts';
 import type { ExecEvent, WorkspaceHandle, WorkspaceSpec } from '../types.ts';
 
 import { resolveDockerSocket } from './docker-socket.ts';
@@ -64,6 +65,15 @@ const APPROVED_ORIGIN = 'https://github.com';
 /** Where the runner places the approved origin, and where the askpass helper reads it. */
 const ALLOWED_ORIGIN_PATH = '/opt/agent-runtime/allowed-origin';
 
+/** Directory an execution's files are placed into, as the image creates it. */
+const HANDOFF_DIR = '/opt/agent-runtime/handoff';
+
+/** Where a turn's credentials are placed, as the worker spells it. */
+const CREDENTIALS_PATH = `${HANDOFF_DIR}/credentials.json`;
+
+/** The document the worker writes there, with canaries in place of real credentials. */
+const CREDENTIALS = { githubToken: GITHUB_CANARY, openaiApiKey: OPENAI_CANARY };
+
 const decoder = new TextDecoder();
 
 /** Everything one exec produced. */
@@ -93,14 +103,14 @@ if (!gate.run) {
    * Builds a workspace spec with a unique id so parallel runs never collide on a container name.
    *
    * @param labels - Extra labels merged into the spec.
-   * @returns A spec whose environment carries the GitHub canary in place of a real PAT.
+   * @returns A spec carrying no credential in its environment, as production carries none.
    */
   function spec(labels: Record<string, string> = { 'ah.chat': 'chat-test' }): WorkspaceSpec {
     return {
       workspaceId: randomUUID(),
       kind: 'CHAT',
       image: IMAGE,
-      env: { AH_TEST_VAR: 'visible', GITHUB_TOKEN: GITHUB_CANARY },
+      env: { AH_TEST_VAR: 'visible' },
       files: [{ path: ALLOWED_ORIGIN_PATH, content: `${APPROVED_ORIGIN}\n` }],
       limits: { cpus: 1, memoryBytes: MEMORY_BYTES, pids: PIDS_LIMIT },
       labels,
@@ -163,6 +173,25 @@ if (!gate.run) {
    */
   async function run(handle: WorkspaceHandle, cmd: readonly string[]): Promise<ExecResult> {
     return collect(runner.exec(handle, { cmd }));
+  }
+
+  /**
+   * Runs one command with a credentials file placed for it, the way a turn runs.
+   *
+   * @param handle - Workspace to run in.
+   * @param cmd - Argument vector.
+   * @returns The exec result.
+   */
+  async function runWithCredentials(
+    handle: WorkspaceHandle,
+    cmd: readonly string[],
+  ): Promise<ExecResult> {
+    return collect(
+      runner.exec(handle, {
+        cmd,
+        files: [{ path: CREDENTIALS_PATH, content: JSON.stringify(CREDENTIALS) }],
+      }),
+    );
   }
 
   beforeAll(async () => {
@@ -368,8 +397,8 @@ if (!gate.run) {
   });
 
   /**
-   * Credentials live in the container's environment and nowhere else. The process sees them; the
-   * image — which is shared, cached and inspectable by anything on the host — must not.
+   * Configuration lives in the container's environment. The process sees it; the image — which is
+   * shared, cached and inspectable by anything on the host — must not.
    */
   it('injects the environment into the container but never into the image', async () => {
     const handle = await workspace();
@@ -382,6 +411,53 @@ if (!gate.run) {
       expect(entry).not.toMatch(/AH_TEST_VAR|TOKEN|KEY|SECRET/i);
     }
     assertNoCanary(JSON.stringify(image));
+  });
+
+  /**
+   * The finding this arrangement exists for, measured rather than argued. Every process of a
+   * workspace runs as the one unprivileged user, so `/proc/1/environ` is an ordinary readable file
+   * for the shell tool — and PID 1 lives as long as the container. A credential put there is a
+   * credential the agent can read at any point in any turn, so nothing puts one there.
+   */
+  it('carries no credential in the environment PID 1 exposes for the life of the container', async () => {
+    const handle = await workspace();
+
+    const environ = await runWithCredentials(handle, [
+      'sh',
+      '-c',
+      'cat /proc/1/environ | tr "\\0" "\\n"',
+    ]);
+
+    expect(environ.exit).toEqual({ type: 'exit', code: 0 });
+    // The read succeeded, so the absence below is absence and not a failed command.
+    expect(environ.stdout).toContain('AH_TEST_VAR=visible');
+    expect(environ.stdout).not.toContain('GITHUB_TOKEN');
+    expect(environ.stdout).not.toContain('OPENAI_API_KEY');
+    assertNoCanary(environ.stdout);
+  });
+
+  /**
+   * How the credential gets in instead: a file placed for one execution, in a directory the
+   * workspace user owns so the process that reads it can also take it away. Everything here is a
+   * property of the running container rather than of the archive the runner built — the ownership
+   * that makes it readable, the directory permissions that make it removable, and the fact that
+   * the next execution finds nothing.
+   */
+  it('places an execution credential the workspace can read and remove, and nothing keeps it', async () => {
+    const handle = await workspace();
+
+    const placed = await runWithCredentials(handle, [
+      'sh',
+      '-c',
+      `stat -c "%U %a" ${CREDENTIALS_PATH}; stat -c "%U %a" ${HANDOFF_DIR}; cat ${CREDENTIALS_PATH}; rm ${CREDENTIALS_PATH} && echo removed`,
+    ]);
+    const afterwards = await run(handle, ['ls', '-A', HANDOFF_DIR]);
+
+    expect(placed.stdout).toContain('root 644');
+    expect(placed.stdout).toContain('agent 700');
+    expect(placed.stdout).toContain(GITHUB_CANARY);
+    expect(placed.stdout).toContain('removed');
+    expect(afterwards.stdout.trim()).toBe('');
   });
 
   /**
@@ -429,23 +505,26 @@ if (!gate.run) {
 
   /**
    * The askpass helper is what lets git authenticate without the token ever entering the shell
-   * tool's environment: it reads the tmpfs file the runtime writes, falls back to `GITHUB_TOKEN`,
-   * and answers the username prompt with GitHub's fixed token username.
+   * tool's environment: it reads the tmpfs file the runtime writes for the duration of a turn, and
+   * answers the username prompt with GitHub's fixed token username. There is no environment
+   * fallback — a variable is something the model's own command can set, and nothing puts the PAT
+   * in one any more, so a prompt answered from `GITHUB_TOKEN` would be a prompt answered from
+   * whatever the workspace chose.
    */
-  it('releases the token through askpass, from the file and from the environment', async () => {
+  it('releases the token through askpass, from the file and never from the environment', async () => {
     const handle = await workspace();
 
     const fromFile = await run(handle, [
       'sh',
       '-c',
-      'printf %s "$GITHUB_TOKEN" > /tmp/tok && AH_GIT_TOKEN_FILE=/tmp/tok GITHUB_TOKEN= /opt/agent-runtime/askpass.sh "$1"',
+      `printf %s '${GITHUB_CANARY}' > /tmp/tok && AH_GIT_TOKEN_FILE=/tmp/tok /opt/agent-runtime/askpass.sh "$1"`,
       'sh',
       PASSWORD_PROMPT,
     ]);
     const fromEnv = await run(handle, [
       'sh',
       '-c',
-      '/opt/agent-runtime/askpass.sh "$1"',
+      `GITHUB_TOKEN='${GITHUB_CANARY}' /opt/agent-runtime/askpass.sh "$1"`,
       'sh',
       PASSWORD_PROMPT,
     ]);
@@ -458,7 +537,8 @@ if (!gate.run) {
     ]);
 
     expect(fromFile.stdout).toBe(`${GITHUB_CANARY}\n`);
-    expect(fromEnv.stdout).toBe(`${GITHUB_CANARY}\n`);
+    expect(fromEnv.stdout).toBe('');
+    expect(fromEnv.exit).not.toEqual({ type: 'exit', code: 0 });
     expect(username.stdout).toBe('x-access-token\n');
   });
 
@@ -482,7 +562,7 @@ if (!gate.run) {
     const stillOriginal = await run(handle, [
       'sh',
       '-c',
-      '/opt/agent-runtime/askpass.sh "$1"',
+      `printf %s '${GITHUB_CANARY}' > /tmp/tok && AH_GIT_TOKEN_FILE=/tmp/tok /opt/agent-runtime/askpass.sh "$1"`,
       'sh',
       PASSWORD_PROMPT,
     ]);

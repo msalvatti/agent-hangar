@@ -4,8 +4,9 @@
  * Layer: integration (spawns sh; no Docker, no network).
  * Goal: the GitHub PAT is released only for the single origin the workspace was created for, read
  * from the root-owned file the host places and never from the environment, and only through the
- * prompts git actually asks; every refusal is silent on stdout and non-zero — git must fail
- * authentication rather than read an empty line as a valid password. The origin is compared whole
+ * prompts git actually asks; the token itself likewise comes from a file and from nothing else, so
+ * a variable naming one is answered with nothing; every refusal is silent on stdout and non-zero —
+ * git must fail authentication rather than read an empty line as a valid password. The origin is compared whole
  * and exactly, so the suffix, userinfo, port and path-segment tricks that a substring or host-only
  * test would accept are all refused, while a forge the operator listed on another host or another
  * port is served. `https` is required of the approved origin itself, so a cleartext workspace
@@ -40,6 +41,7 @@ const SHIPPED_ORIGIN_FILE_LINE = 'ALLOWED_ORIGIN_FILE=/opt/agent-runtime/allowed
 let workDir: string;
 let scriptPath: string;
 let originFile: string;
+let tokenFile: string;
 
 /**
  * Rewrites the approved-origin file the script under test reads.
@@ -54,10 +56,24 @@ function setApprovedOrigin(content: string | null): void {
   writeFileSync(originFile, content, 'utf8');
 }
 
+/**
+ * Rewrites the private token file the agent runtime writes for the duration of a turn.
+ *
+ * @param content - Exactly what the file holds, or `null` to remove it.
+ */
+function setTokenFile(content: string | null): void {
+  if (content === null) {
+    rmSync(tokenFile, { force: true });
+    return;
+  }
+  writeFileSync(tokenFile, content, 'utf8');
+}
+
 beforeAll(() => {
   workDir = mkdtempSync(join(tmpdir(), 'ah-askpass-'));
   scriptPath = join(workDir, 'askpass.sh');
   originFile = join(workDir, 'allowed-origin');
+  tokenFile = join(workDir, 'git-token');
   const shipped = readFileSync(shippedScriptPath, 'utf8');
   // The redirection is one line and it is asserted, so the copy cannot drift into testing a
   // different script than the image ships.
@@ -68,6 +84,7 @@ beforeAll(() => {
     'utf8',
   );
   setApprovedOrigin(`${GITHUB_ORIGIN}\n`);
+  setTokenFile(`${GITHUB_CANARY}\n`);
 });
 
 afterAll(() => {
@@ -80,16 +97,17 @@ const GITHUB_ORIGIN = 'https://github.com';
 /**
  * Runs the helper with one git prompt, returning exactly what it produced.
  *
- * The environment stands in for the one a workspace command runs with: the token, and nothing that
- * decides policy. The approved origin is not in it — that is the point of the file.
+ * The environment stands in for the one a workspace command runs with: the path of the private
+ * token file, and nothing that decides policy. Neither the approved origin nor the token itself is
+ * in it — that is the point of both files.
  *
  * @param prompt - The prompt git would print.
- * @param env - Environment for the run; defaults to the token alone.
+ * @param env - Environment for the run; defaults to the token file alone.
  * @returns Status, stdout and stderr.
  */
 function askpass(
   prompt: string,
-  env: Record<string, string> = { GITHUB_TOKEN: GITHUB_CANARY },
+  env: Record<string, string> = { AH_GIT_TOKEN_FILE: tokenFile },
 ): { status: number | null; stdout: string; stderr: string } {
   const result = spawnSync(sh, [scriptPath, prompt], {
     env: { PATH: process.env.PATH ?? '', ...env },
@@ -189,10 +207,34 @@ describe('infra/workspace/askpass.sh', () => {
    * GitHub; failing closed says what is wrong instead.
    */
   it.each([
-    ['absent', {}],
-    ['empty', { GITHUB_TOKEN: '' }],
-  ])('fails closed when the token is %s', (_label, env) => {
-    const result = askpass(APPROVED, env);
+    ['no file is named', () => ({})],
+    ['the named file is not there', () => ({ AH_GIT_TOKEN_FILE: join(workDir, 'absent') })],
+    [
+      'the file is empty',
+      () => {
+        setTokenFile('');
+        return { AH_GIT_TOKEN_FILE: tokenFile };
+      },
+    ],
+  ])('fails closed when %s', (_label, prepareEnv) => {
+    try {
+      const result = askpass(APPROVED, prepareEnv());
+      expect(result.stdout).toBe('');
+      expect(result.status).not.toBe(0);
+    } finally {
+      setTokenFile(`${GITHUB_CANARY}\n`);
+    }
+  });
+
+  /**
+   * The token has one source, and a variable is not it. Nothing puts the PAT in an environment any
+   * more, and a fallback to one would be a fallback to whatever the workspace chose to set: the
+   * shell tool runs a command a model wrote, and a variable assignment in front of a git command
+   * is all it would take to decide what the helper releases.
+   */
+  it('answers nothing for a token named only in the environment', () => {
+    const result = askpass(APPROVED, { GITHUB_TOKEN: GITHUB_CANARY });
+
     expect(result.stdout).toBe('');
     expect(result.status).not.toBe(0);
   });
@@ -294,9 +336,12 @@ describe('infra/workspace/askpass.sh', () => {
   ])('ignores %s in the environment', (_label, name) => {
     const foreign = "Password for 'https://evil.test': ";
 
-    const refused = askpass(foreign, { GITHUB_TOKEN: GITHUB_CANARY, [name]: 'https://evil.test' });
+    const refused = askpass(foreign, {
+      AH_GIT_TOKEN_FILE: tokenFile,
+      [name]: 'https://evil.test',
+    });
     const approved = askpass(APPROVED, {
-      GITHUB_TOKEN: GITHUB_CANARY,
+      AH_GIT_TOKEN_FILE: tokenFile,
       [name]: 'https://evil.test',
     });
 
@@ -323,5 +368,8 @@ describe('infra/workspace/askpass.sh', () => {
     expect(code).not.toContain('AH_GIT_ALLOWED_ORIGIN');
     expect(code).not.toContain('${ALLOWED_ORIGIN_FILE-');
     expect(code).not.toContain('${ALLOWED_ORIGIN_FILE:-');
+    // And the token likewise: the variable that used to be the fallback is named nowhere but in
+    // the header, which the filter above has already removed.
+    expect(code).not.toContain('GITHUB_TOKEN');
   });
 });

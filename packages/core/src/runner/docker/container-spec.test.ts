@@ -35,7 +35,7 @@ function spec(overrides: Partial<WorkspaceSpec> = {}): WorkspaceSpec {
     workspaceId: 'ws-1',
     kind: 'CHAT',
     image: 'agent-hangar/workspace:dev',
-    env: { GITHUB_TOKEN: GITHUB_CANARY },
+    env: { AGENT_MODEL_PROVIDER: 'openai' },
     limits: { cpus: 2, memoryBytes: 2_147_483_648, pids: 512 },
     labels: { 'ah.chat': 'chat-1' },
     ...overrides,
@@ -81,7 +81,7 @@ describe('buildContainerCreateOptions', () => {
     expect(buildContainerCreateOptions(spec(), OPTIONS)).toEqual({
       name: 'ah-ws-test-ws-1',
       Image: 'agent-hangar/workspace:dev',
-      Env: [`GITHUB_TOKEN=${GITHUB_CANARY}`],
+      Env: ['AGENT_MODEL_PROVIDER=openai'],
       User: 'agent',
       WorkingDir: '/workspace',
       Tty: false,

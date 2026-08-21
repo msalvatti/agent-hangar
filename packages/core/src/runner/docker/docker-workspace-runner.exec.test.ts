@@ -15,6 +15,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { CANARY_MARKER, GITHUB_CANARY } from '../../testing/canaries.ts';
 
 import { DockerRunnerError } from './errors.ts';
+import { dockerError } from './testing/fake-docker-api.ts';
 import {
   createFixtureWorkspace as createWorkspace,
   drainExec as drain,
@@ -39,6 +40,75 @@ describe('DockerWorkspaceRunner.exec', () => {
     expect(result.stdout).toBe('hello\n');
     expect(result.stderr).toBe('warn\n');
     expect(result.exit).toEqual({ type: 'exit', code: 0 });
+  });
+
+  /**
+   * How a credential reaches a workspace. It is placed for this one process and nothing else, and
+   * it is placed after the container has already been running — a container serves many turns, and
+   * the file must be there for the process about to start rather than for the life of the
+   * workspace. The archive lands in the handoff directory, which the runner mounts as a tmpfs the
+   * workspace user owns, so the process that reads it can also unlink it.
+   */
+  it('places an exec file immediately before starting the process', async () => {
+    const { runner, docker } = makeRunner();
+    const handle = await createWorkspace(runner);
+
+    await drain(
+      runner.exec(handle, {
+        cmd: ['node', 'cli.js', 'turn'],
+        files: [
+          {
+            path: '/opt/agent-runtime/handoff/credentials.json',
+            content: JSON.stringify({ githubToken: GITHUB_CANARY }),
+          },
+        ],
+      }),
+    );
+
+    const record = docker.containers.get('c1');
+    expect(record?.archives).toHaveLength(1);
+    expect(record?.archives[0]?.path).toBe('/opt/agent-runtime/handoff');
+    expect(record?.archivesAfterStart).toStrictEqual([true]);
+    // Before the exec that runs the command, not after it: a process that started first would find
+    // nothing there.
+    expect(docker.calls.indexOf('putArchive:c1:/opt/agent-runtime/handoff')).toBeLessThan(
+      docker.calls.findIndex((call) => call.includes('cli.js turn')),
+    );
+  });
+
+  /**
+   * An exec that carries no files makes exactly the daemon calls it always made; every internal
+   * probe of the runner goes through this path too.
+   */
+  it('uploads nothing for an exec that names no files', async () => {
+    const { runner, docker } = makeRunner();
+    const handle = await createWorkspace(runner);
+
+    await drain(runner.exec(handle, { cmd: ['pwd'] }));
+
+    expect(docker.containers.get('c1')?.archives).toStrictEqual([]);
+    expect(docker.calls.some((call) => call.startsWith('putArchive:'))).toBe(false);
+  });
+
+  /**
+   * A credential that could not be placed is a turn that would run without one, which the runtime
+   * refuses anyway — so the failure is reported here rather than turned into a confusing
+   * authentication error later. Nothing is started.
+   */
+  it('fails the exec when a file cannot be placed, without running the command', async () => {
+    const { runner, docker } = makeRunner();
+    const handle = await createWorkspace(runner);
+    docker.failures.containerPutArchive = dockerError(500, 'no such directory');
+
+    const failure = await drain(
+      runner.exec(handle, {
+        cmd: ['node', 'cli.js', 'turn'],
+        files: [{ path: '/opt/agent-runtime/handoff/credentials.json', content: '{}' }],
+      }),
+    ).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(DockerRunnerError);
+    expect(docker.containers.get('c1')?.execCommands).toStrictEqual([['true']]);
   });
 
   /**

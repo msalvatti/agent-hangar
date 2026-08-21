@@ -2,6 +2,14 @@
 // protocol adapters. `bin.ts` is the process entry point and is deliberately not re-exported.
 export { createNodeIo, EXIT, runCli } from './cli.js';
 export type { CliDeps, CliIo, CliOverrides } from './cli.js';
+export {
+  CREDENTIALS_FILE_VAR,
+  CredentialsUnavailable,
+  DEFAULT_CREDENTIALS_FILE,
+  takeWorkspaceCredentials,
+  workspaceCredentialsSchema,
+} from './credentials.js';
+export type { WorkspaceCredentials } from './credentials.js';
 export { builtInFakeScript } from './fake-scripts.js';
 export { createGitRunner, GitError, gitOrThrow } from './git.js';
 export type { GitArgs, GitCommandResult, GitRunner, GitRunOptions } from './git.js';

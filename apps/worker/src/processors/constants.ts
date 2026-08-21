@@ -16,6 +16,7 @@ import {
   LABEL_JOB_RUN,
   LABEL_KIND,
   LABEL_WORKSPACE,
+  WORKSPACE_HANDOFF_DIR,
 } from '@agent-hangar/core/runner/docker';
 
 /** Bytes in a kibibyte. */
@@ -66,6 +67,23 @@ export const ASKPASS_PATH = '/opt/agent-runtime/askpass.sh';
 export const ALLOWED_ORIGIN_PATH = '/opt/agent-runtime/allowed-origin';
 
 /**
+ * File inside the workspace carrying the two credentials of one turn.
+ *
+ * Placed by the runner immediately before the runtime starts and unlinked by the runtime as it
+ * reads it, so the window in which a shell command the agent runs could read the same file is the
+ * gap between those two acts rather than the life of the container. The environment is not an
+ * option: `/proc/<pid>/environ` is readable by any process of the same user, and every process in
+ * a workspace is that same user.
+ *
+ * The directory comes from the runner, which is the side that knows what the image provides: it is
+ * owned by the workspace user, so the runtime can remove what it finds there. Only the file name
+ * is decided here, and the runtime spells the whole path again on its own side, the way
+ * {@link ASKPASS_PATH} and {@link ALLOWED_ORIGIN_PATH} are spelled twice: the two live in
+ * different processes, and the end-to-end suite is what proves they still agree.
+ */
+export const CREDENTIALS_PATH = `${WORKSPACE_HANDOFF_DIR}/credentials.json`;
+
+/**
  * Slack added to the exec's wall-clock limit on top of the turn's own.
  *
  * The runtime enforces `maxTurnMs` itself and then needs time to write its terminal event; the
@@ -96,6 +114,22 @@ export const WORKER_RELIABILITY = {
   stalledInterval: 30 * SECOND_MS,
   maxStalledCount: 1,
 } as const;
+
+/**
+ * Failure code recorded when a credential the turn needs is not configured.
+ *
+ * Reported from two places, which is why it is spelled here: provisioning refuses before it builds
+ * a container, and the execution refuses again because a chat's container outlives the turn that
+ * created it and the operator may have removed the credential since.
+ */
+export const SECRETS_MISSING_CODE = 'secrets_missing';
+
+/** `Workspace.failureReason` written when a credential was not configured. */
+export const SECRETS_MISSING_REASON = 'secrets missing';
+
+/** What the user is told to do when a credential is not configured. */
+export const SECRETS_MISSING_MESSAGE =
+  'Configure the GitHub PAT and the OpenAI API key in Settings, then try again.';
 
 /** `Workspace.failureReason` written when a turn's predecessor was found still holding it. */
 export const STALLED_RECOVERY_REASON = 'stalled turn recovery';

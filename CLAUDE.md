@@ -143,9 +143,11 @@ time, `NODE_OPTIONS=--max-old-space-size=4096`.
 - **Conventional Commits**, no AI-attribution trailers anywhere (commits, PR titles, bodies,
   comments).
 - **Secrets:** GitHub PAT and OpenAI key exist in plaintext only in the `PUT /api/settings/:key`
-  body, in worker memory while a turn is prepared, and in the container env. Never in the repo,
-  image layers, logs, Postgres (ciphertext only), API responses, UI, error messages, fixtures or
-  PR bodies. Tests use the canaries from `packages/core/src/testing/canaries.ts`
+  body, in worker memory while a turn is prepared, and in the file the runner places for that one
+  execution, which the runtime reads and unlinks at start-up. **Never in a container's
+  environment** — `/proc/1/environ` is readable by every process of a workspace for as long as the
+  container lives. Never in the repo, image layers, logs, Postgres (ciphertext only), API
+  responses, UI, error messages, fixtures or PR bodies. Tests use the canaries from `packages/core/src/testing/canaries.ts`
   (`GITHUB_CANARY`, `OPENAI_CANARY`) — the only secret-shaped strings allowed anywhere.
 - `dockerode` only under `packages/core/src/runner/docker/**`; `node:crypto` (never bare `crypto`),
   `crypto.randomUUID()` (never `uuid`/`nanoid`).

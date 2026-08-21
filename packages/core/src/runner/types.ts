@@ -16,7 +16,15 @@ export interface WorkspaceSpec {
   kind: 'CHAT' | 'JOB';
   /** Image reference (tag or digest). */
   image: string;
-  /** Environment injected at start. Secrets arrive here and nowhere else. */
+  /**
+   * Environment injected at start, and therefore carried by every process of the container for
+   * its whole life.
+   *
+   * No credential belongs here. `/proc/<pid>/environ` is readable by any process of the same user,
+   * every process in a workspace runs as that one user, and the workspace runs shell commands a
+   * language model chose — so a value placed here is a value the agent can read back at any time.
+   * Credentials travel per execution instead, as {@link ExecSpec.files}.
+   */
   env: Readonly<Record<string, string>>;
   /** Resource ceilings; the runner must enforce or reject. */
   limits: WorkspaceLimits;
@@ -31,13 +39,14 @@ export interface WorkspaceSpec {
    * workspace reads out of its own environment is a policy the workspace can rewrite. A file the
    * runner places before the first process runs, owned by a user the workspace is not, cannot be.
    *
-   * Secrets do not belong here: this is for values that must survive the workspace, not values
-   * that must be hidden from it. Credentials still travel in {@link WorkspaceSpec.env}.
+   * This is for values that must outlive every process of the workspace: they are placed once and
+   * stay. A credential is the opposite case and belongs in {@link ExecSpec.files}, which is placed
+   * for one execution and removed by the process that reads it.
    */
   files?: readonly WorkspaceFile[];
 }
 
-/** One file placed into a workspace before it starts. */
+/** One file placed into a workspace by the runner. */
 export interface WorkspaceFile {
   /** Absolute path inside the container; its parent directory must already exist. */
   path: string;
@@ -71,8 +80,24 @@ export interface ExecSpec {
   cmd: readonly string[];
   /** Working directory inside the workspace; defaults to the image workdir. */
   cwd?: string;
-  /** Extra environment for this process only. */
+  /** Extra environment for this process only. Never a credential; see {@link ExecSpec.files}. */
   env?: Readonly<Record<string, string>>;
+  /**
+   * Content placed inside the workspace immediately before this process starts.
+   *
+   * This is the channel a credential travels on. The environment cannot be one — neither the
+   * container's nor this process's — because `/proc/<pid>/environ` is readable by any process of
+   * the same user and every process in a workspace is that same user, so an agent shell command
+   * reads back whatever was injected. A file can be taken off the filesystem the moment it has
+   * been read, which is what turns "for as long as the container lives" into "until the runtime
+   * has started".
+   *
+   * The runner places these into a directory the workspace user owns, so the reader can unlink
+   * them; it is the reader's job to do so, and to fail loudly rather than continue without what it
+   * came for. They are written to the container's own storage, which its destruction removes, and
+   * a runner that can offer memory instead should.
+   */
+  files?: readonly WorkspaceFile[];
   /** Data written to stdin, then stdin is closed. Used for the agent protocol. */
   stdin?: AsyncIterable<Uint8Array> | Uint8Array | string;
   /** Wall-clock limit; on expiry the runner kills the process and yields `exit` with `signal: 'TIMEOUT'`. */

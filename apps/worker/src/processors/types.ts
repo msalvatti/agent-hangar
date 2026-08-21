@@ -30,14 +30,17 @@ export interface ProcessorDeps {
   clock: Clock;
   repos: Repositories;
   runner: WorkspaceRunner;
-  /** Worker-only: `reveal` is called here and nowhere else in the application. */
+  /**
+   * Worker-only: `reveal` is called from `workspace-credentials.ts` and nowhere else in the
+   * application.
+   */
   secrets: SecretsService;
   redactor: Redactor;
   publisher: TurnEventPublisher;
   commands: CommandListener;
   queues: WorkerQueues;
   /**
-   * Extra variables every workspace container is created with, on top of its credentials.
+   * Extra variables every workspace container is created with.
    *
    * Resolved once, where the process reads its environment, rather than per create: it is the
    * same for every workspace, and a value that cannot be resolved has to stop the process rather

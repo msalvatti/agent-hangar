@@ -26,6 +26,7 @@ export {
   LABEL_WORKSPACE,
   toEnvArray,
   WORKSPACE_DIR,
+  WORKSPACE_HANDOFF_DIR,
   WORKSPACE_USER,
 } from './container-spec.ts';
 export type { ContainerSpecOptions } from './container-spec.ts';

@@ -8,11 +8,13 @@
  * publish, then persist. Publishing before persisting is what lets the UI stay live while the
  * database catches up; redacting before either is what makes both safe.
  *
- * Security: the bytes fed to the parser are produced by a process whose environment holds the
- * GitHub PAT and the OpenAI key. Nothing derived from them leaves this function unredacted — not
- * the events, not the stderr diagnostics, and not the message of a transport failure. A failure of
- * the publisher or of the repositories is reported by classification and never by message: its
- * text belongs to a driver that was configured with a connection string.
+ * Security: the credentials of the turn are revealed here, one execution at a time, and travel to
+ * the container as a file the runner places immediately before the runtime starts. The bytes fed
+ * to the parser are produced by the process that reads that file, so nothing derived from them
+ * leaves this function unredacted — not the events, not the stderr diagnostics, and not the
+ * message of a transport failure. A failure of the publisher or of the repositories is reported by
+ * classification and never by message: its text belongs to a driver that was configured with a
+ * connection string.
  */
 import {
   agentEventSchema,
@@ -34,8 +36,15 @@ import type {
 import { isTransportError } from '../errors.js';
 
 import type { CancellationWatch } from './cancellation.js';
-import { CANCEL_GRACE_MS, EXEC_GRACE_MS, RUNTIME_CMD } from './constants.js';
+import {
+  CANCEL_GRACE_MS,
+  EXEC_GRACE_MS,
+  RUNTIME_CMD,
+  SECRETS_MISSING_CODE,
+  SECRETS_MISSING_MESSAGE,
+} from './constants.js';
 import type { ProcessorDeps } from './types.js';
+import { revealCredentialsFile } from './workspace-credentials.js';
 
 /** Where a redacted event is persisted; the executor has already published it. */
 export interface TurnSink {
@@ -533,6 +542,24 @@ export async function executeRuntimeTurn(
   deps: ProcessorDeps,
   input: ExecuteRuntimeTurnInput,
 ): Promise<ExecOutcome> {
+  // Asked of every turn rather than of every create, because a workspace outlives the turn that
+  // built it: the credential the operator removed after the last turn must not still be usable in
+  // the container it left behind.
+  const credentials = await revealCredentialsFile(deps);
+  if (credentials === null) {
+    return {
+      terminal: 'runner-error',
+      reportedByRuntime: false,
+      exitCode: null,
+      error: { code: SECRETS_MISSING_CODE, message: SECRETS_MISSING_MESSAGE },
+      protocolErrors: 0,
+    };
+  }
+
+  // After the reveal, and that order is the whole of it. The watch does not replay a cancellation
+  // to a listener registered later, so the only thing that catches one arriving while the secrets
+  // were being decrypted is this read of `requested()` — taken once the awaiting is over, with
+  // nothing but synchronous code between it and the listener below.
   const state = newExecState(input.watch);
 
   input.watch.onCancel(() => {
@@ -544,6 +571,7 @@ export async function executeRuntimeTurn(
     for await (const event of deps.runner.exec(input.handle, {
       cmd: RUNTIME_CMD,
       stdin: encodeLine(input.request),
+      files: [credentials],
       timeoutMs: input.request.limits.maxTurnMs + EXEC_GRACE_MS,
     })) {
       await consumeOrStopExec(deps, input, state, event);

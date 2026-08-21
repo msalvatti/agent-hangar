@@ -15,6 +15,9 @@ describe('@agent-hangar/agent-runtime barrel', () => {
   it('exports the command dispatcher, the turn machinery and the protocol adapters', () => {
     expect(Object.keys(runtime).toSorted()).toStrictEqual([
       'ALLOWED_ORIGIN_FILE',
+      'CREDENTIALS_FILE_VAR',
+      'CredentialsUnavailable',
+      'DEFAULT_CREDENTIALS_FILE',
       'EXIT',
       'GitError',
       'PrepareError',
@@ -41,6 +44,8 @@ describe('@agent-hangar/agent-runtime barrel', () => {
       'runCli',
       'runTurnCommand',
       'runTurnLoop',
+      'takeWorkspaceCredentials',
+      'workspaceCredentialsSchema',
     ]);
   });
 });
