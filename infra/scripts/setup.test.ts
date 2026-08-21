@@ -390,4 +390,31 @@ describe('setup.sh doctor handoff', () => {
     const log = readShimLog(f.log);
     expect(log.at(-1)).toBe('doctor invoked');
   });
+
+  /**
+   * A second run whose shell names a different instance than the env file records is refused, and
+   * refused before anything acts on either instance. Setup used to be the one entry point that
+   * read the file with the weaker check: it discarded the instance the operator typed without a
+   * word, migrated, built the image and brought compose up on the file's instance, and finished by
+   * printing "Setup complete for instance <the other one>" — a wrong answer wearing the face of a
+   * right one. The env file is left exactly as it was, because a refusal that edited it would be
+   * the same mistake in the other direction.
+   */
+  it('refuses a second run whose shell contradicts the env file', () => {
+    const f = fixture();
+    const shimDir = createShimDir({ log: f.log, docker: { image: 'missing' } });
+    spawnScript(scriptPath, { shimDir, args: ['--skip-doctor'], env: baseEnv(f) });
+    const envBefore = readFileSync(f.envFile, 'utf8');
+
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--skip-doctor'],
+      env: baseEnv(f, { AH_INSTANCE: 'other', AH_PORT_BASE: '3410' }),
+    });
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('this shell selects instance "other"');
+    expect(result.stderr).toContain('AH_ENV_FILE');
+    expect(readFileSync(f.envFile, 'utf8')).toBe(envBefore);
+  });
 });

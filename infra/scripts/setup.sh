@@ -67,7 +67,17 @@ fi
 # `eval`, never of `cmd`, so a refusal used to be swallowed here: env.sh printed why it would not
 # hand over an environment, setup carried on without one, and the first step to dereference a key
 # the file never carried died on "unbound variable" instead.
-instance_env="$(bash "$here"/env.sh --print-effective)" || exit "$?"
+#
+# `--print-checked` rather than `--print-effective`, so a shell that names an instance the file
+# contradicts is refused instead of ignored. The paragraph above describes exactly that hazard and
+# the weaker flag let it through: `AH_INSTANCE=test AH_PORT_BASE=3410 pnpm setup` in a checkout set
+# up for another instance ran to completion and printed "Setup complete for instance local" — the
+# shell's answer discarded without a word, the doctor validating the instance the operator had not
+# asked for, and the whole thing wearing the face of success. Every other entry point (run, doctor,
+# archive, ws, db-prune, rotate-key) already refuses; setup was the one that did not, and it is the
+# first command anybody types. A first run is unaffected: the check applies only to a file that
+# already exists, and step 2 above has just written one that agrees.
+instance_env="$(bash "$here"/env.sh --print-checked)" || exit "$?"
 eval "$instance_env"
 
 log "3/7 Docker socket"

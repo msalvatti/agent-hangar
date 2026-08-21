@@ -46,13 +46,26 @@ describe('instance resolution call sites', () => {
   });
 
   /**
-   * `setup.sh` is the one command that establishes the file rather than acting on it: with
-   * `--force` it rewrites the file from the shell, and without it the preserved file wins. Making
-   * it refuse a disagreement it is there to resolve would leave no way out of one.
+   * `setup.sh` answers to the same rule, and used not to.
+   *
+   * The exemption read: setup establishes the file rather than acting on it, so making it refuse a
+   * disagreement "would leave no way out of one". The premise is false — the refusal prints three
+   * ways out, and `--force` is the first of them — and the exemption cost exactly what the rule
+   * exists to prevent: `AH_INSTANCE=test AH_PORT_BASE=3410 pnpm setup` in a configured checkout ran
+   * to completion, migrated, built the image, brought compose up and printed "Setup complete for
+   * instance local", both variables discarded without a word.
+   *
+   * What is actually special about setup is narrower than the exemption was: on a **first** run
+   * there is no file for a shell to contradict, and the check applies only to a file that already
+   * exists. It writes one in the step before this, so a first run passes through untouched.
+   *
+   * `setup.sh` reaches env.sh as `bash "$here"/env.sh`, so it is asserted here rather than added to
+   * the list above, whose scripts quote the whole path.
    */
-  it('setup.sh keeps resolving through --print-effective', () => {
+  it('setup.sh resolves the instance through --print-checked', () => {
     const source = read(join(scriptsDir, 'setup.sh'));
-    expect(source).toContain('env.sh --print-effective');
+    expect(source).toContain('env.sh --print-checked');
+    expect(source).not.toContain('env.sh --print-effective');
   });
 
   /**

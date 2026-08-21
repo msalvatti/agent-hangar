@@ -238,13 +238,22 @@ describe('infra/scripts/env.sh --print-effective', () => {
   });
 
   /**
-   * The mode is only useful if `setup.sh` actually uses it; a call site that reverted to
-   * `--print` would reintroduce the split-brain without failing any other test here.
+   * The mode is only useful if `setup.sh` actually uses it; a call site that reverted to `--print`
+   * would reintroduce the split-brain without failing any other test here.
+   *
+   * `--print-checked` and not `--print-effective`, which this used to require. Both read the file
+   * rather than the shell, which is what stops the split-brain; only the checked one also refuses
+   * a shell that names an instance the file contradicts. Setup read it with the weaker mode, so
+   * `AH_INSTANCE=test AH_PORT_BASE=3410 pnpm setup` in a checkout configured for another instance
+   * discarded both variables without a word and reported "Setup complete for instance local" —
+   * migrations, image and compose all on the instance nobody had asked for. Every other entry
+   * point already refused; this was the one that did not, and it is the first command anybody runs.
    */
   it('is what setup.sh loads its environment from', () => {
     const setup = readFileSync(setupPath, 'utf8');
-    expect(setup).toContain('env.sh --print-effective');
+    expect(setup).toContain('env.sh --print-checked');
     expect(setup).not.toContain('env.sh --print)');
+    expect(setup).not.toContain('env.sh --print-effective');
   });
 });
 
