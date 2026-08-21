@@ -15,8 +15,8 @@ import { TOOL_SCHEMAS } from './tools/schemas.js';
 const script = builtInFakeScript();
 
 describe('builtInFakeScript', () => {
+  /** Each key is the exact text a spec sends; a typo makes the fake answer "Done." instead. */
   it('covers the prompts of the end-to-end suite and has a fallback', () => {
-    // Each key is the exact text a spec sends; a typo makes the fake answer "Done." instead.
     expect(Object.keys(script).toSorted()).toStrictEqual([
       'default',
       'list files and create NOTES.md',
@@ -26,8 +26,8 @@ describe('builtInFakeScript', () => {
     ]);
   });
 
+  /** A stream without `response.done` is treated as an unknown provider failure. */
   it('ends every step with a response, so the loop never sees a truncated stream', () => {
-    // A stream without `response.done` is treated as an unknown provider failure.
     for (const steps of Object.values(script)) {
       for (const step of steps) {
         expect(step.events.at(-1)).toMatchObject({ type: 'response.done' });
@@ -35,8 +35,8 @@ describe('builtInFakeScript', () => {
     }
   });
 
+  /** `turn.completed` sums these; a missing usage silently under-reports the turn's cost. */
   it('reports usage on every response so the turn totals add up', () => {
-    // `turn.completed` sums these; a missing usage silently under-reports the turn's cost.
     for (const steps of Object.values(script)) {
       for (const step of steps) {
         expect(step.events.at(-1)).toMatchObject({
@@ -49,8 +49,8 @@ describe('builtInFakeScript', () => {
     }
   });
 
+  /** The scripted calls go through the same executor as a real model's, schema and all. */
   it('only calls tools with arguments the real schemas accept', () => {
-    // The scripted calls go through the same executor as a real model's, schema and all.
     const calls = Object.values(script)
       .flat()
       .flatMap((step) => step.events)
@@ -63,8 +63,8 @@ describe('builtInFakeScript', () => {
     }
   });
 
+  /** Duplicate response ids make a recorded transcript impossible to follow. */
   it('gives every response a distinct identifier', () => {
-    // Duplicate response ids make a recorded transcript impossible to follow.
     const ids = Object.values(script)
       .flat()
       .flatMap((step) => step.events)

@@ -58,7 +58,12 @@ describe('BranchPicker', () => {
     expect(trigger).toHaveAttribute('title', 'Choose a repository first');
   });
 
-  // Once branches load for a repo, the default branch is auto-selected exactly once.
+  /**
+   * Once branches load for a repo, the default branch is auto-selected exactly once.
+   *
+   * The seeded listing is the forge's own order, so `main` is its last entry: this passes only
+   * because the picker looks the default up by name.
+   */
   it('auto-selects the default branch once branches load', async () => {
     const onChange = vi.fn();
     render(<BranchPicker repo="acme/api" defaultBranch="main" value={null} onChange={onChange} />);
@@ -134,9 +139,9 @@ describe('BranchPicker', () => {
    * Taking the first entry of the listing therefore pinned a schedule to a throwaway work branch
    * without ever saying so, and a schedule nobody re-reads is worse wrong than obviously unset.
    *
-   * The listing here is stated rather than taken from the seeded mocks on purpose: those sort the
-   * default first, which is exactly why this went unseen. What the picker gets in production is
-   * this shape.
+   * The listing is stated here rather than taken from the seeded mocks so that the rule survives
+   * the fixture: the seed happens to be alphabetical today, and a later edit to it must not be
+   * able to quietly withdraw this assertion.
    */
   it('selects the repository default even when the listing does not start with it', async () => {
     server.use(

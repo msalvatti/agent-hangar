@@ -29,47 +29,47 @@ const GITHUB_FINE_GRAINED_CANARY = `github_pat_${CANARY_MARKER.padEnd(22, '0')}`
 const OPENAI_PROJECT_CANARY = `sk-proj-${CANARY_MARKER.padEnd(20, '0')}`;
 
 describe('createRuntimeRedactor / redactText', () => {
+  /** Host and container must agree on the marker so the UI can render it consistently. */
   it('uses the replacement token of the shared secrets contract', () => {
-    // Host and container must agree on the marker so the UI can render it consistently.
     expect(REDACTED).toBe(REDACTED_TOKEN);
   });
 
+  /** Shape patterns are the safety net for a credential the agent itself printed. */
   it.each([
     ['github classic PAT canary', GITHUB_CANARY],
     ['openai key canary', OPENAI_CANARY],
     ['fine-grained github PAT', GITHUB_FINE_GRAINED_CANARY],
     ['openai project key', OPENAI_PROJECT_CANARY],
   ])('replaces a %s found in free text', (_name, secret) => {
-    // Shape patterns are the safety net for a credential the agent itself printed.
     expect(shapeOnly.redactText(`token=${secret} end`)).toBe(`token=${REDACTED} end`);
   });
 
+  /** The pattern consumes the whole header so nothing recognisable survives. */
   it('replaces an Authorization header including its scheme', () => {
-    // The pattern consumes the whole header so nothing recognisable survives.
     expect(shapeOnly.redactText('Authorization: Bearer abc.def.ghi')).toBe(REDACTED);
   });
 
+  /** Fails when a pattern is added upstream, so a sample is added above with it. */
   it('exercises one sample per pattern published by the secrets contract', () => {
-    // Fails when a pattern is added upstream, so a sample is added above with it.
     expect(SECRET_SHAPE_PATTERNS).toHaveLength(5);
   });
 
+  /** Commit shas travel in prepare and git events; redacting them would break the UI. */
   it('leaves an ordinary 40-character hex sha alone', () => {
-    // Commit shas travel in prepare and git events; redacting them would break the UI.
     const sha = 'a'.repeat(40);
     expect(shapeOnly.redactText(`HEAD is ${sha}`)).toBe(`HEAD is ${sha}`);
   });
 
+  /** A remote URL built by the agent is the classic accidental credential leak. */
   it('replaces an exact environment value embedded in a URL', () => {
-    // A remote URL built by the agent is the classic accidental credential leak.
     const redactor = createRuntimeRedactor({ values: [GITHUB_CANARY] });
     expect(redactor.redactText(`https://x-access-token:${GITHUB_CANARY}@github.com/a/b.git`)).toBe(
       `https://x-access-token:${REDACTED}@github.com/a/b.git`,
     );
   });
 
+  /** `split`/`join` avoids escaping bugs a RegExp built from the value would introduce. */
   it('replaces every occurrence of an exact value inside JSON', () => {
-    // `split`/`join` avoids escaping bugs a RegExp built from the value would introduce.
     const value = 'plain.secret.value';
     const redactor = createRuntimeRedactor({ values: [value] });
     expect(redactor.redactText(`{"a":"${value}","b":"${value}"}`)).toBe(
@@ -77,29 +77,29 @@ describe('createRuntimeRedactor / redactText', () => {
     );
   });
 
+  /** Shortest-first would leave the tail of the longer value in the output. */
   it('replaces the longer value first when one value contains another', () => {
-    // Shortest-first would leave the tail of the longer value in the output.
     const short = 'secret-value';
     const long = `${short}-extended`;
     const redactor = createRuntimeRedactor({ values: [short, long] });
     expect(redactor.redactText(`uses ${long} here`)).toBe(`uses ${REDACTED} here`);
   });
 
+  /** An unset variable and a short one must not turn ordinary words into `[REDACTED]`. */
   it('ignores undefined and short values', () => {
-    // An unset variable and a short one must not turn ordinary words into `[REDACTED]`.
     const redactor = createRuntimeRedactor({ values: [undefined, 'abc'] });
     expect(redactor.redactText('abc is a common word')).toBe('abc is a common word');
   });
 
+  /** The worker redacts again; a second pass must not mangle already-redacted text. */
   it('is idempotent', () => {
-    // The worker redacts again; a second pass must not mangle already-redacted text.
     const redactor = createRuntimeRedactor({ values: [GITHUB_CANARY] });
     const once = redactor.redactText(`a ${GITHUB_CANARY} b ${OPENAI_CANARY} c`);
     expect(redactor.redactText(once)).toBe(once);
   });
 
+  /** Proves no regex `lastIndex` state survives between calls of one redactor. */
   it('produces the same output when called twice with the same input', () => {
-    // Proves no regex `lastIndex` state survives between calls of one redactor.
     const input = `${GITHUB_CANARY} and ${GITHUB_CANARY}`;
     expect(shapeOnly.redactText(input)).toBe(shapeOnly.redactText(input));
   });
@@ -108,6 +108,7 @@ describe('createRuntimeRedactor / redactText', () => {
 describe('createRuntimeRedactor / redactEvent', () => {
   const redactor = createRuntimeRedactor({ values: [GITHUB_CANARY] });
 
+  /** Each of these fields carries model or tool output and can contain a credential. */
   it.each([
     [
       { type: 'prepare.progress', message: `pushed with ${GITHUB_CANARY}` },
@@ -140,12 +141,11 @@ describe('createRuntimeRedactor / redactEvent', () => {
       },
     ],
   ] satisfies [AgentEvent, AgentEvent][])('redacts the text of $0.type', (event, expected) => {
-    // Each of these fields carries model or tool output and can contain a credential.
     expect(redactor.redactEvent(event)).toStrictEqual(expected);
   });
 
+  /** The code is machine-generated and is what the worker branches on. */
   it('redacts the message of a failed turn without touching its code', () => {
-    // The code is machine-generated and is what the worker branches on.
     const event: AgentEvent = {
       type: 'turn.failed',
       error: { code: 'auth', message: `rejected ${OPENAI_CANARY}` },
@@ -156,8 +156,8 @@ describe('createRuntimeRedactor / redactEvent', () => {
     });
   });
 
+  /** Arguments are model-authored JSON; the shape must survive so the UI can render the card. */
   it('redacts a secret nested inside tool-call arguments and keeps the structure', () => {
-    // Arguments are model-authored JSON; the shape must survive so the UI can render the card.
     const event: AgentEvent = {
       type: 'tool.call',
       callId: 'c1',
@@ -172,8 +172,8 @@ describe('createRuntimeRedactor / redactEvent', () => {
     });
   });
 
+  /** Zod validation happens later; the redactor must cope with any JSON value. */
   it('redacts tool-call arguments that are a plain string', () => {
-    // Zod validation happens later; the redactor must cope with any JSON value.
     const event: AgentEvent = {
       type: 'tool.call',
       callId: 'c1',
@@ -184,8 +184,8 @@ describe('createRuntimeRedactor / redactEvent', () => {
     expect(redactor.redactEvent(event)).toStrictEqual({ ...event, args: REDACTED });
   });
 
+  /** The Authorization pattern consumes the closing quote, so the reparse cannot succeed. */
   it('falls back to redacted text when redaction breaks the JSON structure', () => {
-    // The Authorization pattern consumes the closing quote, so the reparse cannot succeed.
     const event: AgentEvent = {
       type: 'tool.call',
       callId: 'c1',
@@ -197,8 +197,8 @@ describe('createRuntimeRedactor / redactEvent', () => {
     expect(result.args).toBe(`{"header":"${REDACTED}`);
   });
 
+  /** `JSON.stringify(undefined)` yields no text, so there is nothing to redact. */
   it('leaves tool-call arguments that have no JSON form untouched', () => {
-    // `JSON.stringify(undefined)` yields no text, so there is nothing to redact.
     const event: AgentEvent = {
       type: 'tool.call',
       callId: 'c1',
@@ -209,6 +209,7 @@ describe('createRuntimeRedactor / redactEvent', () => {
     expect(redactor.redactEvent(event)).toStrictEqual(event);
   });
 
+  /** These variants carry only identifiers, counts, statuses and git object names. */
   it.each([
     { type: 'turn.started', turnId: 't1', at: '2026-08-19T10:00:00.000Z' },
     { type: 'prepare.done', headSha: 'abc1234', branch: 'main' },
@@ -226,7 +227,6 @@ describe('createRuntimeRedactor / redactEvent', () => {
     { type: 'turn.cancelled' },
     { type: 'protocol.error', reason: 'invalid-json', length: 12 },
   ] satisfies AgentEvent[])('returns $type unchanged', (event) => {
-    // These variants carry only identifiers, counts, statuses and git object names.
     expect(redactor.redactEvent(event)).toStrictEqual(event);
   });
 });

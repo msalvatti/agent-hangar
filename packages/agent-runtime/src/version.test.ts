@@ -16,13 +16,13 @@ describe('RUNTIME_VERSION', () => {
     vi.resetModules();
   });
 
+  /** Outside the esbuild bundle nothing defines `__AGENT_RUNTIME_VERSION__`. */
   it('falls back to the dev marker when the bundle-time global is absent', () => {
-    // Outside the esbuild bundle nothing defines `__AGENT_RUNTIME_VERSION__`.
     expect(RUNTIME_VERSION).toBe('0.0.0-dev');
   });
 
+  /** `define` replaces the identifier with a string literal; a stubbed global reproduces that. */
   it('reports the value injected at bundle time when the global is a string', async () => {
-    // `define` replaces the identifier with a string literal; a stubbed global reproduces that.
     vi.stubGlobal('__AGENT_RUNTIME_VERSION__', '1.2.3');
     vi.resetModules();
     const reloaded = await import('./version.js');

@@ -197,15 +197,19 @@ const LOCAL_FORGE: RepositoryUrlPolicy = {
 };
 
 describe('resolveRepoUrl', () => {
+  /** These are the URLs the repository picker produces for the public forge. */
   it.each([
     ['a plain repository URL', 'https://github.com/acme/widgets'],
     ['a URL with the git suffix', 'https://github.com/acme/widgets.git'],
     ['a name with dots and dashes', 'https://github.com/acme-co/my.widgets-v2'],
   ])('accepts %s on the workspace origin', (_name, url) => {
-    // These are the URLs the repository picker produces for the public forge.
     expect(resolveRepoUrl(url, GITHUB)).toBe(url);
   });
 
+  /**
+   * Anything git is pointed at that is not the workspace's own repository is a way to get the token
+   * sent somewhere it does not belong, or to work on something nobody asked for.
+   */
   it.each([
     ['embedded credentials', `https://x-access-token:${GITHUB_CANARY}@github.com/acme/widgets`],
     ['a plaintext scheme', 'http://github.com/acme/widgets'],
@@ -220,59 +224,69 @@ describe('resolveRepoUrl', () => {
     ['a missing repository name', 'https://github.com/acme'],
     ['text that is not a URL at all', 'not a url'],
   ])('refuses %s', (_name, url) => {
-    // Anything git is pointed at that is not the workspace's own repository is a way to get the
-    // token sent somewhere it does not belong, or to work on something nobody asked for.
     expect(() => resolveRepoUrl(url, GITHUB)).toThrow(PrepareError);
   });
 
+  /**
+   * The origin decides the scheme and the port, so a forge listed as `http://host:port` is clonable
+   * — anonymously, because the askpass helper still refuses to release a token over cleartext. A
+   * rule fixed on the public forge refused this outright.
+   */
   it('accepts a repository on a local forge the operator configured', () => {
-    // The origin decides the scheme and the port, so a forge listed as `http://host:port` is
-    // clonable — anonymously, because the askpass helper still refuses to release a token over
-    // cleartext. A rule fixed on the public forge refused this outright.
     expect(resolveRepoUrl('http://host.docker.internal:3907/acme/sample.git', LOCAL_FORGE)).toBe(
       'http://host.docker.internal:3907/acme/sample.git',
     );
   });
 
+  /**
+   * The narrowing that matters most: a workspace created for a local forge must not be talked into
+   * cloning — and authenticating to — a repository on github.com.
+   */
   it('refuses a repository on the public forge when the workspace is not for it', () => {
-    // The narrowing that matters most: a workspace created for a local forge must not be talked
-    // into cloning — and authenticating to — a repository on github.com.
     expect(() => resolveRepoUrl('https://github.com/acme/widgets', LOCAL_FORGE)).toThrow(
       PrepareError,
     );
   });
 
+  /**
+   * The limit of what one origin can express, stated rather than left implied: this policy is a
+   * transport policy. A workspace on github.com may still be pointed at another repository there,
+   * which is why the loop's other guards — the branch names, the workspace root — are not redundant
+   * with it.
+   */
   it('still accepts a different repository on the same origin', () => {
-    // The limit of what one origin can express, stated rather than left implied: this policy is a
-    // transport policy. A workspace on github.com may still be pointed at another repository
-    // there, which is why the loop's other guards — the branch names, the workspace root — are
-    // not redundant with it.
     expect(resolveRepoUrl('https://github.com/other/repo', GITHUB)).toBe(
       'https://github.com/other/repo',
     );
   });
 
+  /**
+   * The refused URL is exactly the one that may be carrying a credential, and this message is
+   * persisted and displayed.
+   */
   it('names the origin and never the URL when it refuses', () => {
-    // The refused URL is exactly the one that may be carrying a credential, and this message is
-    // persisted and displayed.
     expect(() =>
       resolveRepoUrl(`https://x-access-token:${GITHUB_CANARY}@github.com/acme/widgets`, GITHUB),
     ).toThrow('repository URL must be https://github.com/<owner>/<repo> without credentials');
   });
 
+  /**
+   * Git echoes the remote into the credential prompt verbatim and the askpass helper compares that
+   * prompt to an origin the host produced with the same normalisation, so a URL written with a
+   * default port or a mixed-case host must be cloned in its canonical spelling or it would fail
+   * authentication on a difference nobody can see.
+   */
   it('hands git the URL as it was parsed, not as it was written', () => {
-    // Git echoes the remote into the credential prompt verbatim and the askpass helper compares
-    // that prompt to an origin the host produced with the same normalisation, so a URL written
-    // with a default port or a mixed-case host must be cloned in its canonical spelling or it
-    // would fail authentication on a difference nobody can see.
     expect(resolveRepoUrl('https://GitHub.com:443/acme/widgets', GITHUB)).toBe(
       'https://github.com/acme/widgets',
     );
   });
 
+  /**
+   * `any` exists for the suites that clone a `file://` remote; nothing in the environment can
+   * produce it.
+   */
   it('returns the URL untouched under the permissive policy the local suites use', () => {
-    // `any` exists for the suites that clone a `file://` remote; nothing in the environment can
-    // produce it.
     expect(resolveRepoUrl(repo.url, { allow: 'any' })).toBe(repo.url);
   });
 });
@@ -290,18 +304,26 @@ describe('repositoryUrlPolicyFromFile', () => {
     return repositoryUrlPolicyFromFile(file);
   }
 
+  /**
+   * This is the file the worker writes from the repository URL it has just vetted, and the trailing
+   * newline it writes must not become part of the origin.
+   */
   it('reads the origin the workspace was created for', async () => {
-    // This is the file the worker writes from the repository URL it has just vetted, and the
-    // trailing newline it writes must not become part of the origin.
     await expect(policyFrom('https://github.com\n')).resolves.toStrictEqual(GITHUB);
   });
 
+  /**
+   * The path is the contract between the worker, this module and the askpass helper. Production
+   * passes nothing, and none of the three takes it from anything the workspace could name.
+   */
   it('defaults to the path the runner writes to', () => {
-    // The path is the contract between the worker, this module and the askpass helper. Production
-    // passes nothing, and none of the three takes it from anything the workspace could name.
     expect(ALLOWED_ORIGIN_FILE).toBe('/opt/agent-runtime/allowed-origin');
   });
 
+  /**
+   * A container nobody prepared has no forge to fall back to: falling back to one would give a
+   * workspace whose origin was never decided a policy from somewhere else.
+   */
   it.each([
     ['empty', ''],
     ['blank', '  \n'],
@@ -311,21 +333,21 @@ describe('repositoryUrlPolicyFromFile', () => {
     ['an opaque scheme with no origin', 'file:///srv/git'],
     ['carrying a second line', 'https://github.com\nhttps://evil.test\n'],
   ])('refuses a file that is %s', async (_name, content) => {
-    // A container nobody prepared has no forge to fall back to: falling back to one would give a
-    // workspace whose origin was never decided a policy from somewhere else.
     await expect(policyFrom(content)).rejects.toThrow(ConfigError);
   });
 
+  /** The failure direction of an unprepared container has to be refusal, never a default. */
   it('refuses a file that is not there at all', async () => {
-    // The failure direction of an unprepared container has to be refusal, never a default.
     await expect(repositoryUrlPolicyFromFile(path.join(root, 'nothing-here'))).rejects.toThrow(
       ConfigError,
     );
   });
 
+  /**
+   * The local forge is reached on a port, and the port is part of the origin rather than a separate
+   * rule.
+   */
   it('accepts an origin with a non-default port', async () => {
-    // The local forge is reached on a port, and the port is part of the origin rather than a
-    // separate rule.
     await expect(policyFrom('http://host.docker.internal:3907\n')).resolves.toStrictEqual(
       LOCAL_FORGE,
     );
@@ -333,34 +355,36 @@ describe('repositoryUrlPolicyFromFile', () => {
 });
 
 describe('branch names', () => {
+  /** These are the shapes the host actually produces. */
   it.each([
     ['an ordinary branch', 'main'],
     ['a namespaced branch', 'agent/work-1.2_x'],
   ])('accepts %s', (_name, branch) => {
-    // These are the shapes the host actually produces.
     expect(() => {
       assertBranchName(branch, 'workBranch');
     }).not.toThrow();
   });
 
+  /**
+   * Two of the git invocations take a branch positionally, where a leading dash becomes an option —
+   * `--upload-pack` is how that turns into command execution on a non-https remote.
+   */
   it.each([
     ['a name git would read as an option', '--upload-pack=/bin/sh'],
     ['a leading dash', '-f'],
     ['a shell metacharacter', 'main;rm -rf /'],
     ['an empty name', ''],
   ])('refuses %s', (_name, branch) => {
-    // Two of the git invocations take a branch positionally, where a leading dash becomes an
-    // option — `--upload-pack` is how that turns into command execution on a non-https remote.
     expect(() => {
       assertBranchName(branch, 'workBranch');
     }).toThrow(PrepareError);
   });
 
+  /** The check runs ahead of the clone, so nothing reaches git at all. */
   it.each([
     ['the base branch', { baseBranch: '--upload-pack=/bin/sh' }],
     ['the work branch', { workBranch: '-f' }],
   ])('refuses %s before running any git command', async (_name, overrides) => {
-    // The check runs ahead of the clone, so nothing reaches git at all.
     await expect(prepare(repoSection(overrides), { clone: true }, deps)).rejects.toThrow(
       PrepareError,
     );
@@ -369,8 +393,8 @@ describe('branch names', () => {
 });
 
 describe('prepare with a fresh workspace', () => {
+  /** The first turn of a chat: nothing exists locally and the branch is new. */
   it('clones the base branch and creates a work branch that does not exist yet', async () => {
-    // The first turn of a chat: nothing exists locally and the branch is new.
     const result = await prepare(repoSection(), { clone: true }, deps);
     expect(result).toStrictEqual({ headSha: repo.headSha, branch: 'agent/work', notes: [] });
     expect(progressMessages()).toStrictEqual([
@@ -384,8 +408,8 @@ describe('prepare with a fresh workspace', () => {
     });
   });
 
+  /** A restored chat continues on the branch its earlier turns pushed. */
   it('checks out a work branch that already exists on the remote', async () => {
-    // A restored chat continues on the branch its earlier turns pushed.
     const result = await prepare(
       repoSection({ workBranch: 'agent/existing' }),
       { clone: true },
@@ -398,15 +422,15 @@ describe('prepare with a fresh workspace', () => {
     );
   });
 
+  /** Some chats work directly on the default branch. */
   it('stays on the base branch when the work branch is the same', async () => {
-    // Some chats work directly on the default branch.
     const result = await prepare(repoSection({ workBranch: 'main' }), { clone: true }, deps);
     expect(result).toStrictEqual({ headSha: repo.headSha, branch: 'main', notes: [] });
     expect(progressMessages().at(-1)).toBe(`On main at ${repo.headSha.slice(0, 7)}`);
   });
 
+  /** Preparation is where the token would leak into a remote URL if it were in the environment. */
   it('gives git an environment with no credentials and an askpass helper', async () => {
-    // Preparation is where the token would leak into a remote URL if it were in the environment.
     await prepare(repoSection(), { clone: true }, deps);
     expect(seenEnvs.length).toBeGreaterThan(0);
     for (const env of seenEnvs) {
@@ -417,15 +441,15 @@ describe('prepare with a fresh workspace', () => {
     }
   });
 
+  /** A repository picker that offered a stale branch must not hang the turn. */
   it('fails when the base branch does not exist on the remote', async () => {
-    // A repository picker that offered a stale branch must not hang the turn.
     await expect(
       prepare(repoSection({ baseBranch: 'nope' }), { clone: true }, deps),
     ).rejects.toThrow('git clone failed');
   });
 
+  /** The host promised a prepared workspace and it is not there; guessing would be worse. */
   it('fails when cloning was not requested and the workspace holds no repository', async () => {
-    // The host promised a prepared workspace and it is not there; guessing would be worse.
     await expect(prepare(repoSection(), { clone: false }, deps)).rejects.toThrow(
       'the workspace holds no repository',
     );
@@ -439,15 +463,15 @@ describe('prepare with a workspace that already holds the repository', () => {
     seenEnvs = [];
   });
 
+  /** A live workspace that is asked to prepare again must not try to clone into itself. */
   it('refreshes instead of cloning again when cloning is requested', async () => {
-    // A live workspace that is asked to prepare again must not try to clone into itself.
     const result = await prepare(repoSection({ workBranch: 'main' }), { clone: true }, deps);
     expect(progressMessages()[0]).toBe('Refreshing the existing checkout…');
     expect(result.headSha).toBe(repo.headSha);
   });
 
+  /** Later turns of a live chat reuse the checkout the first turn produced. */
   it('skips fetching entirely when cloning was not requested', async () => {
-    // Later turns of a live chat reuse the checkout the first turn produced.
     await writeFile(path.join(root, 'scratch.txt'), 'work in progress\n', 'utf8');
     const result = await prepare(repoSection({ workBranch: 'main' }), { clone: false }, deps);
     expect(progressMessages()).toStrictEqual([`On main at ${repo.headSha.slice(0, 7)}`]);
@@ -456,8 +480,8 @@ describe('prepare with a workspace that already holds the repository', () => {
 });
 
 describe('prepare and the expected head', () => {
+  /** Restoring an archived chat is exactly when this happens, and it is not a failure. */
   it('warns when the branch moved since the host last saw it', async () => {
-    // Restoring an archived chat is exactly when this happens, and it is not a failure.
     const result = await prepare(
       repoSection({ workBranch: 'main', expectedHeadSha: 'a'.repeat(40) }),
       { clone: true },
@@ -473,8 +497,8 @@ describe('prepare and the expected head', () => {
     ]);
   });
 
+  /** The common restore: silence is the signal that nothing changed. */
   it('says nothing when the branch is where the host expected', async () => {
-    // The common restore: silence is the signal that nothing changed.
     await prepare(
       repoSection({ workBranch: 'main', expectedHeadSha: repo.headSha }),
       { clone: true },
@@ -492,18 +516,22 @@ describe('prepare on a second turn of the same chat', () => {
     seenEnvs = [];
   });
 
+  /**
+   * The reported defect: the container and its checkout outlive the turn, so the second preparation
+   * of a chat finds the branch already there while the remote still has nothing. Creating it again
+   * is what failed with "a branch named 'agent/work' already exists".
+   */
   it('resumes a work branch that exists in the workspace and not on the remote', async () => {
-    // The reported defect: the container and its checkout outlive the turn, so the second
-    // preparation of a chat finds the branch already there while the remote still has nothing.
-    // Creating it again is what failed with "a branch named 'agent/work' already exists".
     const result = await prepare(repoSection(), { clone: false }, deps);
     expect(result).toStrictEqual({ headSha: repo.headSha, branch: 'agent/work', notes: [] });
     expect(progressMessages()).toStrictEqual([`Resumed agent/work at ${repo.headSha.slice(0, 7)}`]);
   });
 
+  /**
+   * The whole point of resuming: the second turn builds on the first turn's work, so the commit it
+   * made is the commit preparation reports and the one the branch still names.
+   */
   it('starts from the commit the previous turn made instead of rewinding the branch', async () => {
-    // The whole point of resuming: the second turn builds on the first turn's work, so the
-    // commit it made is the commit preparation reports and the one the branch still names.
     const committed = await commitInWorkspace('answer.md', 'first turn\n');
     const result = await prepare(repoSection(), { clone: false }, deps);
     expect(result.headSha).toBe(committed);
@@ -512,10 +540,12 @@ describe('prepare on a second turn of the same chat', () => {
     await expect(readFile(path.join(root, 'answer.md'), 'utf8')).resolves.toBe('first turn\n');
   });
 
+  /**
+   * A turn ends whenever the model stops, not when the work tree is clean, so the next one starts
+   * on top of uncommitted edits. Preparation switches HEAD and touches nothing else: it never
+   * stashes, resets or checks out over them.
+   */
   it('leaves a dirty work tree exactly as the previous turn left it', async () => {
-    // A turn ends whenever the model stops, not when the work tree is clean, so the next one
-    // starts on top of uncommitted edits. Preparation switches HEAD and touches nothing else:
-    // it never stashes, resets or checks out over them.
     const committed = await commitInWorkspace('answer.md', 'first turn\n');
     await writeFile(path.join(root, 'answer.md'), 'edited, not committed\n', 'utf8');
     await writeFile(path.join(root, 'scratch.txt'), 'work in progress\n', 'utf8');
@@ -532,9 +562,11 @@ describe('prepare on a second turn of the same chat', () => {
 });
 
 describe('prepare when the work branch is on the remote', () => {
+  /**
+   * A workspace rebuilt from the persisted history has no local branch, so the remote is the only
+   * copy of the chat's work and preparation lands exactly on it.
+   */
   it('takes the remote tip when the workspace does not have the branch yet', async () => {
-    // A workspace rebuilt from the persisted history has no local branch, so the remote is the
-    // only copy of the chat's work and preparation lands exactly on it.
     const tip = await remoteTip('agent/existing');
     const result = await prepare(
       repoSection({ workBranch: 'agent/existing' }),
@@ -555,17 +587,19 @@ describe('prepare when the work branch is on the remote', () => {
       seenEnvs = [];
     });
 
+    /** Nothing happened between the turns; silence is the signal that the branch is in sync. */
     it('says nothing extra when the two tips agree', async () => {
-      // Nothing happened between the turns; silence is the signal that the branch is in sync.
       const pushed = await remoteTip('agent/work');
       const result = await prepare(repoSection(), { clone: false }, deps);
       expect(result.headSha).toBe(pushed);
       expect(progressMessages()).toStrictEqual([`Resumed agent/work at ${pushed.slice(0, 7)}`]);
     });
 
+    /**
+     * The common case after a failed push: the local branch is ahead, preparation keeps it there
+     * and names what the remote is missing.
+     */
     it('reports commits the previous turn made and never pushed', async () => {
-      // The common case after a failed push: the local branch is ahead, preparation keeps it
-      // there and names what the remote is missing.
       const unpushed = await commitInWorkspace('notes.md', 'not pushed\n');
       const result = await prepare(repoSection(), { clone: false }, deps);
       expect(result.headSha).toBe(unpushed);
@@ -575,9 +609,11 @@ describe('prepare when the work branch is on the remote', () => {
       ]);
     });
 
+    /**
+     * Someone else advanced the branch. Merging it here would rewrite a work tree the agent may
+     * have left dirty, so the turn starts where the workspace stands and is told why.
+     */
     it('warns instead of merging when the remote moved ahead', async () => {
-      // Someone else advanced the branch. Merging it here would rewrite a work tree the agent
-      // may have left dirty, so the turn starts where the workspace stands and is told why.
       const local = await runGit(root, ['rev-parse', 'HEAD']);
       const moved = await commitOnRemote('agent/work');
       const result = await prepare(repoSection(), { clone: false }, deps);
@@ -612,9 +648,11 @@ describe('prepare when the work branch is on the remote', () => {
       expect(result.notes).toStrictEqual([]);
     });
 
+    /**
+     * The state that a reset to the remote tip would destroy: commits exist on both sides and only
+     * the workspace holds its own. Preparation reports the divergence and loses nothing.
+     */
     it('warns and keeps the local commits when the two have diverged', async () => {
-      // The state that a reset to the remote tip would destroy: commits exist on both sides and
-      // only the workspace holds its own. Preparation reports the divergence and loses nothing.
       const first = await commitInWorkspace('notes.md', 'not pushed\n');
       const second = await commitInWorkspace('more.md', 'also not pushed\n');
       const moved = await commitOnRemote('agent/work');
@@ -628,9 +666,11 @@ describe('prepare when the work branch is on the remote', () => {
       ]);
     });
 
+    /**
+     * A force push makes the remote-tracking ref a non-fast-forward update. Refusing it would fail
+     * every later turn of the chat over a ref that only mirrors what the remote says.
+     */
     it('survives a work branch that was rewritten on the remote', async () => {
-      // A force push makes the remote-tracking ref a non-fast-forward update. Refusing it would
-      // fail every later turn of the chat over a ref that only mirrors what the remote says.
       const local = await runGit(root, ['rev-parse', 'HEAD']);
       const rewritten = await rewriteOnRemote('agent/work');
       const result = await prepare(repoSection(), { clone: false }, deps);
@@ -646,8 +686,8 @@ describe('prepare when the work branch is on the remote', () => {
 });
 
 describe('prepare and unexpected failures', () => {
+  /** The turn command maps these to `turn.failed { code: 'runtime' }` and a non-zero exit. */
   it('lets an error that is not a git failure through unchanged', async () => {
-    // The turn command maps these to `turn.failed { code: 'runtime' }` and a non-zero exit.
     const broken: GitRunner = { run: () => Promise.reject(new Error('runner exploded')) };
     await expect(prepare(repoSection(), { clone: true }, { ...deps, git: broken })).rejects.toThrow(
       'runner exploded',

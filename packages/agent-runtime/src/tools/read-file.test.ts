@@ -37,8 +37,8 @@ afterEach(async () => {
 });
 
 describe('readFile', () => {
+  /** The numbers are what let the model point at a line when it asks for an edit. */
   it('returns the whole file as numbered lines', async () => {
-    // The numbers are what let the model point at a line when it asks for an edit.
     const result = await readFile({ path: 'a.txt', startLine: null, endLine: null }, context);
     expect(result).toStrictEqual({
       output: '1\tone\n2\ttwo\n3\tthree\n4\t',
@@ -48,20 +48,20 @@ describe('readFile', () => {
     });
   });
 
+  /** Reading a window of a large file is the normal way the model works. */
   it('returns only the requested range', async () => {
-    // Reading a window of a large file is the normal way the model works.
     const result = await readFile({ path: 'a.txt', startLine: 2, endLine: 3 }, context);
     expect(result.output).toBe('2\ttwo\n3\tthree');
   });
 
+  /** The model guesses line numbers; overshooting should not be an error. */
   it('clamps a range that runs past the end of the file', async () => {
-    // The model guesses line numbers; overshooting should not be an error.
     const result = await readFile({ path: 'a.txt', startLine: 3, endLine: 900 }, context);
     expect(result.output).toBe('3\tthree\n4\t');
   });
 
+  /** Silently swapping the bounds would hide a genuine mistake from the model. */
   it('fails when the range is inverted', async () => {
-    // Silently swapping the bounds would hide a genuine mistake from the model.
     const result = await readFile({ path: 'a.txt', startLine: 3, endLine: 2 }, context);
     expect(result).toMatchObject({
       status: 'FAILED',
@@ -69,43 +69,43 @@ describe('readFile', () => {
     });
   });
 
+  /** An empty file is a fact about the repository, not a failure. */
   it('returns an empty file as empty output with a successful status', async () => {
-    // An empty file is a fact about the repository, not a failure.
     const result = await readFile({ path: 'empty.txt', startLine: null, endLine: null }, context);
     expect(result).toMatchObject({ output: '', exitCode: 0, bytes: 0, status: 'SUCCEEDED' });
   });
 
+  /** The model routinely guesses paths; it needs the workspace-relative name back. */
   it('fails when the file does not exist', async () => {
-    // The model routinely guesses paths; it needs the workspace-relative name back.
     const result = await readFile({ path: 'nope.txt', startLine: null, endLine: null }, context);
     expect(result).toMatchObject({ status: 'FAILED', output: 'file not found: nope.txt' });
   });
 
+  /** Reading a directory would otherwise surface as an opaque EISDIR. */
   it('fails when the path names a directory', async () => {
-    // Reading a directory would otherwise surface as an opaque EISDIR.
     const result = await readFile({ path: 'dir', startLine: null, endLine: null }, context);
     expect(result).toMatchObject({ status: 'FAILED', output: 'is a directory: dir' });
   });
 
+  /** Reading outside the workspace is exactly what confinement exists to prevent. */
   it.each([
     ['a parent segment', '../read-file-outside/secret.txt'],
     ['an absolute path elsewhere', '/etc/hosts'],
   ])('refuses a path that leaves the workspace through %s', async (_name, candidate) => {
-    // Reading outside the workspace is exactly what confinement exists to prevent.
     const result = await readFile({ path: candidate, startLine: null, endLine: null }, context);
     expect(result).toMatchObject({ status: 'FAILED' });
     expect(result.output).toContain('escapes the workspace');
   });
 
+  /** The lexical path is innocent; only the link target reveals the escape. */
   it('refuses a symbolic link that points out of the workspace', async () => {
-    // The lexical path is innocent; only the link target reveals the escape.
     await symlink(path.join(outside, 'secret.txt'), path.join(root, 'link.txt'));
     const result = await readFile({ path: 'link.txt', startLine: null, endLine: null }, context);
     expect(result.output).toContain('symbolic link');
   });
 
+  /** A destroyed workspace must not surface as an unhandled rejection mid-turn. */
   it('reports a workspace root that cannot be resolved at all', async () => {
-    // A destroyed workspace must not surface as an unhandled rejection mid-turn.
     const result = await readFile(
       { path: 'a.txt', startLine: null, endLine: null },
       {
@@ -116,9 +116,11 @@ describe('readFile', () => {
     expect(result).toMatchObject({ status: 'FAILED', output: 'path could not be resolved' });
   });
 
+  /**
+   * The file has to be read whole before it can be numbered, and a large artefact in the checkout
+   * would exhaust the container's memory limit.
+   */
   it('refuses a file too large to load, pointing at the shell instead', async () => {
-    // The file has to be read whole before it can be numbered, and a large artefact in the
-    // checkout would exhaust the container's memory limit.
     await writeFile(path.join(root, 'huge.bin'), Buffer.alloc(4 * 1024 * 1024 + 1));
     const result = await readFile({ path: 'huge.bin', startLine: null, endLine: null }, context);
     expect(result.status).toBe('FAILED');
@@ -126,8 +128,8 @@ describe('readFile', () => {
     expect(result.output).toContain('run_shell with head or sed');
   });
 
+  /** The budget protects the model's context; the notice tells it what it is missing. */
   it('truncates a long file and still reports its real size', async () => {
-    // The budget protects the model's context; the notice tells it what it is missing.
     await writeFile(path.join(root, 'big.txt'), 'x'.repeat(5000), 'utf8');
     const result = await readFile(
       { path: 'big.txt', startLine: null, endLine: null },

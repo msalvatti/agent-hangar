@@ -33,6 +33,7 @@ afterEach(async () => {
 });
 
 describe('looksLikeGitPush', () => {
+  /** The host records where the work landed, so a missed push loses that link. */
   it.each([
     ['a bare push', 'git push'],
     ['a push with flags', 'git push -u origin feat/x'],
@@ -41,58 +42,59 @@ describe('looksLikeGitPush', () => {
     ['a push with global git flags', 'git -c user.name=x push'],
     ['a push behind a valueless global flag', 'git --no-pager push'],
   ])('recognises %s', (_name, command) => {
-    // The host records where the work landed, so a missed push loses that link.
     expect(looksLikeGitPush({ command, output: '', exitCode: 0 })).toBe(true);
   });
 
+  /**
+   * These succeed without a remote ever being contacted; reporting `git.pushed` would tell the host
+   * that work landed when nothing left the container.
+   */
   it.each([
     ['a subcommand that merely takes a ref named push', 'git branch push'],
     ['a configuration value that ends in push', 'git config alias.name push'],
     ['a path option whose value is push', 'git -C push status'],
     ['git with global flags and no subcommand at all', 'git --no-pager'],
   ])('does not recognise %s as a push', (_name, command) => {
-    // These succeed without a remote ever being contacted; reporting `git.pushed` would tell the
-    // host that work landed when nothing left the container.
     expect(looksLikeGitPush({ command, output: '', exitCode: 0 })).toBe(false);
   });
 
+  /** A push from inside a script or a Makefile never appears on the command line. */
   it('recognises a push that only shows up in the output', () => {
-    // A push from inside a script or a Makefile never appears on the command line.
     expect(looksLikeGitPush({ command: 'make release', output: PUSH_OUTPUT, exitCode: 0 })).toBe(
       true,
     );
   });
 
+  /** "Everything up-to-date" still means the branch is where the remote has it. */
   it('recognises a push that had nothing to send', () => {
-    // "Everything up-to-date" still means the branch is where the remote has it.
     expect(
       looksLikeGitPush({ command: 'git push', output: 'Everything up-to-date\n', exitCode: 0 }),
     ).toBe(true);
   });
 
+  /** A false positive tells the host the branch moved when it did not. */
   it.each([
     ['a different command that starts the same way', 'git pushover', ''],
     ['a mention of push in an argument', 'echo "git push"', ''],
     ['output that names a remote without a ref update', 'make release', 'To https://x/y.git\n'],
   ])('does not recognise %s', (_name, command, output) => {
-    // A false positive tells the host the branch moved when it did not.
     expect(looksLikeGitPush({ command, output, exitCode: 0 })).toBe(false);
   });
 
+  /** A rejected push leaves the remote exactly where it was. */
   it('does not recognise a push that failed', () => {
-    // A rejected push leaves the remote exactly where it was.
     expect(looksLikeGitPush({ command: 'git push', output: PUSH_OUTPUT, exitCode: 1 })).toBe(false);
   });
 
+  /** A cancelled or timed-out command reports no exit code at all. */
   it('does not recognise a push that was killed', () => {
-    // A cancelled or timed-out command reports no exit code at all.
     expect(looksLikeGitPush({ command: 'git push', output: '', exitCode: null })).toBe(false);
   });
 });
 
 describe('resolveGitHead', () => {
+  /** These two values are exactly what `git.pushed` carries. */
   it('reads the branch and commit of a repository', async () => {
-    // These two values are exactly what `git.pushed` carries.
     const git = createGitRunner();
     await gitOrThrow(git, ['init', '--initial-branch=main', '.'], { cwd, env });
     await gitOrThrow(
@@ -114,13 +116,13 @@ describe('resolveGitHead', () => {
     expect(head?.sha).toMatch(/^[0-9a-f]{40}$/);
   });
 
+  /** The loop then simply emits no `git.pushed`, rather than failing the turn. */
   it('reports nothing for a directory that is not a repository', async () => {
-    // The loop then simply emits no `git.pushed`, rather than failing the turn.
     await expect(resolveGitHead(createGitRunner(), cwd, env)).resolves.toBeNull();
   });
 
+  /** `rev-parse HEAD` fails on an unborn branch even though the directory is a repository. */
   it('reports nothing for a repository with no commits yet', async () => {
-    // `rev-parse HEAD` fails on an unborn branch even though the directory is a repository.
     await gitOrThrow(createGitRunner(), ['init', '--initial-branch=main', '.'], { cwd, env });
     await expect(resolveGitHead(createGitRunner(), cwd, env)).resolves.toBeNull();
   });

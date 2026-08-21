@@ -15,8 +15,8 @@ import { describe, expect, it } from 'vitest';
 import { makeTempDir, removeTempDir } from './temp-dir.js';
 
 describe('makeTempDir', () => {
+  /** Suites rely on the directory existing and starting out empty. */
   it('creates an empty directory under the system temporary root', async () => {
-    // Suites rely on the directory existing and starting out empty.
     const directory = await makeTempDir('probe');
     try {
       expect(directory.startsWith(tmpdir())).toBe(true);
@@ -29,8 +29,8 @@ describe('makeTempDir', () => {
 });
 
 describe('removeTempDir', () => {
+  /** `afterEach` runs even when the test failed before creating anything. */
   it('removes a populated directory and tolerates one that is already gone', async () => {
-    // `afterEach` runs even when the test failed before creating anything.
     const directory = await makeTempDir('cleanup');
     await mkdir(path.join(directory, 'nested'), { recursive: true });
     await removeTempDir(directory);

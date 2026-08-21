@@ -460,6 +460,38 @@ describe('ChatView', () => {
   });
 
   /*
+   * The lock nothing on screen used to explain. A turn that is still running holds the composer
+   * shut — the API refuses a second one with `TURN_IN_PROGRESS` — and the textarea it shuts is
+   * natively `disabled`, so the browser dispatches no key events into it and Enter appears to be
+   * swallowed. It was reported that way, and the composer's key handling was never involved. The
+   * sentence names both ways out, and the Stop control it points at is in the header above.
+   */
+  it('says why the composer is locked while a turn is running', async () => {
+    renderChat('chat-running');
+    const prompt = await screen.findByLabelText('Prompt');
+    expect(prompt).toBeDisabled();
+    const reason = await screen.findByText(/Wait for the turn to finish, or stop it/);
+    expect(reason).toBeVisible();
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveAttribute(
+      'aria-describedby',
+      reason.id,
+    );
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeEnabled();
+  });
+
+  /*
+   * An archived chat's composer is locked too, and says nothing: the banner above it already
+   * names the reason, and a second sentence would report two reasons for one disabled field. This
+   * is also why the live-turn sentence is not simply attached to every lock.
+   */
+  it('leaves an archived chat lock to its banner', async () => {
+    renderChat('chat-archived');
+    expect(await screen.findByText(/This chat is archived/)).toBeInTheDocument();
+    expect(screen.getByLabelText('Prompt')).toBeDisabled();
+    expect(screen.queryByText(/Wait for the turn to finish/)).not.toBeInTheDocument();
+  });
+
+  /*
    * An archived chat is not told about the environment: its composer is already locked for a
    * reason of its own, and the banner above states it. Two notices would name two different
    * reasons for one disabled field.

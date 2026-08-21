@@ -26,7 +26,7 @@ const listRepos = http.get(routes.repos, ({ request }) => {
   return HttpResponse.json({ repos });
 });
 
-/** `GET /api/repos/branches?repo=` — branches of one repo, default branch first. */
+/** `GET /api/repos/branches?repo=` — branches of one repo, in the forge's own order. */
 const listBranches = http.get(routes.repoBranches, ({ request }) => {
   const url = new URL(request.url);
   const parsed = listBranchesQuery.safeParse(Object.fromEntries(url.searchParams));
@@ -47,11 +47,11 @@ const listBranches = http.get(routes.repoBranches, ({ request }) => {
       },
     );
   }
-  const ordered = [
-    ...branches.filter((branch) => branch.name === repo.defaultBranch),
-    ...branches.filter((branch) => branch.name !== repo.defaultBranch),
-  ];
-  return HttpResponse.json({ branches: ordered });
+  // Handed back exactly as the store holds it. The real route forwards whatever the forge sent and
+  // sorts nothing, so a double that lifted the default branch to the front would answer a question
+  // production never answers that way — and every caller tested against it would be tested against
+  // a listing that cannot go wrong.
+  return HttpResponse.json({ branches });
 });
 
 /** Handlers for `GET /api/repos` and `GET /api/repos/branches`. */

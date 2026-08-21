@@ -53,8 +53,9 @@ describe('Composer', () => {
    * The chat screen was picking the wrong branch for the same reason the job dialog was: the
    * branch picker defaulted to the first entry of the listing, and a forge orders branches its own
    * way. What the composer knows and the picker did not is the repository's own default, so it
-   * hands it over. The listing is stated here rather than seeded, because the seeded one sorts the
-   * default first and would pass either way.
+   * hands it over. The listing is stated here rather than seeded so that the rule survives the
+   * fixture: the seed is the forge's order today, and a later edit to it must not be able to
+   * quietly withdraw this assertion.
    */
   it('starts the chat on the repository default, not the first branch listed', async () => {
     server.use(
@@ -312,8 +313,9 @@ describe('Composer disabled reason', () => {
   });
 
   /**
-   * A locked composer explains itself elsewhere — the spinner while busy, the archived banner when
-   * disabled — so repeating it here would announce a change that has not happened.
+   * A locked composer whose reason is already on screen stays silent — the spinner says it while
+   * busy, and the caller that gives no `disabledReason` is saying the same of its own lock.
+   * Repeating it here would announce a change that has not happened.
    */
   it.each([
     ['busy', { busy: true }],
@@ -322,5 +324,35 @@ describe('Composer disabled reason', () => {
     renderNew({ ...overrides, value: '' });
     expect(screen.getByRole('status')).toBeEmptyDOMElement();
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
+  });
+
+  /**
+   * A lock the screen does not otherwise explain is stated here, and it has to be: the textarea
+   * carries the native `disabled` attribute, which means the browser dispatches no key events into
+   * it at all. Pressing Enter into a locked composer therefore does nothing and shows nothing, and
+   * that is exactly how it was reported — as a composer that had stopped sending. The sentence is
+   * wired to Send the same way the missing-field hints are, so the one control still on screen
+   * carries the explanation.
+   */
+  it('states a lock the rest of the screen does not explain', () => {
+    renderNew({ disabled: true, disabledReason: 'The agent is working on this chat.' });
+    const status = screen.getByRole('status');
+    expect(status).toHaveTextContent('The agent is working on this chat.');
+    expect(screen.getByLabelText('Prompt')).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Send' })).toHaveAttribute(
+      'aria-describedby',
+      status.id,
+    );
+  });
+
+  /**
+   * Busy wins over the lock's own sentence. A request of the composer's own is in flight, the
+   * spinner is already saying so, and the send that is on its way is usually what puts the
+   * composer into the locked state a moment later — announcing both would report two reasons for
+   * one disabled field.
+   */
+  it('shows the spinner rather than the lock reason while busy', () => {
+    renderNew({ busy: true, disabled: true, disabledReason: 'The agent is working on this chat.' });
+    expect(screen.getByRole('status')).toBeEmptyDOMElement();
   });
 });

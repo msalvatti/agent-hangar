@@ -48,15 +48,15 @@ afterEach(async () => {
 });
 
 describe('listDir outside a repository', () => {
+  /** A shallow listing is what the model wants first; the trailing slash tells it where to go. */
   it('lists one level by default and marks directories', async () => {
-    // A shallow listing is what the model wants first; the trailing slash tells it where to go.
     const result = await listDir({ path: null, depth: null }, context);
     expect(result.output.split('\n')).toStrictEqual(['README.md', 'src/']);
     expect(result.status).toBe('SUCCEEDED');
   });
 
+  /** Depth is bounded by the schema, so this cannot become an unbounded walk. */
   it('walks deeper when asked', async () => {
-    // Depth is bounded by the schema, so this cannot become an unbounded walk.
     const result = await listDir({ path: null, depth: 2 }, context);
     expect(result.output.split('\n')).toStrictEqual([
       'README.md',
@@ -66,20 +66,20 @@ describe('listDir outside a repository', () => {
     ]);
   });
 
+  /** Entries are relative to the directory that was listed, not to the workspace root. */
   it('lists a subdirectory relative to it', async () => {
-    // Entries are relative to the directory that was listed, not to the workspace root.
     const result = await listDir({ path: 'src', depth: null }, context);
     expect(result.output.split('\n')).toStrictEqual(['a.ts', 'nested/']);
   });
 
+  /** `.git` is thousands of files of no interest and would swamp the entry cap. */
   it('never shows git internal storage', async () => {
-    // `.git` is thousands of files of no interest and would swamp the entry cap.
     const result = await listDir({ path: null, depth: 5 }, context);
     expect(result.output).not.toContain('.git');
   });
 
+  /** A directory with thousands of files must not fill the model's context. */
   it('caps the number of entries and says how many were left out', async () => {
-    // A directory with thousands of files must not fill the model's context.
     await Promise.all(
       Array.from({ length: 30 }, async (_unused, index) =>
         writeFile(path.join(root, `f${String(index)}.txt`), 'x', 'utf8'),
@@ -91,8 +91,8 @@ describe('listDir outside a repository', () => {
     expect(lines.at(-1)).toBe('[… 22 more entries omitted]');
   });
 
+  /** Production builds the runner itself; the default path has to work. */
   it('uses the real git runner when none is injected', async () => {
-    // Production builds the runner itself; the default path has to work.
     const result = await listDir(
       { path: null, depth: null },
       {
@@ -104,8 +104,8 @@ describe('listDir outside a repository', () => {
     expect(result.output).toContain('README.md');
   });
 
+  /** The listing shares the same budget as every other tool result. */
   it('truncates a listing that exceeds the byte budget', async () => {
-    // The listing shares the same budget as every other tool result.
     const result = await listDir({ path: null, depth: 2 }, { ...context, maxOutputBytes: 12 });
     expect(result.output).toContain('[truncated:');
   });
@@ -122,8 +122,8 @@ describe('listDir inside a repository', () => {
     await git('add', 'README.md');
   });
 
+  /** Listing `node_modules` and build output is what makes a plain walk useless here. */
   it('honours .gitignore and still shows untracked files that are not ignored', async () => {
-    // Listing `node_modules` and build output is what makes a plain walk useless here.
     const result = await listDir({ path: null, depth: 1 }, context);
     const lines = result.output.split('\n');
     expect(lines).toContain('README.md');
@@ -133,8 +133,8 @@ describe('listDir inside a repository', () => {
     expect(lines).not.toContain('build/');
   });
 
+  /** A corrupt index leaves the model with a listing rather than with nothing at all. */
   it('falls back to walking the tree when git cannot list the files', async () => {
-    // A corrupt index leaves the model with a listing rather than with nothing at all.
     const result = await listDir(
       { path: null, depth: 1 },
       {
@@ -152,8 +152,8 @@ describe('listDir inside a repository', () => {
     expect(result.output.split('\n')).toContain('ignored.txt');
   });
 
+  /** Git reports file paths only, so the directories between them have to be derived. */
   it('synthesises the intermediate directories of a deeper listing', async () => {
-    // Git reports file paths only, so the directories between them have to be derived.
     const result = await listDir({ path: null, depth: 2 }, context);
     const lines = result.output.split('\n');
     expect(lines).toContain('src/');
@@ -164,27 +164,27 @@ describe('listDir inside a repository', () => {
 });
 
 describe('listDir failures', () => {
+  /** Listing a file is a mistake the model should see and correct. */
   it('fails when the path is not a directory', async () => {
-    // Listing a file is a mistake the model should see and correct.
     const result = await listDir({ path: 'README.md', depth: null }, context);
     expect(result).toMatchObject({ status: 'FAILED', output: 'not a directory: README.md' });
   });
 
+  /** The model guesses paths; the workspace-relative name is what it needs back. */
   it('fails when the directory does not exist', async () => {
-    // The model guesses paths; the workspace-relative name is what it needs back.
     const result = await listDir({ path: 'nope', depth: null }, context);
     expect(result).toMatchObject({ status: 'FAILED', output: 'directory not found: nope' });
   });
 
+  /** Enumerating the container filesystem is a reconnaissance step worth blocking. */
   it('refuses a path that leaves the workspace', async () => {
-    // Enumerating the container filesystem is a reconnaissance step worth blocking.
     const result = await listDir({ path: '/etc', depth: null }, context);
     expect(result.status).toBe('FAILED');
     expect(result.output).toContain('escapes the workspace');
   });
 
+  /** A destroyed workspace must not surface as an unhandled rejection mid-turn. */
   it('reports a workspace root that cannot be resolved at all', async () => {
-    // A destroyed workspace must not surface as an unhandled rejection mid-turn.
     const result = await listDir(
       { path: null, depth: null },
       {

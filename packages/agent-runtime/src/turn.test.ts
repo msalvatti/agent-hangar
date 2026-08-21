@@ -218,20 +218,22 @@ afterEach(async () => {
 });
 
 describe('what runTurnCommand asks to be given', () => {
+  /**
+   * Every turn builds a provider, and which one the environment names is not knowable when the
+   * dependencies are assembled — so a turn assembled without the wiring is a turn that may have
+   * nothing to run against. It takes what the dispatcher was given rather than restating it, which
+   * is what keeps the two from disagreeing again. Checked by the compiler, not at run time: these
+   * are what fail if the field goes back to optional.
+   */
   it('will not accept process resources and overrides alone, without the provider wiring', () => {
-    // Every turn builds a provider, and which one the environment names is not knowable when the
-    // dependencies are assembled — so a turn assembled without the wiring is a turn that may have
-    // nothing to run against. It takes what the dispatcher was given rather than restating it,
-    // which is what keeps the two from disagreeing again. Checked by the compiler, not at run
-    // time: these are what fail if the field goes back to optional.
     expectTypeOf<{ io: CliIo } & CliOverrides>().not.toExtend<TurnDeps>();
     expectTypeOf<TurnDeps>().toExtend<CliDeps>();
   });
 });
 
 describe('runTurnCommand on the happy path', () => {
+  /** This is the whole runtime, exercised the way the worker exercises it. */
   it('prepares the workspace, runs the turn and streams a valid event sequence', async () => {
-    // This is the whole runtime, exercised the way the worker exercises it.
     const exit = await runTurn(`${JSON.stringify(request('list files and create NOTES.md'))}\n`);
     expect(exit).toBe(EXIT.ok);
     const types = emitted().map((event) => event.type);
@@ -243,23 +245,25 @@ describe('runTurnCommand on the happy path', () => {
     await expect(stat(path.join(root, 'NOTES.md'))).resolves.toBeTruthy();
   });
 
+  /** The container outlives the turn, and the next exec must not find a readable credential. */
   it('removes the git token file when the turn is over', async () => {
-    // The container outlives the turn, and the next exec must not find a readable credential.
     await runTurn(`${JSON.stringify(request('hello'))}\n`, {}, { GITHUB_TOKEN: GITHUB_CANARY });
     await expect(stat(path.join(runtimeDir, 'git-token'))).rejects.toThrow();
   });
 
+  /** A handler left behind would abort the next turn in the same process. */
   it('unsubscribes the cancellation handler when the turn is over', async () => {
-    // A handler left behind would abort the next turn in the same process.
     await runTurn(`${JSON.stringify(request('hello'))}\n`);
     expect(sigintHandlers).toHaveLength(0);
   });
 });
 
 describe('runTurnCommand and secrets', () => {
+  /**
+   * The agent gets a scrubbed environment, and anything credential-shaped it produces itself is
+   * redacted before it reaches the pipe.
+   */
   it('never lets either credential reach stdout, even when the agent prints the token file', async () => {
-    // The agent gets a scrubbed environment, and anything credential-shaped it produces itself is
-    // redacted before it reaches the pipe.
     const script = {
       'show me the secrets': [
         {
@@ -305,26 +309,28 @@ describe('runTurnCommand and secrets', () => {
 });
 
 describe('runTurnCommand and failures it can name', () => {
+  /** Without a turn id there is no event that could describe this. */
   it('exits with the protocol code when stdin carried no request', async () => {
-    // Without a turn id there is no event that could describe this.
     const exit = await runTurn('');
     expect(exit).toBe(EXIT.protocolError);
     expect(stdout.join('')).toBe('');
     expect(stderr.join('')).toContain('no TurnRequest received on stdin');
   });
 
+  /** The rejected bytes came down a pipe the worker owns; they are never echoed back. */
   it('exits with the protocol code and names only the reason for a malformed line', async () => {
-    // The rejected bytes came down a pipe the worker owns; they are never echoed back.
     const exit = await runTurn('not json\n');
     expect(exit).toBe(EXIT.protocolError);
     expect(stderr.join('')).toContain('invalid-json');
     expect(stderr.join('')).not.toContain('not json');
   });
 
+  /**
+   * The UI links the operator to Settings from this event, so the message has to be the one about
+   * the missing key. A runtime whose wiring was left out reports a different configuration failure
+   * with the same code, and only the message tells an operator's problem from a build's.
+   */
   it('reports a provider that is not configured', async () => {
-    // The UI links the operator to Settings from this event, so the message has to be the one
-    // about the missing key. A runtime whose wiring was left out reports a different configuration
-    // failure with the same code, and only the message tells an operator's problem from a build's.
     const exit = await runTurn(
       `${JSON.stringify(request('hello'))}\n`,
       {},
@@ -335,8 +341,8 @@ describe('runTurnCommand and failures it can name', () => {
     expect(lastFailureMessage()).toBe('OPENAI_API_KEY is not set in the workspace environment');
   });
 
+  /** A stale branch is an ordinary user-facing failure, not a runtime crash. */
   it('reports a repository that could not be prepared', async () => {
-    // A stale branch is an ordinary user-facing failure, not a runtime crash.
     const turn = request('hello');
     const exit = await runTurn(
       `${JSON.stringify({ ...turn, repo: { ...turn.repo, baseBranch: 'gone' } })}\n`,
@@ -345,11 +351,13 @@ describe('runTurnCommand and failures it can name', () => {
     expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'prepare' } });
   });
 
+  /**
+   * Production overrides nothing beyond the wiring it must supply, so the policy comes from the
+   * file at its default path, which does not exist here. Nothing touches `/workspace` or `/tmp` and
+   * nothing reaches the network: a container nobody prepared is a configuration failure before
+   * anything clones.
+   */
   it('applies the placed URL policy and the container paths when none are chosen', async () => {
-    // Production overrides nothing beyond the wiring it must supply, so the policy comes from the
-    // file at its default path, which does not exist here. Nothing touches `/workspace` or `/tmp`
-    // and nothing reaches the network: a container nobody prepared is a configuration failure
-    // before anything clones.
     const turn = request('hello');
     const exit = await runTurnCommand({
       io: io(
@@ -362,10 +370,12 @@ describe('runTurnCommand and failures it can name', () => {
     expect(lastFailureMessage()).toContain('/opt/agent-runtime/allowed-origin');
   });
 
+  /**
+   * The whole point of binding the container to one origin: this URL is a perfectly ordinary GitHub
+   * repository, and this workspace exists for a local forge, so preparation refuses it rather than
+   * clone — and authenticate to — something nobody provisioned it for.
+   */
   it('refuses a repository on a forge the workspace was not created for', async () => {
-    // The whole point of binding the container to one origin: this URL is a perfectly ordinary
-    // GitHub repository, and this workspace exists for a local forge, so preparation refuses it
-    // rather than clone — and authenticate to — something nobody provisioned it for.
     await writeFile(originFile, 'http://host.docker.internal:3907\n', 'utf8');
 
     const exit = await runTurn(`${JSON.stringify(request('hello'))}\n`);
@@ -375,9 +385,11 @@ describe('runTurnCommand and failures it can name', () => {
     expect(lastFailureMessage()).toContain('http://host.docker.internal:3907/<owner>/<repo>');
   });
 
+  /**
+   * A container nobody prepared has no forge to fall back to; reporting it as configuration is what
+   * puts the missing file in front of the operator instead of an authentication failure.
+   */
   it('fails closed when the container was never told which origin it serves', async () => {
-    // A container nobody prepared has no forge to fall back to; reporting it as configuration is
-    // what puts the missing file in front of the operator instead of an authentication failure.
     await rm(originFile, { force: true });
 
     const exit = await runTurn(`${JSON.stringify(request('hello'))}\n`);
@@ -387,10 +399,12 @@ describe('runTurnCommand and failures it can name', () => {
     expect(lastFailureMessage()).toContain('must hold the origin this workspace was created for');
   });
 
+  /**
+   * The variable this policy used to travel in is model-controlled: the shell tool runs a command
+   * the model wrote, and a command may set any variable for the process it starts. Naming a foreign
+   * origin there must change nothing, because nothing reads it any more.
+   */
   it('ignores an origin named in the environment', async () => {
-    // The variable this policy used to travel in is model-controlled: the shell tool runs a
-    // command the model wrote, and a command may set any variable for the process it starts.
-    // Naming a foreign origin there must change nothing, because nothing reads it any more.
     const exit = await runTurn(
       `${JSON.stringify(request('hello'))}\n`,
       {},
@@ -403,8 +417,8 @@ describe('runTurnCommand and failures it can name', () => {
     expect(emitted().map((event) => event.type)).toContain('prepare.done');
   });
 
+  /** A GitError that escapes preparation is still the operator's repository problem. */
   it('reports a git command that failed outright as a preparation failure', async () => {
-    // A GitError that escapes preparation is still the operator's repository problem.
     const failing: GitRunner = {
       run: () => Promise.resolve({ code: 128, stdout: '', stderr: 'fatal: broken\n' }),
     };
@@ -413,8 +427,8 @@ describe('runTurnCommand and failures it can name', () => {
     expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'prepare' } });
   });
 
+  /** The loop owns provider errors; the command only sees what escapes it. */
   it('reports a model that fails as a turn failure rather than a runtime one', async () => {
-    // The loop owns provider errors; the command only sees what escapes it.
     const script = {
       default: [
         { events: [{ type: 'error', code: 'auth', message: 'bad key', retryable: false }] },
@@ -431,8 +445,8 @@ describe('runTurnCommand and failures it can name', () => {
 });
 
 describe('runTurnCommand and failures it cannot name', () => {
+  /** A bug in the runtime is the one thing the event stream cannot honestly describe. */
   it('exits non-zero and reports the stack when something unexpected escapes', async () => {
-    // A bug in the runtime is the one thing the event stream cannot honestly describe.
     const exploding: GitRunner = { run: () => Promise.reject(new Error('runner exploded')) };
     const exit = await runTurn(`${JSON.stringify(request('hello'))}\n`, { git: exploding });
     expect(exit).toBe(EXIT.runtimeFailure);
@@ -442,8 +456,8 @@ describe('runTurnCommand and failures it cannot name', () => {
 });
 
 describe('runTurnCommand and cancellation', () => {
+  /** Cancellation reaches the container as a signal, and the turn still exits cleanly. */
   it('ends the turn when the worker sends SIGINT during a long command', async () => {
-    // Cancellation reaches the container as a signal, and the turn still exits cleanly.
     const script = {
       'run a long command': [
         {

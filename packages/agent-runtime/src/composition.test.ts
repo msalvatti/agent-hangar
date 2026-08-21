@@ -253,9 +253,11 @@ afterEach(async () => {
 });
 
 describe('PRODUCTION_PROVIDER_FACTORIES', () => {
+  /**
+   * The factory is the whole fix: it has to produce a provider that talks to the configured
+   * endpoint with the configured key, not merely something shaped like one.
+   */
   it('streams a real round-trip through the OpenAI SDK', async () => {
-    // The factory is the whole fix: it has to produce a provider that talks to the configured
-    // endpoint with the configured key, not merely something shaped like one.
     const provider = PRODUCTION_PROVIDER_FACTORIES.openai({
       apiKey: OPENAI_CANARY,
       baseURL: api.baseURL,
@@ -282,9 +284,11 @@ describe('PRODUCTION_PROVIDER_FACTORIES', () => {
 });
 
 describe('runProductionCli', () => {
+  /**
+   * The defect this covers shipped a build whose every unit test passed against the fake provider:
+   * only a turn that reaches the real one can tell the two builds apart.
+   */
   it('runs a whole turn against the real provider', async () => {
-    // The defect this covers shipped a build whose every unit test passed against the fake
-    // provider: only a turn that reaches the real one can tell the two builds apart.
     const exit = await runProductionCli(
       ['turn'],
       io(`${JSON.stringify(request())}\n`),
@@ -298,17 +302,19 @@ describe('runProductionCli', () => {
     expect(api.authorizations).toStrictEqual([`Bearer ${OPENAI_CANARY}`]);
   });
 
+  /**
+   * The key now reaches an SDK client that reports its own failures; nothing it produces may travel
+   * back out through the event stream or the diagnostics.
+   */
   it('keeps the key out of everything the turn writes', async () => {
-    // The key now reaches an SDK client that reports its own failures; nothing it produces may
-    // travel back out through the event stream or the diagnostics.
     await runProductionCli(['turn'], io(`${JSON.stringify(request())}\n`), localWorkspace());
 
     assertNoCanary(stdout.join(''));
     assertNoCanary(stderr.join(''));
   });
 
+  /** What `bin.ts` calls: two arguments, no seam left to fill in by hand. */
   it('needs no overrides at all', async () => {
-    // What `bin.ts` calls: two arguments, no seam left to fill in by hand.
     const exit = await runProductionCli(['--version'], io(''));
 
     expect(exit).toBe(EXIT.ok);
@@ -317,11 +323,13 @@ describe('runProductionCli', () => {
 });
 
 describe('the dispatcher underneath the composition', () => {
+  /**
+   * The build that shipped reached no provider at all, and the type that let it say so has been
+   * closed: a turn is now exactly as wired as its caller made it. This one hands over factories of
+   * its own, so what the turn streams from is observable — and what it was built with is the key
+   * and the endpoint the container environment carries, not a default from anywhere else.
+   */
   it('streams from the factories it was handed, with the credentials the environment carries', async () => {
-    // The build that shipped reached no provider at all, and the type that let it say so has been
-    // closed: a turn is now exactly as wired as its caller made it. This one hands over factories
-    // of its own, so what the turn streams from is observable — and what it was built with is the
-    // key and the endpoint the container environment carries, not a default from anywhere else.
     const seen: ProviderFactoryOptions[] = [];
 
     const exit = await runCli(['turn'], io(`${JSON.stringify(request())}\n`), {
