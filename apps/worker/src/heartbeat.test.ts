@@ -3,8 +3,9 @@
  *
  * Layer: unit.
  * Goal: the key, its lifetime and its payload are what the health route reads; a daemon that does
- * not answer is published as a reading rather than thrown; the image is only reported present when
- * a create said so; and a failed write never takes the worker down.
+ * not answer is published as a reading rather than thrown; the image is reported from what the
+ * host answers on this beat rather than from what a previous create happened to observe; and a
+ * failed write never takes the worker down.
  * Mocks: the shared recording Redis double and the fake workspace runner.
  */
 import {
@@ -18,7 +19,6 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { startHeartbeat, writeHeartbeat } from './heartbeat.js';
 import type { HeartbeatDeps } from './heartbeat.js';
-import { createImageStatus } from './image-status.js';
 import { createTestContainer, FakeRedisClient } from './testing/index.js';
 
 /** Builds the heartbeat's collaborators over in-memory doubles. */
@@ -37,7 +37,6 @@ function setup(runner = new FakeWorkspaceRunner()): {
       clock: test.clock,
       logger: test.logger,
       runner: test.runner,
-      imageStatus: test.imageStatus,
       redis: { queue: redis },
     },
   };
@@ -118,21 +117,52 @@ describe('writeHeartbeat', () => {
   });
 
   /**
-   * The image is reported missing once a create said so, which is the only place the worker can
-   * learn it, and present again as soon as one succeeds.
+   * A host that does not have the configured image is reported as missing on the very first beat,
+   * before any workspace has been created. That is precisely when an operator who has never run
+   * `pnpm infra:image` is looking at the card, so a reading carried over from a create that never
+   * happened would tell them the one thing they cannot act on.
    */
-  it('follows what the last create said about the image', async () => {
-    const { deps, redis } = setup();
-    const status = createImageStatus();
-    const observing: HeartbeatDeps = { ...deps, imageStatus: status };
+  it('reports an image the host does not have as missing', async () => {
+    const { deps, redis } = setup(new FakeWorkspaceRunner({ images: [] }));
 
-    status.markMissing();
-    await writeHeartbeat(observing);
-    expect(published(redis)).toMatchObject({ imagePresent: false });
+    await writeHeartbeat(deps);
 
-    status.markPresent();
-    await writeHeartbeat(observing);
+    expect(published(redis)).toMatchObject({ dockerOk: true, imagePresent: false });
+  });
+
+  /**
+   * The image the configuration names is the one asked about; another instance's tag on the same
+   * host is not this instance's image.
+   */
+  it('asks the host about the image this instance is configured with', async () => {
+    const { deps, redis } = setup(
+      new FakeWorkspaceRunner({ images: ['agent-hangar/workspace:test'] }),
+    );
+
+    await writeHeartbeat(deps);
     expect(published(redis)).toMatchObject({ imagePresent: true });
+
+    const otherInstance: HeartbeatDeps = {
+      ...deps,
+      config: { ...deps.config, WORKSPACE_IMAGE: 'agent-hangar/workspace:other' },
+    };
+    await writeHeartbeat(otherInstance);
+    expect(published(redis)).toMatchObject({ imagePresent: false });
+  });
+
+  /**
+   * A host that answered the listing but could not be asked about the image has told the worker
+   * nothing about either, so the card says Docker is down instead of naming an image the operator
+   * would then rebuild for no reason.
+   */
+  it('reports a host that could not be asked about the image as unreachable', async () => {
+    const { deps, redis, test } = setup();
+    vi.spyOn(deps.runner, 'imageExists').mockRejectedValue(new Error('daemon closed the socket'));
+
+    await writeHeartbeat(deps);
+
+    expect(published(redis)).toMatchObject({ dockerOk: false, imagePresent: false });
+    expect(test.logs.join('')).toContain('did not answer the health probe');
   });
 });
 

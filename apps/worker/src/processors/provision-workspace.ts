@@ -288,7 +288,6 @@ async function failedCreate(
   error: unknown,
 ): Promise<ProvisionResult> {
   if (error instanceof WorkspaceImageMissing) {
-    deps.imageStatus.markMissing();
     return failWorkspace(
       deps,
       workspaceId,
@@ -439,6 +438,5 @@ export async function provisionWorkspace(
     return failedCreate(deps, workspace.id, error);
   }
 
-  deps.imageStatus.markPresent();
   return recordReadyWorkspace(deps, workspace.id, handle);
 }

@@ -179,6 +179,68 @@ describe('getRun', () => {
   });
 
   /**
+   * The branch a scheduled run pushed to is the one fact it produces that outlives its container,
+   * so the detail route is where the drawer reads it back — long after the container and the event
+   * stream that reported it are both gone.
+   */
+  it('returns where the run pushed', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const { runs } = await seedRuns(harness, 1);
+    const run = runs[0]!;
+    await harness.doubles.repos.jobRuns.recordPush(run.id, {
+      workBranch: 'agent/job-2f7c11a0',
+      lastPushedSha: 'c0ffee1234567890',
+    });
+
+    const response = await getRun(harness.container, readRequest(`/api/runs/${run.id}`), {
+      id: run.id,
+    });
+
+    expect(runDetail.parse(await response.json()).push).toEqual({
+      branch: 'agent/job-2f7c11a0',
+      sha: 'c0ffee1234567890',
+    });
+  });
+
+  /** A run that pushed nothing reports no push rather than a half-built one. */
+  it('reports no push for a run that pushed nothing', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const { runs } = await seedRuns(harness, 1);
+
+    const response = await getRun(harness.container, readRequest(`/api/runs/${runs[0]!.id}`), {
+      id: runs[0]!.id,
+    });
+
+    expect(runDetail.parse(await response.json()).push).toBeNull();
+  });
+
+  /**
+   * The two columns are written by one statement, so only something outside the application can
+   * leave one of them set. The route answers that the same way it answers a run that never pushed,
+   * rather than rendering a branch at an empty revision.
+   */
+  it('reports no push for a row carrying only half of one', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const { runs } = await seedRuns(harness, 1);
+    const run = runs[0]!;
+    await harness.doubles.repos.jobRuns.recordPush(run.id, {
+      workBranch: 'agent/job-2f7c11a0',
+      lastPushedSha: 'c0ffee1234567890',
+    });
+    const pushed = await harness.doubles.repos.jobRuns.get(run.id);
+    vi.spyOn(harness.doubles.repos.jobRuns, 'get').mockResolvedValue({
+      ...pushed!,
+      lastPushedSha: null,
+    });
+
+    const response = await getRun(harness.container, readRequest(`/api/runs/${run.id}`), {
+      id: run.id,
+    });
+
+    expect(runDetail.parse(await response.json()).push).toBeNull();
+  });
+
+  /**
    * An unknown run is missing.
    */
   it('reports an unknown run as missing', async () => {

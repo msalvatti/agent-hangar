@@ -20,6 +20,7 @@ import type { Redactor } from '../../secrets/types.ts';
 import { GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.ts';
 import type { PrismaClient } from '../generated/client.ts';
 import { connectTestDb, describeDb, rawSelect, sqlTemplate, truncateAll } from '../testing/db.ts';
+import { describeJobRunPushContract } from '../testing/job-run-push-contract.ts';
 import { describeRunFinishContract } from '../testing/run-finish-contract.ts';
 import { describeRunWorkspaceKindContract } from '../testing/run-workspace-kind-contract.ts';
 
@@ -275,6 +276,36 @@ describeDb('PrismaJobRunRepository', () => {
       },
     });
     jobId = job.id;
+  });
+
+  describeJobRunPushContract('PrismaJobRunRepository', {
+    seed: async () => {
+      const run = await new PrismaJobRunRepository(client, testRedactor).create({
+        jobId,
+        trigger: 'SCHEDULE',
+        model: 'gpt-5.6-sol',
+        scheduledFor: new Date(),
+      });
+      return run.id;
+    },
+    recordPush: async (id, push) => {
+      await new PrismaJobRunRepository(client, testRedactor).recordPush(id, push);
+    },
+    pushOf: async (id) => {
+      const run = await new PrismaJobRunRepository(client, testRedactor).get(id);
+      return run === null ? null : { workBranch: run.workBranch, lastPushedSha: run.lastPushedSha };
+    },
+    recordPushOnMissing: async (id) => {
+      try {
+        await new PrismaJobRunRepository(client, testRedactor).recordPush(id, {
+          workBranch: 'agent/job-x',
+          lastPushedSha: 'deadbeefdeadbeef',
+        });
+        return null;
+      } catch (error) {
+        return error;
+      }
+    },
   });
 
   describeRunFinishContract('PrismaJobRunRepository', {

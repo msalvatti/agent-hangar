@@ -8,7 +8,12 @@
  *
  * 1. **Resumable.** Every frame carries the Redis entry id, which the browser echoes as
  *    `Last-Event-ID` when it reconnects. Replay is an exclusive `XRANGE` from that id, so a
- *    reconnect delivers what was missed and nothing the transcript already shows.
+ *    reconnect delivers what was missed and nothing the transcript already shows — *while the
+ *    stream still holds that id*. It is capped at `TURN_EVENTS_MAXLEN`, so a chatty turn plus a
+ *    slow reconnect can outrun the window, and then the exclusive range answers with the surviving
+ *    suffix and no indication that anything came before it. A resume point the stream no longer
+ *    holds is therefore checked for rather than trusted: it is the one case where replaying what
+ *    is left would hand the client a transcript with a hole in it and call it complete.
  * 2. **Bounded.** The tail read blocks on a *duplicated* connection, never on the shared one: a
  *    blocking command occupies its connection entirely, and the shared client serves every other
  *    request in the process. That connection is dropped on every exit path — terminal event,
@@ -245,6 +250,34 @@ async function reportExpiry(context: PumpContext, cursor: string): Promise<boole
 }
 
 /**
+ * Reports a resume point the stream can no longer serve.
+ *
+ * The client's cursor is an id this stream handed out, so an entry that is no longer there was
+ * trimmed — and everything Redis dropped along with it is gone for good, because trimming takes
+ * the oldest entries first. Replaying the surviving suffix would deliver a `tool.result` whose
+ * opening `tool.call` the client never saw, or an `assistant.delta` continuing a message it never
+ * started, with nothing to mark the discontinuity.
+ *
+ * There is nothing better the stream can offer: every entry it still holds is newer than the
+ * cursor, so a full replay and an exclusive one return the same set. What the client needs is the
+ * persisted transcript, which is exactly what {@link SSE_EXPIRED_EVENT} already asks it to fetch,
+ * so the same frame carries this case rather than a second one meaning the same thing.
+ *
+ * @param context - The pump context.
+ * @param cursor - The resume point the client asked to continue from.
+ * @returns `true` when the stream was closed because the resume point is gone.
+ */
+async function reportTrimmedResumePoint(context: PumpContext, cursor: string): Promise<boolean> {
+  const { options, connection } = context;
+  if ((await connection.xrange(options.streamKey, cursor, cursor)).length > 0) {
+    return false;
+  }
+  context.write(formatSseFrame({ id: cursor, event: SSE_EXPIRED_EVENT, data: '{}' }));
+  context.stop();
+  return true;
+}
+
+/**
  * Emits a batch of entries, stopping at the first terminal one.
  *
  * @param context - The pump context.
@@ -324,6 +357,9 @@ async function pump(context: PumpContext): Promise<void> {
       return;
     }
     if (options.lastEventId !== undefined) {
+      if (await reportTrimmedResumePoint(context, cursor)) {
+        return;
+      }
       const replayed = await context.connection.xrange(options.streamKey, `(${cursor}`, '+');
       const batch = emitBatch(context, replayed, cursor);
       cursor = batch.cursor;

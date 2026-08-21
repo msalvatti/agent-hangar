@@ -21,7 +21,6 @@ import type { Logger } from 'pino';
 import type { WorkspaceClaims } from '../claims.js';
 import type { CommandListener } from '../commands.js';
 import type { TurnEventPublisher } from '../events.js';
-import type { WorkspaceImageStatus } from '../image-status.js';
 import type { WorkerQueues } from '../queues.js';
 
 /** Collaborators shared by the turn, scheduled-job and garbage-collection processors. */
@@ -37,8 +36,6 @@ export interface ProcessorDeps {
   publisher: TurnEventPublisher;
   commands: CommandListener;
   queues: WorkerQueues;
-  /** Updated by every workspace create, read by the health heartbeat. */
-  imageStatus: WorkspaceImageStatus;
   /**
    * Extra variables every workspace container is created with, on top of its credentials.
    *

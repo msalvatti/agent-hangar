@@ -240,6 +240,8 @@ export function toJobRun(row: JobRunRow): JobRun {
     model: row.model,
     output: row.output,
     error: row.error,
+    workBranch: row.workBranch,
+    lastPushedSha: row.lastPushedSha,
     inputTokens: row.inputTokens,
     outputTokens: row.outputTokens,
     stepCount: row.stepCount,

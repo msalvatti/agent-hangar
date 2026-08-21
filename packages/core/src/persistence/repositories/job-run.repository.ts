@@ -22,6 +22,7 @@ import { JOB_RUN_WORKSPACE_KIND } from '../ports.ts';
 import type {
   CreateJobRunInput,
   FinishJobRunInput,
+  JobRunPush,
   JobRunRepository,
   JobRunStatusUpdate,
 } from '../ports.ts';
@@ -95,6 +96,19 @@ export class PrismaJobRunRepository implements JobRunRepository {
         entity: 'JobRun',
         parent: { entity: 'ScheduledJob', id: input.jobId },
       });
+    }
+  }
+
+  /** @inheritDoc */
+  async recordPush(id: string, push: JobRunPush): Promise<JobRun> {
+    try {
+      const row = await this.prisma.jobRun.update({
+        where: { id },
+        data: { workBranch: push.workBranch, lastPushedSha: push.lastPushedSha },
+      });
+      return toJobRun(row);
+    } catch (error) {
+      translatePrismaError(error, { entity: 'JobRun', id });
     }
   }
 

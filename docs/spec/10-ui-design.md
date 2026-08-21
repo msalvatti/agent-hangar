@@ -133,7 +133,7 @@ Icons: Lucide, 16 px in nav/buttons, 18 px in cards, stroke 1.75. Never emoji as
 - **Status pill** in header: Queued (muted) → Preparing (warning) → Running (accent, pulse, elapsed) → Done (success, fades after 5 s) / Failed (destructive, click → error) / Cancelled. A **Stop** button appears while running.
 - **Archived chat**: read-only transcript, banner at top *"This chat is archived. Restore it to continue in a fresh workspace."* with **Restore** button; after restore a system notice appears and the composer unlocks.
 - Errors: turn failure renders an inline error card (title, redacted message, "Retry" which re-sends the last prompt); auth errors link to Settings; missing image links to README anchor.
-- Connection: SSE drop shows a thin top bar "Reconnecting…"; replay fills the gap silently.
+- Connection: SSE drop shows a thin top bar "Reconnecting…"; replay fills the gap silently while the stream still holds the position the page left off at. Past that — the stream is capped, and a long turn plus a slow reconnect can outrun it — the gap is admitted rather than hidden: the page reloads the persisted transcript and resumes from the beginning of what the stream still has, because a replay with a silent hole in it is the one outcome worse than a visible reload.
 
 ### 4.3 Scheduled (`/scheduled`)
 
@@ -151,7 +151,7 @@ Icons: Lucide, 16 px in nav/buttons, 18 px in cards, stroke 1.75. Never emoji as
 
 - Table (shadcn `Table`), dense rows 44 px; schedule shown as cron in mono + human-readable tooltip ("every day at 02:00 UTC"); status icons + text (never colour alone); toggle switch for enabled on the right; row menu: Run now / Edit / Delete.
 - **Job dialog** (create/edit, shadcn `Dialog`, 520 px): Name · Repository + Branch pickers (same as composer) · Cron input (mono) with live preview line *"Runs every weekday at 09:00 (next: Mon 09:00)"* and inline error for invalid expressions · Timezone combobox (IANA, default system) · Prompt textarea (6 rows) · Enabled switch · Save. Validation inline under fields.
-- **Job detail** (`/scheduled/:id`): header with name, schedule, toggle, Run now; runs table (started, duration, trigger, status, tokens) newest first; click → **run drawer** (shadcn `Sheet`, 720 px) showing the same transcript component as chat in read-only mode (streams live via SSE while running, with Stop).
+- **Job detail** (`/scheduled/:id`): header with name, schedule, toggle, Run now; runs table (started, duration, trigger, status, tokens) newest first; click → **run drawer** (shadcn `Sheet`, 720 px) showing the same transcript component as chat in read-only mode (streams live via SSE while running, with Stop). A reopened drawer rebuilds the run's rows from what was persisted: the job's prompt, the tool calls, the push line when the run pushed, the final output, and the cancellation or failure notice its status implies.
 - Empty state: icon + *"No scheduled jobs yet."* + short explainer + New job button.
 
 ### 4.4 Settings (`/settings`)

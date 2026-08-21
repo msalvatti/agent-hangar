@@ -20,7 +20,6 @@ import type { InMemoryRepositories } from '@agent-hangar/core/testing';
 import type { Logger } from 'pino';
 
 import { createWorkspaceClaims } from '../claims.js';
-import { createImageStatus } from '../image-status.js';
 import { createLogger } from '../logger.js';
 import type { ProcessorDeps } from '../processors/types.js';
 
@@ -106,7 +105,6 @@ export function createTestContainer(overrides: Partial<TestContainer> = {}): Tes
     publisher: new InMemoryTurnEventPublisher(),
     commands: new InMemoryCommandListener(),
     queues: createFakeQueues(),
-    imageStatus: createImageStatus(),
     fakeProviderEnv: {},
     claims: createWorkspaceClaims(),
     logs,

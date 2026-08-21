@@ -168,23 +168,25 @@ enum JobRunTrigger {
 }
 
 model JobRun {
-  id           String        @id @default(cuid())
-  jobId        String
-  job          ScheduledJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  workspaceId  String?       @unique
-  workspace    Workspace?    @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
-  status       JobRunStatus  @default(QUEUED)
-  trigger      JobRunTrigger
-  model        String
-  output       String? // final assistant message, redacted
-  error        String? // redacted
-  inputTokens  Int?
-  outputTokens Int?
-  stepCount    Int           @default(0)
-  scheduledFor DateTime // the cron tick this run belongs to
-  queuedAt     DateTime      @default(now())
-  startedAt    DateTime?
-  finishedAt   DateTime?
+  id            String        @id @default(cuid())
+  jobId         String
+  job           ScheduledJob  @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  workspaceId   String?       @unique
+  workspace     Workspace?    @relation(fields: [workspaceId], references: [id], onDelete: SetNull)
+  status        JobRunStatus  @default(QUEUED)
+  trigger       JobRunTrigger
+  model         String
+  output        String? // final assistant message, redacted
+  error         String? // redacted
+  workBranch    String? // branch the run pushed to, as git reported it
+  lastPushedSha String? // commit at that branch's head after the push
+  inputTokens   Int?
+  outputTokens  Int?
+  stepCount     Int           @default(0)
+  scheduledFor  DateTime // the cron tick this run belongs to
+  queuedAt      DateTime      @default(now())
+  startedAt     DateTime?
+  finishedAt    DateTime?
 
   toolCalls ToolCallLog[]
 

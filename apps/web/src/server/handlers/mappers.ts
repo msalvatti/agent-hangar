@@ -256,6 +256,13 @@ export function toRunDetail(
   return runDetail.parse({
     run: toRunSummary(run),
     output: run.output,
+    // Both columns are written by the same statement, so one without the other is a row nothing
+    // produces; the pair is still required together rather than assumed, because a half-filled
+    // push would otherwise render a branch at commit `undefined`.
+    push:
+      run.workBranch === null || run.lastPushedSha === null
+        ? null
+        : { branch: run.workBranch, sha: run.lastPushedSha },
     toolCalls: toolCalls.map(toToolCallView),
   });
 }

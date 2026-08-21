@@ -288,6 +288,8 @@ describe('row mappers', () => {
       model: 'gpt-5.6-sol',
       output: 'done',
       error: null,
+      workBranch: 'agent/job-1',
+      lastPushedSha: 'abc1234def5678',
       inputTokens: 5,
       outputTokens: 8,
       stepCount: 1,
@@ -310,6 +312,8 @@ describe('row mappers', () => {
       model: 'gpt-5.6-sol',
       output: null,
       error: null,
+      workBranch: null,
+      lastPushedSha: null,
       inputTokens: null,
       outputTokens: null,
       stepCount: 0,
@@ -320,6 +324,8 @@ describe('row mappers', () => {
     };
     const run = toJobRun(row);
     expect(run.workspaceId).toBeNull();
+    expect(run.workBranch).toBeNull();
+    expect(run.lastPushedSha).toBeNull();
     expect(run.startedAt).toBeNull();
   });
 

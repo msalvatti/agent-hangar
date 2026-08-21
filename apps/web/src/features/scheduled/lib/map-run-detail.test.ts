@@ -3,10 +3,12 @@
  *
  * Layer: unit.
  * Goal: every run status maps to its transcript phase, the prompt appears only when a job is
- * given, tool calls/output/error map to their item kinds, and an overlap error becomes a warning
- * notice rather than an error item.
+ * given, tool calls/output/error map to their item kinds, an overlap error becomes a warning
+ * notice rather than an error item, and a recorded push is rebuilt as the line the live stream
+ * showed.
  * Mocks: none.
  */
+import { pushedNoticeText } from '@agent-hangar/core';
 import type { JobRunStatus, JobSummary, RunDetail, ToolCallView } from '@agent-hangar/core';
 import { describe, expect, it } from 'vitest';
 
@@ -48,6 +50,7 @@ const toolCall: ToolCallView = {
 function detail(
   overrides: Partial<RunDetail['run']> = {},
   toolCalls: ToolCallView[] = [],
+  push: RunDetail['push'] = null,
 ): RunDetail {
   return {
     run: {
@@ -65,6 +68,7 @@ function detail(
       ...overrides,
     },
     output: null,
+    push,
     toolCalls,
   };
 }
@@ -95,6 +99,47 @@ describe('mapRunDetail', () => {
   it('omits the prompt when no job is given', () => {
     const result = mapRunDetail(detail());
     expect(result.items.some((item) => item.kind === 'user')).toBe(false);
+  });
+
+  /**
+   * The push a run recorded reads exactly as the live stream showed it, so the drawer says the same
+   * thing either side of a reload — and it says it long after the container and the event stream
+   * are both gone, which is the whole reason the run keeps it.
+   */
+  it('rebuilds the push notice from the run record', () => {
+    const result = mapRunDetail(
+      detail({}, [], { branch: 'agent/job-2f7c11a0', sha: 'c0ffee1234567890' }),
+      job,
+    );
+
+    expect(result.items).toContainEqual({
+      kind: 'notice',
+      id: 'git-c0ffee1234567890',
+      tone: 'success',
+      text: pushedNoticeText('agent/job-2f7c11a0', 'c0ffee1234567890'),
+    });
+  });
+
+  /** A run that pushed nothing shows no push line rather than an empty one. */
+  it('shows no push notice for a run that pushed nothing', () => {
+    const result = mapRunDetail(detail({}, [toolCall]), job);
+
+    expect(result.items.some((item) => item.kind === 'notice')).toBe(false);
+  });
+
+  /**
+   * The push happened after the work and before the answer that reports it, which is where a chat
+   * puts the same line; a notice after the final message would read as a second event.
+   */
+  it('places the push between the tool calls and the output', () => {
+    const withOutput: RunDetail = {
+      ...detail({}, [toolCall], { branch: 'agent/job-x', sha: 'abcdef1234567890' }),
+      output: 'Pushed the fix.',
+    };
+
+    const kinds = mapRunDetail(withOutput, job).items.map((item) => item.kind);
+
+    expect(kinds).toEqual(['user', 'tool', 'notice', 'assistant']);
   });
 
   /** Tool calls map to tool items in order. */

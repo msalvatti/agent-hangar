@@ -151,6 +151,69 @@ describe('createRunScheduledJobProcessor', () => {
   });
 
   /**
+   * A run's container is destroyed the moment it finishes and its event stream is discarded an hour
+   * later, so the branch the run pushed to is on the run's own row or it is nowhere. That branch is
+   * the whole product of a scheduled coding job, and the operator reads it long after both the
+   * container and the stream are gone.
+   */
+  it('records where the run pushed', async () => {
+    const script = happyScript();
+    script.splice(script.length - 1, 0, {
+      type: 'git.pushed',
+      branch: 'agent/job-2f7c11a0',
+      sha: 'c0ffee1234567890abcdef',
+    });
+    const container = setupProcessorContainer({ script: scriptedRuntime(script) });
+    const job = await seedJob(container);
+
+    await run(container, delivery(job.id));
+
+    const runs = await container.repos.jobRuns.listByJob(job.id);
+    expect(runs[0]).toMatchObject({
+      status: 'SUCCEEDED',
+      workBranch: 'agent/job-2f7c11a0',
+      lastPushedSha: 'c0ffee1234567890abcdef',
+    });
+  });
+
+  /**
+   * A run that pushed twice is described by the second push: the first branch may no longer be
+   * where its work is, and a record of both would say nothing about which one to look at.
+   */
+  it('keeps the last push of a run that pushed twice', async () => {
+    const script = happyScript();
+    script.splice(
+      script.length - 1,
+      0,
+      { type: 'git.pushed', branch: 'agent/job-first', sha: '1111111111111111' },
+      { type: 'git.pushed', branch: 'agent/job-second', sha: '2222222222222222' },
+    );
+    const container = setupProcessorContainer({ script: scriptedRuntime(script) });
+    const job = await seedJob(container);
+
+    await run(container, delivery(job.id));
+
+    const runs = await container.repos.jobRuns.listByJob(job.id);
+    expect(runs[0]).toMatchObject({
+      workBranch: 'agent/job-second',
+      lastPushedSha: '2222222222222222',
+    });
+  });
+
+  /**
+   * A run that pushed nothing says so, rather than carrying a branch it never wrote to.
+   */
+  it('leaves the push record empty when the run pushed nothing', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+
+    await run(container, delivery(job.id));
+
+    const runs = await container.repos.jobRuns.listByJob(job.id);
+    expect(runs[0]).toMatchObject({ workBranch: null, lastPushedSha: null });
+  });
+
+  /**
    * The tick moves the job's clock forward: `lastRunAt` is now and `nextRunAt` is the cron's next
    * occurrence, computed by the same function the API uses.
    */
@@ -615,6 +678,10 @@ describe('createRunScheduledJobProcessor', () => {
   it('lets no credential reach the run record or its stream', async () => {
     const container = setupProcessorContainer({
       script: scriptedRuntime([
+        // A branch name is chosen by the agent, so it is a place a credential can be carried out
+        // of the container as surely as a final message is — and it now lands on a column of its
+        // own, which is why this case is scripted here rather than left to the output.
+        { type: 'git.pushed', branch: `agent/job-${OPENAI_CANARY}`, sha: '1111111111111111' },
         {
           type: 'turn.completed',
           usage: { inputTokens: 1, outputTokens: 1 },
@@ -632,6 +699,7 @@ describe('createRunScheduledJobProcessor', () => {
       assertNoCanary(JSON.stringify(runs));
     }).not.toThrow();
     expect(runs[0]?.output).toContain('[REDACTED]');
+    expect(runs[0]?.workBranch).toContain('[REDACTED]');
     expect(() => {
       assertNoCanary(JSON.stringify(container.publisher.records));
     }).not.toThrow();

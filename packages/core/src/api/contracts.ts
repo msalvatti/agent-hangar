@@ -337,11 +337,26 @@ export const runSummary = z.object({
 /** `GET /api/jobs/:id/runs` response. */
 export const listRunsResponse = z.object({ runs: z.array(runSummary) });
 
+/** Where a run's work ended up, as git reported it after the push. */
+export const runPush = z.object({
+  /** Branch the push landed on. */
+  branch: z.string().min(1),
+  /** Commit at that branch's head. */
+  sha: z.string().min(1),
+});
+
 /** `GET /api/runs/:id` response. */
 export const runDetail = z.object({
   run: runSummary,
   /** Final assistant message, redacted. */
   output: z.string().nullable(),
+  /**
+   * Where the run pushed, or `null` when it pushed nothing.
+   *
+   * Detail-only: the runs table shows one row per run and has no room for it, and a run that
+   * pushed nothing is the common case.
+   */
+  push: runPush.nullable(),
   toolCalls: z.array(toolCallView),
 });
 

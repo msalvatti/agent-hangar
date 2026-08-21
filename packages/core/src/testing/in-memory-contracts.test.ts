@@ -12,6 +12,7 @@
 import { beforeEach } from 'vitest';
 
 import { describeChatDeleteContract } from '../persistence/testing/chat-delete-contract.ts';
+import { describeJobRunPushContract } from '../persistence/testing/job-run-push-contract.ts';
 import { describeRunFinishContract } from '../persistence/testing/run-finish-contract.ts';
 import { describeRunWorkspaceKindContract } from '../persistence/testing/run-workspace-kind-contract.ts';
 
@@ -77,6 +78,37 @@ describeRunFinishContract('InMemoryTurnRepository', {
     (await repos.turns.finish(id, status, { inputTokens: 0, outputTokens: 0, stepCount: 0 })) !==
     null,
   statusOf: async (id) => (await repos.turns.get(id))?.status ?? null,
+});
+
+describeJobRunPushContract('InMemoryJobRunRepository', {
+  seed: async () => {
+    const job = await seedJob();
+    const run = await repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'SCHEDULE',
+      model: 'm',
+      scheduledFor: T0,
+    });
+    return run.id;
+  },
+  recordPush: async (id, push) => {
+    await repos.jobRuns.recordPush(id, push);
+  },
+  pushOf: async (id) => {
+    const run = await repos.jobRuns.get(id);
+    return run === null ? null : { workBranch: run.workBranch, lastPushedSha: run.lastPushedSha };
+  },
+  recordPushOnMissing: async (id) => {
+    try {
+      await repos.jobRuns.recordPush(id, {
+        workBranch: 'agent/job-x',
+        lastPushedSha: 'deadbeefdeadbeef',
+      });
+      return null;
+    } catch (error) {
+      return error;
+    }
+  },
 });
 
 describeRunFinishContract('InMemoryJobRunRepository', {

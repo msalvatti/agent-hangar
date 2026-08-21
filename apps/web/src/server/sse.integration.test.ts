@@ -207,6 +207,30 @@ describeRedis('@redis sse', (url) => {
   });
 
   /**
+   * The case the cap creates, reproduced by making Redis really trim: the client's resume point is
+   * an entry `XTRIM` removed, so the frames between it and the oldest survivor are gone for good.
+   *
+   * What makes this worth a real server is that Redis reports nothing about it. `XRANGE` with an
+   * exclusive bound below the first surviving id answers with the surviving suffix and no error, so
+   * a pump that trusted the resume point would deliver a contiguous-looking sequence with a hole in
+   * the middle. The client is told to refetch the persisted transcript instead.
+   */
+  it('refuses a resume point Redis has trimmed away', async () => {
+    const key = newKey();
+    const trimmed = await append(key, { type: 'assistant.delta', text: 'trimmed' });
+    await append(key, { type: 'assistant.delta', text: 'survivor' });
+    await client.xtrim(key, 'MAXLEN', 1);
+    expect(await client.xrange(key, trimmed, trimmed)).toHaveLength(0);
+
+    const { response, controller } = open({ key, lastEventId: trimmed });
+    const text = await readUntil(response, (read) => read.includes(SSE_EXPIRED_EVENT));
+    controller.abort();
+
+    expect(text).toContain(`event: ${SSE_EXPIRED_EVENT}`);
+    expect(text).not.toContain('survivor');
+  });
+
+  /**
    * The blocking read really tails: an entry written from another connection after the client
    * connected arrives without a new request.
    */

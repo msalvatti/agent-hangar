@@ -392,4 +392,59 @@ describeDocker('worker end-to-end', () => {
     expect((await repos.workspaces.get(workspace.id))?.destroyedAt).not.toBeNull();
     expect((await repos.workspaces.listLive()).map((row) => row.id)).not.toContain(workspace.id);
   });
+
+  /**
+   * A teardown that reached `STOPPING` and then lost its process leaves a live row pointing at a
+   * container that is still running, and no other pass can take it: a teardown refuses anything
+   * that is not `READY`, the idle selection refuses it for the same reason, and the reconciliation
+   * refuses it because the container is right there and so is not missing. Until this was
+   * measurable the only thing that reclaimed it was the next worker boot, which does not help a
+   * process that is still up.
+   *
+   * The row is left in exactly the state that failure produces — `STOPPING`, with a real container
+   * behind its reference — and the assertion is the container's own absence from the daemon, not a
+   * status somebody wrote about it.
+   */
+  it('finishes a teardown whose process never came back for the container', async () => {
+    const { repos, queues, runner } = harness.container;
+    const workspace = await repos.workspaces.create({
+      kind: 'JOB',
+      runnerKind: runner.kind,
+      image: harness.config.WORKSPACE_IMAGE,
+      repoUrl: TEST_REPO_URL,
+      branch: TEST_REPO_BRANCH,
+    });
+    const handle = await runner.create({
+      workspaceId: workspace.id,
+      kind: 'JOB',
+      image: harness.config.WORKSPACE_IMAGE,
+      env: {},
+      limits: WORKSPACE_LIMITS,
+      labels: {
+        [LABELS.instance]: harness.config.AH_INSTANCE,
+        [LABELS.workspace]: workspace.id,
+        [LABELS.kind]: 'JOB',
+      },
+    });
+    await repos.workspaces.setStatus(workspace.id, 'READY', { runnerRef: handle.runnerRef });
+    expect(await repos.workspaces.claimStatus(workspace.id, 'READY', 'STOPPING')).not.toBeNull();
+    await expect(runner.health(handle)).resolves.toMatchObject({ status: 'healthy' });
+
+    await queues.workspaceGc.add(JOB_NAMES.reapIdle, {});
+
+    await harness.waitFor('the abandoned container to be removed', async () => {
+      const handles = await runner.list({
+        [LABELS.instance]: harness.config.AH_INSTANCE,
+        [LABELS.workspace]: workspace.id,
+      });
+      return handles.length === 0;
+    });
+
+    await expect
+      .poll(async () => (await repos.workspaces.get(workspace.id))?.status, {
+        timeout: ROW_SETTLE_MS,
+      })
+      .toBe('DESTROYED');
+    expect((await repos.workspaces.listLive()).map((row) => row.id)).not.toContain(workspace.id);
+  });
 });

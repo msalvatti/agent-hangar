@@ -67,7 +67,8 @@ sequenceDiagram
 - Limits hit (`maxSteps`, `maxTurnMs`) → runtime emits `assistant.message` explaining what was done so far, then `turn.completed` with `stoppedBy: 'limit'` (field omitted in the type above for brevity).
 - Cancel → `POST /api/turns/:id/cancel` → web publishes `cmd:turn:<id> cancel` on Redis pub/sub → worker `runner.signal(INT)` → `turn.cancelled` → Turn `CANCELLED`.
 - Worker crash mid-turn → BullMQ stalled-job detection re-queues; on pickup the worker sees `Workspace.status = BUSY` with a dead exec, destroys that workspace (`list()` by label), and re-runs the turn in a fresh one with a `SYSTEM` note.
-- Browser reconnect → `Last-Event-ID` → `XRANGE (id, +]` replay then tail; if the stream expired, UI re-fetches `GET /api/chats/:id` and shows persisted state.
+- Worker crash mid-*teardown* → the row is `STOPPING` and its owner had already committed to destroying the container, so nothing is re-run: the next boot closes the row out, and the collection pass finishes the destroy the owner never got to. `BUSY` is deliberately excluded from that pass, because its owner committed to the opposite.
+- Browser reconnect → `Last-Event-ID` → `XRANGE (id, +]` replay then tail — but only after the stream confirms it still holds that id. It answers `event: expired` when it does not, which happens for two reasons now: the key expired (1 h TTL), or the `MAXLEN` cap trimmed past the client's position. Either way the UI re-fetches `GET /api/chats/:id`, shows the persisted state, and — when the turn is still running — reopens the stream from the start, because the only position it held is the one that was refused.
 
 **Second and later messages:** same flow, but step 11–13 find the live `READY` workspace, `prepare.clone=false`, and the history window is rebuilt from `Message` rows (the container's filesystem carries over as long as it is alive).
 
@@ -120,7 +121,7 @@ sequenceDiagram
   end
 ```
 
-Restore is **not** a special code path: the worker's "ensure workspace" step always asks "is there a live workspace for this chat? no → create and clone from the persisted context". Idle-TTL GC (every 5 min, `WORKSPACE_IDLE_TTL_MIN` default 30) exercises the same path for active chats, so restore is tested on every long-lived chat, not only on archived ones.
+Restore is **not** a special code path: the worker's "ensure workspace" step always asks "is there a live workspace for this chat? no → create and clone from the persisted context". The collection pass (every 5 min, `WORKSPACE_IDLE_TTL_MIN` default 30 for the idle arm) exercises the same path for active chats, so restore is tested on every long-lived chat, not only on archived ones.
 
 ## (c) Scheduled job trigger → fresh workspace → run recorded
 
@@ -154,6 +155,8 @@ sequenceDiagram
   W->>R: exec(turn, items=[user: prompt], prepare.clone=true, limits.jobs)
   C->>OAI: tool loop (as flow a)
   C-->>W: AgentEvents → XADD events:turn:<runId>; ToolCallLog(jobRunId)
+  C-->>W: git.pushed {branch, sha}
+  W->>PG: JobRun.workBranch/lastPushedSha
   C-->>W: turn.completed {finalMessage}
   W->>PG: JobRun → SUCCEEDED, output=finalMessage, usage; ScheduledJob.lastRunAt/nextRunAt
   W->>R: destroy(handle)   (finally — also on failure/cancel)
@@ -164,6 +167,7 @@ sequenceDiagram
 **Guarantees**
 
 - One workspace per run, always destroyed in `finally`; GC reaps any survivor by label `ah.jobRun`.
+- A run's durable record is its `output`, its `ToolCallLog` rows and, when it pushed, `workBranch`/`lastPushedSha`. Everything else its stream reports is for the live view only: the container is gone the moment the run ends and the stream an hour later, so a fact that has to survive either is a column, and a run has no message channel to hold one instead.
 - Overlap policy: if a run is still executing when the next tick fires, the new run is recorded as `FAILED` with error `previous run still running` (no queueing pile-up). Stated in the UI.
 - Disable → `removeJobScheduler(jobId)`; enable/edit → `upsertJobScheduler` (idempotent by key). Delete → remove scheduler + cascade rows.
 - Worker boot → reconcile: for every enabled job upsert its scheduler; remove schedulers with no matching enabled row.

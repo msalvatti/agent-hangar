@@ -8,9 +8,10 @@
  * Mocks: a recording consumer factory and the in-memory container.
  */
 import { QUEUE_NAMES } from '@agent-hangar/core';
+import { FakeWorkspaceRunner } from '@agent-hangar/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 
-import { defaultWorkerFactories, probeRunnerReachable, startWorker } from './app.js';
+import { defaultWorkerFactories, probeWorkspaceImage, startWorker } from './app.js';
 import type { ImageProbe } from './app.js';
 import type { WorkerContainer } from './container.js';
 import { SHUTDOWN_GRACE_MS, WORKER_RELIABILITY } from './processors/constants.js';
@@ -47,7 +48,6 @@ function appContainer(test: TestContainer): { container: AppContainer; closed: s
     publisher: test.publisher,
     commands: test.commands,
     queues: test.queues,
-    imageStatus: test.imageStatus,
     fakeProviderEnv: test.fakeProviderEnv,
     claims: test.claims,
     close: () => {
@@ -395,17 +395,33 @@ describe('startWorker', () => {
   });
 
   /**
-   * Without an injected probe the application uses the default one, which asks the runner rather
-   * than assuming the daemon is there.
+   * Without an injected probe the application uses the default one, and that default reports what
+   * the host actually has: a boot on a host missing the configured image prints the command that
+   * builds it, on a checkout where nothing has ever been created.
    */
-  it('falls back to the default image probe', async () => {
-    const test = createTestContainer();
+  it('falls back to a default probe that reports a missing image', async () => {
+    const test = createTestContainer({ runner: new FakeWorkspaceRunner({ images: [] }) });
     const { container } = appContainer(test);
     const factory = createFakeWorkerFactory();
 
     await startWorker(container, { createWorker: factory.createWorker.bind(factory) });
 
-    expect(test.runner.calls.some((call) => call.method === 'list')).toBe(true);
+    expect(test.logs.join('')).toContain('pnpm infra:image');
+    expect(factory.workers).toHaveLength(3);
+  });
+
+  /**
+   * The same default on a host that has the image says nothing, so the log stays readable.
+   */
+  it('falls back to a default probe that stays quiet when the image is there', async () => {
+    const test = createTestContainer({
+      runner: new FakeWorkspaceRunner({ images: ['agent-hangar/workspace:test'] }),
+    });
+    const { container } = appContainer(test);
+    const factory = createFakeWorkerFactory();
+
+    await startWorker(container, { createWorker: factory.createWorker.bind(factory) });
+
     expect(test.logs.join('')).not.toContain('pnpm infra:image');
   });
 });
@@ -421,20 +437,28 @@ describe('defaultWorkerFactories', () => {
   });
 });
 
-describe('probeRunnerReachable', () => {
+describe('probeWorkspaceImage', () => {
   /**
-   * The default probe asks the runner for this instance's workspaces: that proves the daemon
-   * answers, which is the half of the check worth failing loudly about at boot.
+   * The probe answers about the image the configuration names, not about whether the daemon
+   * happened to reply to something.
    */
-  it('lists this instance and reports the runner as usable', async () => {
-    const test = createTestContainer();
+  it('answers from what the host has', async () => {
+    const runner = new FakeWorkspaceRunner({ images: ['agent-hangar/workspace:test'] });
 
-    await expect(
-      probeRunnerReachable(test.runner, test.config.WORKSPACE_IMAGE, 'w2b-unit'),
-    ).resolves.toBe(true);
-    expect(test.runner.calls.at(-1)).toEqual({
-      method: 'list',
-      args: [{ 'ah.instance': 'w2b-unit' }],
-    });
+    await expect(probeWorkspaceImage(runner, 'agent-hangar/workspace:test')).resolves.toBe(true);
+    await expect(probeWorkspaceImage(runner, 'agent-hangar/workspace:other')).resolves.toBe(false);
+  });
+
+  /**
+   * A host that could not be asked is not a host without the image: the rejection is passed on, so
+   * the boot fails loudly instead of printing a build command that would not help.
+   */
+  it('rejects rather than reporting absence when the host cannot be asked', async () => {
+    const runner = new FakeWorkspaceRunner();
+    vi.spyOn(runner, 'imageExists').mockRejectedValue(new Error('connect ECONNREFUSED'));
+
+    await expect(probeWorkspaceImage(runner, 'agent-hangar/workspace:test')).rejects.toThrow(
+      'connect ECONNREFUSED',
+    );
   });
 });

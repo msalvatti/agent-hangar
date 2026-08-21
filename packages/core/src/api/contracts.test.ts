@@ -348,9 +348,34 @@ describe('job schemas', () => {
       startedAt: null,
       finishedAt: now,
     };
-    expect(runDetail.safeParse({ run, output: null, toolCalls: [toolCall] }).success).toBe(true);
     expect(
-      runDetail.safeParse({ run: { ...run, trigger: 'API' }, output: null, toolCalls: [] }).success,
+      runDetail.safeParse({ run, output: null, push: null, toolCalls: [toolCall] }).success,
+    ).toBe(true);
+    expect(
+      runDetail.safeParse({
+        run,
+        output: null,
+        push: { branch: 'agent/job-2f7c11a0', sha: 'c0ffee1234567890' },
+        toolCalls: [],
+      }).success,
+    ).toBe(true);
+    // A push is both halves or neither: a branch with no commit describes nothing, and rendering
+    // it would put a branch at an empty revision in front of the operator.
+    expect(
+      runDetail.safeParse({
+        run,
+        output: null,
+        push: { branch: 'agent/job-2f7c11a0' },
+        toolCalls: [],
+      }).success,
+    ).toBe(false);
+    expect(
+      runDetail.safeParse({
+        run: { ...run, trigger: 'API' },
+        output: null,
+        push: null,
+        toolCalls: [],
+      }).success,
     ).toBe(false);
   });
 });

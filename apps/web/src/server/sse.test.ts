@@ -205,6 +205,41 @@ describe('createSseResponse', () => {
   });
 
   /**
+   * A resume point the stream no longer holds is the case the cap creates: `TURN_EVENTS_MAXLEN`
+   * drops the oldest entries, and everything Redis dropped with them is unreachable. Replaying the
+   * surviving suffix would hand the client a transcript with a hole in it and no mark where the
+   * hole is — the `tool.result` whose opening call was trimmed away. The client is told to refetch
+   * the persisted record instead, which is the one thing that is still complete.
+   */
+  it('refuses a resume point the stream no longer holds', async () => {
+    const redis = new FakeRedis();
+    await append(redis, { type: 'assistant.delta', text: 'survivor' });
+    const harness = open({ fake: redis, lastEventId: '0-1' });
+
+    const text = await readUntil(harness.reader, (read) => read.includes(SSE_EXPIRED_EVENT));
+
+    expect(text).toContain(`event: ${SSE_EXPIRED_EVENT}`);
+    expect(text).not.toContain('survivor');
+    expect((await harness.reader.read()).done).toBe(true);
+  });
+
+  /**
+   * The check must not fire for a resume point that is still there, which is every ordinary
+   * reconnect: the entry named is present, so the replay proceeds and nothing is expired.
+   */
+  it('replays normally when the resume point is still in the stream', async () => {
+    const redis = new FakeRedis();
+    const first = await append(redis, { type: 'assistant.delta', text: 'one' });
+    await append(redis, { type: 'assistant.delta', text: 'two' });
+    const harness = open({ fake: redis, lastEventId: first });
+
+    const text = await readUntil(harness.reader, (read) => read.includes('two'));
+
+    expect(text).not.toContain(`event: ${SSE_EXPIRED_EVENT}`);
+    harness.controller.abort();
+  });
+
+  /**
    * The tail: an entry written after the client connected arrives without another request.
    */
   it('delivers an entry written after the client connected', async () => {

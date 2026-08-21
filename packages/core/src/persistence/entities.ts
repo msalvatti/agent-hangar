@@ -104,6 +104,17 @@ export interface JobRun {
   model: string;
   output: string | null;
   error: string | null;
+  /**
+   * Branch the run pushed to, as git reported it after the push; `null` when it pushed nothing.
+   *
+   * A run has no message channel and no restore, so this is not a hint for rebuilding anything —
+   * it is the record of where the run's work ended up. Its container is destroyed the moment the
+   * run finishes and its event stream is discarded an hour later, so without these two columns the
+   * one durable fact a coding job exists to produce is not recoverable from the application at all.
+   */
+  workBranch: string | null;
+  /** Commit at the head of {@link JobRun.workBranch} after that push; `null` when it pushed nothing. */
+  lastPushedSha: string | null;
   inputTokens: number | null;
   outputTokens: number | null;
   stepCount: number;

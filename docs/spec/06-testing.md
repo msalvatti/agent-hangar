@@ -27,7 +27,7 @@ Coverage thresholds (Vitest `coverage.thresholds`): **100 % lines, branches, fun
 - **secrets/** — AES-256-GCM roundtrip; different iv per write; tampered ciphertext/authTag throws `SecretIntegrityError`; wrong key throws; `last4` for values shorter than 4; master key file: created 0600 when missing, refused when world-readable, `keyVersion` preserved; `reveal` never returns for unknown key.
 - **redaction/** — exact-value redaction (including values appearing inside JSON and URLs), shape patterns (`ghp_`, `github_pat_`, `sk-`, `sk-proj-`, `Bearer`), `redactJson` deep objects/arrays, idempotence, no false positive on ordinary hex; pino serializer integration.
 - **scheduling/** — cron validation (5-field, tz), `nextRunAt` computation across DST boundaries, overlap policy decision, scheduler key = job id, reconcile diff (DB vs scheduler list → upsert/remove sets).
-- **workspace lifecycle/** — state machine transitions (`CREATING→READY→BUSY→READY→DESTROYED`, illegal transitions throw), "ensure workspace" decision (live? restore? image missing?), idle-TTL selection, restore-context builder (ordering, windowing, `TOOL_SUMMARY` compaction, restoration notice text, `expectedHeadSha` propagation).
+- **workspace lifecycle/** — state machine transitions (`CREATING→READY→BUSY→READY→DESTROYED`, illegal transitions throw), "ensure workspace" decision (live? restore? image missing?), idle-TTL selection, the collector's three reconciliation arms (orphan container, missing container, abandoned teardown — and `BUSY` excluded from all three), restore-context builder (ordering, windowing, `TOOL_SUMMARY` compaction, restoration notice text, `expectedHeadSha` propagation).
 - **agent-protocol/** — Zod schemas for `TurnRequest`/`AgentEvent`; NDJSON framing (partial lines, multiple events per chunk, invalid line → `protocol.error`, never throws the stream).
 - **model/openai/** — event mapping from recorded Responses API stream fixtures (text deltas, function call arguments deltas, completed with usage, failed, 401/429 mapping) using a fake SDK client; model id comes from config; `store:false` sent.
 - **runner/docker/** — pure parts only: socket resolution order, container spec builder (labels, limits, security opts, env), exec demux parser; dockerode itself is faked here (real Docker in integration).
@@ -40,7 +40,7 @@ Coverage thresholds (Vitest `coverage.thresholds`): **100 % lines, branches, fun
 
 `apps/web`
 
-- Route handlers with fake repositories/queues: validation errors, archive/restore state changes, settings responses never contain plaintext, SSE framing helper (id/event/data, heartbeat).
+- Route handlers with fake repositories/queues: validation errors, archive/restore state changes, settings responses never contain plaintext, SSE framing helper (id/event/data, heartbeat), and a resume point the stream no longer holds refused rather than replayed from what survives.
 - UI components (Vitest + Testing Library): masked secret field, composer disabled states, tool-call card rendering of redacted args, streaming reducer.
 
 `apps/worker`
@@ -51,11 +51,11 @@ Coverage thresholds (Vitest `coverage.thresholds`): **100 % lines, branches, fun
 
 Run with `pnpm test:integration`; compose test profile brings up `postgres`/`redis` on `AH_INSTANCE=test` ports; Docker socket required (skipped with a loud message if absent, **never** silently green).
 
-- **DockerWorkspaceRunner** (`packages/core`, tag `@docker`): `create` → `health` healthy → `exec echo` streams stdout → `exec` with stdin → `exec` timeout kills → `signal INT` reaches process → `snapshot` on a real git repo (dirty/ahead) → `destroy` → `health` gone; `list` by labels; two concurrent workspaces have different filesystems (write in A, not visible in B); limits applied (`docker inspect` shows memory/pids); env injected visible to process but image has none; missing image → `WorkspaceImageMissing`.
+- **DockerWorkspaceRunner** (`packages/core`, tag `@docker`): `create` → `health` healthy → `exec echo` streams stdout → `exec` with stdin → `exec` timeout kills → `signal INT` reaches process → `snapshot` on a real git repo (dirty/ahead) → `destroy` → `health` gone; `list` by labels; `imageExists` answers `true` for the built image and `false` for one the host does not have; two concurrent workspaces have different filesystems (write in A, not visible in B); limits applied (`docker inspect` shows memory/pids); env injected visible to process but image has none; missing image → `WorkspaceImageMissing`.
 - **Persistence** (Prisma against Postgres): repositories redact on write (canary value never stored), message `seq` gap-free under concurrency (transaction), partial unique index "one live workspace per chat", cascades.
 - **Queues** (BullMQ against Redis): `upsertJobScheduler` creates exactly one scheduler per job; edit updates pattern; disable removes; reconcile on boot converges; worker `maxRetriesPerRequest:null`.
-- **SSE endpoint**: XADD events → client receives framed events; `Last-Event-ID` replay returns only later entries; heartbeat present; stream expiry → 204/`event: expired`.
-- **Worker end-to-end with fake provider + real Docker**: `run-turn` job → container created → agent-runtime executes scripted tool calls (`write_file`, `run_shell`) in the container → ToolCallLog rows, Message rows, Turn SUCCEEDED → idle GC destroys → next turn restores and `prepare.done` emitted.
+- **SSE endpoint**: XADD events → client receives framed events; `Last-Event-ID` replay returns only later entries; heartbeat present; stream expiry → `event: expired`; a resume point a real `XTRIM` has removed → `event: expired` and close, never the surviving tail.
+- **Worker end-to-end with fake provider + real Docker**: `run-turn` job → container created → agent-runtime executes scripted tool calls (`write_file`, `run_shell`) in the container → ToolCallLog rows, Message rows, Turn SUCCEEDED → idle GC destroys → next turn restores and `prepare.done` emitted; a row parked in `STOPPING` with its container still up has that container really removed by the next collection pass; the published heartbeat reports the real image presence.
 
 ## 4. Playwright E2E (critical flows)
 
@@ -65,7 +65,7 @@ Stack: `pnpm dev` in test mode (`AGENT_MODEL_PROVIDER=fake`, real Docker, real P
 |---|---|---|
 | `chat-create-run.spec` | Open app → New chat → choose repo/branch → send "list files and create NOTES.md" | Transcript streams `Cloning…`, tool cards for `list_dir`/`write_file`, final assistant message; status pill goes Preparing → Running → Done; DB has Turn SUCCEEDED |
 | `chat-archive-restore.spec` | Continue above → Archive → chat appears in Archived → Restore → send "show NOTES.md" | After archive, container gone (`docker ps` via API `/api/health` counters); after restore, system notice visible, new turn shows `Cloning…`, history intact |
-| `scheduled-job-run.spec` | Scheduled → New job (cron `* * * * *`, prompt "print date") → wait ≤ 90 s (or click Run now) | Run row appears, status Succeeded, output visible; opening run shows tool calls; `/api/health` shows zero live job workspaces |
+| `scheduled-job-run.spec` | Scheduled → New job (cron `* * * * *`, prompt "print date") → wait ≤ 90 s (or click Run now) | Run row appears, status Succeeded, output visible; opening run shows tool calls, and the push line when the run pushed; `/api/health` shows zero live job workspaces |
 | `settings-save-mask.spec` | Settings → paste fake PAT `ghp_…` + key `sk-…` → Save → reload | Fields show `••••••••<last4>`; `GET /api/settings` body has no plaintext; Replace/Remove work; a turn run afterwards logs contain `[REDACTED]` where the canary would be |
 | `settings-missing.spec` | No secrets → New chat | Composer blocked with link to Settings; no container created |
 | `cancel-turn.spec` | Fake provider scripted with a long `run_shell sleep 60` → Cancel | Turn CANCELLED within 5 s, workspace still READY |

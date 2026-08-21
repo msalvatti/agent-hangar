@@ -136,8 +136,16 @@ async function persistRunOutcome(
 /**
  * Builds the persistence half of a run's event stream.
  *
- * A run has no chat, so nothing becomes a message: the final answer is the run's `output` and the
- * tool calls are its log.
+ * A run has no chat, so nothing becomes a message: the final answer is the run's `output`, the tool
+ * calls are its log, and where it pushed is on the run's own row. That last one is a column rather
+ * than a notice because a run has no message channel to put a notice in, and giving it one would
+ * mean a history nothing reads — a run always starts in a fresh workspace from the job's prompt, so
+ * there is no window to feed. What a column is for is the opposite: a fact that has to outlive the
+ * container, and the branch a scheduled coding job pushed to is the only one a run produces.
+ *
+ * Everything else the runtime reports is published for the live view and kept nowhere. A
+ * preparation finding describes the checkout the run started from, which its container took with
+ * it, and the assistant's stream is already summarised by `output`.
  *
  * @param deps - Repositories.
  * @param runId - The run.
@@ -166,15 +174,21 @@ function makeJobRunSink(deps: ProcessorDeps, runId: string, recorder: ToolCallRe
         case 'turn.cancelled':
           await persistRunOutcome(deps, runId, event, steps);
           break;
+        case 'git.pushed':
+          await deps.repos.jobRuns.recordPush(runId, {
+            workBranch: event.branch,
+            lastPushedSha: event.sha,
+          });
+          break;
         case 'turn.started':
         case 'prepare.progress':
         case 'prepare.done':
         case 'assistant.delta':
         case 'assistant.message':
-        case 'git.pushed':
         case 'heartbeat':
         case 'protocol.error':
-          // Published for the live view; a run's durable record is its output and its tool log.
+          // Published for the live view and kept nowhere: nothing they carry outlives the
+          // container, and `output` already carries the answer the assistant streamed.
           break;
       }
     },
