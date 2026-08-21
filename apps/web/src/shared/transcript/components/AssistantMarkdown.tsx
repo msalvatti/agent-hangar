@@ -101,7 +101,7 @@ function PreRenderer({ children, node: _node, ...rest }: ComponentProps<'pre'> &
   const rawText = extractText(children);
 
   return (
-    <div className="border-border bg-muted overflow-hidden rounded-lg border">
+    <div className="border-border bg-muted my-3 overflow-hidden rounded-lg border">
       <div className="border-border flex items-center justify-between border-b px-3 py-1.5">
         <span className="text-muted-foreground font-mono text-xs">{language}</span>
         <CopyButton value={rawText} label="Copy code" />
@@ -133,9 +133,14 @@ export function AssistantMarkdown({ text, streaming = false, className }: Assist
     <div
       data-item-kind="assistant"
       className={cn(
-        'max-w-none space-y-3 text-[15px] leading-[1.6]',
+        'max-w-none space-y-4 text-[15px] leading-[1.6]',
         '[&_h1]:text-lg [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:text-[15px] [&_h3]:font-semibold',
         '[&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:list-disc [&_ul]:pl-5',
+        // `space-y` reaches direct children only, and a list puts everything one or two levels
+        // deeper: without these, bullets sit flush against each other and two code blocks inside
+        // one bullet touch with no gap at all. The second rule is what separates stacked blocks —
+        // a fence followed by a fence, or a paragraph followed by a nested list — inside one item.
+        '[&_li]:my-2 [&_li>*+*]:mt-4',
         className,
       )}
     >
