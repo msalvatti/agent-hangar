@@ -293,8 +293,9 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
   /**
    * Stops and removes the workspace and its storage.
    *
-   * Idempotent: a container that is already stopped (304) or already gone (404) is a success, so a
-   * retried destroy after a worker crash does not fail the job.
+   * Idempotent: a container that is already stopped (304), already gone (404) or already being
+   * removed by another caller (409) is a success, so neither a retried destroy after a worker
+   * crash nor a second destroyer racing this one fails the job.
    *
    * @param handle - Workspace to destroy.
    * @returns Resolves once the container is gone.
@@ -591,7 +592,17 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
   }
 
   /**
-   * Stops and removes a container, tolerating "already stopped" and "already gone".
+   * Stops and removes a container, tolerating "already stopped", "already gone" and "already
+   * going".
+   *
+   * The last of the three is what a second remover sees. Destroying a workspace has more than one
+   * caller by design — the teardown of the turn that owned it, the collector's orphan pass, and
+   * the operator's reaper — and the daemon answers `409` to whichever arrives while another
+   * removal is under way. That is the goal of this method being met by somebody else, not a
+   * failure of it: the container is on its way out either way. Treating it as an error made the
+   * collector report every concurrently reaped workspace as a failed teardown, and would leave a
+   * row `FAILED` for a container that is gone. The remove is forced, so the other `409` the daemon
+   * has — "the container is running" — cannot be what arrived here.
    *
    * @param container - Container to destroy.
    * @throws DockerRunnerError when the daemon fails for any other reason.
@@ -600,7 +611,7 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     try {
       await container.stop({ t: STOP_GRACE_SECONDS });
     } catch (error) {
-      if (!isDockerNotFound(error) && !isDockerNotModified(error)) {
+      if (!isDockerNotFound(error) && !isDockerNotModified(error) && !isDockerConflict(error)) {
         throw new DockerRunnerError(`cannot stop container ${container.id}`, { cause: error });
       }
     }
@@ -608,7 +619,7 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     try {
       await container.remove({ v: true, force: true });
     } catch (error) {
-      if (!isDockerNotFound(error)) {
+      if (!isDockerNotFound(error) && !isDockerConflict(error)) {
         throw new DockerRunnerError(`cannot remove container ${container.id}`, { cause: error });
       }
     }
