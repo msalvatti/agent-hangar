@@ -28,14 +28,26 @@ import { dockerGate } from './testing/docker-available.ts';
 
 const gate = dockerGate();
 
+/**
+ * The instance this suite addresses, derived once.
+ *
+ * All three values below come from the same derivation rather than from three literals, because
+ * they have to describe one instance: the image is the tag `pnpm infra:image` wrote for it, and the
+ * label and prefix are what this suite reaps by afterwards. Spelled separately, a run without
+ * `AH_INSTANCE` would look for one instance's image while labelling its containers with another's
+ * name, and report it as an image that does not exist. The documented workflow and the continuous
+ * integration job both set `AH_INSTANCE=test`, which is why the three literals agreed until now.
+ */
+const SUITE = resolveInstance();
+
 /** Instance every container of this suite is labelled with. */
-const INSTANCE = 'test';
+const INSTANCE = SUITE.instance;
 
 /** Container name prefix of this suite. */
-const NAME_PREFIX = 'ah-ws-test-';
+const NAME_PREFIX = SUITE.workspaceNamePrefix;
 
 /** Image under test; overridable so the suite can run against a differently tagged build. */
-const IMAGE = process.env.WORKSPACE_IMAGE ?? resolveInstance().workspaceImage;
+const IMAGE = process.env.WORKSPACE_IMAGE ?? SUITE.workspaceImage;
 
 /** Memory ceiling applied to every workspace of this suite (512 MiB). */
 const MEMORY_BYTES = 536_870_912;

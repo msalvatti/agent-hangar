@@ -9,12 +9,30 @@
  * Mocks: `docker` and `node` via `infra/scripts/testing/shims.ts`; the expected digest is derived
  * a second time in TypeScript by `testing/workspace-digest.ts` rather than taken from the script.
  */
-import { describe, expect, it } from 'vitest';
+import { execFileSync } from 'node:child_process';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { createShimDir, spawnScript, writeExtraShim } from './testing/shims.js';
 import { expectedWorkspaceDigest, SHIM_BUNDLE_DIGEST } from './testing/workspace-digest.js';
 
-const scriptPath = new URL('./workspace-image.sh', import.meta.url).pathname;
+const scriptPath = fileURLToPath(new URL('./workspace-image.sh', import.meta.url));
+const envScriptPath = fileURLToPath(new URL('./env.sh', import.meta.url));
+
+const dirs: string[] = [];
+
+afterEach(() => {
+  while (dirs.length > 0) {
+    const dir = dirs.pop();
+    if (dir !== undefined) {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+});
 
 /** Tag of the instance every test here works with. */
 const TAG = 'agent-hangar/workspace:feat-x';
@@ -39,7 +57,9 @@ function run(
     nodeFails?: boolean;
   } = {},
 ) {
-  const log = `${process.env.TMPDIR ?? '/tmp'}/ah-wsi-${String(process.hrtime.bigint())}.log`;
+  const dir = mkdtempSync(join(tmpdir(), 'ah-wsi-'));
+  dirs.push(dir);
+  const log = join(dir, 'log');
   const shimDir = createShimDir({
     log,
     docker: {
@@ -124,13 +144,18 @@ describe('workspace-image.sh --status', () => {
     expect(result.stderr).toContain('Docker is not reachable');
   });
 
-  /** Same rule for the other half: no digest from this tree, no verdict about the image. */
-  it('reports unavailable when the bundle cannot be built from this tree', () => {
+  /**
+   * The other half, and a different word for it. An image is present and this tree cannot say what
+   * is in it — which costs a caller more than Docker being absent does, because there is something
+   * here about to create containers. `pnpm dev` refuses this and starts on `unavailable`; one word
+   * for both would force it to get one of the two wrong.
+   */
+  it('reports unverifiable when the bundle cannot be built from this tree', () => {
     const result = run(['--status', TAG], {
       imageDigest: expectedWorkspaceDigest(),
       nodeFails: true,
     });
-    expect(result.stdout.trim()).toBe('unavailable');
+    expect(result.stdout.trim()).toBe('unverifiable');
     expect(result.stderr).toContain('could not be built from this tree');
   });
 });
@@ -163,6 +188,47 @@ describe('workspace-image.sh --assert-tag', () => {
     expect(result.stderr).toContain('agent-hangar/workspace:feat-x');
     expect(result.stderr).toContain('pnpm run setup --force');
   });
+});
+
+describe('workspace-image.sh and env.sh on the tag', () => {
+  /**
+   * The tag an instance derives is written in two places — `env.sh` computes it into `.env.local`,
+   * `workspace-image.sh` decides whether a tag is that instance's — and nothing else compares them.
+   * A change to one spelling alone would make every correct tag refused, or every wrong one
+   * accepted, without failing anything: the derivation is a string that works perfectly on the
+   * checkout that wrote it. So the two are run against each other, over the same permutations the
+   * instance derivation is pinned on.
+   *
+   * @param instance - Instance name as a shell would name it, before slugifying.
+   * @returns What `env.sh` derives for it.
+   */
+  function derive(instance: string): { instance: string; image: string } {
+    const printed = execFileSync('bash', [envScriptPath, '--print'], {
+      env: {
+        PATH: process.env.PATH ?? '',
+        HOME: process.env.HOME ?? '/tmp',
+        AH_INSTANCE: instance,
+      },
+      encoding: 'utf8',
+    });
+    const values: Record<string, string> = {};
+    for (const line of printed.split('\n')) {
+      const match = /^export ([A-Z_]+)="(.*)"$/u.exec(line);
+      if (match?.[1] !== undefined && match[2] !== undefined) {
+        values[match[1]] = match[2];
+      }
+    }
+    return { instance: values.AH_INSTANCE ?? '', image: values.WORKSPACE_IMAGE ?? '' };
+  }
+
+  it.each(['default', 'Feat_X', 'lane-a', 'Ünïcödé name'])(
+    'accepts exactly the tag env.sh derives for %s',
+    (name) => {
+      const derived = derive(name);
+      expect(derived.image).not.toBe('');
+      expect(run(['--assert-tag', derived.image, derived.instance]).status).toBe(0);
+    },
+  );
 });
 
 describe('workspace-image.sh usage', () => {

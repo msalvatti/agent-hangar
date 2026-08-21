@@ -247,6 +247,39 @@ describe('doctor.sh — required failures', () => {
   });
 
   /**
+   * Docker answered but the digest could not be computed, because the runtime bundle cannot be
+   * built from this tree. The row says so and offers the command, rather than reporting an image
+   * it never compared as ✓ — the failure mode this whole check exists to remove. It is not a ✗:
+   * nothing is known to be wrong with the image, only that the question could not be asked, and a
+   * required row failing the exit code on that would be its own kind of untrue.
+   */
+  it('reports an unverifiable workspace image without claiming it is good', async () => {
+    const box = await sandbox();
+    const shimDir = greenShims(box);
+    const helper = helperShim(shimDir);
+    // Answers `node -v` for the Node row, and fails everything else — which is what a checkout
+    // without its dependencies installed does to the bundle build.
+    writeExtraShim(
+      shimDir,
+      'node',
+      "if [ \"$1\" = '-v' ]; then printf 'v24.0.0\\n'; exit 0; fi\nexit 1",
+    );
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      args: ['--json'],
+      env: greenEnv(box, { AH_DOCTOR_HELPER_CMD: helper }),
+    });
+    const rows = JSON.parse(result.stdout) as { check: string; status: string; fix: string }[];
+    expect(rows.find((row) => row.check === 'Workspace image')).toEqual({
+      check: 'Workspace image',
+      status: '–',
+      detail: 'cannot rebuild the bundle to compare',
+      fix: 'pnpm install',
+    });
+    expect(rows.find((row) => row.check === 'Node')?.status).toBe('✓');
+  });
+
+  /**
    * A master key file with mode 644 is refused with `chmod 600`, and the Secrets row is skipped.
    */
   it('reports a wrongly-permissioned master key with chmod 600', async () => {

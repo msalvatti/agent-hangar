@@ -72,12 +72,23 @@ fi
 
 if [ $print_only -eq 0 ]; then
   ah_assert_workspace_image_tag "$WORKSPACE_IMAGE" "$AH_INSTANCE" || exit "$?"
-  if [ "$(ah_workspace_image_status "$WORKSPACE_IMAGE")" = "stale" ]; then
-    echo "error: the workspace image \"$WORKSPACE_IMAGE\" was not built from this checkout." >&2
-    echo "Every container it creates would run an agent runtime this tree does not contain, and nothing about the run would say so: the turn succeeds and reports a result for a combination of worker and runtime that was never released together." >&2
-    echo "Rebuild it with \"pnpm infra:image\"." >&2
-    exit 1
-  fi
+  case "$(ah_workspace_image_status "$WORKSPACE_IMAGE")" in
+    stale)
+      echo "error: the workspace image \"$WORKSPACE_IMAGE\" was not built from this checkout." >&2
+      echo "Every container it creates would run an agent runtime this tree does not contain, and nothing about the run would say so: the turn succeeds and reports a result for a combination of worker and runtime that was never released together." >&2
+      echo "Rebuild it with \"pnpm infra:image\"." >&2
+      exit 1
+      ;;
+    unverifiable)
+      # Not the same as "no image". There is one, this instance is about to create containers from
+      # it, and this checkout cannot say what is inside it — which is the state the whole check
+      # exists to refuse. Starting anyway on the grounds that nothing was proven wrong is how a run
+      # ends up reporting a result for a runtime nobody can name.
+      echo "error: the workspace image \"$WORKSPACE_IMAGE\" could not be checked against this checkout: the runtime bundle did not build, so there is no digest to compare it with." >&2
+      echo "The reason is on the line above. \"pnpm install\" if this worktree has no dependencies yet; otherwise the bundle itself does not build, and the image cannot be vouched for until it does." >&2
+      exit 1
+      ;;
+  esac
 fi
 
 # 127.0.0.1, not localhost: `next dev`/`next start` are given `-H 127.0.0.1`, so the listener is

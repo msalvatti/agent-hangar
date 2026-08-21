@@ -37,6 +37,12 @@ const fsPort = { readFileSync };
  */
 export const SHIM_BUNDLE_DIGEST = 'b'.repeat(64);
 
+/**
+ * Hex SHA-256 of a string.
+ *
+ * @param data - Content to hash.
+ * @returns The digest as lowercase hex.
+ */
 function sha256(data: string): string {
   return createHash('sha256').update(data).digest('hex');
 }

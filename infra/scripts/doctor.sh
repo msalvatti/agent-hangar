@@ -257,6 +257,14 @@ check_workspace_image() {
     missing)
       row_status="✗"; row_detail="missing"; row_fix="pnpm infra:image"
       ;;
+    unverifiable)
+      # Docker answered — the row above gates on that — so the only way the comparison can fail is
+      # the other half: the runtime bundle could not be rebuilt from this tree to hash it. That is
+      # usually a checkout without its dependencies installed, which is a state with a command. Not
+      # a ✗: nothing is known to be wrong with the image, only that the question could not be asked,
+      # and failing the exit code on that would be its own kind of untrue.
+      row_status="–"; row_detail="cannot rebuild the bundle to compare"; row_fix="pnpm install"
+      ;;
     *)
       row_status="–"; row_detail="not verified"; row_fix=""
       ;;

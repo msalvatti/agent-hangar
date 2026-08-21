@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 
 import { afterEach, describe, expect, it } from 'vitest';
 
-import { createShimDir, readShimLog, spawnScript } from './testing/shims.js';
+import { createShimDir, readShimLog, spawnScript, writeExtraShim } from './testing/shims.js';
 import { expectedWorkspaceDigest, SHIM_BUNDLE_DIGEST } from './testing/workspace-digest.js';
 
 const scriptPath = fileURLToPath(new URL('./run.sh', import.meta.url));
@@ -351,10 +351,38 @@ describe('run.sh and the workspace image', () => {
   });
 
   /**
+   * Present, in use, and unverifiable is not the same as absent. The image exists, this instance is
+   * about to create containers from it, and the checkout cannot say what is inside — the state the
+   * check exists to refuse. Starting anyway because nothing was *proven* wrong is how a run ends up
+   * reporting a result for a runtime nobody can name. Found by review: the first version of this
+   * check blocked only on `stale` and waved this through with a warning on stderr.
+   */
+  it('refuses to start against an image it cannot check', () => {
+    const dir = sandbox();
+    sandboxes.push(dir);
+    const log = join(dir, 'log');
+    const shimDir = createShimDir({ log, docker: { image: 'present' } });
+    // Answers `node -v`, fails the bundle digest — a worktree whose dependencies are not installed.
+    writeExtraShim(
+      shimDir,
+      'node',
+      "if [ \"$1\" = '-v' ]; then printf 'v24.0.0\\n'; exit 0; fi\nexit 1",
+    );
+    const result = spawnScript(scriptPath, {
+      shimDir,
+      env: envWithImage(dir, log, expectedWorkspaceDigest()),
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toContain('could not be checked against this checkout');
+    expect(readShimLog(log).some((line) => line.startsWith('pnpm exec concurrently'))).toBe(false);
+  });
+
+  /**
    * A missing image is not refused. It is already loud everywhere it matters — the worker logs it,
    * `/api/health` reports it and the UI shows a banner — and a developer working on the interface
-   * has no reason to build one. Refusing here would only make the interface unstartable without
-   * Docker.
+   * has no reason to build one. This is the case that stops the refusal above from being written as
+   * "anything other than current": refusing here, and on the `unavailable` that a stopped Docker
+   * produces, would make the interface unstartable without Docker.
    */
   it('starts with no workspace image at all', () => {
     const dir = sandbox();

@@ -21,6 +21,7 @@
  * `E2E_SKIP_BUILD=1` reuses the build already in `.next`, for a developer iterating on one spec.
  */
 import { workspaceImageStatus } from './docker';
+import type { WorkspaceImageStatus } from './docker';
 import { repoRoot, resolveE2eEnv, webRoot } from './env';
 import type { E2eEnv } from './env';
 import { startGitServer } from './gitserver';
@@ -60,6 +61,16 @@ async function composeUp(env: E2eEnv): Promise<void> {
   );
 }
 
+/** Why each answer other than `current` stops the run, in the words of the refusal. */
+const IMAGE_REFUSAL_REASONS: Record<Exclude<WorkspaceImageStatus, 'current'>, string> = {
+  missing: 'is missing',
+  stale:
+    'was not built from this checkout, so the run would measure a runtime this tree does not contain',
+  unverifiable:
+    'could not be checked against this checkout, because the runtime bundle did not build',
+  unavailable: 'could not be checked, because Docker did not answer',
+};
+
 /**
  * Refuses to start a real run against an image that is missing or does not carry this tree.
  *
@@ -81,14 +92,8 @@ async function assertWorkspaceImage(env: E2eEnv): Promise<void> {
   if (status === 'current') {
     return;
   }
-  const reason =
-    status === 'missing'
-      ? 'is missing'
-      : status === 'stale'
-        ? 'was not built from this checkout, so the run would measure a runtime this tree does not contain'
-        : 'could not be verified against this checkout';
   throw new Error(
-    `Workspace image "${env.workspaceImage}" ${reason}. Build it with: ` +
+    `Workspace image "${env.workspaceImage}" ${IMAGE_REFUSAL_REASONS[status]}. Build it with: ` +
       `WORKSPACE_IMAGE=${env.workspaceImage} pnpm infra:image`,
   );
 }

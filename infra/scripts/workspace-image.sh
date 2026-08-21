@@ -23,7 +23,7 @@
 # Usage:
 #   workspace-image.sh --digest                    print the digest of the tree
 #   workspace-image.sh --image-digest <tag>        print the digest an existing image carries
-#   workspace-image.sh --status <tag>              print current | stale | missing | unavailable
+#   workspace-image.sh --status <tag>              current | stale | missing | unverifiable | unavailable
 #   workspace-image.sh --assert-tag <tag> <name>   refuse a tag that is not instance <name>'s
 #
 # Runs on macOS bash 3.2.
@@ -79,13 +79,23 @@ ah_image_digest() {
 
 # Prints one word for how far the image can be trusted:
 #
-#   current      it carries the digest this tree produces
-#   stale        it exists but carries another digest, or none at all because it predates the
-#                label — either way what it would run is not what this checkout says
-#   missing      no such image; already loud everywhere it matters (the worker logs it, the health
-#                endpoint reports it, the doctor has a row)
-#   unavailable  the question could not be asked. Said out loud rather than passed off as
-#                "current": a check that reports success without checking is worse than no check
+#   current       it carries the digest this tree produces
+#   stale         it exists but carries another digest, or none at all because it predates the
+#                 label — either way what it would run is not what this checkout says
+#   missing       Docker answered and has no such image; already loud everywhere it matters (the
+#                 worker logs it, the health endpoint reports it, the doctor has a row)
+#   unverifiable  the image is there and this tree could not produce a digest to compare it with
+#   unavailable   Docker did not answer, so there is neither an image to judge nor a container it
+#                 could be creating
+#
+# The last two are one situation — "not checked" — told apart because they cost their callers
+# different things, and folding them together made one of those callers wrong. `pnpm dev` must
+# start with Docker stopped, since the interface is worked on without it; it must NOT start against
+# an image it holds in its hand and cannot vouch for. A single word for both forced a choice
+# between blocking the first and waving through the second.
+#
+# Neither is ever rounded to `current`: a check that reports success without checking is worse than
+# no check. Both say why on stderr.
 #
 # Never exits non-zero: the caller decides what each answer costs it.
 ah_workspace_image_status() {
@@ -101,7 +111,7 @@ ah_workspace_image_status() {
   fi
   if ! tree_digest=$(ah_workspace_digest 2>/dev/null); then
     echo "workspace image not verified: the runtime bundle could not be built from this tree" >&2
-    printf 'unavailable\n'
+    printf 'unverifiable\n'
     return 0
   fi
   image_digest=$(ah_image_digest "$tag")

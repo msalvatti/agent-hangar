@@ -55,17 +55,6 @@ export interface DockerShimOptions {
   execExitCode?: number;
 }
 
-/**
- * Environment variable the `docker` shim reads the workspace image's digest label from.
- *
- * Read at spawn time rather than baked into the shim, because a test's expected digest is
- * computed from the repository's own files and is not known when the shim directory is created.
- */
-export const SHIM_IMAGE_DIGEST_VAR = 'AH_SHIM_IMAGE_DIGEST';
-
-/** Environment variable the `node` shim answers `scripts/bundle-digest.mjs` from. */
-export const SHIM_BUNDLE_DIGEST_VAR = 'AH_SHIM_BUNDLE_DIGEST';
-
 /** Canned behaviour of the shimmed `pnpm` executable. */
 export interface PnpmShimOptions {
   /** Printed for `pnpm -v`. Default `'11.22.0'`. */
@@ -159,7 +148,9 @@ case "\${1:-}" in
     ;;
   image)
     # \`docker image inspect --format …\` is how the digest label is read; without the flag the
-    # call is only asking whether the image is there at all.
+    # call is only asking whether the image is there at all. AH_SHIM_IMAGE_DIGEST is read at spawn
+    # time rather than baked in, because a test's expected digest is computed from the
+    # repository's own files and is not known when the shim directory is created.
     if printf '%s\\n' "$*" | grep -q -- '--format'; then
       printf '%s\\n' "\${AH_SHIM_IMAGE_DIGEST:-}"
     fi
