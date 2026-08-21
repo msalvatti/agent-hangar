@@ -25,6 +25,14 @@ export interface ChatBodyProps {
   onRetry: () => void;
   /** `true` while a retry request is in flight, which disables the Retry button. */
   retrying: boolean;
+  /**
+   * Turn whose failure row may still be acted on, or `null` when the chat has no turn to retry.
+   *
+   * A reloaded chat rebuilds a failure row for every turn that failed, and the API accepts a retry
+   * only for the newest one — every other id is answered `TURN_NOT_RETRYABLE`. So the older rows
+   * report what happened and offer nothing, and this is what tells them apart.
+   */
+  retryableTurnId: string | null;
   /** Lets the header scroll the failure card into view. */
   errorRef: RefObject<HTMLDivElement | null>;
   draft: string;
@@ -51,8 +59,10 @@ export interface ChatBodyProps {
  * Renders the scrolling transcript, any turn failure, and the composer that continues the chat.
  *
  * A failure is one row of the transcript, live or reloaded from history, so it is rendered there
- * and nowhere else — with the retry and the code-specific next step attached, which is what makes
- * a failed turn actionable again after a reload.
+ * and nowhere else. The chat's newest failure carries the retry and the code-specific next step,
+ * which is what makes a failed turn actionable again after a reload; an earlier turn's failure is
+ * history and is rendered as the record of it, because retrying it is not something the API
+ * allows and a button that is refused is worse than no button.
  *
  * Infrastructure that is down locks the composer and says which dependency is missing. An archived
  * chat is not told: its composer is already locked for a reason of its own, and the banner above
@@ -66,6 +76,7 @@ export function ChatBody({
   archived,
   onRetry,
   retrying,
+  retryableTurnId,
   errorRef,
   draft,
   onDraftChange,
@@ -87,11 +98,16 @@ export function ChatBody({
         phase={phase}
         readOnly={archived}
         className="min-h-0 flex-1"
-        renderError={(item) => (
-          <div ref={errorRef}>
-            <TurnErrorCard error={item} onRetry={onRetry} busy={retrying} />
-          </div>
-        )}
+        renderError={(item) =>
+          // `undefined` is a row the live stream produced, and the stream follows one turn: the
+          // one that is still there to retry. `null` hands an older turn's failure back to the
+          // transcript's own row, which reports it without offering anything.
+          item.turnId === undefined || item.turnId === retryableTurnId ? (
+            <div ref={errorRef}>
+              <TurnErrorCard error={item} onRetry={onRetry} busy={retrying} />
+            </div>
+          ) : null
+        }
       />
       <div className="px-6 pt-2 pb-[max(0.5rem,env(safe-area-inset-bottom))]">
         {actionError !== undefined && (

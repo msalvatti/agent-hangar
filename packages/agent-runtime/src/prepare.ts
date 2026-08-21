@@ -35,7 +35,7 @@
  */
 import { mkdir, readFile } from 'node:fs/promises';
 
-import { ConfigError } from '@agent-hangar/core';
+import { ConfigError, prepareWarningText } from '@agent-hangar/core';
 import type { AgentEvent, TurnRequest } from '@agent-hangar/core';
 import { z } from 'zod';
 
@@ -149,12 +149,25 @@ export interface PrepareDeps {
   urlPolicy: RepositoryUrlPolicy;
 }
 
-/** Where preparation left the workspace. */
+/** Where preparation left the workspace, as the `prepare.done` event reports it. */
 export interface PrepareResult {
   /** Commit the turn starts from. */
   headSha: string;
   /** Branch that is checked out. */
   branch: string;
+}
+
+/** What preparation left the workspace in, including what it found on the way. */
+export interface PrepareOutcome extends PrepareResult {
+  /**
+   * Findings about the checkout the turn starts from, oldest first.
+   *
+   * Empty on the ordinary path. A non-empty entry means the ground is not where somebody expected
+   * it — the work branch and its remote hold different commits, or HEAD moved since the snapshot —
+   * and the agent is the one that can reconcile it, so the caller puts these in the model's
+   * context as well as on screen.
+   */
+  notes: readonly string[];
 }
 
 /**
@@ -415,10 +428,14 @@ async function measureDivergence(
  */
 function divergenceNote(branch: string, divergence: BranchDivergence): string | null {
   if (divergence.ahead > 0 && divergence.behind > 0) {
-    return `Warning: ${branch} and origin/${branch} have diverged (${commits(divergence.ahead)} here, ${commits(divergence.behind)} on the remote); preparation merged neither into the other.`;
+    return prepareWarningText(
+      `${branch} and origin/${branch} have diverged (${commits(divergence.ahead)} here, ${commits(divergence.behind)} on the remote); preparation merged neither into the other.`,
+    );
   }
   if (divergence.behind > 0) {
-    return `Warning: origin/${branch} is ${commits(divergence.behind)} ahead of ${branch}; preparation did not merge it.`;
+    return prepareWarningText(
+      `origin/${branch} is ${commits(divergence.behind)} ahead of ${branch}; preparation did not merge it.`,
+    );
   }
   if (divergence.ahead > 0) {
     return `${commits(divergence.ahead)} on ${branch} not yet pushed to origin/${branch}.`;
@@ -529,8 +546,12 @@ async function switchToWorkBranch(
  *
  * @param repo - Repository section of the turn request.
  * @param deps - Preparation dependencies.
+ * @returns The note the checkout produced, or `null` when there was nothing to report.
  */
-async function checkoutWorkBranch(repo: TurnRequest['repo'], deps: PrepareDeps): Promise<void> {
+async function checkoutWorkBranch(
+  repo: TurnRequest['repo'],
+  deps: PrepareDeps,
+): Promise<string | null> {
   const options = { cwd: deps.workspaceRoot, env: deps.env };
   const outcome = await switchToWorkBranch(repo, deps, options);
   const sha = await gitOrThrow(deps.git, ['rev-parse', 'HEAD'], options);
@@ -538,6 +559,7 @@ async function checkoutWorkBranch(repo: TurnRequest['repo'], deps: PrepareDeps):
   if (outcome.note !== null) {
     await deps.emit({ type: 'prepare.progress', message: outcome.note });
   }
+  return outcome.note;
 }
 
 /**
@@ -548,19 +570,20 @@ async function checkoutWorkBranch(repo: TurnRequest['repo'], deps: PrepareDeps):
  *
  * @param repo - Repository section of the turn request.
  * @param deps - Preparation dependencies.
- * @returns The commit and branch the turn starts from.
+ * @returns The commit and branch the turn starts from, and the mismatch when there was one.
  */
-async function verifyHead(repo: TurnRequest['repo'], deps: PrepareDeps): Promise<PrepareResult> {
+async function verifyHead(repo: TurnRequest['repo'], deps: PrepareDeps): Promise<PrepareOutcome> {
   const options = { cwd: deps.workspaceRoot, env: deps.env };
   const headSha = await gitOrThrow(deps.git, ['rev-parse', 'HEAD'], options);
   const branch = await gitOrThrow(deps.git, ['rev-parse', '--abbrev-ref', 'HEAD'], options);
-  if (repo.expectedHeadSha !== undefined && repo.expectedHeadSha !== headSha) {
-    await deps.emit({
-      type: 'prepare.progress',
-      message: `Warning: expected HEAD ${short(repo.expectedHeadSha)} but found ${short(headSha)}; the branch moved since the last snapshot`,
-    });
+  if (repo.expectedHeadSha === undefined || repo.expectedHeadSha === headSha) {
+    return { headSha, branch, notes: [] };
   }
-  return { headSha, branch };
+  const note = prepareWarningText(
+    `expected HEAD ${short(repo.expectedHeadSha)} but found ${short(headSha)}; the branch moved since the last snapshot`,
+  );
+  await deps.emit({ type: 'prepare.progress', message: note });
+  return { headSha, branch, notes: [note] };
 }
 
 /**
@@ -569,23 +592,34 @@ async function verifyHead(repo: TurnRequest['repo'], deps: PrepareDeps): Promise
  * @param repo - Repository section of the turn request.
  * @param prepareOptions - Preparation section of the turn request.
  * @param deps - Preparation dependencies.
- * @returns The commit and branch the turn starts from.
+ * @returns The commit and branch the turn starts from, with everything preparation found.
  * @throws PrepareError when the URL is refused, the workspace is unusable, or git fails.
  */
 export async function prepare(
   repo: TurnRequest['repo'],
   prepareOptions: TurnRequest['prepare'],
   deps: PrepareDeps,
-): Promise<PrepareResult> {
+): Promise<PrepareOutcome> {
   const url = resolveRepoUrl(repo.url, deps.urlPolicy);
   assertBranchName(repo.baseBranch, 'baseBranch');
   assertBranchName(repo.workBranch, 'workBranch');
   try {
     await cloneOrFetch({ url, baseBranch: repo.baseBranch }, prepareOptions, deps);
-    await checkoutWorkBranch(repo, deps);
-    const result = await verifyHead(repo, deps);
-    await deps.emit({ type: 'prepare.done', ...result });
-    return result;
+    const checkoutNote = await checkoutWorkBranch(repo, deps);
+    const verified = await verifyHead(repo, deps);
+    // `prepare.done` is spelled out rather than spread: the event contract carries the head and
+    // the branch and nothing else, and a spread would put the notes on the wire the day one is
+    // added to this type without anybody deciding to publish them.
+    await deps.emit({
+      type: 'prepare.done',
+      headSha: verified.headSha,
+      branch: verified.branch,
+    });
+    return {
+      headSha: verified.headSha,
+      branch: verified.branch,
+      notes: checkoutNote === null ? verified.notes : [checkoutNote, ...verified.notes],
+    };
   } catch (error) {
     throw error instanceof GitError ? new PrepareError(error.message) : error;
   }

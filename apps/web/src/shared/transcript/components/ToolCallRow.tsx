@@ -47,6 +47,28 @@ function outcomeText(item: ToolTranscriptItem): string {
   return item.exitCode === null ? duration : `exit ${String(item.exitCode)} · ${duration}`;
 }
 
+/** Shown in place of the tool name when the row cannot name the tool that was called. */
+const UNKNOWN_TOOL_LABEL = 'unknown tool';
+
+/** Shown in place of the arguments when the call's opening event never reached this client. */
+const ARGUMENTS_NOT_RECEIVED =
+  'Not received. This client never saw the event that opened the call, so its name and arguments ' +
+  'are not known here; the outcome below is what the call reported.';
+
+/**
+ * Builds the one-line summary beside the tool name.
+ *
+ * A row whose opening event was not seen has nothing to summarise, so it names the call id
+ * instead: that is the one identifier both halves of the call carry, and it is what makes the row
+ * matchable against the worker's log rather than a dead end.
+ *
+ * @param item - The call.
+ * @returns The collapsed-row summary.
+ */
+function rowSummary(item: ToolTranscriptItem): string {
+  return item.name === null ? `call ${item.callId}` : summarizeArgs(item.name, item.args);
+}
+
 function StatusMeta({ item, elapsed }: { item: ToolTranscriptItem; elapsed: string }) {
   switch (item.status) {
     case 'running':
@@ -83,7 +105,7 @@ function StatusMeta({ item, elapsed }: { item: ToolTranscriptItem; elapsed: stri
 export function ToolCallRow({ item, defaultOpen = false, onStop, className }: ToolCallRowProps) {
   const [open, setOpen] = useState(defaultOpen);
   const elapsed = useElapsed(item.startedAt, item.status === 'running');
-  const summary = summarizeArgs(item.name, item.args);
+  const summary = rowSummary(item);
   // Defence in depth (rule: the transcript masks secret shapes before rendering, even though the
   // worker has already redacted): masked once here so both the display blocks and the copy
   // button's clipboard value see the same scrubbed text.
@@ -92,10 +114,16 @@ export function ToolCallRow({ item, defaultOpen = false, onStop, className }: To
   const outputText = maskedStdout + maskedStderr;
   const isTruncated = item.totalBytes !== null && item.totalBytes > item.shownBytes;
 
+  // `data-call-id` and `data-tool-name` publish what the row knows about the call's identity, so a
+  // reader — a test, or a person with the inspector open — can tell "the model called run_shell"
+  // from "this client could not name the call" without reading that difference out of the styling.
+  // `data-stream` on the output blocks does the same for the routing of each line.
   return (
     <div
       data-item-kind="tool"
       data-tool-status={item.status}
+      data-call-id={item.callId}
+      data-tool-name={item.name ?? ''}
       className={cn('text-[13px]', className)}
     >
       <Collapsible open={open} onOpenChange={setOpen}>
@@ -108,7 +136,14 @@ export function ToolCallRow({ item, defaultOpen = false, onStop, className }: To
                 open && 'rotate-90',
               )}
             />
-            <span className="text-accent shrink-0 font-mono">{item.name}</span>
+            <span
+              className={cn(
+                'shrink-0 font-mono',
+                item.name === null ? 'text-muted-foreground italic' : 'text-accent',
+              )}
+            >
+              {item.name ?? UNKNOWN_TOOL_LABEL}
+            </span>
             <span className="text-muted-foreground truncate">{summary}</span>
           </CollapsibleTrigger>
           <span className="text-muted-foreground ml-auto flex shrink-0 items-center gap-2 tabular-nums">
@@ -132,9 +167,13 @@ export function ToolCallRow({ item, defaultOpen = false, onStop, className }: To
               <h4 className="text-muted-foreground mb-1 text-[11px] tracking-[0.06em] uppercase">
                 Arguments
               </h4>
-              <pre className="bg-muted overflow-x-auto rounded p-2 font-mono text-[13px]">
-                {toDisplayJson(item.args)}
-              </pre>
+              {item.args === undefined ? (
+                <p className="text-muted-foreground">{ARGUMENTS_NOT_RECEIVED}</p>
+              ) : (
+                <pre className="bg-muted overflow-x-auto rounded p-2 font-mono text-[13px]">
+                  {toDisplayJson(item.args)}
+                </pre>
+              )}
             </section>
             <section>
               <div className="mb-1 flex items-center justify-between">
@@ -152,10 +191,15 @@ export function ToolCallRow({ item, defaultOpen = false, onStop, className }: To
                   className="bg-muted max-h-104 overflow-y-auto rounded p-2 font-mono text-[13px] leading-[1.6]"
                 >
                   {maskedStdout.length > 0 && (
-                    <pre className="whitespace-pre-wrap">{maskedStdout}</pre>
+                    <pre data-stream="stdout" className="whitespace-pre-wrap">
+                      {maskedStdout}
+                    </pre>
                   )}
                   {maskedStderr.length > 0 && (
-                    <pre className="border-destructive border-l-2 pl-2 whitespace-pre-wrap">
+                    <pre
+                      data-stream="stderr"
+                      className="border-destructive border-l-2 pl-2 whitespace-pre-wrap"
+                    >
                       {maskedStderr}
                     </pre>
                   )}

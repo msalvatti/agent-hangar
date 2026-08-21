@@ -123,7 +123,7 @@ async function prepareAndRun(
     deps.io.env,
     deps.providerFactories,
   );
-  await prepare(request.repo, request.prepare, {
+  const prepared = await prepare(request.repo, request.prepare, {
     workspaceRoot: context.workspaceRoot,
     git: context.git,
     env: context.childEnv,
@@ -134,6 +134,9 @@ async function prepareAndRun(
     ...context,
     request,
     provider,
+    // What preparation found travels on two roads on purpose. It was published as an event, which
+    // is what the operator sees; this is the other consumer, and it is the one that can act on it.
+    prepareNotes: prepared.notes,
     tools: createToolExecutor({
       workspaceRoot: context.workspaceRoot,
       childEnv: context.childEnv,

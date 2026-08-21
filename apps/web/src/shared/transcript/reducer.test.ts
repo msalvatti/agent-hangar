@@ -2,7 +2,7 @@
  * Tests for the pure transcript reducer: every `AgentEvent` variant, id dedupe, and the terminal
  * helpers.
  */
-import { agentEventSchema } from '@agent-hangar/core';
+import { agentEventSchema, prepareWarningText } from '@agent-hangar/core';
 import type { AgentEvent } from '@agent-hangar/core';
 import { describe, expect, it } from 'vitest';
 
@@ -121,6 +121,61 @@ describe('prepare.progress / prepare.done', () => {
       text: 'Prepared agent/k3x9 at abcdef1',
       durationMs: 2_100,
     });
+  });
+
+  /**
+   * The divergence warning preparation emits used to travel as ordinary progress, so it was
+   * upserted into the one collapsing notice and `prepare.done` overwrote it with the success line
+   * a few milliseconds later. The operator was told for about as long as it takes git to print a
+   * sha. The assertion is that the finding is still an item after `prepare.done` — not that it was
+   * ever rendered, which it always was.
+   */
+  it('keeps a preparation finding after prepare.done replaces the progress line', () => {
+    const finding = prepareWarningText('agent/k3x9 and origin/agent/k3x9 have diverged');
+    let state = dispatchEvent(createInitialState(), {
+      type: 'prepare.progress',
+      message: 'Resumed agent/k3x9 at abcdef1',
+    });
+    state = dispatchEvent(state, { type: 'prepare.progress', message: finding });
+    state = dispatchEvent(state, {
+      type: 'prepare.done',
+      headSha: 'abcdef1234',
+      branch: 'agent/k3x9',
+    });
+
+    expect(state.items).toEqual([
+      expect.objectContaining({ kind: 'notice', id: PREPARE_NOTICE_ID, tone: 'success' }),
+      expect.objectContaining({ kind: 'notice', tone: 'warning', text: finding }),
+    ]);
+  });
+
+  /**
+   * A client that reconnects is replayed the turn from its first event, so the same finding
+   * arrives twice. One fact reported twice is still one fact — the same rule `git.pushed` follows.
+   */
+  it('reports a replayed preparation finding once', () => {
+    const finding = prepareWarningText('origin/agent/k3x9 is 2 commits ahead of agent/k3x9');
+    let state = dispatchEvent(createInitialState(), { type: 'prepare.progress', message: finding });
+    state = dispatchEvent(state, { type: 'prepare.progress', message: finding });
+
+    expect(state.items).toHaveLength(1);
+  });
+
+  /**
+   * Two different findings are two different facts and each keeps its own line; only a repeat of
+   * the same one collapses.
+   */
+  it('keeps a second, different preparation finding', () => {
+    let state = dispatchEvent(createInitialState(), {
+      type: 'prepare.progress',
+      message: prepareWarningText('the branch diverged'),
+    });
+    state = dispatchEvent(state, {
+      type: 'prepare.progress',
+      message: prepareWarningText('HEAD moved since the last snapshot'),
+    });
+
+    expect(state.items).toHaveLength(2);
   });
 
   // Without a prior turn.started, startedAt is null and durationMs is omitted rather than NaN.
@@ -341,8 +396,17 @@ describe('tool.call / tool.output.delta / tool.result', () => {
     expect(tool.durationMs).toBe(300);
   });
 
-  // A result for a callId never seen (e.g. its tool.call event was dropped) still renders a row.
-  it('pushes a defensive row for a tool.result with an unknown callId', () => {
+  /**
+   * A result for a callId this client never folded in. It is reachable: the turn event stream is
+   * capped at `TURN_EVENTS_MAXLEN`, so a chatty long-running call plus a reconnect can deliver a
+   * terminal event whose opening frame has already been trimmed away.
+   *
+   * The row appears, because the call happened and its outcome is known. What it must not do is
+   * fill in the fields the opening frame carried: it used to hardcode `run_shell` and `{}`, which
+   * is a row asserting that the model ran a shell command with no arguments — a statement nothing
+   * measured, indistinguishable on screen from a real one, and reported as a defect three times.
+   */
+  it('opens a row that admits it never saw the call, instead of naming run_shell', () => {
     const state = dispatchEvent(createInitialState(), {
       type: 'tool.result',
       callId: 'ghost',
@@ -351,9 +415,62 @@ describe('tool.call / tool.output.delta / tool.result', () => {
       durationMs: 5,
       status: 'SUCCEEDED',
     });
-    expect(state.items).toEqual([
-      expect.objectContaining({ kind: 'tool', callId: 'ghost', status: 'succeeded', args: {} }),
-    ]);
+
+    const tool = state.items[0] as ToolTranscriptItem;
+    expect(tool).toMatchObject({ kind: 'tool', callId: 'ghost', status: 'succeeded' });
+    expect(tool.name).toBeNull();
+    expect(tool.seq).toBeNull();
+    expect(tool.args).toBeUndefined();
+    expect('args' in tool).toBe(true);
+  });
+
+  /**
+   * The one field the orphan row may state is `startedAt`, and it is not a guess: the result
+   * carries how long the call took, so the instant it began follows from the instant it ended.
+   */
+  it('derives the start of an orphan row from the duration the result reports', () => {
+    const state = dispatchEvent(
+      createInitialState(),
+      {
+        type: 'tool.result',
+        callId: 'ghost',
+        exitCode: null,
+        bytes: 0,
+        durationMs: 4_000,
+        status: 'FAILED',
+      },
+      { now: 10_000 },
+    );
+
+    expect((state.items[0] as ToolTranscriptItem).startedAt).toBe(6_000);
+  });
+
+  /**
+   * The honest row is only for a call this client never saw. A call it did see keeps everything
+   * the opening frame carried, which is what stops the repair from erasing the ordinary case.
+   */
+  it('keeps the name and arguments of a call whose opening frame did arrive', () => {
+    let state = dispatchEvent(createInitialState(), {
+      type: 'tool.call',
+      callId: 'c1',
+      name: 'read_file',
+      args: { path: 'src/index.ts' },
+      seq: 3,
+    });
+    state = dispatchEvent(state, {
+      type: 'tool.result',
+      callId: 'c1',
+      exitCode: null,
+      bytes: 10,
+      durationMs: 5,
+      status: 'FAILED',
+    });
+
+    expect(state.items[0]).toMatchObject({
+      name: 'read_file',
+      args: { path: 'src/index.ts' },
+      seq: 3,
+    });
   });
 });
 

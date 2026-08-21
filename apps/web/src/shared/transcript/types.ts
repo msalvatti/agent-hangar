@@ -34,9 +34,25 @@ export interface ToolTranscriptItem {
   kind: 'tool';
   id: string;
   callId: string;
-  name: ToolName;
+  /**
+   * Tool the model called, or `null` when this reader cannot name it.
+   *
+   * `null` is not a defect and not a default: it is the row declining to guess. A row can be
+   * opened by a later event of a call whose opening frame this client never received, and a
+   * persisted row can name a tool this build does not know. Both are states the row reports as
+   * themselves — naming a tool it has no evidence for would put a plausible lie on screen, which
+   * is worse than an honest blank, because the reader has no way to tell the two apart.
+   */
+  name: ToolName | null;
+  /**
+   * Arguments as the model sent them, or `undefined` when they never reached this reader.
+   *
+   * `undefined` and `{}` are different facts — "not received" and "the model sent no arguments" —
+   * and a row that renders the first as the second is asserting something nobody measured.
+   */
   args: unknown;
-  seq: number;
+  /** Position of the call within its turn, or `null` when the opening frame was not seen. */
+  seq: number | null;
   status: ToolCallStatus;
   stdout: string;
   stderr: string;
@@ -65,6 +81,15 @@ export interface ErrorTranscriptItem {
   id: string;
   code: string;
   message: string;
+  /**
+   * Turn the failure belongs to, when the reader knows it.
+   *
+   * A transcript can hold the failures of several turns at once, and only one of them — the
+   * chat's newest — is a turn anything can still be done about. A caller that offers an action
+   * per failure needs to know which row it may offer it on; `undefined` means the row came from
+   * the live stream, which follows exactly one turn and so is always that one.
+   */
+  turnId?: string;
 }
 
 /** Every row a {@link Transcript} can render, discriminated by `kind`. */

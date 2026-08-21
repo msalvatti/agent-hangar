@@ -16,7 +16,7 @@ export {
   repositoryUrlPolicyFromFile,
   resolveRepoUrl,
 } from './prepare.js';
-export type { PrepareDeps, PrepareResult, RepositoryUrlPolicy } from './prepare.js';
+export type { PrepareDeps, PrepareOutcome, PrepareResult, RepositoryUrlPolicy } from './prepare.js';
 export { createDiagnostics, createEventWriter, readTurnRequest } from './protocol.js';
 export type { EventWriter } from './protocol.js';
 export { createProvider, resolveProviderName } from './provider.js';

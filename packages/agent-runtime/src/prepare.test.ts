@@ -372,7 +372,7 @@ describe('prepare with a fresh workspace', () => {
   it('clones the base branch and creates a work branch that does not exist yet', async () => {
     // The first turn of a chat: nothing exists locally and the branch is new.
     const result = await prepare(repoSection(), { clone: true }, deps);
-    expect(result).toStrictEqual({ headSha: repo.headSha, branch: 'agent/work' });
+    expect(result).toStrictEqual({ headSha: repo.headSha, branch: 'agent/work', notes: [] });
     expect(progressMessages()).toStrictEqual([
       `Cloning ${repo.url} (branch main)…`,
       `Created agent/work from main at ${repo.headSha.slice(0, 7)}`,
@@ -401,7 +401,7 @@ describe('prepare with a fresh workspace', () => {
   it('stays on the base branch when the work branch is the same', async () => {
     // Some chats work directly on the default branch.
     const result = await prepare(repoSection({ workBranch: 'main' }), { clone: true }, deps);
-    expect(result).toStrictEqual({ headSha: repo.headSha, branch: 'main' });
+    expect(result).toStrictEqual({ headSha: repo.headSha, branch: 'main', notes: [] });
     expect(progressMessages().at(-1)).toBe(`On main at ${repo.headSha.slice(0, 7)}`);
   });
 
@@ -468,6 +468,9 @@ describe('prepare and the expected head', () => {
     );
     expect(events.at(-1)?.type).toBe('prepare.done');
     expect(result.headSha).toBe(repo.headSha);
+    expect(result.notes).toStrictEqual([
+      `Warning: expected HEAD aaaaaaa but found ${repo.headSha.slice(0, 7)}; the branch moved since the last snapshot`,
+    ]);
   });
 
   it('says nothing when the branch is where the host expected', async () => {
@@ -494,7 +497,7 @@ describe('prepare on a second turn of the same chat', () => {
     // preparation of a chat finds the branch already there while the remote still has nothing.
     // Creating it again is what failed with "a branch named 'agent/work' already exists".
     const result = await prepare(repoSection(), { clone: false }, deps);
-    expect(result).toStrictEqual({ headSha: repo.headSha, branch: 'agent/work' });
+    expect(result).toStrictEqual({ headSha: repo.headSha, branch: 'agent/work', notes: [] });
     expect(progressMessages()).toStrictEqual([`Resumed agent/work at ${repo.headSha.slice(0, 7)}`]);
   });
 
@@ -538,7 +541,7 @@ describe('prepare when the work branch is on the remote', () => {
       { clone: true },
       deps,
     );
-    expect(result).toStrictEqual({ headSha: tip, branch: 'agent/existing' });
+    expect(result).toStrictEqual({ headSha: tip, branch: 'agent/existing', notes: [] });
     expect(progressMessages().at(-1)).toBe(`Checked out agent/existing at ${tip.slice(0, 7)}`);
   });
 
@@ -584,6 +587,29 @@ describe('prepare when the work branch is on the remote', () => {
         `Resumed agent/work at ${local.slice(0, 7)}`,
         'Warning: origin/agent/work is 1 commit ahead of agent/work; preparation did not merge it.',
       ]);
+    });
+
+    /**
+     * The warning has a second consumer and it is the one that can do something about it. It used
+     * to reach only the event stream, where the transcript folded it into the collapsing progress
+     * line and `prepare.done` overwrote it — so the divergence was told to nobody who could act on
+     * it, while the model planned against a branch it had not been told had moved.
+     */
+    it('returns the divergence warning to the caller, not only to the event stream', async () => {
+      await commitInWorkspace('notes.md', 'not pushed\n');
+      await commitOnRemote('agent/work');
+      const result = await prepare(repoSection(), { clone: false }, deps);
+
+      expect(result.notes).toStrictEqual([
+        'Warning: agent/work and origin/agent/work have diverged (1 commit here, 1 commit on the remote); preparation merged neither into the other.',
+      ]);
+    });
+
+    /** A branch in sync produces nothing to carry, so a clean turn costs the model no context. */
+    it('returns no note when the two tips agree', async () => {
+      const result = await prepare(repoSection(), { clone: false }, deps);
+
+      expect(result.notes).toStrictEqual([]);
     });
 
     it('warns and keeps the local commits when the two have diverged', async () => {

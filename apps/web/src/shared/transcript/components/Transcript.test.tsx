@@ -206,4 +206,26 @@ describe('Transcript', () => {
     render(<Transcript items={ITEMS} phase="succeeded" />);
     expect(screen.queryByTestId('stream-cursor')).toBeNull();
   });
+
+  /**
+   * A caller with an action for one failure and nothing to offer on another says so by returning
+   * `null` for the second, and gets the default row rather than a blank. Without the fallback the
+   * caller would have to restate the default presentation, leaving two copies free to drift.
+   */
+  it('falls back to the default error row when the caller renders nothing for it', () => {
+    const failures: readonly TranscriptItem[] = [
+      { kind: 'error', id: 'e1', code: 'E1', message: 'actionable failure' },
+      { kind: 'error', id: 'e2', code: 'E2', message: 'historical failure' },
+    ];
+    render(
+      <Transcript
+        items={failures}
+        phase="failed"
+        renderError={(item) => (item.id === 'e1' ? <button type="button">Retry</button> : null)}
+      />,
+    );
+
+    expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1);
+    expect(screen.getByText('historical failure')).toBeInTheDocument();
+  });
 });
