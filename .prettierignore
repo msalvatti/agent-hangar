@@ -11,6 +11,10 @@ test-results/
 # Generated code
 packages/core/src/persistence/generated/
 
+# Tool output kept as evidence: Lighthouse writes these and rewriting them would make them
+# stop matching the run they record.
+.github/assets/**/*.json
+
 # Build artefact staged into the image build context by `pnpm infra:image`
 infra/workspace/runtime/
 
