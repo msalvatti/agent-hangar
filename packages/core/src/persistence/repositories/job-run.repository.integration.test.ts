@@ -8,7 +8,9 @@
  * `findRunningByJob` finds the running run and returns null after it finishes; `listByJob` orders
  * newest first; deleting a run's workspace nulls `workspaceId` (SetNull); `create` on a missing
  * scheduled job raises `NotFoundError('ScheduledJob', …)`; a `setStatus` whose status update
- * fails rolls the `startedAt` stamp back with it.
+ * fails rolls the `startedAt` stamp back with it. The shared conditional-`finish` contract runs
+ * against this implementation too, so "the first outcome is the record" is pinned here and on the
+ * double from one source.
  * Mocks: none — a real compose Postgres.
  */
 import { beforeEach, expect, it } from 'vitest';
@@ -17,6 +19,7 @@ import type { Redactor } from '../../secrets/types.ts';
 import { GITHUB_CANARY, OPENAI_CANARY } from '../../testing/canaries.ts';
 import type { PrismaClient } from '../generated/client.ts';
 import { connectTestDb, describeDb, rawSelect, sqlTemplate, truncateAll } from '../testing/db.ts';
+import { describeRunFinishContract } from '../testing/run-finish-contract.ts';
 
 import { NotFoundError, UniqueViolationError } from './errors.ts';
 import { PrismaJobRunRepository } from './job-run.repository.ts';
@@ -252,5 +255,43 @@ describeDb('PrismaJobRunRepository', () => {
     await client.workspace.delete({ where: { id: workspace.id } });
     const reloaded = await repo.get(run.id);
     expect(reloaded?.workspaceId).toBeNull();
+  });
+});
+
+describeDb('PrismaJobRunRepository', () => {
+  beforeEach(async () => {
+    client = connectTestDb();
+    await truncateAll(client);
+    const job = await client.scheduledJob.create({
+      data: {
+        name: 'Nightly',
+        cron: '0 0 * * *',
+        timezone: 'UTC',
+        prompt: 'print date',
+        repoUrl: 'https://github.com/acme/repo',
+        branch: 'main',
+      },
+    });
+    jobId = job.id;
+  });
+
+  describeRunFinishContract('PrismaJobRunRepository', {
+    seed: async (status) => {
+      const repo = new PrismaJobRunRepository(client, testRedactor);
+      const run = await repo.create({
+        jobId,
+        trigger: 'SCHEDULE',
+        model: 'gpt-5.6-sol',
+        scheduledFor: new Date(),
+      });
+      return status === 'QUEUED' ? run.id : (await repo.setStatus(run.id, status)).id;
+    },
+    finish: async (id, status) =>
+      (await new PrismaJobRunRepository(client, testRedactor).finish(id, {
+        status,
+        usage: { inputTokens: 0, outputTokens: 0, stepCount: 0 },
+      })) !== null,
+    statusOf: async (id) =>
+      (await new PrismaJobRunRepository(client, testRedactor).get(id))?.status ?? null,
   });
 });

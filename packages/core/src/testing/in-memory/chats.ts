@@ -5,6 +5,7 @@
  */
 import type { Chat, Message, Turn, UsageTotals } from '../../persistence/entities.ts';
 import type {
+  ChatDeleteOutcome,
   ChatRepository,
   CreateChatInput,
   CreateTurnInput,
@@ -15,6 +16,7 @@ import type {
   TurnRepository,
   TurnStatusUpdate,
 } from '../../persistence/ports.ts';
+import { LIVE_RUN_STATUSES } from '../../workspace/lifecycle.ts';
 import type { ChatStatus, MessageRole, TurnStatus } from '../../workspace/types.ts';
 
 import type { InMemoryStore } from './store.ts';
@@ -76,8 +78,16 @@ export class InMemoryChatRepository implements ChatRepository {
     await this.update(id, {});
   }
 
-  async delete(id: string): Promise<void> {
-    this.store.require(this.store.chats, 'Chat', id);
+  async deleteIfIdle(id: string): Promise<ChatDeleteOutcome> {
+    if (!this.store.chats.has(id)) {
+      return 'MISSING';
+    }
+    const live = [...this.store.turns.values()].some(
+      (turn) => turn.chatId === id && LIVE_RUN_STATUSES.includes(turn.status),
+    );
+    if (live) {
+      return 'LIVE_TURN';
+    }
     const turnIds = new Set(
       [...this.store.turns.values()].filter((turn) => turn.chatId === id).map((turn) => turn.id),
     );
@@ -100,6 +110,7 @@ export class InMemoryChatRepository implements ChatRepository {
       }
     }
     this.store.chats.delete(id);
+    return 'DELETED';
   }
 
   private async update(id: string, patch: Partial<Chat>): Promise<Chat> {
@@ -204,8 +215,11 @@ export class InMemoryTurnRepository implements TurnRepository {
     status: TerminalStatus,
     usage: UsageTotals,
     error?: string,
-  ): Promise<Turn> {
-    const turn = this.store.require(this.store.turns, 'Turn', id);
+  ): Promise<Turn | null> {
+    const turn = this.store.turns.get(id);
+    if (turn === undefined || !LIVE_RUN_STATUSES.includes(turn.status)) {
+      return null;
+    }
     Object.assign(turn, {
       status,
       inputTokens: usage.inputTokens,

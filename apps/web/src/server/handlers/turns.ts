@@ -25,6 +25,23 @@
  * `compensate` writes, naming the turn, is the only record; cancelling that turn again answers
  * `202` and publishes a command no worker is listening for, so it takes an operator to close it.
  *
+ * A `202` is a promise about the row, not only about the message that was sent. The web process
+ * takes the turn `CANCELLED` itself — conditionally, so it is granted only while the turn is still
+ * live — and answers `202` only once that write has landed. `./cancel.ts` holds that step and the
+ * argument for it; what it costs *here* is a turn stopped in the instant it was succeeding: the
+ * answer is still appended to the transcript, but the row reads `CANCELLED`, because that is what
+ * the user asked for and what they were told.
+ *
+ * The same trade reaches the live event stream, and in the same direction. The worker publishes a
+ * turn's terminal event before it persists the outcome, so a page watching the stream at that exact
+ * moment can be shown the `turn.completed` or `turn.failed` the worker was about to write while the
+ * row already says `CANCELLED`. Nothing republishes to correct it, deliberately: the stream is a
+ * live view of what the container did, the row is the record of what the turn *is*, and every
+ * reader that outlives the stream — a reload, the sidebar, the retry route — reads the row. Making
+ * the two agree would mean either publishing a second terminal event, which the transcript reducer
+ * would render as a second ending, or holding the stream back until the write settled, which would
+ * delay the one thing the user is watching for.
+ *
  * This route answers for chat turns only. Its parameter is resolved through the turn repository,
  * so a `JobRun.id` is a 404 here rather than a cancellation of the wrong kind of work; stopping a
  * scheduled run is `handlers/runs.ts`'s `cancelRun`.
@@ -38,7 +55,7 @@
  * avoid. The cost is that the row keeps no history of its attempts: the failure that preceded the
  * retry survives only in the log, and Postgres cannot answer how often a turn was run.
  */
-import { enqueueRunTurn, okResponse, turnCommand, turnCommandChannel } from '@agent-hangar/core';
+import { enqueueRunTurn, isTerminalRunStatus, okResponse } from '@agent-hangar/core';
 import type { Turn } from '@agent-hangar/core';
 
 import type { ServerContainer } from '../container';
@@ -46,7 +63,7 @@ import { ConflictError, ResourceNotFoundError } from '../errors';
 import { jsonResponse, withErrorHandling } from '../http';
 import { assertSameOrigin } from '../same-origin';
 
-import { CANCEL_REQUESTED_STATUS, removeQueuedJob } from './cancel';
+import { askWorkerToCancel, removeQueuedJob } from './cancel';
 import { compensate } from './compensate';
 import { redispatchTurn, releasePreviousAttempt } from './dispatch';
 import {
@@ -65,8 +82,8 @@ const RETRY_REFUSED = 'Only a failed turn can be retried; send the prompt again 
 const RETRY_SUPERSEDED =
   'A later turn has superseded this one; only the most recent turn can be retried';
 
-/** Statuses a turn can no longer leave. */
-const TERMINAL_STATUSES: readonly string[] = ['SUCCEEDED', 'FAILED', 'CANCELLED'];
+/** What a caller is told when the turn it named has already reached an outcome. */
+const TURN_ALREADY_FINISHED = 'This turn has already finished';
 
 /** Path parameters of the turn routes. */
 export interface TurnParams {
@@ -80,6 +97,8 @@ export interface TurnParams {
  * @param request - The incoming request.
  * @param params - Resolved path parameters.
  * @returns `200` when the turn was cancelled outright, `202` when the worker was asked to stop it.
+ * @throws ConflictError 409 `TURN_NOT_CANCELLABLE` when the turn had already finished, whether it
+ *   was already finished when this request read it or finished while the request was in flight.
  * @throws Error When the terminal status could not be written after the job was removed; the job
  *   is put back first, so a retry of the request finds the same state it started from.
  */
@@ -94,12 +113,15 @@ export function cancelTurn(
     if (turn === null) {
       throw new ResourceNotFoundError('Turn not found');
     }
-    if (TERMINAL_STATUSES.includes(turn.status)) {
-      throw new ConflictError('TURN_NOT_CANCELLABLE', 'This turn has already finished');
+    // Read first only to answer a finished turn without touching the queue; the write below is
+    // what actually decides, and it re-tests this on the row rather than trusting the snapshot.
+    if (isTerminalRunStatus(turn.status)) {
+      throw new ConflictError('TURN_NOT_CANCELLABLE', TURN_ALREADY_FINISHED);
     }
     if (turn.status === 'QUEUED' && (await removeQueuedJob(container.queues.chatTurns, turn.id))) {
+      let cancelled: Turn | null;
       try {
-        await container.repos.turns.finish(turn.id, 'CANCELLED', NO_USAGE);
+        cancelled = await container.repos.turns.finish(turn.id, 'CANCELLED', NO_USAGE);
       } catch (error) {
         await compensate(
           container,
@@ -109,13 +131,19 @@ export function cancelTurn(
         );
         throw error;
       }
+      // Losing here is not a half-done cancel to undo: the turn already carries an outcome, so
+      // there is no work left for the job that was taken off the queue to do.
+      if (cancelled === null) {
+        throw new ConflictError('TURN_NOT_CANCELLABLE', TURN_ALREADY_FINISHED);
+      }
       return jsonResponse(okResponse, { ok: true });
     }
-    await container.redis.publish(
-      turnCommandChannel(turn.id),
-      JSON.stringify(turnCommand.parse({ type: 'cancel' })),
-    );
-    return jsonResponse(okResponse, { ok: true }, { status: CANCEL_REQUESTED_STATUS });
+    return askWorkerToCancel(container, {
+      id: turn.id,
+      finish: () => container.repos.turns.finish(turn.id, 'CANCELLED', NO_USAGE),
+      code: 'TURN_NOT_CANCELLABLE',
+      message: TURN_ALREADY_FINISHED,
+    });
   });
 }
 

@@ -45,6 +45,15 @@ export interface CreateChatInput {
   baseBranch: string;
 }
 
+/**
+ * What a conditional chat delete did.
+ *
+ * `LIVE_TURN` and `MISSING` are kept apart because the caller answers them differently — one is a
+ * refusal the user can act on, the other is the outcome the request asked for reached by somebody
+ * else — where a workspace claim can collapse both into `null` because neither lets the caller act.
+ */
+export type ChatDeleteOutcome = 'DELETED' | 'LIVE_TURN' | 'MISSING';
+
 /** Restore hints written when the agent pushes. */
 export interface RestoreHints {
   workBranch?: string | null;
@@ -67,8 +76,21 @@ export interface ChatRepository {
   updateRestoreHints(id: string, hints: RestoreHints): Promise<Chat>;
   /** Bumps `updatedAt` (sidebar ordering). */
   touch(id: string): Promise<void>;
-  /** Deletes the chat and, by cascade, its messages, turns and tool-call logs. */
-  delete(id: string): Promise<void>;
+  /**
+   * Deletes the chat and, by cascade, its messages, turns and tool-call logs — but only while the
+   * chat carries no live turn.
+   *
+   * The precondition is part of the write rather than a check the caller makes first, which is the
+   * whole of what this method offers. A request that reads the turns and then deletes leaves a
+   * window in which another request can claim the chat's work slot, and the cascade then removes a
+   * turn that request was told it owned; naming the condition in the delete itself hands that
+   * decision to the database, so the claim and the delete cannot both succeed.
+   *
+   * @param id - Chat to delete.
+   * @returns `DELETED` when the row and everything under it are gone, `LIVE_TURN` when a turn of
+   *   the chat is queued or executing, `MISSING` when there is no such chat.
+   */
+  deleteIfIdle(id: string): Promise<ChatDeleteOutcome>;
 }
 
 /** Paging options for message history, ascending by `seq`. */
@@ -113,8 +135,30 @@ export interface TurnRepository {
   setStatus(id: string, status: TurnStatus, update?: TurnStatusUpdate): Promise<Turn>;
   /** Returns the turn or `null`. */
   get(id: string): Promise<Turn | null>;
-  /** Sets a terminal status, usage and `finishedAt`; `error` is redacted on write. */
-  finish(id: string, status: TerminalStatus, usage: UsageTotals, error?: string): Promise<Turn>;
+  /**
+   * Sets a terminal status, usage and `finishedAt`, but only while the turn has not reached one
+   * already; `error` is redacted on write.
+   *
+   * The condition is part of the write rather than a check the caller makes first, so the first
+   * writer of an outcome is the one that is kept and every later one is told it lost. Two writers
+   * genuinely compete for this: the worker records what the run did, and the cancel route records
+   * what the user asked for, and each decides from a status it read some awaits earlier. An
+   * unconditional write let the later of them overwrite the earlier — which is how a cancellation
+   * the API had already accepted, and reported to the browser, ended up stored as a failure.
+   *
+   * @param id - Turn to finish.
+   * @param status - Terminal status to record.
+   * @param usage - Token and step totals.
+   * @param error - Failure detail, redacted on write.
+   * @returns The finished turn, or `null` when nothing was recorded — because the turn had already
+   *   reached a terminal status, or because there is no such row.
+   */
+  finish(
+    id: string,
+    status: TerminalStatus,
+    usage: UsageTotals,
+    error?: string,
+  ): Promise<Turn | null>;
   /**
    * Moves a `FAILED` turn back to `QUEUED` so it can be dispatched again, erasing the record of
    * the attempt that failed: `error`, `startedAt`, `finishedAt` and the usage totals are all
@@ -282,8 +326,20 @@ export interface JobRunRepository {
   create(input: CreateJobRunInput): Promise<JobRun>;
   /** Sets the status; `PREPARING` stamps `startedAt` when unset. */
   setStatus(id: string, status: JobRunStatus, update?: JobRunStatusUpdate): Promise<JobRun>;
-  /** Sets a terminal status, output/error, usage and `finishedAt`. */
-  finish(id: string, input: FinishJobRunInput): Promise<JobRun>;
+  /**
+   * Sets a terminal status, output/error, usage and `finishedAt`, but only while the run has not
+   * reached one already.
+   *
+   * Same rule, and the same reason, as {@link TurnRepository.finish}: the worker and the cancel
+   * route both write an outcome for a run they read a moment earlier, and exactly one of them may
+   * be the record.
+   *
+   * @param id - Run to finish.
+   * @param input - Terminal status, totals and the text to store.
+   * @returns The finished run, or `null` when nothing was recorded — because the run had already
+   *   reached a terminal status, or because there is no such row.
+   */
+  finish(id: string, input: FinishJobRunInput): Promise<JobRun | null>;
   /** Runs of a job, newest first. */
   listByJob(jobId: string, options?: { limit?: number }): Promise<JobRun[]>;
   /** Returns the run or `null`. */

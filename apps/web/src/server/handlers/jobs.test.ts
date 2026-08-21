@@ -519,6 +519,117 @@ describe('deleteJob', () => {
   });
 });
 
+describe('deleteJob overlapping updateJob', () => {
+  /**
+   * The edit lands after the delete has taken the scheduler away and before it removes the row.
+   * The edit registers a schedule the delete is about to orphan, and the delete's second removal
+   * is what takes it back out; without that removal the job fires on its cron for ever with no row
+   * to describe it, and nothing but a worker restart notices.
+   */
+  it('leaves no scheduler behind when an edit lands between the two steps of a delete', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    const edits: Response[] = [];
+    const { scheduledJobs } = harness.doubles.queues;
+    const removeJobScheduler = scheduledJobs.removeJobScheduler.bind(scheduledJobs);
+    vi.spyOn(scheduledJobs, 'removeJobScheduler').mockImplementation(async (key: string) => {
+      const removed = await removeJobScheduler(key);
+      if (edits.length === 0) {
+        edits.push(
+          await updateJob(
+            harness.container,
+            writeRequest('/api/jobs', 'PATCH', { cron: '0 4 * * *' }),
+            {
+              id: job.id,
+            },
+          ),
+        );
+      }
+      return removed;
+    });
+
+    const deleted = await deleteJob(harness.container, writeRequest('/api/jobs', 'DELETE'), {
+      id: job.id,
+    });
+
+    expect(edits.map((response) => response.status)).toEqual([200]);
+    expect(deleted.status).toBe(204);
+    expect(await harness.doubles.repos.scheduledJobs.get(job.id)).toBeNull();
+    expect([...harness.doubles.queues.scheduledJobs.schedulers.keys()]).toEqual([]);
+  });
+
+  /**
+   * The other side of the same pair: the whole delete runs after the edit has written its row and
+   * before the edit registers its schedule, so the edit's own upsert is the last write of all. The
+   * read it does afterwards is what catches it — the row is gone, so the schedule it just
+   * registered describes nothing and is taken back out, and the edit reports the job as missing
+   * rather than as saved.
+   */
+  it('leaves no scheduler behind when a delete runs while an edit is registering one', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    const deletes: Response[] = [];
+    const { repos } = harness.doubles;
+    const update = repos.scheduledJobs.update.bind(repos.scheduledJobs);
+    vi.spyOn(repos.scheduledJobs, 'update').mockImplementation(async (id, patch) => {
+      const updated = await update(id, patch);
+      if (deletes.length === 0) {
+        deletes.push(
+          await deleteJob(harness.container, writeRequest('/api/jobs', 'DELETE'), { id }),
+        );
+      }
+      return updated;
+    });
+
+    const edited = await updateJob(
+      harness.container,
+      writeRequest('/api/jobs', 'PATCH', { cron: '0 4 * * *' }),
+      { id: job.id },
+    );
+
+    expect(deletes.map((response) => response.status)).toEqual([204]);
+    expect(edited.status).toBe(404);
+    expect(await harness.doubles.repos.scheduledJobs.get(job.id)).toBeNull();
+    expect([...harness.doubles.queues.scheduledJobs.schedulers.keys()]).toEqual([]);
+  });
+
+  /**
+   * The edit's own clean-up can fail too, and it is the last thing that could have kept the two
+   * stores in step. The request still reports the job as missing — that is what it is — and the
+   * mismatch it could not repair is written to the log, naming the job, because there is nowhere
+   * else left to record it.
+   */
+  it('reports a scheduler it could not take back out after a delete removed the row', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    const { repos } = harness.doubles;
+    const update = repos.scheduledJobs.update.bind(repos.scheduledJobs);
+    let deleted = false;
+    vi.spyOn(repos.scheduledJobs, 'update').mockImplementation(async (id, patch) => {
+      const updated = await update(id, patch);
+      if (!deleted) {
+        deleted = true;
+        await deleteJob(harness.container, writeRequest('/api/jobs', 'DELETE'), { id });
+        // Only now, so the delete itself still ran to completion: what fails is the edit's own
+        // attempt to take back the schedule it is about to register.
+        vi.spyOn(harness.doubles.queues.scheduledJobs, 'removeJobScheduler').mockRejectedValue(
+          new Error('redis unreachable'),
+        );
+      }
+      return updated;
+    });
+
+    const edited = await updateJob(
+      harness.container,
+      writeRequest('/api/jobs', 'PATCH', { cron: '0 4 * * *' }),
+      { id: job.id },
+    );
+
+    expect(edited.status).toBe(404);
+    expect(harness.doubles.logOutput()).toContain('could not undo a partial scheduled-job write');
+  });
+});
+
 describe('triggerRun', () => {
   /**
    * A manual run creates the row the client immediately streams from, and passes its id on the

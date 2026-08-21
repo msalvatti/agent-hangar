@@ -57,7 +57,12 @@ describe('createChat', () => {
     });
     const messages = await harness.doubles.repos.messages.listByChat(chatId);
     expect(messages).toHaveLength(1);
-    expect(messages[0]).toMatchObject({ role: 'USER', seq: 1, content: CREATE_BODY.prompt });
+    expect(messages[0]).toMatchObject({
+      role: 'USER',
+      seq: 1,
+      content: CREATE_BODY.prompt,
+      turnId,
+    });
     const turn = await harness.doubles.repos.turns.get(turnId);
     expect(turn).toMatchObject({ status: 'QUEUED', queueJobId: turnId });
     expect(harness.doubles.queues.chatTurns.added).toEqual([
@@ -137,6 +142,29 @@ describe('createChat', () => {
     const [chat] = await harness.doubles.repos.chats.list();
     const turns = await harness.doubles.repos.turns.listByChat(chat!.id);
     expect(turns[0]).toMatchObject({ status: 'FAILED', error: ENQUEUE_FAILED });
+  });
+
+  /**
+   * The claim now precedes the prompt, so an append that fails has to give it back: a chat left
+   * with a `QUEUED` turn and no message would hold its single work slot against every later
+   * request while no worker had anything to run.
+   */
+  it('gives the turn claim back when the first prompt cannot be appended', async () => {
+    const harness = createTestContainer();
+    vi.spyOn(harness.doubles.repos.messages, 'append').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+
+    const response = await createChat(
+      harness.container,
+      writeRequest('/api/chats', 'POST', CREATE_BODY),
+    );
+
+    expect(response.status).toBe(500);
+    const [chat] = await harness.doubles.repos.chats.list();
+    const turns = await harness.doubles.repos.turns.listByChat(chat!.id);
+    expect(turns).toMatchObject([{ status: 'CANCELLED' }]);
+    expect(harness.doubles.queues.chatTurns.added).toEqual([]);
   });
 
   /**

@@ -12,9 +12,12 @@
  *
  * `requeue` is the one backwards transition this repository allows, and it is written as a
  * conditional `updateMany` so the legality of the move is decided by the row Postgres holds rather
- * than by a status the caller read a moment earlier.
+ * than by a status the caller read a moment earlier. `finish` is conditional for the same reason
+ * and in the same shape: it names the live statuses in its own `where`, so a row that already
+ * carries an outcome is not overwritten by a second writer and that writer is told so.
  */
 import type { Redactor } from '../../secrets/types.ts';
+import { LIVE_RUN_STATUSES } from '../../workspace/lifecycle.ts';
 import type { TurnStatus } from '../../workspace/types.ts';
 import type { Turn, UsageTotals } from '../entities.ts';
 import type { Prisma, PrismaClient } from '../generated/client.ts';
@@ -100,38 +103,50 @@ export class PrismaTurnRepository implements TurnRepository {
     }
   }
 
-  /** @inheritDoc */
+  /**
+   * @inheritDoc
+   *
+   * The precondition belongs in the `where` clause, for the reason
+   * {@link PrismaTurnRepository.requeue} gives: Postgres decides whether this writer is the first
+   * one, instead of the caller deciding it from a status it read earlier. A row that already holds
+   * an outcome then matches nothing, which is an ordinary answer rather than the P2025 a plain
+   * `update` would raise.
+   *
+   * `updateManyAndReturn` rather than an `updateMany` followed by a read, which is the shape
+   * `claimStatus` settled on: the row a caller is handed has to be the one this statement wrote.
+   * A second round trip would answer `null` for a row this call had genuinely terminalised, once a
+   * cascade removed it in between — and terminalising the turn is exactly what makes deleting its
+   * chat legal, so that is not a remote interleaving but the one next door.
+   */
   async finish(
     id: string,
     status: TerminalStatus,
     usage: UsageTotals,
     error?: string,
-  ): Promise<Turn> {
-    try {
-      const row = await this.prisma.turn.update({
-        where: { id },
-        data: {
-          status: toPrismaTurnStatus(status),
-          inputTokens: usage.inputTokens,
-          outputTokens: usage.outputTokens,
-          stepCount: usage.stepCount,
-          finishedAt: new Date(),
-          ...(error === undefined ? {} : { error: this.redactor.redact(error) }),
-        },
-      });
-      return toTurn(row);
-    } catch (caught) {
-      translatePrismaError(caught, { entity: 'Turn', id });
-    }
+  ): Promise<Turn | null> {
+    const rows = await this.prisma.turn.updateManyAndReturn({
+      where: { id, status: { in: LIVE_RUN_STATUSES.map(toPrismaTurnStatus) } },
+      data: {
+        status: toPrismaTurnStatus(status),
+        inputTokens: usage.inputTokens,
+        outputTokens: usage.outputTokens,
+        stepCount: usage.stepCount,
+        finishedAt: new Date(),
+        ...(error === undefined ? {} : { error: this.redactor.redact(error) }),
+      },
+    });
+    const row = rows[0];
+    return row === undefined ? null : toTurn(row);
   }
 
   /** @inheritDoc */
   async requeue(id: string): Promise<Turn | null> {
-    // `updateMany` rather than `update`: the status belongs in the `where` clause, so Postgres
-    // decides whether the transition is legal instead of the caller deciding it from a status it
-    // read a moment earlier. A row that is not FAILED then matches nothing and the count says so,
-    // where `update` would raise P2025 — an exception for what is an ordinary, expected answer.
-    const { count } = await this.prisma.turn.updateMany({
+    // The status belongs in the `where` clause, so Postgres decides whether the transition is legal
+    // instead of the caller deciding it from a status it read a moment earlier. A row that is not
+    // FAILED then matches nothing, where `update` would raise P2025 — an exception for what is an
+    // ordinary, expected answer. `updateManyAndReturn` for the reason `finish` gives: the row a
+    // caller is handed has to be the one this statement wrote, not one a second round trip found.
+    const rows = await this.prisma.turn.updateManyAndReturn({
       where: { id, status: toPrismaTurnStatus('FAILED') },
       data: {
         status: toPrismaTurnStatus('QUEUED'),
@@ -143,7 +158,8 @@ export class PrismaTurnRepository implements TurnRepository {
         stepCount: 0,
       },
     });
-    return count === 0 ? null : this.get(id);
+    const row = rows[0];
+    return row === undefined ? null : toTurn(row);
   }
 
   /** @inheritDoc */

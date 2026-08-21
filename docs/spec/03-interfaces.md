@@ -249,8 +249,8 @@ All JSON; Zod-validated; errors `{ error: { code, message } }`.
 | `PATCH /api/chats/:id` | `{ title }` → rename (title is editable inline in the chat header) |
 | `POST /api/chats/:id/messages` | `{ prompt }` → new Turn, enqueues |
 | `POST /api/chats/:id/archive` · `/restore` | Status change; archive destroys live workspace; restore creates on next message (or immediately if `?warm=1`) |
-| `POST /api/turns/:id/cancel` | Stop a chat turn: remove the queued job, or signal INT via worker (through a Redis command channel) |
-| `DELETE /api/chats/:id` | Cascade delete |
+| `POST /api/turns/:id/cancel` | Stop a chat turn: remove the queued job, or signal INT via worker (through a Redis command channel). Either way the route records the cancellation on the turn itself, conditionally on it still being live, and answers `409` when it is not — so an accepted stop is never overwritten by the outcome the worker was about to write |
+| `DELETE /api/chats/:id` | Cascade delete, refused with `409 TURN_IN_PROGRESS` while a turn of the chat is live; the condition is part of the delete statement, so a message claiming the chat at the same moment cannot be undone by it |
 | `GET /api/chats/:id/events` | **SSE** — live `AgentEvent`s for the chat; supports `Last-Event-ID` |
 | `GET /api/jobs` · `POST /api/jobs` · `PATCH /api/jobs/:id` · `DELETE /api/jobs/:id` | CRUD; upserts/removes the BullMQ Job Scheduler |
 | `POST /api/jobs/:id/run` | Manual trigger → JobRun |

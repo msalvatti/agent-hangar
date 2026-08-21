@@ -175,6 +175,13 @@ describeDb('persistence invariants', () => {
     const chatId = await seedChat(client);
     await repos.messages.append(chatId, 'USER', 'hi');
     const turn = await repos.turns.create({ chatId, model: 'gpt-5.6-sol' });
+    // Finished first: the delete refuses while a turn of the chat is live, and the cascade this
+    // test is about is the same whichever terminal status the turn holds.
+    await repos.turns.finish(turn.id, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
     const workspace = await repos.workspaces.create({
       kind: 'CHAT',
       chatId,
@@ -191,7 +198,7 @@ describeDb('persistence invariants', () => {
       toolName: 'run_shell',
       args: {},
     });
-    await repos.chats.delete(chatId);
+    expect(await repos.chats.deleteIfIdle(chatId)).toBe('DELETED');
     expect(await client.message.count()).toBe(0);
     expect(await client.turn.count()).toBe(0);
     expect(await client.toolCallLog.count({ where: { turnId: turn.id } })).toBe(0);

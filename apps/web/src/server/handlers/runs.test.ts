@@ -17,6 +17,7 @@ import { foreignRequest, readRequest, writeRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
 
+import { NO_USAGE } from './guards';
 import { triggerRun } from './jobs';
 import { cancelRun, getRun, listRuns, RUNS_PAGE_SIZE } from './runs';
 
@@ -208,12 +209,13 @@ describe('cancelRun', () => {
   });
 
   /**
-   * A run the worker already picked up cannot be closed from here: the container and the exec
-   * stream belong to the worker, so the request is published on the channel it subscribes to —
-   * keyed by the run id, which is what the scheduled-job processor watches — and acknowledged
-   * with `202`.
+   * A run the worker already picked up keeps its container and its exec stream there, so the
+   * request is published on the channel the scheduled-job processor subscribes to — keyed by the
+   * run id — and acknowledged with `202`. The outcome, though, is recorded here: `202` says the
+   * run is being stopped, and leaving the record to the worker is what let a run the API had
+   * already accepted a cancellation for come back as `FAILED`.
    */
-  it('publishes a cancel command for a running run', async () => {
+  it('publishes a cancel command for a running run and records the cancellation', async () => {
     const harness = createTestContainer({ now: NOW });
     const runId = await seedManualRun(harness);
     await harness.doubles.repos.jobRuns.setStatus(runId, 'RUNNING');
@@ -221,7 +223,7 @@ describe('cancelRun', () => {
     const response = await cancelRun(harness.container, cancelRequest(runId), { id: runId });
 
     expect(response.status).toBe(202);
-    expect(await harness.doubles.repos.jobRuns.get(runId)).toMatchObject({ status: 'RUNNING' });
+    expect(await harness.doubles.repos.jobRuns.get(runId)).toMatchObject({ status: 'CANCELLED' });
     const [published] = harness.doubles.redis.published;
     expect(published?.channel).toBe(turnCommandChannel(runId));
     expect(turnCommand.parse(JSON.parse(published?.message ?? ''))).toEqual({ type: 'cancel' });
@@ -241,7 +243,7 @@ describe('cancelRun', () => {
 
     expect(response.status).toBe(202);
     expect(harness.doubles.redis.published).toHaveLength(1);
-    expect(await harness.doubles.repos.jobRuns.get(runId)).toMatchObject({ status: 'QUEUED' });
+    expect(await harness.doubles.repos.jobRuns.get(runId)).toMatchObject({ status: 'CANCELLED' });
   });
 
   /**
@@ -257,7 +259,65 @@ describe('cancelRun', () => {
 
     expect(response.status).toBe(202);
     expect(harness.doubles.redis.published).toHaveLength(1);
-    expect(await harness.doubles.repos.jobRuns.get(runId)).toMatchObject({ status: 'QUEUED' });
+    expect(await harness.doubles.repos.jobRuns.get(runId)).toMatchObject({ status: 'CANCELLED' });
+  });
+
+  /**
+   * The window this route's write exists to close, driven at the seam where it is real: the worker
+   * had already decided the run could not proceed and records `FAILED` while this request is
+   * between its publish and its own write. Before, the request answered `202` — telling the browser
+   * the run was being stopped — and the row then read `FAILED`, contradicting it. Now the write is
+   * refused, the answer is `409`, and what the user is told matches what is stored.
+   */
+  it('refuses rather than promising a cancel the worker has already outrun', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const runId = await seedManualRun(harness);
+    await harness.doubles.repos.jobRuns.setStatus(runId, 'RUNNING');
+    const publish = harness.doubles.redis.publish.bind(harness.doubles.redis);
+    vi.spyOn(harness.doubles.redis, 'publish').mockImplementation(async (channel, message) => {
+      const delivered = await publish(channel, message);
+      await harness.doubles.repos.jobRuns.finish(runId, {
+        status: 'FAILED',
+        usage: NO_USAGE,
+        error: 'the worker got there first',
+      });
+      return delivered;
+    });
+
+    const response = await cancelRun(harness.container, cancelRequest(runId), { id: runId });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: 'RUN_NOT_CANCELLABLE' } });
+    expect(await harness.doubles.repos.jobRuns.get(runId)).toMatchObject({
+      status: 'FAILED',
+      error: 'the worker got there first',
+    });
+  });
+
+  /**
+   * The same window on the queued path. The delivery was taken off the queue, so nothing is left
+   * to run — putting it back would be the wrong repair — and the run already carries the outcome
+   * the worker wrote, so the request reports that rather than claiming a cancellation.
+   */
+  it('refuses without re-enqueueing when the run finished after its delivery was removed', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const runId = await seedManualRun(harness);
+    const delivery = harness.doubles.queues.scheduledJobs.jobs.get(runId);
+    const remove = delivery?.remove.bind(delivery);
+    vi.spyOn(delivery!, 'remove').mockImplementation(async () => {
+      await remove?.();
+      await harness.doubles.repos.jobRuns.finish(runId, {
+        status: 'FAILED',
+        usage: NO_USAGE,
+        error: 'the worker got there first',
+      });
+    });
+
+    const response = await cancelRun(harness.container, cancelRequest(runId), { id: runId });
+
+    expect(response.status).toBe(409);
+    expect(await harness.doubles.repos.jobRuns.get(runId)).toMatchObject({ status: 'FAILED' });
+    expect(harness.doubles.queues.scheduledJobs.added).toHaveLength(1);
   });
 
   /**

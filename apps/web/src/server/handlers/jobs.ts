@@ -14,18 +14,28 @@
  * compensation has a case that must not run: a row that is already gone is the outcome the request
  * asked for, so it answers success instead of restoring a schedule for a job nothing describes.
  *
- * Two limits, and the first is the one the qualification above is about. Two edits of the *same*
- * job in flight together can finish with the row from one and the scheduler from the other, both
- * answering success: each request writes its row and then syncs its own scheduler, and nothing
- * orders the second step the way the first was ordered. Every handler reads the job before it
- * writes, so the snapshot it decided from may already be stale by the time it acts, and no
- * re-read closes it — a request can still re-read before a rival writes and sync after it. Closing
- * this needs a write that fails when the row has moved, and `ScheduledJobRepository` exposes only
- * an unconditional `update`; a conditional one belongs in the persistence port, which is frozen.
- * What is ruled out is the worse half of that race: an undo is skipped when the row no longer
- * carries what this request wrote, so a failed edit never reverts a later edit that succeeded.
+ * A delete overlapping an edit is the one pair that is settled rather than bounded, and it is
+ * settled by ordering alone: neither store can be locked, but each half can be made to check the
+ * other *after* it has written. A delete removes the scheduler, deletes the row, and then removes
+ * the scheduler once more; an edit writes the row, upserts its scheduler, and then re-reads the
+ * row. Suppose a scheduler outlived the row. The row is gone from the instant the delete committed
+ * it, so the scheduler that survives must have been written by an edit after the delete's second
+ * removal — and that edit re-reads the row afterwards, finds it gone, and removes what it just
+ * registered. There is no interleaving left in which the two survive each other, which is why
+ * neither half is a compensation that might not run: both are ordinary steps of the happy path.
  *
- * The second limit is where both stores fail at once. If the compensating write also fails, the
+ * Two edits of the *same* job in flight together are not settled, and are a different race. They
+ * can finish with the row from one and the scheduler from the other, both answering success: each
+ * request writes its row and then syncs its own scheduler, and nothing orders the second step the
+ * way the first was ordered. Every handler reads the job before it writes, so the snapshot it
+ * decided from may already be stale by the time it acts, and no re-read closes it — a request can
+ * still re-read before a rival writes and sync after it. Closing that one needs a write that fails
+ * when the row has moved, which `ScheduledJobRepository` does not offer; the ordering argument
+ * above does not reach it, because both survivors describe a row that still exists. What is ruled
+ * out is the worse half of it: an undo is skipped when the row no longer carries what this request
+ * wrote, so a failed edit never reverts a later edit that succeeded.
+ *
+ * The last limit is where both stores fail at once. If the compensating write also fails, the
  * halves are left disagreeing; the request still fails, and the mismatch is logged with the job id
  * because there is nowhere left to record it. Editing that job again rewrites both halves.
  * Scheduler keys are `ScheduledJob.id`, which is what makes the upsert idempotent per job. The undo
@@ -216,6 +226,29 @@ async function restoreJob(
 }
 
 /**
+ * Refuses an edit whose row a delete removed while the edit was registering its scheduler.
+ *
+ * Called after the scheduler write, never before it: read first, this would prove only that the
+ * row existed a moment ago, and the scheduler the edit is about to register could still outlive
+ * it. Read afterwards, a row that is gone means the delete has already run both of its removals,
+ * so the scheduler this request just wrote is the one nothing describes — and removing it here is
+ * what leaves the two stores agreeing.
+ *
+ * @param container - The server container.
+ * @param jobId - The job the edit wrote.
+ * @throws ResourceNotFoundError 404 when the row was deleted while this request was in flight.
+ */
+async function assertJobSurvivedTheEdit(container: ServerContainer, jobId: string): Promise<void> {
+  if ((await container.repos.scheduledJobs.get(jobId)) !== null) {
+    return;
+  }
+  await compensate(container, { jobId }, COMPENSATE_FAILURE_MESSAGE, () =>
+    removeScheduledJob(container.queues.scheduledJobs, jobId),
+  );
+  throw new ResourceNotFoundError('Scheduled job not found');
+}
+
+/**
  * `POST /api/jobs` — creates a scheduled job and registers its scheduler.
  *
  * @param container - The server container.
@@ -291,6 +324,11 @@ export function getJob(
  * one; see the module header for why that cannot be closed from here. The undo below is the part
  * that is closed: it runs only while the row still carries what this request wrote.
  *
+ * A delete overlapping this edit *is* closed, and the closing step is the read after the scheduler
+ * write. A delete that took the row away while this request was registering its schedule would
+ * otherwise leave that schedule firing on a job nothing describes; finding the row gone, the edit
+ * takes its own scheduler back out and reports the job as missing, which it is.
+ *
  * @param container - The server container.
  * @param request - The incoming request.
  * @param params - Resolved path parameters.
@@ -329,6 +367,7 @@ export function updateJob(
       await restoreJob(container, existing, updated);
       throw error;
     }
+    await assertJobSurvivedTheEdit(container, updated.id);
     return jobResponse(container, updated);
   });
 }
@@ -350,6 +389,14 @@ function isAlreadyDeleted(error: unknown, jobId: string): boolean {
 
 /**
  * `DELETE /api/jobs/:id` — removes the scheduler and the job with its run history.
+ *
+ * The scheduler is removed twice, once on each side of the row delete, and the second removal is
+ * what serialises this request against a concurrent edit rather than merely tidying up. An edit
+ * that ran between the two steps registers a schedule for a row this request is about to remove;
+ * before, that schedule survived the row and fired for ever on a job nothing described. Removing
+ * again once the row is gone leaves the edit only one place left to write — after this removal —
+ * and an edit that writes there re-reads the row, finds it gone and takes its own schedule out.
+ * See the module header for the argument that no interleaving escapes the pair.
  *
  * @param container - The server container.
  * @param request - The incoming request.
@@ -375,16 +422,18 @@ export function deleteJob(
       // the state this request was asking for. Restoring the scheduler here would register a
       // schedule for a job no row describes any more — a repeatable delivery nothing can ever
       // satisfy and nothing removes, since the row that named it is gone.
-      if (isAlreadyDeleted(error, job.id)) {
-        return noContent();
+      if (!isAlreadyDeleted(error, job.id)) {
+        // The row survived the delete, so it still describes a job that is meant to fire; putting
+        // its scheduler back is what keeps the two halves saying the same thing.
+        await compensate(container, { jobId: job.id }, COMPENSATE_FAILURE_MESSAGE, () =>
+          syncScheduler(container, job),
+        );
+        throw error;
       }
-      // The row survived the delete, so it still describes a job that is meant to fire; putting
-      // its scheduler back is what keeps the two halves saying the same thing.
-      await compensate(container, { jobId: job.id }, COMPENSATE_FAILURE_MESSAGE, () =>
-        syncScheduler(container, job),
-      );
-      throw error;
     }
+    // The row is gone either way by now, so any scheduler still registered under its id describes
+    // nothing. Only a request that overlapped this one can have put one there.
+    await removeScheduledJob(container.queues.scheduledJobs, job.id);
     return noContent();
   });
 }

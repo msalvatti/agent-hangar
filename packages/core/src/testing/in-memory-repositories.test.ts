@@ -5,6 +5,8 @@
  * Goal: every port method behaves like the Postgres implementation will — including the
  * invariants: gap-free message `seq`, one live workspace per chat, unique `JobRun.workspaceId`,
  * cascade deletes — with timestamps from the injected clock and copies (not live rows) returned.
+ * The port contracts these doubles share with the Prisma repositories are registered separately,
+ * in `in-memory-contracts.test.ts`.
  * Mocks: FakeClock.
  */
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -109,12 +111,14 @@ describe('ChatRepository', () => {
   });
 
   /**
-   * Unknown ids raise `NotFoundError` on every mutating method.
+   * Unknown ids raise `NotFoundError` on every mutating method that overwrites a row. The
+   * conditional delete is the exception and reports the absence instead, which is the contract it
+   * shares with the Prisma implementation.
    */
   it('throws NotFoundError for unknown chats', async () => {
     await expect(repos.chats.rename('x', 't')).rejects.toThrow(NotFoundError);
     await expect(repos.chats.touch('x')).rejects.toThrow(NotFoundError);
-    await expect(repos.chats.delete('x')).rejects.toThrow(NotFoundError);
+    expect(await repos.chats.deleteIfIdle('x')).toBe('MISSING');
   });
 
   /**
@@ -127,6 +131,12 @@ describe('ChatRepository', () => {
     await repos.messages.append(chat.id, 'USER', 'hi');
     await repos.messages.append(other.id, 'USER', 'keep');
     const turn = await repos.turns.create({ chatId: chat.id, model: 'm' });
+    // Finished, because the delete below refuses while a turn is live; the cascade is the same.
+    await repos.turns.finish(turn.id, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
     const workspace = await repos.workspaces.create({
       kind: 'CHAT',
       chatId: chat.id,
@@ -167,7 +177,7 @@ describe('ChatRepository', () => {
       args: {},
     });
 
-    await repos.chats.delete(chat.id);
+    expect(await repos.chats.deleteIfIdle(chat.id)).toBe('DELETED');
     expect((await repos.workspaces.get(otherWorkspace.id))?.chatId).toBe(other.id);
     expect(await repos.toolCalls.listByJobRun(run.id)).toHaveLength(1);
     expect(await repos.chats.getById(chat.id)).toBeNull();
@@ -252,16 +262,18 @@ describe('TurnRepository', () => {
       stepCount: 1,
       error: 'boom',
     });
-    expect(finished.finishedAt).toEqual(clock.now());
+    expect(finished?.finishedAt).toEqual(clock.now());
+    // A second outcome is refused rather than written over the first, so the row keeps what the
+    // writer that got there first recorded.
     const succeeded = await repos.turns.finish(turn.id, 'SUCCEEDED', {
       inputTokens: 1,
       outputTokens: 1,
       stepCount: 2,
     });
-    expect(succeeded.error).toBe('boom');
+    expect(succeeded).toBeNull();
 
     expect((await repos.turns.listByChat(chat.id)).map((t) => t.id)[0]).toBe(turn.id);
-    expect((await repos.turns.get(turn.id))?.status).toBe('SUCCEEDED');
+    expect((await repos.turns.get(turn.id))?.status).toBe('FAILED');
     expect(await repos.turns.get('missing')).toBeNull();
     await expect(repos.turns.create({ chatId: 'missing', model: 'm' })).rejects.toThrow(
       NotFoundError,
@@ -591,14 +603,19 @@ describe('JobRunRepository', () => {
       outputTokens: 4,
       stepCount: 2,
     });
-    expect(finished.finishedAt).toEqual(clock.now());
+    expect(finished?.finishedAt).toEqual(clock.now());
     expect(await repos.jobRuns.findRunningByJob(job.id)).toBeNull();
+    // `second` already carries an outcome, so a second one is refused and its error survives.
     const failed = await repos.jobRuns.finish(second.id, {
       status: 'FAILED',
       usage: { inputTokens: 0, outputTokens: 0, stepCount: 0 },
       error: 'x',
     });
-    expect(failed.output).toBeNull();
+    expect(failed).toBeNull();
+    expect(await repos.jobRuns.get(second.id)).toMatchObject({
+      output: null,
+      error: 'previous run still running',
+    });
 
     expect((await repos.jobRuns.listByJob(job.id)).map((run) => run.id)).toEqual([
       second.id,
@@ -610,12 +627,14 @@ describe('JobRunRepository', () => {
     await expect(
       repos.jobRuns.create({ jobId: 'missing', trigger: 'MANUAL', model: 'm', scheduledFor: T0 }),
     ).rejects.toThrow(NotFoundError);
-    await expect(
-      repos.jobRuns.finish('missing', {
+    // A row that is not there is answered rather than thrown, exactly as one that already carries
+    // an outcome is: neither recorded anything, which is all the answer is about.
+    expect(
+      await repos.jobRuns.finish('missing', {
         status: 'FAILED',
         usage: { inputTokens: 0, outputTokens: 0, stepCount: 0 },
       }),
-    ).rejects.toThrow(NotFoundError);
+    ).toBeNull();
   });
 });
 

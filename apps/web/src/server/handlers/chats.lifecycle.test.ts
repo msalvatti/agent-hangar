@@ -48,6 +48,8 @@ describe('postMessage', () => {
     const { turnId: nextTurn } = postMessageResponse.parse(await response.json());
     const messages = await harness.doubles.repos.messages.listByChat(chatId);
     expect(messages.map((message) => message.seq)).toEqual([1, 2]);
+    // The prompt names the turn that answers it, exactly as every other writer of a message does.
+    expect(messages[1]).toMatchObject({ role: 'USER', turnId: nextTurn });
     expect(nextTurn).not.toBe(turnId);
     expect(harness.doubles.queues.chatTurns.added).toHaveLength(2);
   });
@@ -627,7 +629,7 @@ describe('deleteChat', () => {
       repoUrl: REPO_URL,
       branch: 'main',
     });
-    vi.spyOn(harness.doubles.repos.chats, 'delete').mockRejectedValue(
+    vi.spyOn(harness.doubles.repos.chats, 'deleteIfIdle').mockRejectedValue(
       new Error('database unreachable'),
     );
 
@@ -638,6 +640,38 @@ describe('deleteChat', () => {
     expect(response.status).toBe(500);
     expect(harness.doubles.queues.workspaceGc.added).toEqual([]);
     expect(await harness.doubles.repos.chats.getById(chatId)).toMatchObject({ status: 'ACTIVE' });
+  });
+
+  /**
+   * A chat that another request removed between this one's read and its write is reported as
+   * missing rather than as held by a turn: both leave nothing deleted, but only one of them is
+   * something the user can wait out, and "wait for the running turn" is nonsense advice about a
+   * chat that no longer exists. The rival delete is run from inside the workspace read, which is
+   * the step that actually sits between the two, so the window is the real one rather than a
+   * stubbed answer.
+   */
+  it('reports a chat deleted by another request while this one was reading it', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    const { repos } = harness.doubles;
+    const findLiveByChat = repos.workspaces.findLiveByChat.bind(repos.workspaces);
+    vi.spyOn(repos.workspaces, 'findLiveByChat').mockImplementation(async (id: string) => {
+      const live = await findLiveByChat(id);
+      await repos.chats.deleteIfIdle(id);
+      return live;
+    });
+
+    const response = await deleteChat(harness.container, writeRequest('/api/chats', 'DELETE'), {
+      id: chatId,
+    });
+
+    expect(response.status).toBe(404);
+    expect(harness.doubles.queues.workspaceGc.added).toEqual([]);
   });
 
   /**

@@ -6,13 +6,16 @@
  * changes only the fields explicitly present; every write explicitly bumps `updatedAt` (an
  * update whose `data` has no other key never triggers Prisma's `@updatedAt` directive on its
  * own, which is exactly what `touch` sends); `title` is redacted on `create` and on `rename`,
- * while the identifier columns are written untouched; `delete`/`update` failures translate through
- * `translatePrismaError`.
+ * while the identifier columns are written untouched; an `update` failure translates through
+ * `translatePrismaError`; and `deleteIfIdle` sends the live-turn condition inside the statement,
+ * so nothing decides it in this process. The outcomes that condition produces are pinned against a
+ * real database by the shared contract, which no client double can settle.
  * Mocks: a Prisma client double exposing only `chat.*` — no database.
  */
 import { describe, expect, it, vi } from 'vitest';
 
 import type { Redactor } from '../../secrets/types.ts';
+import { LIVE_RUN_STATUSES } from '../../workspace/lifecycle.ts';
 import type { PrismaClient } from '../generated/client.ts';
 
 import { PrismaChatRepository } from './chat.repository.ts';
@@ -47,7 +50,7 @@ const chatRow = {
 /** Builds a fake Prisma client exposing only the `chat` delegate methods this repository calls. */
 function fakePrisma(
   overrides: Partial<
-    Record<'create' | 'findUnique' | 'findMany' | 'update' | 'delete', ReturnType<typeof vi.fn>>
+    Record<'create' | 'findUnique' | 'findMany' | 'update' | 'deleteMany', ReturnType<typeof vi.fn>>
   > = {},
 ) {
   const chat = {
@@ -55,7 +58,7 @@ function fakePrisma(
     findUnique: vi.fn(() => Promise.resolve(chatRow)),
     findMany: vi.fn(() => Promise.resolve([chatRow])),
     update: vi.fn(() => Promise.resolve(chatRow)),
-    delete: vi.fn(() => Promise.resolve(chatRow)),
+    deleteMany: vi.fn(() => Promise.resolve({ count: 1 })),
     ...overrides,
   };
   return { client: { chat } as unknown as PrismaClient, chat };
@@ -212,19 +215,38 @@ describe('PrismaChatRepository', () => {
     });
   });
 
-  /** delete() removes the row. */
-  it('delete() removes the chat', async () => {
+  /**
+   * The condition travels in the `WHERE` of the delete itself. A `delete` by id with the turns
+   * read beforehand would pass this suite just as well and still lose the race the method exists
+   * to settle, so what is asserted is the shape of the statement, not just its effect.
+   */
+  it('deleteIfIdle() names the live-turn condition inside the delete', async () => {
     const { client, chat } = fakePrisma();
     const repo = new PrismaChatRepository(client, fakeRedactor);
-    await repo.delete('chat-1');
-    expect(chat.delete).toHaveBeenCalledWith({ where: { id: 'chat-1' } });
+    expect(await repo.deleteIfIdle('chat-1')).toBe('DELETED');
+    expect(chat.deleteMany).toHaveBeenCalledWith({
+      where: { id: 'chat-1', turns: { none: { status: { in: [...LIVE_RUN_STATUSES] } } } },
+    });
+    expect(chat.findUnique).not.toHaveBeenCalled();
   });
 
-  /** delete() on a missing row translates P2025 into NotFoundError. */
-  it('delete() translates a missing row to NotFoundError', async () => {
-    const { client } = fakePrisma({ delete: vi.fn(() => Promise.reject(p2025())) });
-    const repo = new PrismaChatRepository(client, fakeRedactor);
-    await expect(repo.delete('missing')).rejects.toBeInstanceOf(NotFoundError);
+  /**
+   * Nothing matched, so the second read decides which of the two reasons it was; a row that is
+   * still there was held by a live turn, and one that is not is simply gone.
+   */
+  it('deleteIfIdle() tells a chat held by a turn apart from one that is gone', async () => {
+    const held = fakePrisma({ deleteMany: vi.fn(() => Promise.resolve({ count: 0 })) });
+    expect(await new PrismaChatRepository(held.client, fakeRedactor).deleteIfIdle('chat-1')).toBe(
+      'LIVE_TURN',
+    );
+
+    const gone = fakePrisma({
+      deleteMany: vi.fn(() => Promise.resolve({ count: 0 })),
+      findUnique: vi.fn(() => Promise.resolve(null)),
+    });
+    expect(await new PrismaChatRepository(gone.client, fakeRedactor).deleteIfIdle('chat-1')).toBe(
+      'MISSING',
+    );
   });
 
   /** update() on a missing row (via rename) also translates P2025. */

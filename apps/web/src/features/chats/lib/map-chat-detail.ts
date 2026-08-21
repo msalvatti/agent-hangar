@@ -4,12 +4,13 @@
  * Layer: feature (lib).
  *
  * The API returns messages, turns and tool-call logs as three lists; the transcript is one ordered
- * list. Nothing links a prompt to the turn it started — the message is written before the turn
- * exists, so `Message.turnId` is null on every user message the database holds — and the rows a
- * turn produces have no key back to the prompt either. What all three lists do carry is when each
- * row happened, and the order they happened in is the order the transcript reads in: a tool call
- * starts after the prompt that triggered it and before the answer that follows it, and a turn
- * finishes after the last call it made. So the lists are merged on their own timestamps.
+ * list. A prompt written from now on names the turn that answers it, but that is not enough to
+ * merge on: every user message stored before the routes started passing the id still has a null
+ * `turnId`, and the rows a turn produces have no key back to the prompt either. What all three
+ * lists do carry is when each row happened, and the order they happened in is the order the
+ * transcript reads in: a tool call starts after the prompt that triggered it and before the answer
+ * that follows it, and a turn finishes after the last call it made. So the lists are merged on
+ * their own timestamps, which is right for the whole history rather than only for its newest part.
  */
 import { systemNoticeTone, toolNameSchema } from '@agent-hangar/core';
 import type { ChatDetail, MessageView, ToolCallView, ToolName, TurnView } from '@agent-hangar/core';
