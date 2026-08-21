@@ -33,13 +33,17 @@ export function EnvPill({ iconOnly = false }: EnvPillProps) {
   const label = data === undefined ? 'checking…' : ok ? 'docker ✓' : 'docker ✗';
   const summary =
     data === undefined ? 'checking' : ok ? 'everything healthy' : `${failing.join(', ')} failing`;
+  // The visible text is part of the accessible name, not replaced by it: WCAG 2.5.3 asks that a
+  // control answer to the words a person can see on it, which is how speech input addresses it.
+  // An `aria-label` that omitted "docker ✓" would leave "click docker" reaching nothing.
+  const accessibleName = `Environment status: ${label}, ${summary}`;
 
   return (
     <>
       <button
         type="button"
-        aria-label={`Environment status: ${summary}`}
-        title={`Environment status: ${summary}`}
+        aria-label={accessibleName}
+        title={accessibleName}
         onClick={() => {
           setOpen(true);
         }}

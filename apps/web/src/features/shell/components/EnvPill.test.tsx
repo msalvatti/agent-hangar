@@ -15,16 +15,18 @@ describe('EnvPill', () => {
   // Before the first report the pill says it is still checking.
   it('shows a checking state first', () => {
     render(<EnvPill />);
-    expect(screen.getByRole('button', { name: 'Environment status: checking' })).toHaveTextContent(
-      'checking…',
-    );
+    expect(
+      screen.getByRole('button', { name: 'Environment status: checking…, checking' }),
+    ).toHaveTextContent('checking…');
   });
 
   // A healthy environment is stated in text as well as colour.
   it('reports a healthy environment', async () => {
     render(<EnvPill />);
     expect(
-      await screen.findByRole('button', { name: 'Environment status: everything healthy' }),
+      await screen.findByRole('button', {
+        name: 'Environment status: docker ✓, everything healthy',
+      }),
     ).toHaveTextContent('docker ✓');
   });
 
@@ -33,7 +35,7 @@ describe('EnvPill', () => {
     setScenario('infra-down');
     render(<EnvPill />);
     const pill = await screen.findByRole('button', {
-      name: 'Environment status: Redis, Docker failing',
+      name: 'Environment status: docker ✗, Redis, Docker failing',
     });
     expect(pill).toHaveTextContent('docker ✗');
     expect(pill.className).toContain('text-destructive');
@@ -54,7 +56,7 @@ describe('EnvPill', () => {
     // The dialog opens on the click alone, so finding it says nothing about the report inside it:
     // until the health request lands it renders "Checking the environment…". Nor does anything
     // earlier force that request to have finished — the accessible name is matched by a pattern
-    // the pre-load label ("Environment status: checking") satisfies just as well. Waiting on the
+    // the pre-load label ("Environment status: checking…, checking") satisfies just as well. Waiting on the
     // probe list is waiting on the thing being asserted; waiting on the dialog was waiting on a
     // round-trip's worth of nothing.
     await waitFor(() => {
@@ -113,7 +115,7 @@ describe('EnvPill', () => {
     );
     render(<EnvPill />);
     const pill = await screen.findByRole('button', {
-      name: 'Environment status: Worker, Docker, Workspace image failing',
+      name: 'Environment status: docker ✗, Worker, Docker, Workspace image failing',
     });
     expect(pill).toHaveTextContent('docker ✗');
     await userEvent.click(pill);
