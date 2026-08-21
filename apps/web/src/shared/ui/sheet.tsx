@@ -36,6 +36,33 @@ function SheetOverlay({ className, ...props }: SheetPrimitive.Backdrop.Props) {
   );
 }
 
+/** Everything a sheet popup looks like regardless of which edge it is anchored to. */
+const SHEET_CONTENT_CLASS =
+  'bg-popover text-popover-foreground fixed z-50 flex flex-col gap-4 bg-clip-padding text-sm shadow-lg transition duration-200 ease-in-out data-ending-style:opacity-0 data-starting-style:opacity-0';
+
+/**
+ * Placement, size and entry direction per edge.
+ *
+ * Written as plain utilities selected in TypeScript rather than as `data-[side=…]` variants, and
+ * that is the whole point of the table. An attribute variant compiles to a selector carrying the
+ * attribute, which outranks a bare class of the same property, so `cn` kept both when a caller
+ * asked for a different width and the cascade handed the popup back to the primitive: the run
+ * drawer asked for `w-full sm:max-w-[720px]`, spec 10 §4 says 720 px, and Chrome measured 384 px
+ * at every width down to 768 and 281 px at 375. Selected here, the caller's class is the only one
+ * of its property in the string and `cn` merges the default away, which is what a `className` prop
+ * is for.
+ *
+ * @see SheetContent
+ */
+const SHEET_SIDE_CLASS = {
+  top: 'inset-x-0 top-0 h-auto border-b data-ending-style:translate-y-[-2.5rem] data-starting-style:translate-y-[-2.5rem]',
+  bottom:
+    'inset-x-0 bottom-0 h-auto border-t data-ending-style:translate-y-[2.5rem] data-starting-style:translate-y-[2.5rem]',
+  left: 'inset-y-0 left-0 h-full w-3/4 border-r sm:max-w-sm data-ending-style:translate-x-[-2.5rem] data-starting-style:translate-x-[-2.5rem]',
+  right:
+    'inset-y-0 right-0 h-full w-3/4 border-l sm:max-w-sm data-ending-style:translate-x-[2.5rem] data-starting-style:translate-x-[2.5rem]',
+} as const;
+
 function SheetContent({
   className,
   children,
@@ -53,10 +80,7 @@ function SheetContent({
         data-slot="sheet-content"
         data-side={side}
         data-close-button={showCloseButton ? 'true' : undefined}
-        className={cn(
-          'bg-popover text-popover-foreground fixed z-50 flex flex-col gap-4 bg-clip-padding text-sm shadow-lg transition duration-200 ease-in-out data-ending-style:opacity-0 data-starting-style:opacity-0 data-[side=bottom]:inset-x-0 data-[side=bottom]:bottom-0 data-[side=bottom]:h-auto data-[side=bottom]:border-t data-[side=bottom]:data-ending-style:translate-y-[2.5rem] data-[side=bottom]:data-starting-style:translate-y-[2.5rem] data-[side=left]:inset-y-0 data-[side=left]:left-0 data-[side=left]:h-full data-[side=left]:w-3/4 data-[side=left]:border-r data-[side=left]:data-ending-style:translate-x-[-2.5rem] data-[side=left]:data-starting-style:translate-x-[-2.5rem] data-[side=right]:inset-y-0 data-[side=right]:right-0 data-[side=right]:h-full data-[side=right]:w-3/4 data-[side=right]:border-l data-[side=right]:data-ending-style:translate-x-[2.5rem] data-[side=right]:data-starting-style:translate-x-[2.5rem] data-[side=top]:inset-x-0 data-[side=top]:top-0 data-[side=top]:h-auto data-[side=top]:border-b data-[side=top]:data-ending-style:translate-y-[-2.5rem] data-[side=top]:data-starting-style:translate-y-[-2.5rem] data-[side=left]:sm:max-w-sm data-[side=right]:sm:max-w-sm',
-          className,
-        )}
+        className={cn(SHEET_CONTENT_CLASS, SHEET_SIDE_CLASS[side], className)}
         {...props}
       >
         {children}

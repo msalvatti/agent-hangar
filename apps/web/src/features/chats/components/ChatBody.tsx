@@ -56,6 +56,41 @@ export interface ChatBodyProps {
 }
 
 /**
+ * What the composer says while a turn of its own chat is still running.
+ *
+ * Names both ways out, and the Stop control it points at is in the header directly above. The wait
+ * is not advice but the rule: the API refuses a second turn with `TURN_IN_PROGRESS` while one is
+ * live, so a composer that accepted the message would only be collecting a refusal.
+ */
+const LIVE_TURN_LOCK_HINT =
+  'The agent is working on this chat. Wait for the turn to finish, or stop it, to send the next message.';
+
+/**
+ * What the composer says while it is locked, when nothing else on screen already says it.
+ *
+ * A live turn is the case that had no explanation anywhere. The lock is correct and stays, but a
+ * disabled textarea dispatches no key events, so pressing Enter into it looks exactly like a
+ * composer that has stopped working — and that is how it was reported.
+ *
+ * The other two locks are already accounted for on screen: an archived chat by its banner and a
+ * missing dependency by {@link InfraDownNotice}, both rendered above the composer. They are
+ * checked first, so a chat that is somehow both does not get the wrong sentence.
+ *
+ * @param state - Which of the three locks apply.
+ * @returns The sentence to announce, or `undefined` when the screen already explains the lock.
+ */
+function composerLockReason(state: {
+  archived: boolean;
+  infraDown: boolean;
+  turnLive: boolean;
+}): string | undefined {
+  if (state.archived || state.infraDown || !state.turnLive) {
+    return undefined;
+  }
+  return LIVE_TURN_LOCK_HINT;
+}
+
+/**
  * Renders the scrolling transcript, any turn failure, and the composer that continues the chat.
  *
  * A failure is one row of the transcript, live or reloaded from history, so it is rendered there
@@ -66,7 +101,8 @@ export interface ChatBodyProps {
  *
  * Infrastructure that is down locks the composer and says which dependency is missing. An archived
  * chat is not told: its composer is already locked for a reason of its own, and the banner above
- * states it.
+ * states it. A live turn locks it too, and that one is stated on the composer itself — see
+ * {@link composerLockReason}.
  *
  * @param props - The transcript, the draft and the lock state.
  */
@@ -126,6 +162,7 @@ export function ChatBody({
           onSubmit={onSubmit}
           busy={sending}
           disabled={archived || turnLive || infraDown}
+          disabledReason={composerLockReason({ archived, infraDown, turnLive })}
           model={model}
         />
       </div>

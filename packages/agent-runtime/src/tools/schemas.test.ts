@@ -21,16 +21,17 @@ import {
 } from './schemas.js';
 
 describe('tool argument schemas', () => {
+  /** These are exactly the shapes the tool descriptions promise the model. */
   it.each([
     ['run_shell', runShellArgs, { command: 'ls', cwd: null, timeoutMs: null }],
     ['read_file', readFileArgs, { path: 'a.ts', startLine: 1, endLine: 10 }],
     ['write_file', writeFileArgs, { path: 'NOTES.md', content: '# Notes\n' }],
     ['list_dir', listDirArgs, { path: '.', depth: 2 }],
   ])('accepts the documented %s call', (_name, schema, value) => {
-    // These are exactly the shapes the tool descriptions promise the model.
     expect(schema.safeParse(value).success).toBe(true);
   });
 
+  /** Invalid arguments become a failed tool result, so the model can correct itself. */
   it.each([
     [
       'an unknown property',
@@ -45,12 +46,11 @@ describe('tool argument schemas', () => {
     ['a depth past the maximum', listDirArgs, { path: null, depth: MAX_LIST_DIR_DEPTH + 1 }],
     ['a depth below one', listDirArgs, { path: null, depth: 0 }],
   ])('rejects %s', (_name, schema, value) => {
-    // Invalid arguments become a failed tool result, so the model can correct itself.
     expect(schema.safeParse(value).success).toBe(false);
   });
 
+  /** A tool published without a schema would reach the executor unvalidated. */
   it('covers every tool the protocol contract names', () => {
-    // A tool published without a schema would reach the executor unvalidated.
     expect(Object.keys(TOOL_SCHEMAS).toSorted()).toStrictEqual([
       'list_dir',
       'read_file',
@@ -61,8 +61,8 @@ describe('tool argument schemas', () => {
 });
 
 describe('toToolDefinition', () => {
+  /** Strict function calling rejects a schema that allows either. */
   it('projects a schema with no additional properties and every property required', () => {
-    // Strict function calling rejects a schema that allows either.
     const definition = toToolDefinition('run_shell', runShellArgs);
     expect(definition.name).toBe('run_shell');
     expect(definition.description.length).toBeGreaterThan(0);
@@ -70,21 +70,21 @@ describe('toToolDefinition', () => {
     expect(definition.parameters.required).toStrictEqual(['command', 'cwd', 'timeoutMs']);
   });
 
+  /** Strict mode has no notion of an omitted property, so optionality travels as null. */
   it('encodes an optional argument as a nullable one that is always present', () => {
-    // Strict mode has no notion of an omitted property, so optionality travels as null.
     const properties = toToolDefinition('run_shell', runShellArgs).parameters.properties;
     expect(properties).toMatchObject({ cwd: { anyOf: [{ type: 'string' }, { type: 'null' }] } });
   });
 
+  /** The check runs at module initialisation, so this can never ship unnoticed. */
   it('refuses a schema that would let the model pass unknown arguments', () => {
-    // The check runs at module initialisation, so this can never ship unnoticed.
     expect(() => toToolDefinition('run_shell', z.looseObject({ command: z.string() }))).toThrow(
       'must forbid additional properties',
     );
   });
 
+  /** A provider asked for strict mode rejects the call rather than defaulting the property. */
   it('refuses a schema with a property the model may omit', () => {
-    // A provider asked for strict mode rejects the call rather than defaulting the property.
     expect(() =>
       toToolDefinition(
         'read_file',

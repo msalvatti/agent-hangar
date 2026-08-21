@@ -43,8 +43,8 @@ afterEach(async () => {
 });
 
 describe('createChildEnv', () => {
+  /** A command the model wrote must not be able to read the PAT or the API key. */
   it('removes both credentials', () => {
-    // A command the model wrote must not be able to read the PAT or the API key.
     const child = createChildEnv(parentEnv);
     for (const key of SCRUBBED_KEYS) {
       expect(child).not.toHaveProperty(key);
@@ -53,8 +53,8 @@ describe('createChildEnv', () => {
     expect(Object.values(child)).not.toContain(OPENAI_CANARY);
   });
 
+  /** Commands need PATH and HOME; an unset variable must not become an empty string. */
   it('keeps the rest of the environment and drops unset variables', () => {
-    // Commands need PATH and HOME; an unset variable must not become an empty string.
     const child = createChildEnv(parentEnv);
     expect(child.PATH).toBe('/usr/bin:/bin');
     expect(child.HOME).toBe('/home/agent');
@@ -62,11 +62,12 @@ describe('createChildEnv', () => {
     expect(child).not.toHaveProperty('EMPTY');
   });
 
+  /** Without this a git command that needs credentials blocks until the tool timeout. */
   it('disables git terminal prompts', () => {
-    // Without this a git command that needs credentials blocks until the tool timeout.
     expect(createChildEnv(parentEnv).GIT_TERMINAL_PROMPT).toBe('0');
   });
 
+  /** The helper is the only channel through which git ever sees the token. */
   it.each([
     ['falls back to the image helper when unset', {}, DEFAULT_ASKPASS],
     ['falls back to the image helper when empty', { GIT_ASKPASS: '' }, DEFAULT_ASKPASS],
@@ -76,12 +77,11 @@ describe('createChildEnv', () => {
       '/custom/askpass.sh',
     ],
   ])('%s', (_name, overrides, expected) => {
-    // The helper is the only channel through which git ever sees the token.
     expect(createChildEnv({ ...parentEnv, ...overrides }).GIT_ASKPASS).toBe(expected);
   });
 
+  /** The helper falls back to GITHUB_TOKEN when the variable is absent, so it must not be empty. */
   it('advertises the token file only when one was written', () => {
-    // The helper falls back to GITHUB_TOKEN when the variable is absent, so it must not be empty.
     expect(createChildEnv(parentEnv, { tokenFile: '/tmp/ah/git-token' }).AH_GIT_TOKEN_FILE).toBe(
       '/tmp/ah/git-token',
     );
@@ -91,8 +91,8 @@ describe('createChildEnv', () => {
 });
 
 describe('materializeGitToken', () => {
+  /** Group- or world-readable would defeat moving the token out of the environment. */
   it('writes the token to an owner-only file inside an owner-only directory', async () => {
-    // Group- or world-readable would defeat moving the token out of the environment.
     const nested = path.join(directory, 'runtime');
     const file = await materializeGitToken(parentEnv, nested);
     expect(file).toBe(path.join(nested, 'git-token'));
@@ -101,11 +101,11 @@ describe('materializeGitToken', () => {
     expect((await stat(nested)).mode & 0o777).toBe(0o700);
   });
 
+  /** A missing PAT is an ordinary state: the turn simply cannot push. */
   it.each([
     ['no token is configured', undefined],
     ['the token is empty', ''],
   ])('writes nothing when %s', async (_name, token) => {
-    // A missing PAT is an ordinary state: the turn simply cannot push.
     await expect(
       materializeGitToken({ ...parentEnv, GITHUB_TOKEN: token }, directory),
     ).resolves.toBeNull();
@@ -113,8 +113,8 @@ describe('materializeGitToken', () => {
 });
 
 describe('removeGitToken', () => {
+  /** Cleanup runs in a `finally`, so it must be safe on every path out of a turn. */
   it('removes the file and tolerates a turn that never wrote one', async () => {
-    // Cleanup runs in a `finally`, so it must be safe on every path out of a turn.
     const file = await materializeGitToken(parentEnv, directory);
     await removeGitToken(file);
     await expect(stat(file!)).rejects.toThrow();

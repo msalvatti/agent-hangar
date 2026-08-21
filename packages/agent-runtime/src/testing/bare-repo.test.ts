@@ -37,8 +37,8 @@ afterEach(async () => {
 });
 
 describe('createBareRepoWithSeed', () => {
+  /** The seed sha is what preparation tests assert `prepare.done` reports. */
   it('produces a repository that clones with the seed commit on the default branch', async () => {
-    // The seed sha is what preparation tests assert `prepare.done` reports.
     repo = await createBareRepoWithSeed({ files: { 'README.md': '# hello\n' } });
     clone = await makeTempDir('bare-repo-clone');
     const git = createGitRunner();
@@ -50,8 +50,8 @@ describe('createBareRepoWithSeed', () => {
     expect(repo.branch).toBe('main');
   });
 
+  /** The work-branch cases need a branch that already exists on the remote. */
   it('creates nested seed files and extra branches ahead of the seed', async () => {
-    // The work-branch cases need a branch that already exists on the remote.
     repo = await createBareRepoWithSeed({
       branch: 'trunk',
       files: { 'src/a.ts': 'export {};\n' },

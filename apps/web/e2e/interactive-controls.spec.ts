@@ -20,8 +20,11 @@
  * The widths are the ones spec 10 §9 names: 1440 and 1024 for the sidebar and its rail, 768 and
  * 375 for the overlay drawer. The reported point is in viewport coordinates, so a failure can be
  * reproduced by opening the same screen at the same width.
+ *
+ * The sheets' own widths are measured here for the same reason: a width is a fact about the
+ * cascade, and the cascade is the thing a unit assertion about a class name cannot see.
  */
-import type { Page } from '@playwright/test';
+import type { Locator, Page } from '@playwright/test';
 
 import { test, expect } from './fixtures';
 import { ChatPage, JobDetailPage, ScheduledPage, SettingsPage, SidebarPage } from './pages';
@@ -45,6 +48,9 @@ const MOCK_CHATS = {
 
 /** Job the mock API seeds; it is enabled and has runs, so its detail screen has a drawer to open. */
 const MOCK_JOB = 'Nightly tests';
+
+/** Width spec 10 §4 gives the run drawer, and §2 the sidebar, in CSS pixels. */
+const SHEET_WIDTH = { runDrawer: 720, sidebar: 260 } as const;
 
 /**
  * Fails naming every control on the page that is covered or that offers no pointer cursor.
@@ -84,6 +90,23 @@ async function expectNoSidewaysScroll(page: Page, where: string): Promise<void> 
         ]
       : [],
   ).toEqual([]);
+}
+
+/**
+ * The width one element occupies on screen, rounded to whole pixels.
+ *
+ * The border box is read rather than the computed `width`, because that is the number a person
+ * sees: a sheet whose `max-width` wins reports the cap it settled on, not the `width` it asked
+ * for. Rounded because a percentage width lands on a fraction — 75 % of 375 px is 281.25 — and a
+ * fraction is never the answer a design states.
+ *
+ * @param locator - The element to measure; it must be visible.
+ * @returns Its rendered width in CSS pixels.
+ */
+async function widthOf(locator: Locator): Promise<number> {
+  const box = await locator.boundingBox();
+  expect(box, 'the element must be visible to be measured').not.toBeNull();
+  return Math.round(box?.width ?? 0);
 }
 
 test.describe('interactive controls are usable with a pointer', () => {
@@ -216,6 +239,42 @@ test.describe('interactive controls are usable with a pointer', () => {
     await scheduled.dialog.getByRole('button', { name: 'Timezone' }).click();
     await expect(page.getByRole('option').first()).toBeVisible();
     await expectUsableControls(page, 'the job dialog with the timezone picker open');
+  });
+
+  /**
+   * The two sheets are as wide as the design says, which no unit assertion in this repository can
+   * establish.
+   *
+   * The run drawer asked for `w-full sm:max-w-[720px]` and rendered at 384 px, because the sheet
+   * primitive expressed its own cap as `data-[side=right]:sm:max-w-sm` — an attribute selector,
+   * which outranks the caller's plain class — and `cn` cannot merge two classes written under
+   * different variants. The test that was meant to hold the 720 px asserted that the class was in
+   * the attribute, and it was: present, and outvoted. The same override took the sidebar drawer
+   * from the 260 px it asked for to the primitive's `w-3/4`.
+   *
+   * Measured at 1440 px, above the `sm` breakpoint where the cap applies, and at 375 px, where the
+   * run drawer has no cap and must simply fill the viewport — the width at which a sheet that
+   * ignored `w-full` would cover three quarters of the screen and leave a quarter of a backdrop
+   * nobody meant to show.
+   */
+  test('the sheets are as wide as the design says', async ({ page }) => {
+    const scheduled = new ScheduledPage(page);
+    const detail = new JobDetailPage(page);
+    await scheduled.goto();
+    await scheduled.openJob(MOCK_JOB);
+    await detail.openRun(0);
+    await expect(detail.drawer.getByTestId(TEST_IDS.transcript)).toBeVisible();
+    expect(await widthOf(detail.drawer)).toBe(SHEET_WIDTH.runDrawer);
+
+    await page.setViewportSize({ width: DRAWER_WIDTH, height: VIEWPORT_HEIGHT });
+    expect(await widthOf(detail.drawer)).toBe(DRAWER_WIDTH);
+
+    const sidebar = new SidebarPage(page);
+    await sidebar.goto();
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    const navigation = page.locator('[data-slot="sheet-content"][data-side="left"]');
+    await expect(navigation.getByRole('navigation', { name: 'Primary' })).toBeVisible();
+    expect(await widthOf(navigation)).toBe(SHEET_WIDTH.sidebar);
   });
 
   /**

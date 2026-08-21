@@ -89,15 +89,15 @@ afterEach(async () => {
 });
 
 describe('createGitRunner', () => {
+  /** The runner is how every other module talks to git. */
   it('reports the output of a successful command', async () => {
-    // The runner is how every other module talks to git.
     const result = await createGitRunner().run(['--version'], { cwd, env });
     expect(result.code).toBe(0);
     expect(result.stdout).toMatch(/^git version /);
   });
 
+  /** Callers such as `list_dir` branch on the code; an exception would be in the way. */
   it('reports a non-zero exit as data rather than throwing', async () => {
-    // Callers such as `list_dir` branch on the code; an exception would be in the way.
     const result = await createGitRunner().run(['rev-parse', '--is-inside-work-tree'], {
       cwd,
       env,
@@ -106,8 +106,8 @@ describe('createGitRunner', () => {
     expect(result.stderr).toContain('not a git repository');
   });
 
+  /** Without git on the PATH the turn should fail with a message, not an unhandled rejection. */
   it('reports a binary that will not start', async () => {
-    // Without git on the PATH the turn should fail with a message, not an unhandled rejection.
     const { spawn } = scriptedSpawn({ error: new Error('spawn git ENOENT') });
     await expect(createGitRunner(spawn).run(['status'], { cwd, env })).resolves.toStrictEqual({
       code: null,
@@ -116,17 +116,19 @@ describe('createGitRunner', () => {
     });
   });
 
+  /** A hung clone must not pin the turn until its wall-clock limit. */
   it('kills a command that outlives its timeout', async () => {
-    // A hung clone must not pin the turn until its wall-clock limit.
     const { spawn, kills } = scriptedSpawn({ hang: true });
     const result = await createGitRunner(spawn).run(['clone', 'x'], { cwd, env, timeoutMs: 5 });
     expect(kills).toStrictEqual(['SIGKILL']);
     expect(result.code).toBeNull();
   });
 
+  /**
+   * `list_dir` runs `ls-files` in a directory the model chose, over a checkout whose size the
+   * repository decides: without the cap the whole listing is accumulated in the runtime's heap.
+   */
   it('stops keeping output once a command passes the byte cap', async () => {
-    // `list_dir` runs `ls-files` in a directory the model chose, over a checkout whose size the
-    // repository decides: without the cap the whole listing is accumulated in the runtime's heap.
     const chunk = 'x'.repeat(1024 * 1024);
     const chunks = Array.from({ length: 9 }, () => chunk);
     const { spawn } = scriptedSpawn({ stdout: chunks });
@@ -135,36 +137,36 @@ describe('createGitRunner', () => {
     expect(result.stdout.length).toBe(MAX_GIT_OUTPUT_BYTES);
   });
 
+  /** The cap must be invisible to every legitimate command, which is all of them. */
   it('keeps output that stays within the byte cap', async () => {
-    // The cap must be invisible to every legitimate command, which is all of them.
     const { spawn } = scriptedSpawn({ stdout: ['a\0b\0'] });
     const result = await createGitRunner(spawn).run(['ls-files', '-z'], { cwd, env });
     expect(result.stdout).toBe('a\0b\0');
   });
 
+  /** The default has to cover a full-depth clone over a slow link and still be finite. */
   it('bounds a command that names no timeout', () => {
-    // The default has to cover a full-depth clone over a slow link and still be finite.
     expect(DEFAULT_GIT_TIMEOUT_MS).toBe(600_000);
   });
 });
 
 describe('gitOrThrow', () => {
+  /** Callers use the output directly as a sha or a branch name. */
   it('returns the trimmed output of a successful command', async () => {
-    // Callers use the output directly as a sha or a branch name.
     await expect(gitOrThrow(createGitRunner(), ['--version'], { cwd, env })).resolves.toMatch(
       /^git version \S/,
     );
   });
 
+  /** Preparation maps this straight to a failed turn, so the message has to be readable. */
   it('throws a GitError naming the subcommand and the first line of stderr', async () => {
-    // Preparation maps this straight to a failed turn, so the message has to be readable.
     const promise = gitOrThrow(createGitRunner(), ['rev-parse', 'HEAD'], { cwd, env });
     await expect(promise).rejects.toBeInstanceOf(GitError);
     await expect(promise).rejects.toThrow('git rev-parse failed: fatal:');
   });
 
+  /** A runaway command must not be able to push an unbounded string into an event. */
   it('carries the exit code and a capped stderr on the error', async () => {
-    // A runaway command must not be able to push an unbounded string into an event.
     const { spawn } = scriptedSpawn({ exitCode: 128 });
     const error = await gitOrThrow(createGitRunner(spawn), ['fetch'], { cwd, env }).catch(
       (caught: unknown) => caught,

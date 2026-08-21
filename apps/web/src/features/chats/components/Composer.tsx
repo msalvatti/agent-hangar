@@ -36,6 +36,19 @@ export interface ComposerBaseProps {
   busy?: boolean;
   /** Locks the composer for a reason other than a request (e.g. an archived chat). */
   disabled?: boolean;
+  /**
+   * Why the composer is locked, announced in place of the missing-field hint while `disabled`.
+   *
+   * A locked textarea carries the native `disabled` attribute, so the browser dispatches no key
+   * events into it at all — a person pressing Enter sees nothing happen and has no way to tell a
+   * deliberate lock from a broken one. That was reported as "Enter is swallowed in the composer",
+   * and the composer's key handling was never involved.
+   *
+   * Left `undefined` when something else on screen already gives the reason: an archived chat has
+   * its banner and a missing dependency has its notice, and repeating either here would announce a
+   * change that has not happened.
+   */
+  disabledReason?: string | undefined;
   /** Model id shown bottom-left; `undefined` renders a skeleton, `null` renders nothing. */
   model?: string | null | undefined;
   placeholder?: string;
@@ -123,20 +136,24 @@ const SUBMIT_HINT = {
  * condition, so the button and its explanation cannot drift apart: whatever shuts the button is by
  * construction the thing the user is told about.
  *
- * A locked composer returns nothing. Being busy is already shown by the spinner, and the reason a
- * composer is `disabled` — an archived chat — is stated by the banner above it; repeating either
- * one here would announce a change that has not happened.
+ * A busy composer returns nothing, because the spinner already shows it. A locked one returns
+ * whatever the caller gave as {@link ComposerBaseProps.disabledReason} — the sentence is the whole
+ * point of the lock being visible at all, since the textarea is inert and cannot be asked.
  *
- * The checks run in the order the composer is filled in, and only the first is reported: with no
- * repository chosen there is no branch either, and naming both would bury the one action to take.
+ * The remaining checks run in the order the composer is filled in, and only the first is reported:
+ * with no repository chosen there is no branch either, and naming both would bury the one action
+ * to take.
  *
  * @param props - The composer's props, whose placement decides whether targets are required.
- * @param locked - Whether the composer is busy or externally disabled.
+ * @param busy - Whether a request of this composer's own is in flight.
  * @returns The sentence to announce, or `null` when nothing is missing.
  */
-function submitBlockedReason(props: ComposerProps, locked: boolean): string | null {
-  if (locked) {
+function submitBlockedReason(props: ComposerProps, busy: boolean): string | null {
+  if (busy) {
     return null;
+  }
+  if (props.disabled === true) {
+    return props.disabledReason ?? null;
   }
   // Gated on the placement, not merely on the value: a follow-up inherits the chat's repository
   // and branch, so telling that user to choose a repository would be wrong as well as useless.
@@ -175,7 +192,7 @@ export function Composer(props: ComposerProps) {
   useAutogrow(ref, value);
 
   const locked = busy || disabled;
-  const blockedReason = submitBlockedReason(props, locked);
+  const blockedReason = submitBlockedReason(props, busy);
   const canSubmit = !locked && blockedReason === null;
   const hintId = `${promptId}-submit-hint`;
 

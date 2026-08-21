@@ -56,11 +56,20 @@ export interface MockStore {
  * lookup can't miss). */
 type SeededRepoName = 'acme/api' | 'acme/web' | 'acme/docs' | 'acme/infra';
 
+/**
+ * Branches per seeded repository, in the order the forge reports them.
+ *
+ * GitHub's branch listing is alphabetical and the client forwards it untouched, so `acme/api` is
+ * seeded the way that repository really reads: an agent work branch first, the default branch
+ * last. Anything that reaches for the first entry when it means the default branch is wrong on
+ * this fixture, which is the point — that mistake pinned a schedule to a throwaway branch, and a
+ * fixture that put `main` at the front could not have shown it.
+ */
 const REPO_BRANCHES: Record<SeededRepoName, BranchSummary[]> = {
   'acme/api': [
-    { name: 'main', sha: 'a1b2c3d4e5f6', protected: true },
-    { name: 'develop', sha: 'b2c3d4e5f6a1', protected: false },
     { name: 'agent/k3x9', sha: 'c3d4e5f6a1b2', protected: false },
+    { name: 'develop', sha: 'b2c3d4e5f6a1', protected: false },
+    { name: 'main', sha: 'a1b2c3d4e5f6', protected: true },
   ],
   'acme/web': [{ name: 'main', sha: 'd4e5f6a1b2c3', protected: true }],
   'acme/docs': [{ name: 'master', sha: 'e5f6a1b2c3d4', protected: false }],

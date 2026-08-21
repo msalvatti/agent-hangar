@@ -51,13 +51,20 @@ describe('GET /api/repos', () => {
 });
 
 describe('GET /api/repos/branches', () => {
-  // The response satisfies the contract schema, default branch listed first.
-  it('returns branches with the default branch first', async () => {
+  /**
+   * Rule this protects: the double answers with the forge's own order and sorts nothing.
+   *
+   * The real route hands back whatever the GitHub client read, and GitHub lists branches
+   * alphabetically — so `agent/k3x9` comes before `main` and the repository's default branch is
+   * last. A double that lifted the default to the front would let anything reading position zero
+   * look correct here and pin a schedule to a throwaway work branch in production, which is the
+   * defect this fixture exists to be able to reproduce.
+   */
+  it('returns branches in the forge order, default branch not first', async () => {
     const response = await fetch('/api/repos/branches?repo=acme/api');
     expect(response.status).toBe(200);
     const body = listBranchesResponse.parse(await response.json());
-    expect(body.branches[0]?.name).toBe('main');
-    expect(body.branches.map((branch) => branch.name)).toContain('agent/k3x9');
+    expect(body.branches.map((branch) => branch.name)).toEqual(['agent/k3x9', 'develop', 'main']);
   });
 
   // Every branch satisfies branchSummary on its own too (defence against a partial mock shape).

@@ -70,9 +70,11 @@ function unreachedFactories(): { factories: ProviderFactories; calls: () => numb
 }
 
 describe('runCli', () => {
+  /**
+   * CI smoke-tests the image with exactly this command, and it must answer from the bundle alone:
+   * reading a version is not a reason to construct anything that reads a credential.
+   */
   it.each(['--version', '-v'])('prints the runtime version for %s and exits 0', async (flag) => {
-    // CI smoke-tests the image with exactly this command, and it must answer from the bundle
-    // alone: reading a version is not a reason to construct anything that reads a credential.
     const { io, stdout } = testIo();
     const { factories, calls } = unreachedFactories();
     await expect(runCli([flag], io, { providerFactories: factories })).resolves.toBe(EXIT.ok);
@@ -80,9 +82,11 @@ describe('runCli', () => {
     expect(calls()).toBe(0);
   });
 
+  /**
+   * Empty stdin is the shortest path through the turn command; the exit code proves it ran. It also
+   * stops before the provider, which is what lets the wiring here refuse to build one.
+   */
   it('dispatches the turn command and passes the overrides through', async () => {
-    // Empty stdin is the shortest path through the turn command; the exit code proves it ran.
-    // It also stops before the provider, which is what lets the wiring here refuse to build one.
     const { io, stdout } = testIo();
     const { factories, calls } = unreachedFactories();
     await expect(
@@ -92,11 +96,13 @@ describe('runCli', () => {
     expect(calls()).toBe(0);
   });
 
+  /**
+   * A wrong invocation must not look like a completed turn to the worker, and must not build
+   * anything on its way to saying so.
+   */
   it.each([['unknown command', ['nope']] as const, ['no arguments', [] as const] as const])(
     'prints usage on stderr and exits 64 for %s',
     async (_name, argv) => {
-      // A wrong invocation must not look like a completed turn to the worker, and must not
-      // build anything on its way to saying so.
       const { io, stdout, stderr } = testIo();
       const { factories, calls } = unreachedFactories();
       await expect(runCli(argv, io, { providerFactories: factories })).resolves.toBe(EXIT.usage);
@@ -108,20 +114,22 @@ describe('runCli', () => {
 });
 
 describe('what runCli asks to be given', () => {
+  /**
+   * The defect this closes was a seam that compiled while empty: an entry point that wired no
+   * provider type-checked, shipped, and failed on the operator's first real turn. The seams a
+   * caller may replace and the wiring a build must supply are now separate types, so leaving the
+   * wiring out is a compile error rather than a run-time surprise. These assertions are checked by
+   * the compiler, not at run time: they are what stops the field going back to optional.
+   */
   it('will not accept the overrides alone, without the provider wiring', () => {
-    // The defect this closes was a seam that compiled while empty: an entry point that wired no
-    // provider type-checked, shipped, and failed on the operator's first real turn. The seams a
-    // caller may replace and the wiring a build must supply are now separate types, so leaving the
-    // wiring out is a compile error rather than a run-time surprise. These assertions are checked
-    // by the compiler, not at run time: they are what stops the field going back to optional.
     expectTypeOf<CliOverrides>().not.toExtend<CliDeps>();
     expectTypeOf<CliDeps>().toExtend<CliOverrides>();
   });
 });
 
 describe('createNodeIo', () => {
+  /** Creating the value must not install handlers or read stdin. */
   it('exposes the process resources and a removable SIGINT registration', () => {
-    // Creating the value must not install handlers or read stdin.
     const before = process.listenerCount('SIGINT');
     const io = createNodeIo();
     expect(io.stdout).toBe(process.stdout);

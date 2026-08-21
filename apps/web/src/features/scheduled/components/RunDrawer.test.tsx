@@ -6,8 +6,13 @@
  * fake `EventSource` for an active run (tool call running → done, final text, pill "Done"); the
  * stop flow hits the cancel endpoint; the header actions stay clear of the sheet's close
  * button; a reconnecting bar shows during reconnection; `expired`
- * triggers a refetch; the raw-output tab shows the output and copies it; Esc closes; the sheet
- * content carries the 720 px width class.
+ * triggers a refetch; the raw-output tab shows the output and copies it; Esc closes.
+ *
+ * The drawer's width is not asserted here and may not be. jsdom resolves no stylesheet, so the
+ * only question this environment can answer is whether a class name is in the attribute — which it
+ * was, while the cascade handed the popup back to the primitive's 384 px and the assertion stayed
+ * green. It is measured where a real engine can answer it, in
+ * `apps/web/e2e/interactive-controls.spec.ts`.
  * Mocks: MSW node server serving `src/mocks/scheduled.ts`; a fake `EventSource` factory; a
  * stubbed `navigator.clipboard`.
  */
@@ -61,13 +66,6 @@ describe('RunDrawer — terminal run', () => {
     expect(await screen.findByText('Done')).toBeInTheDocument();
     expect(await screen.findByText('run_shell')).toBeInTheDocument();
     expect(document.querySelector('[data-tool-status="succeeded"]')).not.toBeNull();
-  });
-
-  /** The sheet content carries the 720 px width class. */
-  it('applies the 720px sheet width class', async () => {
-    render(<RunDrawer runId="run-nightly-success" job={job} open onOpenChange={vi.fn()} />);
-    await screen.findByText('Done');
-    expect(document.querySelector('.sm\\:max-w-\\[720px\\]')).not.toBeNull();
   });
 
   /** The raw-output tab shows the persisted output and copies it. */

@@ -54,25 +54,25 @@ async function play(provider: AgentModelProvider, prompt?: string): Promise<Mode
 }
 
 describe('resolveProviderName', () => {
+  /** A workspace with no explicit setting must not silently run against a fake model. */
   it('defaults to the real provider', () => {
-    // A workspace with no explicit setting must not silently run against a fake model.
     expect(resolveProviderName({})).toBe(DEFAULT_PROVIDER_NAME);
   });
 
+  /** The end-to-end suite and the local demo set this to `fake`. */
   it('honours the environment', () => {
-    // The end-to-end suite and the local demo set this to `fake`.
     expect(resolveProviderName({ AGENT_MODEL_PROVIDER: 'fake' })).toBe('fake');
   });
 });
 
 describe('createProvider with the fake provider', () => {
+  /** This is what makes the end-to-end suite runnable without an API key. */
   it('uses the built-in scripts when the environment supplies none', () => {
-    // This is what makes the end-to-end suite runnable without an API key.
     expect(createProvider('fake', {}, undefined).name).toBe('fake');
   });
 
+  /** A spec that needs its own answer sets AGENT_FAKE_SCRIPT_JSON on the container. */
   it('uses a script supplied through the environment', async () => {
-    // A spec that needs its own answer sets AGENT_FAKE_SCRIPT_JSON on the container.
     const script = { default: [{ events: [{ type: 'text.done', text: 'scripted' }] }] };
     const provider = createProvider(
       'fake',
@@ -91,10 +91,12 @@ describe('createProvider with the fake provider', () => {
     expect(events).toStrictEqual([{ type: 'text.done', text: 'scripted' }]);
   });
 
+  /**
+   * The forwarded script is keyed by prompt, which is the whole reason a caller supplies one: the
+   * built-in script answers different text under the same keys, and answers nothing at all under
+   * keys it does not carry.
+   */
   it('selects the answer the last user message is keyed to', async () => {
-    // The forwarded script is keyed by prompt, which is the whole reason a caller supplies one:
-    // the built-in script answers different text under the same keys, and answers nothing at all
-    // under keys it does not carry.
     const script = {
       'print date': [{ events: [{ type: 'text.done', text: 'The date was printed above.' }] }],
       default: [{ events: [{ type: 'text.done', text: 'Acknowledged.' }] }],
@@ -110,10 +112,12 @@ describe('createProvider with the fake provider', () => {
     ]);
   });
 
+  /**
+   * A step has to be able to carry the credential to prove it is redacted on its way to a row, and
+   * the script itself must not: it is a file, and a file is not where a credential lives. The
+   * workspace already holds the credential, so the substitution happens here.
+   */
   it('fills the credential placeholder from the workspace environment', async () => {
-    // A step has to be able to carry the credential to prove it is redacted on its way to a row,
-    // and the script itself must not: it is a file, and a file is not where a credential lives.
-    // The workspace already holds the credential, so the substitution happens here.
     const script = {
       default: [
         {
@@ -144,9 +148,11 @@ describe('createProvider with the fake provider', () => {
     ]);
   });
 
+  /**
+   * Substituting an empty string would turn a step that asks for the credential into one that
+   * quietly asks for nothing; the literal placeholder is what makes the omission visible.
+   */
   it('leaves the placeholder alone when the workspace holds no credential', async () => {
-    // Substituting an empty string would turn a step that asks for the credential into one that
-    // quietly asks for nothing; the literal placeholder is what makes the omission visible.
     const script = {
       default: [{ events: [{ type: 'text.done', text: GITHUB_CREDENTIAL_PLACEHOLDER }] }],
     };
@@ -161,8 +167,8 @@ describe('createProvider with the fake provider', () => {
     ]);
   });
 
+  /** An empty variable is the same statement as an absent one, and must not be substituted in. */
   it('leaves the placeholder alone when the credential is empty', async () => {
-    // An empty variable is the same statement as an absent one, and must not be substituted in.
     const script = {
       default: [{ events: [{ type: 'text.done', text: GITHUB_CREDENTIAL_PLACEHOLDER }] }],
     };
@@ -177,8 +183,8 @@ describe('createProvider with the fake provider', () => {
     ]);
   });
 
+  /** The value came from the container environment, alongside the credentials. */
   it('refuses a script that is not valid JSON, without quoting it', () => {
-    // The value came from the container environment, alongside the credentials.
     expect(() => createProvider('fake', { AGENT_FAKE_SCRIPT_JSON: '{oops' }, undefined)).toThrow(
       new ConfigError('AGENT_FAKE_SCRIPT_JSON is not valid JSON'),
     );
@@ -186,16 +192,16 @@ describe('createProvider with the fake provider', () => {
 });
 
 describe('createProvider with the openai provider', () => {
+  /** The runtime never reads the OpenAI SDK itself; the composition supplies the factory. */
   it('builds it through the injected factory with the key from the environment', () => {
-    // The runtime never reads the OpenAI SDK itself; the composition supplies the factory.
     const openai = vi.fn((_options: ProviderFactoryOptions) => stubProvider);
     const provider = createProvider('openai', { OPENAI_API_KEY: OPENAI_CANARY }, { openai });
     expect(provider).toBe(stubProvider);
     expect(openai).toHaveBeenCalledWith({ apiKey: OPENAI_CANARY });
   });
 
+  /** Local proxies and compatible gateways are configured this way. */
   it('passes an alternative endpoint when the environment names one', () => {
-    // Local proxies and compatible gateways are configured this way.
     const openai = vi.fn((_options: ProviderFactoryOptions) => stubProvider);
     createProvider(
       'openai',
@@ -208,19 +214,21 @@ describe('createProvider with the openai provider', () => {
     });
   });
 
+  /**
+   * A build that composed no factories is the state that shipped once and failed on the operator's
+   * first real turn; it stays a named failure rather than an undefined dereference.
+   */
   it('reports that this build has no factory wired in', () => {
-    // A build that composed no factories is the state that shipped once and failed on the
-    // operator's first real turn; it stays a named failure rather than an undefined dereference.
     expect(() => createProvider('openai', { OPENAI_API_KEY: OPENAI_CANARY }, undefined)).toThrow(
       /not wired into this build/,
     );
   });
 
+  /** Settings is where the operator fixes this, and the UI links there from the failure. */
   it.each([
     ['no key at all', {}],
     ['an empty key', { OPENAI_API_KEY: '' }],
   ])('reports %s before calling the factory', (_name, env) => {
-    // Settings is where the operator fixes this, and the UI links there from the failure.
     const openai = vi.fn((_options: ProviderFactoryOptions) => stubProvider);
     expect(() => createProvider('openai', env, { openai })).toThrow(/OPENAI_API_KEY is not set/);
     expect(openai).not.toHaveBeenCalled();
@@ -228,8 +236,8 @@ describe('createProvider with the openai provider', () => {
 });
 
 describe('createProvider with an unknown name', () => {
+  /** The message becomes a persisted, displayed event. */
   it('names the valid values without echoing the configured one', () => {
-    // The message becomes a persisted, displayed event.
     expect(() => createProvider('anthropic', {}, undefined)).toThrow(
       new ConfigError('AGENT_MODEL_PROVIDER must be "openai" or "fake"'),
     );

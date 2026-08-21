@@ -73,15 +73,15 @@ function recordingStream(options: { slow?: boolean } = {}): {
 }
 
 describe('readTurnRequest', () => {
+  /** The common case: the worker writes the whole request and closes stdin. */
   it('parses a request delivered in a single chunk', async () => {
-    // The common case: the worker writes the whole request and closes stdin.
     await expect(readTurnRequest(chunks(`${JSON.stringify(request)}\n`))).resolves.toStrictEqual(
       request,
     );
   });
 
+  /** Pipes split writes arbitrarily; the codec buffers partial lines. */
   it('parses a request split across chunks', async () => {
-    // Pipes split writes arbitrarily; the codec buffers partial lines.
     const line = `${JSON.stringify(request)}\n`;
     const middle = Math.floor(line.length / 2);
     await expect(
@@ -89,29 +89,29 @@ describe('readTurnRequest', () => {
     ).resolves.toStrictEqual(request);
   });
 
+  /** The rejected bytes come from the host pipe and must never be echoed back. */
   it('rejects a first line that is not valid JSON, naming only the reason and the length', async () => {
-    // The rejected bytes come from the host pipe and must never be echoed back.
     const promise = readTurnRequest(chunks('not json\n'));
     await expect(promise).rejects.toBeInstanceOf(ProtocolError);
     await expect(promise).rejects.toThrow('invalid-json (line of 8 characters)');
   });
 
+  /** A wrong protocol version or a missing field is a schema violation, not a JSON error. */
   it('rejects a first line that is valid JSON but violates the schema', async () => {
-    // A wrong protocol version or a missing field is a schema violation, not a JSON error.
     await expect(readTurnRequest(chunks('{"protocolVersion":2}\n'))).rejects.toThrow(
       'schema-violation',
     );
   });
 
+  /** Without a turn id no event can be emitted, so the runtime can only exit with a diagnostic. */
   it('rejects an empty stdin', async () => {
-    // Without a turn id no event can be emitted, so the runtime can only exit with a diagnostic.
     await expect(readTurnRequest(chunks())).rejects.toThrow('no TurnRequest received on stdin');
   });
 });
 
 describe('createEventWriter', () => {
+  /** The worker parses stdout as NDJSON: exactly one object per line, terminated by \n. */
   it('writes one redacted JSON line per event', async () => {
-    // The worker parses stdout as NDJSON: exactly one object per line, terminated by \n.
     const { stream, text } = recordingStream();
     const writer = createEventWriter(stream, createRuntimeRedactor({ values: [GITHUB_CANARY] }));
     await writer.emit({ type: 'assistant.delta', text: `token ${GITHUB_CANARY}` });
@@ -125,8 +125,8 @@ describe('createEventWriter', () => {
     assertNoCanary(text());
   });
 
+  /** A full pipe must not be overrun; the next event waits for the previous one to flush. */
   it('paces writes so a slow stream is never offered the next line early', async () => {
-    // A full pipe must not be overrun; the next event waits for the previous one to flush.
     const { stream, chunks } = recordingStream({ slow: true });
     const writer = createEventWriter(stream, createRuntimeRedactor());
     const first = writer.emit({ type: 'step.started', step: 1 });
@@ -139,8 +139,8 @@ describe('createEventWriter', () => {
     expect(chunks).toHaveLength(2);
   });
 
+  /** Tool output and model deltas are emitted from different call sites at the same time. */
   it('keeps concurrent emits in order and never interleaves two lines', async () => {
-    // Tool output and model deltas are emitted from different call sites at the same time.
     const { stream, chunks } = recordingStream({ slow: true });
     const writer = createEventWriter(stream, createRuntimeRedactor());
     await Promise.all(
@@ -154,11 +154,13 @@ describe('createEventWriter', () => {
     ]);
   });
 
+  /**
+   * A poisoned promise chain would make every later event reject with the first failure and never
+   * be attempted, hiding the real state of the pipe from the loop. No `error` listener is added
+   * here on purpose: the writer installs its own, and without it the stream's own report of the
+   * same failure would reach the process as an uncaught exception.
+   */
   it('reports a write failure to its own caller and does not replay it on the next emit', async () => {
-    // A poisoned promise chain would make every later event reject with the first failure and
-    // never be attempted, hiding the real state of the pipe from the loop. No `error` listener is
-    // added here on purpose: the writer installs its own, and without it the stream's own report
-    // of the same failure would reach the process as an uncaught exception.
     const stream = new Writable({
       write(_chunk: Buffer, _encoding, callback) {
         callback(new Error('pipe closed'));
@@ -171,8 +173,8 @@ describe('createEventWriter', () => {
     );
   });
 
+  /** The loop uses this to decide when a heartbeat is due. */
   it('reports the timestamp of the last completed write', async () => {
-    // The loop uses this to decide when a heartbeat is due.
     const { stream } = recordingStream({});
     const clock = [100, 200];
     let index = 0;
@@ -184,16 +186,16 @@ describe('createEventWriter', () => {
 });
 
 describe('createDiagnostics', () => {
+  /** Diagnostics reach the worker's debug log, so they need the same redaction as events. */
   it('writes one redacted line per message', () => {
-    // Diagnostics reach the worker's debug log, so they need the same redaction as events.
     const { stream, text } = recordingStream();
     const diag = createDiagnostics(stream, createRuntimeRedactor({ values: [GITHUB_CANARY] }));
     diag(`clone failed for ${GITHUB_CANARY}`);
     expect(text()).toBe(`clone failed for ${REDACTED}\n`);
   });
 
+  /** Losing stderr must never take down a turn that is otherwise fine. */
   it('swallows a write failure', () => {
-    // Losing stderr must never take down a turn that is otherwise fine.
     const stream = new Writable({
       write() {
         throw new Error('stderr gone');

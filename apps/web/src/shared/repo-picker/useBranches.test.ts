@@ -13,13 +13,24 @@ describe('useBranches', () => {
     expect(result.current.status).toBe('idle');
   });
 
-  // With a repo, it fetches and returns the seeded branches, default branch first.
+  /**
+   * With a repo, it fetches and hands the listing back in the order the route sent it.
+   *
+   * The order is the assertion, not an incidental detail: this hook sorts nothing and must not, so
+   * that the picker above it chooses the default branch by name. The seeded listing is the forge's
+   * own — alphabetical, so `main` is last — and an implementation that reordered it towards the
+   * default would fail here rather than hide the position a caller must never trust.
+   */
   it('fetches branches once a repo is chosen', async () => {
     const { result } = renderHook(() => useBranches('acme/api'));
     await waitFor(() => {
       expect(result.current.status).toBe('success');
     });
-    expect(result.current.data?.branches[0]?.name).toBe('main');
+    expect(result.current.data?.branches.map((branch) => branch.name)).toEqual([
+      'agent/k3x9',
+      'develop',
+      'main',
+    ]);
   });
 
   // `refetch()` has no `enabled` guard of its own (unlike the query's automatic effects), so a

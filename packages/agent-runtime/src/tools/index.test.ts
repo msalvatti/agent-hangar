@@ -39,15 +39,15 @@ afterEach(async () => {
 });
 
 describe('TOOL_DEFINITIONS', () => {
+  /** The worker validates every `tool.call` against the same union of names. */
   it('publishes exactly the tools the protocol contract names', () => {
-    // The worker validates every `tool.call` against the same enum.
     expect(TOOL_DEFINITIONS.map((definition) => definition.name)).toStrictEqual([
       ...toolNameSchema.options,
     ]);
   });
 
+  /** A provider asked for strict function calling rejects anything looser. */
   it('gives every tool a description and a strict parameter schema', () => {
-    // A provider asked for strict function calling rejects anything looser.
     for (const definition of TOOL_DEFINITIONS) {
       expect(definition.description.length).toBeGreaterThan(0);
       expect(definition.parameters.additionalProperties).toBe(false);
@@ -56,8 +56,8 @@ describe('TOOL_DEFINITIONS', () => {
 });
 
 describe('createToolExecutor', () => {
+  /** The loop needs the command to decide whether a push happened. */
   it('dispatches a run_shell call and reports the command back', async () => {
-    // The loop needs the command to decide whether a push happened.
     const result = await executor.execute('run_shell', {
       command: 'echo hello',
       cwd: null,
@@ -66,8 +66,8 @@ describe('createToolExecutor', () => {
     expect(result).toMatchObject({ status: 'SUCCEEDED', output: 'hello\n', command: 'echo hello' });
   });
 
+  /** The two halves of the model's normal edit cycle. */
   it('dispatches a write_file call and then a read_file call', async () => {
-    // The two halves of the model's normal edit cycle.
     await executor.execute('write_file', { path: 'NOTES.md', content: '# Notes\n' });
     await expect(readFile(path.join(root, 'NOTES.md'), 'utf8')).resolves.toBe('# Notes\n');
     const read = await executor.execute('read_file', {
@@ -78,15 +78,15 @@ describe('createToolExecutor', () => {
     expect(read.output).toContain('1\t# Notes');
   });
 
+  /** The listing is usually the model's first move in a fresh workspace. */
   it('dispatches a list_dir call', async () => {
-    // The listing is usually the model's first move in a fresh workspace.
     await executor.execute('write_file', { path: 'a.txt', content: 'x' });
     const result = await executor.execute('list_dir', { path: null, depth: null });
     expect(result.output).toBe('a.txt');
   });
 
+  /** The name came from a model that had read untrusted repository content. */
   it('fails an unknown tool without echoing the name the model invented', async () => {
-    // The name came from a model that had read untrusted repository content.
     const result = await executor.execute('rm_rf', { path: '/' });
     expect(result).toMatchObject({
       status: 'FAILED',
@@ -94,8 +94,8 @@ describe('createToolExecutor', () => {
     });
   });
 
+  /** The model sees the failure as a tool result and corrects itself on the next step. */
   it('fails a call whose arguments do not match the schema', async () => {
-    // The model sees the failure as a tool result and corrects itself on the next step.
     const result = await executor.execute('read_file', {
       path: 42,
       startLine: null,
@@ -105,8 +105,8 @@ describe('createToolExecutor', () => {
     expect(result.output).toContain('invalid arguments for read_file: path:');
   });
 
+  /** Nothing guarantees the model sends an object; the problem then has no property to name. */
   it('fails a call whose arguments are not an object at all', async () => {
-    // Nothing guarantees the model sends an object; the problem then has no property to name.
     const result = await executor.execute('list_dir', 'everything');
     expect(result.status).toBe('FAILED');
     expect(result.output).toBe(
@@ -114,8 +114,8 @@ describe('createToolExecutor', () => {
     );
   });
 
+  /** Zod quotes the offending keys, and the model chose them from repository content. */
   it('reports how many unrecognised arguments there were, never their names', async () => {
-    // Zod quotes the offending keys, and the model chose them from repository content.
     const result = await executor.execute('write_file', {
       path: 'a.txt',
       content: 'x',
@@ -125,8 +125,8 @@ describe('createToolExecutor', () => {
     expect(result.output).toBe('invalid arguments for write_file: 2 unrecognized argument(s)');
   });
 
+  /** The loop passes hooks so the transcript can show output as it arrives. */
   it('streams shell output through the hook when the caller supplies one', async () => {
-    // The loop passes hooks so the transcript can show output as it arrives.
     const streamed: string[] = [];
     await executor.execute(
       'run_shell',
@@ -136,8 +136,8 @@ describe('createToolExecutor', () => {
     expect(streamed.join('')).toBe('streamed\n');
   });
 
+  /** A dependency that fails outright must not take a recoverable turn down with it. */
   it('turns an exception from a tool into a failed result', async () => {
-    // A dependency that fails outright must not take a recoverable turn down with it.
     const broken = createToolExecutor({
       ...context,
       git: {
