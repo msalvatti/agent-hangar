@@ -5,7 +5,6 @@
  */
 'use client';
 
-import Link from 'next/link';
 import { useCallback, useRef, useState } from 'react';
 
 import { ErrorCard } from '@/shared/feedback';
@@ -13,6 +12,7 @@ import { PageHeader } from '@/shared/shell/PageHeader';
 import { assertPresent } from '@/shared/transcript';
 import type { CreateEventSource } from '@/shared/transcript';
 import { Button } from '@/shared/ui/button';
+import { ButtonLink } from '@/shared/ui/button-link';
 
 import { useChat } from '../hooks/useChat';
 import { useChatActions } from '../hooks/useChatActions';
@@ -58,9 +58,9 @@ export function ChatView({ chatId, createEventSource }: ChatViewProps) {
           message="This chat no longer exists."
           className="m-6"
           actions={
-            <Button render={<Link href="/chats/new" />} variant="outline" size="sm">
+            <ButtonLink href="/chats/new" variant="outline" size="sm">
               Start a new chat
-            </Button>
+            </ButtonLink>
           }
         />
       </>
