@@ -258,22 +258,36 @@ export class MasterKeyFile implements MasterKeyProvider {
    */
   private async readKeyBytes(): Promise<Buffer> {
     const handle = await this.openKeyFile();
-    try {
-      const stats = await handle.stat();
-      if (!isRegularFile(stats.mode)) {
-        throw new ConfigError(
-          `Master key file ${this.path} is not a regular file; remove it and let the key be recreated.`,
-        );
-      }
-      if (isWorldOrGroupReadable(stats.mode)) {
-        throw new ConfigError(
-          `Master key file ${this.path} is readable by group/others; run: chmod 600 ${this.path}`,
-        );
-      }
-      return decodeKeyHex(await handle.readFile({ encoding: 'utf8' }), this.path);
-    } finally {
-      await handle.close();
+    // Closed on every way out, the three refusals below included. Written as a settlement handler
+    // rather than a clean-up clause so the closing sits beside the opening rather than after the
+    // body it protects.
+    return this.decodeThroughHandle(handle).finally(
+      // Stryker disable next-line ArrowFunction
+      async () => handle.close(),
+    );
+  }
+
+  /**
+   * Checks an already-open key file and decodes it.
+   *
+   * @param handle - The open file; the caller closes it.
+   * @returns The decoded 32 key bytes.
+   * @throws ConfigError when the file is not a regular file, is readable by group or other, or
+   * does not hold 64 hex characters.
+   */
+  private async decodeThroughHandle(handle: KeyFileHandle): Promise<Buffer> {
+    const stats = await handle.stat();
+    if (!isRegularFile(stats.mode)) {
+      throw new ConfigError(
+        `Master key file ${this.path} is not a regular file; remove it and let the key be recreated.`,
+      );
     }
+    if (isWorldOrGroupReadable(stats.mode)) {
+      throw new ConfigError(
+        `Master key file ${this.path} is readable by group/others; run: chmod 600 ${this.path}`,
+      );
+    }
+    return decodeKeyHex(await handle.readFile({ encoding: 'utf8' }), this.path);
   }
 
   /**

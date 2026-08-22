@@ -217,7 +217,7 @@ describe('what the message repository asks the database for', () => {
 
     await repo.listByChat('chat-1', options);
 
-    expect(findMany.mock.calls[0]?.[0]).toStrictEqual({
+    expect((findMany.mock.calls as unknown[][])[0]?.[0]).toStrictEqual({
       where: { chatId: 'chat-1' },
       orderBy: { seq: 'desc' },
       ...(take === undefined ? {} : { take }),

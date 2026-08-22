@@ -369,7 +369,7 @@ describe('what the turn repository reports and returns', () => {
     const repo = new PrismaTurnRepository(client, fakeRedactor);
 
     const failure = await repo
-      .create({ chatId: 'chat-1', model: 'gpt', queueJobId: null })
+      .create({ chatId: 'chat-1', model: 'gpt' })
       .catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(NotFoundError);
@@ -387,7 +387,7 @@ describe('what the turn repository reports and returns', () => {
     const repo = new PrismaTurnRepository(client, fakeRedactor);
 
     const failure = await repo
-      .create({ chatId: 'chat-1', model: 'gpt', queueJobId: null })
+      .create({ chatId: 'chat-1', model: 'gpt' })
       .catch((error: unknown) => error);
 
     expect((failure as NotFoundError).entity).toBe('Turn');

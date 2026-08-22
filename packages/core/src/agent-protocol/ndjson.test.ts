@@ -358,3 +358,66 @@ describe('parseNdjsonStream', () => {
     ]);
   });
 });
+
+describe('what the parser tolerates and where it draws the line', () => {
+  /**
+   * A carriage return is stripped from the end of a line, where a `\r\n` producer puts it — not
+   * from the middle, where it is part of the text a tool wrote and the JSON quoted.
+   */
+  it('strips a carriage return only from the end of a line', () => {
+    const parser = createNdjsonParser(agentEventSchema);
+
+    const items = parser.push(`${JSON.stringify({ type: 'assistant.delta', text: 'a\rb' })}\r\n`);
+
+    expect(items).toStrictEqual([{ type: 'assistant.delta', text: 'a\rb' }]);
+  });
+
+  /**
+   * The cap is the longest line the parser will assemble, not the first length it refuses: a line
+   * of exactly that many characters is one the producer was entitled to write, and measured one
+   * short of it the parser condemns a line it should have parsed.
+   */
+  it('assembles a line of exactly the maximum length', () => {
+    const parser = createNdjsonParser(agentEventSchema);
+    const filler = 'x'.repeat(
+      PROTOCOL_MAX_LINE_LENGTH - JSON.stringify({ type: 'assistant.delta', text: '' }).length,
+    );
+    const line = JSON.stringify({ type: 'assistant.delta', text: filler });
+
+    expect(parser.push(`${line}\n`)).toStrictEqual([{ type: 'assistant.delta', text: filler }]);
+  });
+
+  /**
+   * The cap binds a line that is still being assembled as well as a complete one: exactly the
+   * maximum is a line the producer was entitled to write, and measured one short of it the parser
+   * condemns the longest legitimate line there is.
+   */
+  it.each([
+    ['at the maximum', 0, false],
+    ['one character past it', 1, true],
+  ])('condemns a partial line %s: %s', (_case, extra, condemned) => {
+    const parser = createNdjsonParser(agentEventSchema);
+
+    const items = parser.push('x'.repeat(PROTOCOL_MAX_LINE_LENGTH + extra));
+
+    expect(items.some((item) => JSON.stringify(item).includes('line-too-long'))).toBe(condemned);
+  });
+
+  /**
+   * A chunk boundary can fall inside a multi-byte character, and the decoder is told to expect
+   * more: decoded on its own each half becomes a replacement character, and what the transcript
+   * shows is not what the agent wrote.
+   */
+  it('reassembles a character split across two chunks', () => {
+    const parser = createNdjsonParser(agentEventSchema);
+    const bytes = new TextEncoder().encode(
+      `${JSON.stringify({ type: 'assistant.delta', text: 'café' })}\n`,
+    );
+    const split = bytes.indexOf(0xc3);
+
+    parser.push(bytes.subarray(0, split + 1));
+    const items = parser.push(bytes.subarray(split + 1));
+
+    expect(items).toStrictEqual([{ type: 'assistant.delta', text: 'café' }]);
+  });
+});

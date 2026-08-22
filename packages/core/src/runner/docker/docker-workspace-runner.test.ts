@@ -943,7 +943,11 @@ describe('what the runner reads back from the daemon', () => {
     docker.containers.set('c-empty', {
       options: { Labels: { 'ah.instance': 'test', 'ah.workspace': '' } },
       running: true,
+      startedAt: '2026-01-01T00:00:00.000Z',
+      oomKilled: false,
       execCommands: [],
+      archives: [],
+      archivesAfterStart: [],
     });
 
     const listed = await runner.list({});

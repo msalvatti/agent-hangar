@@ -229,7 +229,14 @@ describe('what the tool-call log refuses and reports', () => {
     const repo = new PrismaToolCallLogRepository(client, fakeRedactor);
 
     await expect(
-      repo.start({ callId: 'c1', seq: 0, toolName: 'run_shell', args: {}, ...parents }),
+      repo.start({
+        workspaceId: 'ws-1',
+        callId: 'c1',
+        seq: 0,
+        toolName: 'run_shell',
+        args: {},
+        ...parents,
+      }),
     ).rejects.toThrow('StartToolCallInput must set exactly one of turnId or jobRunId.');
   });
 
@@ -239,7 +246,13 @@ describe('what the tool-call log refuses and reports', () => {
     const repo = new PrismaToolCallLogRepository(client, fakeRedactor);
 
     const failure = await repo
-      .finish('log-1', { status: 'SUCCEEDED', exitCode: 0, resultHead: null, resultBytes: 0 })
+      .finish('log-1', {
+        status: 'SUCCEEDED',
+        exitCode: 0,
+        resultHead: null,
+        resultBytes: 0,
+        durationMs: 5,
+      })
       .catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(NotFoundError);

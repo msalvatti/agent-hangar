@@ -518,7 +518,6 @@ describe('what the workspace repository asks the database for', () => {
     const failure = await repo
       .create({
         kind: 'JOB',
-        chatId: null,
         runnerKind: 'docker',
         image: 'img',
         repoUrl: 'https://github.com/acme/widgets',

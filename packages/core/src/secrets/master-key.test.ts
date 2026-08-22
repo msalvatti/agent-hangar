@@ -56,4 +56,14 @@ describe('StaticMasterKey', () => {
       expect(() => new StaticMasterKey(Buffer.alloc(length))).toThrow(ConfigError);
     },
   );
+
+  /**
+   * The refusal names both the length required and the length received: an operator who generated
+   * a key with the wrong tool needs to see which of the two numbers to change.
+   */
+  it('says how long a master key must be and how long this one was', () => {
+    expect(() => new StaticMasterKey(Buffer.alloc(16))).toThrow(
+      'Master key must be 32 bytes, received 16 bytes.',
+    );
+  });
 });

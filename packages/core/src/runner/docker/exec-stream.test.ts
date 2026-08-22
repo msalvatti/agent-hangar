@@ -764,7 +764,7 @@ describe('what the stream layer refuses and cleans up', () => {
   it('drops a source failure that arrives after the cancellation', async () => {
     const stream = new PassThrough();
     const controller = new AbortController();
-    const source: AsyncIterable<string> = {
+    const source: AsyncIterable<Uint8Array> = {
       [Symbol.asyncIterator]: () => ({
         next: async () => {
           controller.abort();
@@ -787,11 +787,14 @@ describe('what the stream layer refuses and cleans up', () => {
   it('abandons a source that cannot be closed', async () => {
     const stream = new PassThrough();
     const controller = new AbortController();
-    const source: AsyncIterable<string> = {
+    const source: AsyncIterable<Uint8Array> = {
       [Symbol.asyncIterator]: () => ({
         next: async () => {
           controller.abort();
-          return Promise.resolve({ value: 'chunk', done: false });
+          return Promise.resolve({
+            value: new TextEncoder().encode('chunk'),
+            done: false as const,
+          });
         },
       }),
     };

@@ -435,7 +435,7 @@ describe('what the job-run repository asks the database for', () => {
 
     await repo.listByJob('job-1', options);
 
-    expect(jobRun.findMany.mock.calls[0]?.[0]).toStrictEqual({
+    expect((jobRun.findMany.mock.calls as unknown[][])[0]?.[0]).toStrictEqual({
       where: { jobId: 'job-1' },
       orderBy: { queuedAt: 'desc' },
       ...(take === undefined ? {} : { take }),
