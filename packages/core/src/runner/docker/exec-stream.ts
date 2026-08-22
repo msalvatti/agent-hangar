@@ -322,9 +322,9 @@ async function raceAbort<T>(
   signal.addEventListener('abort', onAbort);
   try {
     return await Promise.race([promise, aborted]);
-    // Stryker disable next-line BlockStatement,StringLiteral: a listener left attached would only
-    // resolve a promise that has already settled, and how many listeners a signal carries is not
-    // something anything outside can read — so detaching is tidiness rather than behaviour.
+    // Detached on every way out. This racer runs once per chunk of an async stdin source, so a
+    // listener left behind is not one listener but one per chunk, all held for as long as the
+    // caller holds the signal.
   } finally {
     signal.removeEventListener('abort', onAbort);
   }

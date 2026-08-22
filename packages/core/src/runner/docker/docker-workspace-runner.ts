@@ -232,6 +232,14 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     // still suspended at the `started` yield has somewhere to record itself.
     const record = { cancelled: null as ExecSignal | null };
     this.#liveExecs.set(execRef, record);
+    // Forgotten at the end of this scope, however it is left — returned, thrown out of, or
+    // abandoned by a caller that stops consuming. The entry is replaced by the next exec that takes
+    // this reference, so what this prevents is a map that only grows in a runner that is never
+    // restarted.
+    using _tracked = {
+      // Stryker disable next-line ArrowFunction
+      [Symbol.dispose]: (): void => void this.#liveExecs.delete(execRef),
+    };
     yield { type: 'started', execRef };
 
     try {
@@ -245,15 +253,6 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
             });
       }
       yield { type: 'exit', code: null, signal: 'GONE' };
-      // The entry below is replaced by the next exec that takes this reference, so forgetting it
-      // changes nothing any caller can observe — only how much the map holds for a runner that is
-      // never restarted. Mutation testing therefore cannot kill either the call or the block it
-      // sits in; the call carries a directive saying so, and the block cannot take one, because a
-      // directive binds to a `finally` only between the keyword and its brace and no such line
-      // survives formatting.
-    } finally {
-      // Stryker disable next-line CallExpression
-      this.#liveExecs.delete(execRef);
     }
   }
 

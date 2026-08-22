@@ -10,6 +10,7 @@
  * Mocks: in-memory `PassThrough` streams, injected timer functions and Vitest fake timers; no
  * Docker daemon is involved.
  */
+import { getEventListeners } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -254,6 +255,31 @@ describe('writeStdin', () => {
 
     expect(Buffer.concat(written).toString('utf8')).toBe('abc');
     expect(stream.writableEnded).toBe(true);
+  });
+
+  /**
+   * Every chunk of an async source is raced against the caller's signal, and each race attaches an
+   * abort listener. A race that does not detach its own listener therefore does not leak one
+   * listener but one per chunk, all held for as long as the caller holds the signal — so the count
+   * observed at the top of each pull is the guarantee, not just the count left at the end.
+   */
+  it('holds no more than one abort listener at a time while draining a source', async () => {
+    const stream = new PassThrough();
+    stream.resume();
+    const controller = new AbortController();
+    const attachedBeforeEachPull: number[] = [];
+
+    async function* source(): AsyncIterable<Uint8Array> {
+      for (const byte of [1, 2, 3, 4]) {
+        attachedBeforeEachPull.push(getEventListeners(controller.signal, 'abort').length);
+        yield await Promise.resolve(Buffer.from([byte]));
+      }
+    }
+
+    await writeStdin(stream, source(), controller.signal);
+
+    expect(attachedBeforeEachPull).toStrictEqual([0, 0, 0, 0]);
+    expect(getEventListeners(controller.signal, 'abort')).toStrictEqual([]);
   });
 
   /**

@@ -220,6 +220,9 @@ function statusCodeOf(err: unknown): number | undefined {
     return undefined;
   }
   const { statusCode } = err;
+  // Stryker disable next-line ConditionalExpression: a status that is not a number is compared
+  // strictly against the numbers this module recognises and matches none of them, so handing it on
+  // and refusing it here reach the same answer. This is what narrows it to a number for callers.
   return typeof statusCode === 'number' ? statusCode : undefined;
 }
 
