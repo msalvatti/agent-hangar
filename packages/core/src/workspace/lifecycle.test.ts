@@ -118,6 +118,10 @@ describe('assertTransition', () => {
     expect(() => {
       assertRunTransition('QUEUED', 'SUCCEEDED', 'run-1');
     }).toThrow(IllegalTransitionError);
+    // Naming the run, because a worker handling several of them at once is told which one refused.
+    expect(() => {
+      assertRunTransition('QUEUED', 'SUCCEEDED', 'run-1');
+    }).toThrow('run run-1 cannot transition from QUEUED to SUCCEEDED.');
   });
 
   /**

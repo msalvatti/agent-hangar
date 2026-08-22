@@ -14,7 +14,7 @@ import type { AgentHangarErrorOptions } from '../../errors.ts';
 
 /** The Docker daemon refused an operation, or the workspace could not be driven to a usable state. */
 export class DockerRunnerError extends AgentHangarError {
-  override readonly code = 'DOCKER_RUNNER' as const;
+  declare readonly code: 'DOCKER_RUNNER';
 
   /**
    * @param message - What failed, described with ids and names only — never a secret value.

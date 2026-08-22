@@ -17,7 +17,7 @@ import type { WorkspaceStatus } from './types.ts';
  * invariant forbids.
  */
 export class WorkspaceBusyError extends AgentHangarError {
-  override readonly code = 'WORKSPACE_BUSY' as const;
+  declare readonly code: 'WORKSPACE_BUSY';
   /** Workspace that is not available. */
   readonly workspaceId: string;
   /** Status that made it unavailable. */

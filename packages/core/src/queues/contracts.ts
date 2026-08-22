@@ -178,11 +178,16 @@ export const TURN_EVENT_FIELD = 'event';
 export function parseTurnEventEntry(fields: readonly string[]): AgentEvent | null {
   // Stepping two at a time is what keeps names and values apart: a *value* that happens to read
   // `event` never lands on an even index, so it can never be mistaken for the field name.
+  // Stryker disable next-line EqualityOperator: one position past the end holds nothing, which is
+  // not the field name, so the step that reads it moves on exactly as the bound does.
   for (let index = 0; index < fields.length; index += 2) {
     if (fields[index] !== TURN_EVENT_FIELD) {
       continue;
     }
     const raw = fields[index + 1];
+    // Stryker disable next-line ConditionalExpression,BlockStatement: a name with nothing after it
+    // would reach the parse below as no text at all, which fails the schema exactly as an
+    // unreadable entry does. This is what narrows it to text for that call.
     if (raw === undefined) {
       return null;
     }
@@ -202,8 +207,9 @@ function parseJson(raw: string): unknown {
   try {
     return JSON.parse(raw);
   } catch {
-    // A malformed entry is data, not a fault: `undefined` fails the schema check like any other
-    // invalid payload, and the caller reports it as one unreadable entry.
-    return undefined;
+    // A malformed entry is data, not a fault. Falling out of here answers with nothing, which
+    // fails the schema check like any other invalid payload, and the caller reports it as one
+    // unreadable entry.
   }
+  return undefined;
 }

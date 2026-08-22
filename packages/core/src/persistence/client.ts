@@ -65,7 +65,6 @@ export async function assertDatabaseReachable(
   client: Pick<DatabaseClient, '$queryRaw'>,
   timeoutMs: number = DEFAULT_REACHABILITY_TIMEOUT_MS,
 ): Promise<void> {
-  let timer: NodeJS.Timeout | undefined;
   // Held by identity so the catch can recognise this exact object. Testing `instanceof ConfigError`
   // instead would also wave through a ConfigError raised by the client — and `client` is an
   // injectable interface, so a wrapper rejecting `new ConfigError(connectionString, { cause })`
@@ -73,23 +72,16 @@ export async function assertDatabaseReachable(
   const timedOut = new ConfigError(
     `database unreachable: no answer to SELECT 1 within ${String(timeoutMs)} ms`,
   );
+  // The deadline is a signal rather than a timer of this function's own: the one `AbortSignal`
+  // schedules does not hold the event loop open and needs no clearing, so a probe that answers
+  // first leaves nothing behind to disarm.
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
+    AbortSignal.timeout(timeoutMs).addEventListener('abort', () => {
       reject(timedOut);
-    }, timeoutMs);
+    });
   });
-  // The timer is disarmed on every way out, success and failure alike. Both the race and this
-  // clean-up are internal to one call, so a timer left armed only rejects a promise the race has
-  // already settled and handled — nothing outside can see the difference, which is why the
-  // directive sits where it does.
-  const probe = Promise.race([client.$queryRaw`SELECT 1`, timeout]).finally(
-    // Stryker disable next-line ArrowFunction
-    () => {
-      clearTimeout(timer);
-    },
-  );
   try {
-    await probe;
+    await Promise.race([client.$queryRaw`SELECT 1`, timeout]);
   } catch (error) {
     if (error === timedOut) {
       throw error;

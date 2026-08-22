@@ -77,14 +77,21 @@ function createAbortError(): Error {
  */
 function wait(ms: number, signal: AbortSignal | undefined): Promise<void> {
   return new Promise<void>((resolve, reject) => {
+    // The three clean-ups below cannot be told apart from outside: a promise settles once, so a
+    // timer left armed resolves one that has already rejected, and a listener left attached
+    // rejects one that has already resolved. They are here so this double leaves nothing running
+    // between the tests that drive it.
     const onAbort = (): void => {
+      // Stryker disable next-line CallExpression
       clearTimeout(timer);
       reject(createAbortError());
     };
     const timer = setTimeout(() => {
+      // Stryker disable next-line StringLiteral
       signal?.removeEventListener('abort', onAbort);
       resolve();
     }, ms);
+    // Stryker disable next-line ObjectLiteral,BooleanLiteral
     signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
@@ -112,6 +119,9 @@ async function* replay(
     if (streamOptions?.signal?.aborted === true) {
       throw createAbortError();
     }
+    // Stryker disable next-line ConditionalExpression: a delay of nothing is scheduled for the
+    // next turn of the loop, which is what not waiting at all also does — so waiting anyway
+    // produces the same sequence of events at the same points.
     if (options.delayMs !== undefined) {
       await wait(options.delayMs, streamOptions?.signal);
     }

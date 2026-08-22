@@ -211,6 +211,37 @@ describe('OpenAIModelProvider', () => {
     expect(call?.options?.signal).toBe(controller.signal);
   });
 
+  /**
+   * A turn with no cancellation sends no options object at all. Sent one carrying a signal that is
+   * not there, the SDK is told a cancellation was offered and given nothing to watch.
+   */
+  it('sends no options at all when the turn carries no signal', async () => {
+    const client = createFakeOpenAIClient();
+
+    await collect(createOpenAIModelProvider({ client }).stream(INPUT));
+
+    expect(client.calls.stream[0]?.options).toBeUndefined();
+  });
+
+  /**
+   * A cancelled turn ends quietly. The signal is the authoritative record of it, so whatever the
+   * transport raises on the way out is not classified and not reported: the loop already knows the
+   * turn was stopped, and an error event would make it look like a failure instead.
+   */
+  it('reports nothing when the turn was cancelled', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const client = createFakeOpenAIClient({
+      throwBeforeStream: new APIError(500, { message: 'aborted' }, undefined, new Headers()),
+    });
+
+    const events = await collect(
+      createOpenAIModelProvider({ client }).stream({ ...INPUT, signal: controller.signal }),
+    );
+
+    expect(events).toStrictEqual([]);
+  });
+
   it('reports a failure raised before the first event and yields nothing else', async () => {
     // A bad key fails the request itself; the turn must end with one classified error.
     const client = createFakeOpenAIClient({

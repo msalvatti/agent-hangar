@@ -16,6 +16,9 @@ import {
   runScheduledJobPayload,
   runTurnPayload,
   parseTurnEventEntry,
+  REAP_IDLE_EVERY_MS,
+  TURN_EVENTS_MAXLEN,
+  TURN_EVENTS_TTL_SECONDS,
   TURN_EVENT_FIELD,
   turnCommand,
   turnCommandChannel,
@@ -158,5 +161,66 @@ describe('parseTurnEventEntry', () => {
     expect(parseTurnEventEntry([TURN_EVENT_FIELD, 'not json'])).toBeNull();
     expect(parseTurnEventEntry([TURN_EVENT_FIELD, '{"type":"unknown.event"}'])).toBeNull();
     expect(parseTurnEventEntry([TURN_EVENT_FIELD, '{"type":"assistant.delta"}'])).toBeNull();
+  });
+});
+
+const NOW = '2026-01-01T00:00:00.000Z';
+
+describe('what a turn-event stream entry is read from', () => {
+  /**
+   * The three constants below are agreed with the worker that writes the stream and the web app
+   * that replays it; nothing in this package reads any of them back, and each is a number or a
+   * name the other side has to match exactly.
+   */
+  it.each([
+    ['the idle-workspace sweep interval', REAP_IDLE_EVERY_MS, 300_000],
+    ['the replay cache lifetime', TURN_EVENTS_TTL_SECONDS, 3600],
+    ['the entries kept per turn', TURN_EVENTS_MAXLEN, 5000],
+  ])('names %s', (_case, actual, expected) => {
+    expect(actual).toBe(expected);
+  });
+
+  /** The field name the worker writes every entry under, and the reader looks for. */
+  it('reads the entry from the field the worker writes it to', () => {
+    expect(TURN_EVENT_FIELD).toBe('event');
+    expect(parseTurnEventEntry(['event', JSON.stringify({ type: 'heartbeat', at: NOW })])).toEqual({
+      type: 'heartbeat',
+      at: NOW,
+    });
+  });
+
+  /**
+   * Names are read at even positions and values at odd ones. Stepping one at a time, a value that
+   * happens to read `event` is taken for a field name and whatever follows it is parsed as the
+   * event — which is a value another process wrote and this one has no reason to trust.
+   */
+  it('never mistakes a value that reads like the field name for one', () => {
+    const forged = JSON.stringify({ type: 'heartbeat', at: NOW });
+
+    expect(parseTurnEventEntry(['other', 'event', forged])).toBeNull();
+  });
+
+  /**
+   * A field name with nothing after it is a truncated entry, not an event; read past the end of
+   * the list the reader would parse `undefined` and answer for an entry that is not there.
+   */
+  it('answers nothing for a field name with no value after it', () => {
+    expect(parseTurnEventEntry(['event'])).toBeNull();
+  });
+
+  /** The identifiers a payload carries are real ones, not single characters. */
+  it('refuses a destroy payload whose chat id is empty and accepts a real one', () => {
+    expect(destroyChatWorkspacePayload.safeParse({ chatId: '' }).success).toBe(false);
+    expect(
+      destroyChatWorkspacePayload.safeParse({ chatId: '018f3a2b-6c1d-7f00-9a11-2233445566aa' })
+        .success,
+    ).toBe(true);
+    // And the workspace it names, when it names one, is a real identifier rather than a character.
+    expect(destroyChatWorkspacePayload.safeParse({ chatId: 'c1', workspaceId: '' }).success).toBe(
+      false,
+    );
+    expect(
+      destroyChatWorkspacePayload.safeParse({ chatId: 'c1', workspaceId: 'ws-1' }).success,
+    ).toBe(true);
   });
 });
