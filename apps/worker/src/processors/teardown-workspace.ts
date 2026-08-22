@@ -164,7 +164,10 @@ async function recordBeforeTeardown(
   options: TeardownOptions,
 ): Promise<boolean> {
   const snapshot = await snapshotOrNull(deps, workspace);
-  if (workspace.kind !== 'CHAT' || workspace.chatId === null) {
+  // Whether there is a chat to write for, which is not the same question as what kind of workspace
+  // this is: a scheduled run's workspace never had one, and a chat's workspace loses the reference
+  // when the chat is deleted. Either way there is nobody to hand a branch or a note to.
+  if (workspace.chatId === null) {
     return true;
   }
   try {
