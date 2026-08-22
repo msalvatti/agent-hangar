@@ -187,7 +187,31 @@ describe('prepare.progress / prepare.done', () => {
     });
     const notice = state.items.find((item) => item.kind === 'notice');
     expect(notice).toMatchObject({ tone: 'success' });
-    expect(notice && 'durationMs' in notice ? notice.durationMs : undefined).toBeUndefined();
+    // The key is absent rather than present and empty: the row renders "took N ms" from its
+    // presence, and a key carrying nothing would render an empty duration for every preparation
+    // whose start nobody saw.
+    expect(notice && 'durationMs' in notice).toBe(false);
+  });
+
+  /**
+   * With a start recorded, the duration is how long the preparation took — the difference between
+   * the two instants, in that order. Added instead, the row reports a preparation that began
+   * before the epoch and took fifty-five years.
+   */
+  it('reports how long the preparation took', () => {
+    let state = dispatchEvent(
+      createInitialState(),
+      { type: 'turn.started', turnId: 't1', at: new Date(1_000).toISOString() },
+      { now: 1_000 },
+    );
+    state = dispatchEvent(
+      state,
+      { type: 'prepare.done', headSha: 'abcdef1234', branch: 'agent/k3x9' },
+      { now: 4_500 },
+    );
+
+    const notice = state.items.find((item) => item.kind === 'notice');
+    expect(notice).toMatchObject({ tone: 'success', durationMs: 3_500 });
   });
 });
 
@@ -201,6 +225,18 @@ describe('step.started', () => {
 
 describe('assistant.delta / assistant.message', () => {
   // The first delta creates a new streaming assistant item.
+  it('opens a tool row keyed by the call it belongs to', () => {
+    const state = dispatchEvent(createInitialState(), {
+      type: 'tool.call',
+      callId: 'c9',
+      name: 'run_shell',
+      args: { command: 'ls' },
+      seq: 0,
+    });
+
+    expect(state.items[0]).toMatchObject({ kind: 'tool', id: 'tool-c9', callId: 'c9' });
+  });
+
   it('creates a streaming assistant item on the first delta', () => {
     const state = dispatchEvent(createInitialState(), { type: 'assistant.delta', text: 'Hello' });
     expect(state.items).toEqual([
@@ -215,6 +251,10 @@ describe('assistant.delta / assistant.message', () => {
     state = dispatchEvent(state, { type: 'assistant.delta', text: 'lo' });
     expect(state.items).toHaveLength(1);
     expect(state.items[0]).toMatchObject({ text: 'Hello', streaming: true });
+    // Text arriving is the turn running, whether or not it is the first of it: the phase is what
+    // the page shows as a spinner, and a transcript that stayed on the preparing phase while the
+    // model was answering would show one for the whole turn.
+    expect(state.phase).toBe('running');
   });
 
   // assistant.message finalizes an in-progress stream with the authoritative final text.
@@ -417,7 +457,18 @@ describe('tool.call / tool.output.delta / tool.result', () => {
     });
 
     const tool = state.items[0] as ToolTranscriptItem;
-    expect(tool).toMatchObject({ kind: 'tool', callId: 'ghost', status: 'succeeded' });
+    // The row is keyed by the call it belongs to. React lists these by `id`, and a row keyed by
+    // nothing collides with every other row that has no key of its own.
+    expect(tool).toMatchObject({
+      kind: 'tool',
+      id: 'tool-ghost',
+      callId: 'ghost',
+      status: 'succeeded',
+      // Nothing was streamed for a call this transcript never saw open, and the row says so with
+      // empty output rather than with text nobody produced.
+      stdout: '',
+      stderr: '',
+    });
     expect(tool.name).toBeNull();
     expect(tool.seq).toBeNull();
     expect(tool.args).toBeUndefined();
@@ -525,7 +576,13 @@ describe('turn.completed', () => {
     expect(state.usage).toEqual({ inputTokens: 10, outputTokens: 20 });
     expect(state.items).toHaveLength(2);
     expect(state.items[0]).toMatchObject({ text: 'Working...', streaming: false });
-    expect(state.items[1]).toMatchObject({ text: 'Done, fixed the bug.', streaming: false });
+    // The appended answer is keyed by the step it belongs to and its place in the list. React
+    // lists these by `id`, and two items sharing one key are two rows React treats as one.
+    expect(state.items[1]).toMatchObject({
+      id: 'assistant-0-1',
+      text: 'Done, fixed the bug.',
+      streaming: false,
+    });
   });
 
   // When the streaming item's text already equals finalMessage, no duplicate is pushed.
@@ -538,6 +595,42 @@ describe('turn.completed', () => {
       finalMessage: 'Same text',
     });
     expect(state.items).toHaveLength(1);
+  });
+
+  // A final message with no assistant text before it is still the answer, so it becomes the only
+  // item. Read the other way round — "every item already says this" is vacuously true of an empty
+  // transcript — a turn that streamed nothing would end with nothing to show.
+  it('appends the final message when nothing was streamed', () => {
+    const state = dispatchEvent(createInitialState(), {
+      type: 'turn.completed',
+      usage: { inputTokens: 1, outputTokens: 1 },
+      steps: 1,
+      finalMessage: 'Done.',
+    });
+
+    expect(state.items).toEqual([
+      { kind: 'assistant', id: 'assistant-0-0', text: 'Done.', streaming: false },
+    ]);
+  });
+
+  // Only the assistant's own text counts as "already said". A notice carries text too — the
+  // preparation line, a push, a cancellation — and matching against one would swallow an answer
+  // whose wording happens to coincide with something the transcript had already announced.
+  it('appends a final message that a notice happens to repeat', () => {
+    let state = dispatchEvent(createInitialState(), {
+      type: 'prepare.progress',
+      message: 'Cloning the repository',
+    });
+    state = dispatchEvent(state, {
+      type: 'turn.completed',
+      usage: { inputTokens: 1, outputTokens: 1 },
+      steps: 1,
+      finalMessage: 'Cloning the repository',
+    });
+
+    expect(state.items.filter((item) => item.kind === 'assistant')).toEqual([
+      { kind: 'assistant', id: 'assistant-0-1', text: 'Cloning the repository', streaming: false },
+    ]);
   });
 
   // An empty finalMessage never becomes its own item.
@@ -620,6 +713,7 @@ describe('turn.cancelled', () => {
     expect(state.items[0]).toMatchObject({ streaming: false });
     expect(state.items[1]).toMatchObject({
       kind: 'notice',
+      id: 'cancel-0',
       tone: 'warning',
       text: 'Turn cancelled.',
     });
@@ -681,6 +775,12 @@ describe('id dedupe', () => {
     state = dispatchEvent(state, { type: 'step.started', step: 2 }, { id: '1700000000000-0' });
     expect(state).toBe(before);
     expect(state.step).toBe(1);
+
+    // The same id is a replay too, not merely an older one: a reconnect resumes *after* the last
+    // id it saw, and a stream that redelivered it would apply that event twice.
+    state = dispatchEvent(state, { type: 'step.started', step: 3 }, { id: '1700000000000-1' });
+    expect(state).toBe(before);
+    expect(state.step).toBe(1);
   });
 
   // A newer id (same millisecond, next sequence) is applied.
@@ -725,6 +825,24 @@ describe('compareStreamIds', () => {
     expect(compareStreamIds('abc', 'abd')).toBeLessThan(0);
     expect(compareStreamIds('abc', 'abc')).toBe(0);
     expect(compareStreamIds('abd', 'abc')).toBeGreaterThan(0);
+  });
+
+  // One id well-formed and the other not is still the string fallback: reading the numbers out of
+  // a match that is not there is what a comparison of a real id against a synthetic one would do.
+  it('falls back when only one id is well formed', () => {
+    expect(() => compareStreamIds('1700000000000-0', 'abc')).not.toThrow();
+    expect(compareStreamIds('1700000000000-0', 'abc')).toBeLessThan(0);
+    expect(compareStreamIds('abc', '1700000000000-0')).toBeGreaterThan(0);
+  });
+
+  // The pattern reads the whole id and nothing less. An id with anything before or after it is not
+  // a Redis entry id, and treating its digits as one would order it among ids it has no place in.
+  it.each([
+    ['x1700000000000-0', '1700000000000-0'],
+    ['1700000000000-0x', '1700000000000-0'],
+  ])('treats %s as malformed beside %s', (malformed, wellFormed) => {
+    // The string fallback puts the malformed one after, which the numeric branch would not.
+    expect(compareStreamIds(malformed, wellFormed)).toBeGreaterThan(0);
   });
 });
 
