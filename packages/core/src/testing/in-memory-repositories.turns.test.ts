@@ -133,6 +133,11 @@ describe('TurnRepository', () => {
     ).resolves.toBeUndefined();
   });
 
+  /**
+   * The forward path of the same rule: a FAILED turn is the one status `requeue` moves, and it
+   * returns to QUEUED with the whole record of the failed attempt cleared — error, timestamps and
+   * usage — so a turn waiting to run again carries nothing from the run that failed.
+   */
   it('requeues a failed turn and clears the failed attempt', async () => {
     const chat = await seedChat();
     const turn = await repos.turns.create({ chatId: chat.id, model: 'gpt' });
@@ -178,12 +183,19 @@ describe('TurnRepository', () => {
     });
     expect(await repos.turns.requeue(turn.id)).toBeNull();
 
-    await repos.turns.finish(turn.id, 'SUCCEEDED', {
+    // A turn of its own, because `finish` writes only over a live run: asking the cancelled turn
+    // above to succeed is refused and leaves it cancelled, so a requeue asked of it would answer
+    // for the cancelled case a second time while reading as though it covered the succeeded one.
+    // The status is asserted before the requeue for the same reason — it is what makes the answer
+    // below attributable to SUCCEEDED.
+    const succeeded = await repos.turns.create({ chatId: chat.id, model: 'gpt' });
+    await repos.turns.finish(succeeded.id, 'SUCCEEDED', {
       inputTokens: 0,
       outputTokens: 0,
       stepCount: 0,
     });
-    expect(await repos.turns.requeue(turn.id)).toBeNull();
+    expect(await repos.turns.get(succeeded.id)).toMatchObject({ status: 'SUCCEEDED' });
+    expect(await repos.turns.requeue(succeeded.id)).toBeNull();
 
     expect(await repos.turns.requeue('missing')).toBeNull();
   });

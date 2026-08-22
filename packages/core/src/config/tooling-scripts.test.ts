@@ -502,22 +502,24 @@ describe('the manifests that fan a suite out across workspaces', () => {
         .split('\n')
         .filter((line) => !line.trimStart().startsWith('#'))
         .map((line) => ({
+          script,
           where: `${script} → ${line.trim()}`,
           verdict: fanOutVerdict(shellCommandOf(line)),
         }))
         .filter(({ verdict }) => verdict !== 'none')
-        .map(({ where, verdict }) => ({ where, test: true, verdict })),
+        .map((entry) => ({ ...entry, test: true })),
     );
+    // Asked of each wrapper rather than of the pile: a scan that recognises nothing passes for the
+    // wrong reason, and so does one that recognises only the other wrapper. Either the recursive
+    // command left the file it is checked in, or this scan stopped reading it — both leave that
+    // wrapper's suites unguarded while the total stays comfortably non-empty.
+    const scanned = new Set(fromWrappers.map(({ script }) => script));
+    expect(
+      DELEGATED_TEST_SCRIPTS.filter((script) => !scanned.has(script)),
+      'no fan-out was recognised in these wrappers; each one must still contribute the recursive ' +
+        'pnpm invocation this check exists to judge',
+    ).toEqual([]);
     const verdicts = [...fromManifests, ...fromWrappers];
-    expect(
-      verdicts.length,
-      'the scan must still recognise the fan-out it exists for; a guard tightened until it ' +
-        'matches nothing passes every manifest for the wrong reason',
-    ).toBeGreaterThan(0);
-    expect(
-      verdicts.map(({ where }) => where).filter((where) => where.includes('run-integration.sh')),
-      'the integration fan-out moved from the manifest into a wrapper; the scan has to follow it',
-    ).not.toEqual([]);
 
     const offenders = verdicts
       .filter(({ verdict }) => verdict !== 'complete')
@@ -532,13 +534,6 @@ describe('the manifests that fan a suite out across workspaces', () => {
   });
 
   /**
-   * The check above is only worth having if it cannot be satisfied by a command that does not have
-   * the property, so every spelling that would fool a simpler reading is pinned here rather than
-   * left to the reader's confidence. Each rejected form was run against pnpm 11.22.0 and started
-   * every workspace at the same instant while handing the script the flag as an argument, or —
-   * for the chained ones — left a second fan-out entirely unprotected.
-   */
-  /**
    * A double-quoted word is text, not a separator and not an expansion, so a script name written
    * with quotes reads the same as one without. The distinction matters because reaching an
    * expansion is what makes the parser give up entirely: it has to know which quote it is in
@@ -551,6 +546,13 @@ describe('the manifests that fan a suite out across workspaces', () => {
     expect(fanOutVerdict('pnpm --recursive --if-present run "test"')).toBe('incomplete');
   });
 
+  /**
+   * The check above is only worth having if it cannot be satisfied by a command that does not have
+   * the property, so every spelling that would fool a simpler reading is pinned here rather than
+   * left to the reader's confidence. Each rejected form was run against pnpm 11.22.0 and started
+   * every workspace at the same instant while handing the script the flag as an argument, or —
+   * for the chained ones — left a second fan-out entirely unprotected.
+   */
   it('rejects a fan-out whose flags never reach the pnpm invocation that needs them', () => {
     expect(
       fanOutVerdict('pnpm --recursive --if-present --sequential --no-bail run test:integration'),

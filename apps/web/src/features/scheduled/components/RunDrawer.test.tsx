@@ -437,8 +437,10 @@ describe('RunDrawer — active run (live stream)', () => {
     expect(await screen.findByRole('button', { name: 'Stop run' })).toBeInTheDocument();
   });
 
-  // The header spells the start in the reader's own zone once the browser reports one, rather
-  // than in the machine-readable form the API sends.
+  /**
+   * The header spells the start in the reader's own zone once the browser reports one, rather than
+   * in the machine-readable form the API sends.
+   */
   it('spells the start as a readable local time', async () => {
     render(<RunDrawer runId="run-nightly-success" job={job} open onOpenChange={vi.fn()} />);
     const started = await screen.findByText(/^Started /);
@@ -446,8 +448,10 @@ describe('RunDrawer — active run (live stream)', () => {
     expect(started.textContent).toMatch(/Started [A-Z][a-z]{2} \d{1,2}, \d{4}/);
   });
 
-  // Before the browser reports a zone there is no local time to spell, so the header says how
-  // long ago the run started — true in every zone, and never a guess at the reader's.
+  /**
+   * Before the browser reports a zone there is no local time to spell, so the header says how long
+   * ago the run started — true in every zone, and never a guess at the reader's.
+   */
   it('reports how long ago it started while the reader zone is unknown', async () => {
     readerZone.value = null;
     try {

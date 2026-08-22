@@ -135,16 +135,21 @@ describe('RunsTable', () => {
     expect(after).not.toEqual(before);
   });
 
-  // The started cell spells the instant in the reader's own zone once the browser reports one.
+  /**
+   * The started cell spells the instant in the reader's own zone once the browser reports one,
+   * rather than in the machine-readable form the API sends.
+   */
   it('spells the start as a readable local time', () => {
     render(<RunsTable runs={[finishedRun]} onOpen={vi.fn()} />);
     const label = formatTimestamp(finishedRun.queuedAt, 'UTC') ?? '';
     expect(screen.getByRole('button', { name: `Open run from ${label}` })).toBeInTheDocument();
   });
 
-  // Before the browser reports a zone there is no local time to spell, and the cell is also this
-  // row's accessible name — a blank one would leave the button unnameable. It says how long ago
-  // instead, which is true in every zone.
+  /**
+   * Before the browser reports a zone there is no local time to spell, and the cell is also this
+   * row's accessible name — a blank one would leave the button unnameable. It says how long ago
+   * instead, which is true in every zone.
+   */
   it('names the run by how long ago it started while the reader zone is unknown', () => {
     readerZone.value = null;
     try {
