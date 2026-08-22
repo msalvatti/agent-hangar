@@ -148,7 +148,13 @@ class EventDeliveryFailure extends Error {
    * @param cause - What the publisher or the sink rejected with.
    */
   constructor(cause: unknown) {
+    // Neither the text nor the name travels: this wrapper is raised and unwrapped inside this
+    // module, and what the turn records is the classification of the cause — the message it came
+    // with is a driver's, built from the connection string it was configured with. Both exist for
+    // a developer reading a stack trace, which is why nothing can observe either of them.
+    // Stryker disable next-line StringLiteral
     super('publishing or persisting a turn event failed', { cause });
+    // Stryker disable next-line StringLiteral
     this.name = 'EventDeliveryFailure';
   }
 }
@@ -581,10 +587,11 @@ export async function executeRuntimeTurn(
     }
   } catch (error) {
     return failedOutcome(deps, state, error);
+    // Cleared unconditionally, because `clearTimeout` is defined for a timer that was never armed
+    // and a guard here would be a branch no execution could tell apart from the path it skips. What
+    // it disarms is the escalation: a turn that answered its `SIGINT` must not be killed afterwards.
   } finally {
-    if (state.killTimer !== undefined) {
-      clearTimeout(state.killTimer);
-    }
+    clearTimeout(state.killTimer);
   }
 
   const reported = state.terminal;
