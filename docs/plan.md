@@ -245,7 +245,7 @@ Each lane below is one subagent prompt. Common to all: read `CLAUDE.md`, the spe
 
 - README per spec 05 §7 (quick start, config table, scripts, Conductor, testing, security notes, troubleshooting, known gaps, decisions, deployment appendix = spec 08 condensed with a link); refresh `docs/spec/*` to match reality (versions, names); this plan's §9 updated.
 
-## 9. Wave 4 — Stryker 10 mutation testing (last, non-blocking, parallel per package)
+## 9. Wave 4 — Stryker 10 mutation testing (last, non-blocking, one lane at a time)
 
 Deliberately last: the code is stable, so mutants are meaningful, and if time runs out the product is complete without it (README "Known gaps" then states the mutation status and the plan — which is this section).
 
@@ -258,6 +258,52 @@ Deliberately last: the code is stable, so mutants are meaningful, and if time ru
 
 Rules: kill survivors by **strengthening tests** (or simplifying code to the value that serves); no `// Stryker disable` without a one-line reason; equivalent mutants documented in the PR. When both lanes pass, a third tiny PR adds the `mutation` CI job (PR-scoped incremental, nightly full) and the README badge/section.
 
+### Sizing and sequencing, measured rather than assumed
+
+The heading of this section used to say "parallel per package". It no longer does. On 2026-08-22 the
+two lanes were probed against `main` on the 14-core / 36 GB laptop with `concurrency: 2`, and the
+numbers moved the decision:
+
+| | W4-A `packages/core` | W4-B `packages/agent-runtime` |
+|---|---|---|
+| Files / mutants in the `mutate` scope | 25 / **1,396** | 9 / **944** |
+| Sample measured in full | `redaction/redactor.ts` — 117 mutants, **6 s**, 91.45 % | `tools/run-shell.ts` — 109 mutants, **3 min 51 s**, 83.33 % |
+| Cost per mutant | ~0.05 s | ~2.1 s |
+| Projected full run | **3–10 min** | **20–40 min** — not the ten this plan assumed |
+| Peak RSS over idle baseline | +751 MB (~375 MB per runner) | +662 MB (~330 MB per runner) |
+
+**Memory is not the constraint, and the reason is specific.** For Vitest ≥ 4.1 the Stryker vitest
+runner builds its context with `pool: 'threads'`, `maxWorkers: 1`, `maxConcurrency: 1` and coverage
+disabled, so a package's own `maxWorkers: 3` never multiplies inside a runner: peak is
+`concurrency × one worker`. Two lanes at `concurrency: 2` would cost about 1.4 GB of 36 — nowhere
+near the multiplication that the no-parallel-test-agents rule was written against, which came from
+per-worker module graphs under a different runner.
+
+**What binds instead is the verdict.** `Timeout` counts as killed and is measured in wall-clock, so a
+loaded machine does not merely slow a run, it changes the score — and 24 of `run-shell.ts`'s 109
+verdicts were timeouts. So: **one lane at a time, and the same lock covers the full gate run**
+(`pnpm test -- --coverage` reaches `apps/web`'s 174 jsdom suites, which is the real memory event of
+this wave). **Run W4-B first**: it is the slow lane, the timeout-sensitive one, and the one whose
+survivors are sandbox escapes and leaked credentials. W4-A follows and costs minutes.
+
+Four things the lane files got wrong, now corrected in them:
+
+1. `plugins: ['@stryker-mutator/vitest-runner']` is **mandatory** — Stryker globs
+   `node_modules/@stryker-mutator/*` relative to the cwd, and under pnpm the packages exist only at
+   the root, so without it the run dies with `Cannot find TestRunner plugin "vitest"`.
+2. W4-A cannot start without `packages/core/vitest.stryker.config.ts`: the eight repository gates in
+   `src/config/**` derive the repo root by climbing four levels from `import.meta.url`, which inside
+   `.stryker-tmp/sandbox-N/` lands on `packages/core` and fails with
+   `ENOENT … packages/core/packages/core/package.json`, aborting the whole run in the dry phase.
+3. `timeoutMS: 20000` is wrong for both packages; the default 5000 is what the projections above
+   were measured at.
+4. `ignorePatterns` was missing, so the 6.7 MB `dist/` tree was being copied into every sandbox.
+
+Two acceptance items are already satisfied on `main` and need no work: `.gitignore` lists
+`.stryker-tmp/` and `reports/`, and the root `test:mutation` already serialises workspaces
+(`pnpm --recursive --if-present --sequential`). Consequently **the two lanes share no file**, and the
+`.gitignore` rebase coordination they used to describe does not exist.
+
 ## 10. Risks
 
 | Level | Risk | Mitigation in this plan |
@@ -269,7 +315,7 @@ Rules: kill survivors by **strengthening tests** (or simplifying code to the val
 | MEDIUM | 100 % coverage on UI code slows W1-G/H | Components are small and state-driven; MSW + Testing Library; `coverage.include` scoped to owned paths during the wave, widened to the whole package afterwards |
 | MEDIUM | Subagent ends without PR (context exhaustion) | Orchestrator verifies via `git`; spawns a *finalize-agent* on the **same worktree path** to run gates, commit, push, open PR |
 | LOW | Responses API event names differ from spec | W1-C verifies against official docs and fixtures; provider is the only place that changes |
-| LOW | Stryker time budget | Last wave, parallel per package, explicitly allowed to slip; CI gate added only once green |
+| LOW | Stryker time budget | Last wave, one lane at a time (W4-B first), explicitly allowed to slip; measured at 20–40 min for `agent-runtime` and 3–10 min for `core` per full run (§9); CI gate added only once green |
 
 ## 11. Orchestrator protocol (copy into the orchestrator session)
 
