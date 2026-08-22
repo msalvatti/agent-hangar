@@ -23,10 +23,10 @@
  * execute, tear down.
  */
 import {
+  assertNever,
   buildJobTurnRequest,
   decideOverlap,
   defaultWorkBranch,
-  isTerminalRunStatus,
   JOB_WORK_BRANCH_PREFIX,
   runScheduledJobPayload,
 } from '@agent-hangar/core';
@@ -190,6 +190,14 @@ function makeJobRunSink(deps: ProcessorDeps, runId: string, recorder: ToolCallRe
           // Published for the live view and kept nowhere: nothing they carry outlives the
           // container, and `output` already carries the answer the assistant streamed.
           break;
+        // Every event of the protocol is named above, either because it is written down or because
+        // it deliberately is not. This clause is the compiler's, not the runtime's: `assertNever`
+        // takes a `never`, so adding an event to the protocol without adding it here stops the
+        // build. Nothing can reach it while the union is closed — the stream is parsed against that
+        // same union, and a line outside it arrives as a `protocol.error`.
+        // Stryker disable next-line ConditionalExpression
+        default:
+          return assertNever(event);
       }
     },
   };
@@ -218,14 +226,16 @@ async function teardownRun(deps: ProcessorDeps, teardown: Teardown): Promise<voi
   if (teardown.workspaceId !== null) {
     await deps.repos.workspaces.setStatus(teardown.workspaceId, 'DESTROYED');
   }
-  const run = await deps.repos.jobRuns.get(teardown.runId);
-  if (run !== null && !isTerminalRunStatus(run.status)) {
-    await deps.repos.jobRuns.finish(teardown.runId, {
-      status: 'FAILED',
-      usage: NO_USAGE,
-      error: `${WORKER_ERROR_PREFIX}: the worker stopped before the run finished`,
-    });
-  }
+  // Offered unconditionally, because refusing it is the repository's job and it does that in the
+  // write itself: `finish` applies only to a run that is still live, so a run that already recorded
+  // its own outcome — or one that is no longer there — is left exactly as it is. Reading the row
+  // first and deciding here would be the same answer arrived at a moment earlier, over a row a
+  // second writer can still move in between.
+  await deps.repos.jobRuns.finish(teardown.runId, {
+    status: 'FAILED',
+    usage: NO_USAGE,
+    error: `${WORKER_ERROR_PREFIX}: the worker stopped before the run finished`,
+  });
   await updateRunTimes(deps, teardown.job);
 }
 
@@ -430,6 +440,10 @@ async function runDelivery(
   // The run this delivery drives is either brand new or an adopted `QUEUED` row, and neither is
   // what `findRunningByJob` answers with, so the two can never be the same record.
   const run = await openRun(deps, job, payload, scheduledFor);
+  // The null test narrows the type and nothing else: a delivery carrying a `runId` is exactly a
+  // delivery whose watch was opened before the job row was read, so an id that matches the run
+  // already implies the watch is there.
+  // Stryker disable next-line ConditionalExpression
   const canReuseEarlyWatch = earlyWatch !== null && run.id === payload.runId;
   const watch = canReuseEarlyWatch ? earlyWatch : await openCancellationWatch(deps, run.id);
   try {

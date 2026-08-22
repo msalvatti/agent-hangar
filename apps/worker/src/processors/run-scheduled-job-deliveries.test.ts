@@ -609,7 +609,14 @@ describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
 
     expect(await container.repos.jobRuns.listByJob(disabled.id)).toHaveLength(0);
     expect(container.runner.calls).toHaveLength(0);
-    expect(container.logs.join('')).toContain('scheduled job is disabled');
+    // Each line names the job it was about. A scheduler holds many, and a tick that reports only
+    // that "a job is disabled" tells an operator nothing about which schedule stopped firing.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({ msg: 'scheduled job is gone', jobId: 'no-such-job' }),
+    );
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({ msg: 'scheduled job is disabled', jobId: disabled.id }),
+    );
   });
 
   /**
