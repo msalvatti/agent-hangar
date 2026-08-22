@@ -316,9 +316,15 @@ async function raceAbort<T>(
       resolve(ABORTED);
     };
   });
-  signal.addEventListener('abort', onAbort, { once: true });
+  // No `once`: an `AbortSignal` fires this event at most once, and the `finally` below detaches
+  // the listener regardless, so asking for one that removes itself would describe a second call
+  // that cannot arrive.
+  signal.addEventListener('abort', onAbort);
   try {
     return await Promise.race([promise, aborted]);
+    // Stryker disable next-line BlockStatement,StringLiteral: a listener left attached would only
+    // resolve a promise that has already settled, and how many listeners a signal carries is not
+    // something anything outside can read — so detaching is tidiness rather than behaviour.
   } finally {
     signal.removeEventListener('abort', onAbort);
   }
@@ -365,6 +371,10 @@ function watchTermination(params: PumpExecParams, schedule: ScheduleTimeout): Te
     // rejection handled so it is not reported as unhandled while the pump drains the stream —
     // `killed` still rejects for whoever awaits it.
     killed = kill(reason);
+    // Stryker disable next-line CallExpression: marks the rejection handled for the window before
+    // a caller awaits it. Whether that window ends in an unhandled rejection depends on when the
+    // process happens to exit, so no test can decide it — what a caller that does await gets is
+    // the same rejection either way.
     killed.catch(() => undefined);
     stream.destroy();
   };
@@ -376,7 +386,8 @@ function watchTermination(params: PumpExecParams, schedule: ScheduleTimeout): Te
     if (signal.aborted) {
       terminate('ABORTED');
     } else {
-      signal.addEventListener('abort', onAbort, { once: true });
+      // No `once`: the event fires at most once and `dispose` detaches the listener regardless.
+      signal.addEventListener('abort', onAbort);
     }
   }
   if (params.timeoutMs !== undefined) {
