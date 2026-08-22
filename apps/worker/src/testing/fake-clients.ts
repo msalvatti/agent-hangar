@@ -73,7 +73,7 @@ export class FakeRedisClient implements WorkerRedisClient {
   readonly role: string;
 
   private readonly options: FakeRedisOptions;
-  private listener: ((channel: string, payload: string) => void) | undefined;
+  private readonly listeners = new Map<string, ((channel: string, payload: string) => void)[]>();
 
   /**
    * @param options - Role, release callback, failure mode and scripted transaction replies.
@@ -136,20 +136,27 @@ export class FakeRedisClient implements WorkerRedisClient {
   }
 
   /**
-   * Installs the single message handler of a subscriber connection.
+   * Installs a handler, the way an event emitter does: every call adds one.
    *
-   * @param _event - Always `message`.
+   * Handlers are kept per event name and they accumulate, because that is what ioredis does — a
+   * connection given the same handler twice calls it twice, and one given a name nothing publishes
+   * under never calls it at all. A double that kept a single slot regardless of the name would
+   * report a healthy listener for a subscriber that is deaf.
+   *
+   * @param event - Event name; only `message` carries published payloads.
    * @param listener - Handler to install.
    * @returns This connection.
    */
-  on(_event: 'message', listener: (channel: string, payload: string) => void): unknown {
-    this.listener = listener;
+  on(event: string, listener: (channel: string, payload: string) => void): unknown {
+    const installed = this.listeners.get(event) ?? [];
+    installed.push(listener);
+    this.listeners.set(event, installed);
     return this;
   }
 
   /** How many message handlers were installed; a shared connection must only ever get one. */
   get listenerCount(): number {
-    return this.listener === undefined ? 0 : 1;
+    return (this.listeners.get('message') ?? []).length;
   }
 
   /**
@@ -210,6 +217,8 @@ export class FakeRedisClient implements WorkerRedisClient {
    * @param payload - Raw message body.
    */
   deliver(channel: string, payload: string): void {
-    this.listener?.(channel, payload);
+    for (const listener of this.listeners.get('message') ?? []) {
+      listener(channel, payload);
+    }
   }
 }
