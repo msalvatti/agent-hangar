@@ -96,7 +96,10 @@ export const TOOL_DESCRIPTIONS: Record<ToolName, string> = {
  *   otherwise surface as a provider error in the middle of a turn.
  */
 export function toToolDefinition(name: ToolName, schema: z.ZodType): ToolDefinition {
-  const parameters = z.toJSONSchema(schema, { target: 'draft-2020-12' });
+  // The target is left at Zod's default rather than named here. Both spellings emit exactly the
+  // same document today, so naming it would be a line no test could ever hold to account; what
+  // guards the dialect instead is the projection test, which asserts the `$schema` that comes out.
+  const parameters = z.toJSONSchema(schema);
   if (parameters.additionalProperties !== false) {
     throw new Error(`tool ${name}: schema must forbid additional properties`);
   }
