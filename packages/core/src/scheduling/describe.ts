@@ -102,6 +102,8 @@ function minuteShape(field: string): string {
   if (EVERY_N_MINUTES.test(field)) {
     return 'step';
   }
+  // Stryker disable next-line StringLiteral: the name of the shape nothing spells out. Every key
+  // built with it matches no sentence, so a schedule is quoted whatever this is called.
   return PLAIN_NUMBER.test(field) ? 'num' : 'other';
 }
 
@@ -115,6 +117,8 @@ function numericShape(field: string): string {
   if (field === '*') {
     return 'any';
   }
+  // Stryker disable next-line StringLiteral: the name of the shape nothing spells out. Every key
+  // built with it matches no sentence, so a schedule is quoted whatever this is called.
   return PLAIN_NUMBER.test(field) ? 'num' : 'other';
 }
 
@@ -132,6 +136,7 @@ function dayOfWeekShape(field: string, weekdays: readonly string[]): string {
   if (field === WEEKDAYS_FIELD) {
     return 'weekdays';
   }
+  // Stryker disable next-line StringLiteral: as above — the shape nothing spells out.
   return weekdays.length > 0 ? 'names' : 'other';
 }
 

@@ -275,3 +275,77 @@ describe('nextRuns', () => {
     expect(runs[1]?.toISOString()).toBe('2026-03-09T06:30:00.000Z');
   });
 });
+
+describe('what the schedule refuses, and what it says', () => {
+  /**
+   * A count below one asks for no occurrences at all, which is a caller's mistake rather than an
+   * empty answer — and the message names the value so the caller can see what it asked for. One is
+   * the smallest real request and has to be answered.
+   */
+  it.each([0, -1])('refuses a request for %i occurrences, naming it', (count) => {
+    expect(() => nextRuns({ cron: '0 3 * * *', timezone: 'UTC' }, new Date(), count)).toThrow(
+      `count must be at least 1, got ${String(count)}`,
+    );
+  });
+
+  /** One occurrence is the smallest request there is, and it is a real one. */
+  it('answers a request for exactly one occurrence', () => {
+    expect(
+      nextRuns({ cron: '0 3 * * *', timezone: 'UTC' }, new Date('2026-01-01T00:00:00Z'), 1),
+    ).toHaveLength(1);
+  });
+
+  /**
+   * An empty timezone is not a zone, and `Intl` answers for it with the machine's own rather than
+   * refusing — so a schedule saved with the field blank would run on whatever zone the host is set
+   * to, which is not the one the operator chose.
+   */
+  it('refuses an empty timezone rather than falling back to the machine', () => {
+    expect(isValidTimezone('')).toBe(false);
+    expect(() => validateCronSpec({ cron: '0 3 * * *', timezone: '' })).toThrow(
+      'unknown IANA timezone: ',
+    );
+  });
+
+  /**
+   * A cron line is separated by whitespace, whatever the operator typed: a form that pastes two
+   * spaces between fields is a form that saves a schedule, and split on a single space it becomes
+   * a line of the wrong number of fields.
+   */
+  it('reads a schedule written with several spaces between its fields', () => {
+    expect(validateCronSpec({ cron: '0  3  *  *  *', timezone: 'UTC' }).cron).toBe('0  3  *  *  *');
+  });
+
+  /**
+   * The zone belongs to the schedule, not to the machine that evaluates it: without it the parser
+   * computes occurrences in the host's zone, and a job set for three in the morning in Lisbon runs
+   * at three in the morning wherever the worker happens to be.
+   */
+  it('computes occurrences in the schedule own zone', () => {
+    const [first] = nextRuns(
+      { cron: '0 3 * * *', timezone: 'Asia/Tokyo' },
+      new Date('2026-01-01T00:00:00Z'),
+      1,
+    );
+
+    expect(first?.toISOString()).toBe('2026-01-01T18:00:00.000Z');
+  });
+
+  /**
+   * A parser failure is reported with the parser's own reason kept as the cause, which is the only
+   * thing that says which field it choked on.
+   */
+  it('keeps the parser reason as the cause of an invalid expression', () => {
+    const failure = (() => {
+      try {
+        validateCronSpec({ cron: '99 3 * * *', timezone: 'UTC' });
+      } catch (error) {
+        return error;
+      }
+      return undefined;
+    })();
+
+    expect(failure).toBeInstanceOf(InvalidCronError);
+    expect((failure as Error).cause).toBeInstanceOf(Error);
+  });
+});

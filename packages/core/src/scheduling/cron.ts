@@ -33,11 +33,17 @@ const CRON_FIELD_NAMES = 'minute hour day-of-month month day-of-week';
  * @returns `true` when `Intl` resolves the name; `false` for an empty or unknown one.
  */
 export function isValidTimezone(timezone: string): boolean {
+  // Stryker disable next-line ConditionalExpression,BlockStatement,StringLiteral: `Intl` refuses an
+  // empty zone name with a range error, which the catch below already answers with the same
+  // `false`. Asked here so the answer is a rule rather than the shape of another library's throw.
   if (timezone === '') {
     return false;
   }
   try {
     const resolved = new Intl.DateTimeFormat('en-US', { timeZone: timezone }).resolvedOptions();
+    // Stryker disable next-line ConditionalExpression,EqualityOperator: a formatter that was built
+    // always resolves to a zone name, so this can only be true; it is asked so the answer rests on
+    // what `Intl` resolved rather than on the constructor not having thrown.
     return resolved.timeZone.length > 0;
   } catch {
     return false;
@@ -71,6 +77,9 @@ export function validateCronSpec(spec: CronSpec): CronSpec {
     throw new InvalidCronError(spec.cron, `unknown IANA timezone: ${spec.timezone}`);
   }
   try {
+    // Stryker disable next-line ObjectLiteral: the zone was resolved above, so the parser accepts
+    // this expression the same way with it or without it — what is being checked here is the
+    // expression. The occurrences themselves are computed with the zone where it does decide them.
     CronExpressionParser.parse(cron, { tz: spec.timezone });
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);

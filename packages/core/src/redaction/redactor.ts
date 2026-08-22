@@ -145,6 +145,9 @@ function firstMatch(input: string, pattern: RegExp): RegExpExecArray | null {
     pattern.lastIndex = 0;
     return pattern.exec(input);
   }
+  // Stryker disable next-line EqualityOperator: the last position holds nothing, so a pattern can
+  // only match empty there — and an empty match is refused by the caller before anything is
+  // replaced. Written inclusive because the search is over positions, not over characters.
   for (let start = 0; start <= input.length; start += 1) {
     pattern.lastIndex = start;
     const match = pattern.exec(input);
@@ -180,6 +183,9 @@ function firstMatch(input: string, pattern: RegExp): RegExpExecArray | null {
  */
 function replaceEvery(input: string, pattern: RegExp, replacement: string): string {
   const probe = firstMatch(input, pattern);
+  // Stryker disable next-line ConditionalExpression: a pattern that is neither global nor sticky
+  // keeps its cursor at the start already, so clearing it is either the repair this is here for or
+  // a write of the value that was there.
   if (pattern.global || pattern.sticky) {
     // `exec` moves the cursor of a global or sticky pattern; `split` builds its own copy, so
     // clearing it here leaves the caller's pattern exactly as it was handed over.
@@ -277,6 +283,8 @@ export function createRedactor(options: RedactorOptions = {}): RegisteringRedact
   const replacement = options.replacement ?? REDACTED_TOKEN;
   const patterns = options.patterns ?? REDACTION_PATTERNS;
   const registered = new Set<string>();
+  // Stryker disable next-line ArrayDeclaration: nothing is registered yet, so any list put here
+  // would only replace text containing one of its entries — text no caller can name.
   let longestFirst: string[] = [];
 
   const redact = (input: string): string => {
@@ -304,6 +312,8 @@ export function createRedactor(options: RedactorOptions = {}): RegisteringRedact
 
     clear(): void {
       registered.clear();
+      // Stryker disable next-line ArrayDeclaration: same as the initial value — a list put here
+      // instead would replace only text containing one of its entries.
       longestFirst = [];
     },
 

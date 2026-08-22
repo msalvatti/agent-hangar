@@ -91,6 +91,19 @@ describe('describeCron', () => {
     expect(describeIn('0 0 * * 1-3')).toBe('on schedule `0 0 * * 1-3` UTC');
     expect(describeIn('*/15 3 * * *')).toBe('on schedule `*/15 3 * * *` UTC');
     expect(describeIn('0 0 1 * 1')).toBe('on schedule `0 0 1 * 1` UTC');
+    // A field that merely contains a shape this does spell out is not that shape: the step pattern
+    // is anchored at both ends, and either anchor removed reads a list holding a step as one.
+    expect(describeIn('1,*/15 * * * *')).toBe('on schedule `1,*/15 * * * *` UTC');
+    expect(describeIn('*/15,7 * * * *')).toBe('on schedule `*/15,7 * * * *` UTC');
+  });
+
+  /**
+   * A day-of-week token is a single digit or a three-letter alias. A token that merely begins or
+   * ends with a digit — `12`, or the `07` a zero-padded form produces — names no day, and read as
+   * one it would put a weekday name into the sentence that the schedule does not run on.
+   */
+  it.each(['07', '1-2'])('quotes a schedule whose day-of-week token is %s', (token) => {
+    expect(describeIn(`0 0 * * ${token}`)).toBe(`on schedule \`0 0 * * ${token}\` UTC`);
   });
 
   /**
