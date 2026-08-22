@@ -31,6 +31,7 @@ import type {
 import { buildContainerFileArchive } from './container-files.ts';
 import {
   buildContainerCreateOptions,
+  buildNetworkCreateOptions,
   LABEL_INSTANCE,
   LABEL_WORKSPACE,
   toEnvArray,
@@ -175,6 +176,7 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
    */
   async create(spec: WorkspaceSpec, opts?: { signal?: AbortSignal }): Promise<WorkspaceHandle> {
     await this.#assertImageExists(spec.image);
+    await this.#ensureNetwork();
     const container = await this.#createContainer(spec);
     // Once the container exists, every later failure must remove it. A created-but-abandoned
     // container holds the workspace name for good, so the retry the caller is about to make would
@@ -384,6 +386,38 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
         throw new WorkspaceImageMissing(image, { cause: error });
       }
       throw new DockerRunnerError(`cannot inspect image ${image}`, { cause: error });
+    }
+  }
+
+  /**
+   * Makes sure this instance's workspace network exists before a container asks to join it.
+   *
+   * Checked on every create rather than once per process: the network outlives no particular
+   * runner, and `docker network prune` removes it the moment the last workspace is destroyed, so a
+   * runner that remembered creating it would hand the next workspace a network that is gone.
+   *
+   * A concurrent create racing to the same conclusion is expected and is not a failure: the loser
+   * gets a 409 from the daemon, which means the network is there, which is all this asked for.
+   *
+   * @throws DockerRunnerError when the daemon refuses for any other reason.
+   */
+  async #ensureNetwork(): Promise<void> {
+    const options = buildNetworkCreateOptions(this.#instance);
+    // The daemon matches a name filter as a substring, so an instance whose name is a prefix of
+    // another's would find the wrong network. Compare the names it returns.
+    const existing = await this.#docker.listNetworks({ filters: { name: [options.Name] } });
+    if (existing.some((network) => network.Name === options.Name)) {
+      return;
+    }
+    try {
+      await this.#docker.createNetwork(options);
+    } catch (error) {
+      if (isDockerConflict(error)) {
+        return;
+      }
+      throw new DockerRunnerError(`could not create the workspace network ${options.Name}`, {
+        cause: error,
+      });
     }
   }
 

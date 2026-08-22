@@ -15,6 +15,7 @@ import type { WorkspaceSpec } from '../types.ts';
 
 import {
   buildContainerCreateOptions,
+  buildNetworkCreateOptions,
   LABEL_COMPOSE_PROJECT,
   LABEL_COMPOSE_SERVICE,
   toEnvArray,
@@ -74,8 +75,9 @@ describe('toEnvArray', () => {
 describe('buildContainerCreateOptions', () => {
   /**
    * The whole security posture of a chat workspace in one assertion: unprivileged user, dropped
-   * capabilities, `no-new-privileges`, tmpfs `/tmp`, bridge egress, the three resource ceilings,
-   * and the discovery labels. Any future edit that weakens one of them fails here.
+   * capabilities, `no-new-privileges`, tmpfs `/tmp`, this instance's own network, the three
+   * resource ceilings, and the discovery labels. Any future edit that weakens one of them fails
+   * here.
    */
   it('produces the exact hardened options for a CHAT workspace', () => {
     expect(buildContainerCreateOptions(spec(), OPTIONS)).toEqual({
@@ -101,10 +103,33 @@ describe('buildContainerCreateOptions', () => {
         CapDrop: ['ALL'],
         SecurityOpt: ['no-new-privileges'],
         Tmpfs: { '/tmp': '' },
-        NetworkMode: 'bridge',
+        NetworkMode: 'ah-ws-test',
         Init: true,
       },
     });
+  });
+
+  /**
+   * Workspaces of one instance share a network of their own, and that network forbids traffic
+   * between the containers on it.
+   *
+   * Regression: every workspace joined the default `bridge`, where a container reaches any other
+   * by address alone. Two chats of the same user ran side by side with nothing between them, and
+   * a repository whose task the model was following could scan for the neighbour. The named
+   * network keeps the egress each workspace needs -- it clones and calls OpenAI -- while
+   * `enable_icc=false` drops packets between its own members.
+   */
+  it('puts an instance on its own network with traffic between members disabled', () => {
+    const network = buildNetworkCreateOptions('test');
+
+    expect(network).toEqual({
+      Name: 'ah-ws-test',
+      Driver: 'bridge',
+      Options: { 'com.docker.network.bridge.enable_icc': 'false' },
+      Labels: { 'ah.instance': 'test' },
+    });
+    expect(buildContainerCreateOptions(spec(), OPTIONS).HostConfig?.NetworkMode).toBe(network.Name);
+    expect(buildNetworkCreateOptions('other').Name).not.toBe(network.Name);
   });
 
   /**

@@ -175,6 +175,20 @@ export interface DockerApi {
     all: boolean;
     filters: { label: string[] };
   }): Promise<{ Id: string; Labels: Record<string, string> }[]>;
+  /**
+   * Lists networks matching a name selector.
+   *
+   * @param opts - `filters.name` holds name selectors; the daemon matches them as substrings.
+   * @returns One entry per matching network.
+   */
+  listNetworks(opts: { filters: { name: string[] } }): Promise<{ Name: string }[]>;
+  /**
+   * Creates a network.
+   *
+   * @param opts - Full create options, as produced by `buildNetworkCreateOptions`.
+   * @returns Resolves once the network exists; rejects with 409 when the name is taken.
+   */
+  createNetwork(opts: Dockerode.NetworkCreateOptions): Promise<unknown>;
 }
 
 /** HTTP status the daemon returns when a container, image or exec does not exist. */

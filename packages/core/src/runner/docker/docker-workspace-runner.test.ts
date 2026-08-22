@@ -46,6 +46,83 @@ describe('DockerWorkspaceRunner.create', () => {
   });
 
   /**
+   * The workspace joins this instance's own network, and the runner creates that network on the
+   * way in rather than assuming somebody else did.
+   *
+   * Regression: workspaces joined the default `bridge`, where each one could address every other
+   * container on the host by IP. The network is created before the container that needs it,
+   * because Docker refuses to create a container for a network that is not there.
+   */
+  it('creates the instance network before the container joins it', async () => {
+    const { runner, docker } = makeRunner();
+
+    await createWorkspace(runner);
+
+    expect(docker.networkOptions).toEqual([
+      {
+        Name: 'ah-ws-test',
+        Driver: 'bridge',
+        Options: { 'com.docker.network.bridge.enable_icc': 'false' },
+        Labels: { 'ah.instance': 'test' },
+      },
+    ]);
+    expect(docker.containers.get('c1')?.options.HostConfig?.NetworkMode).toBe('ah-ws-test');
+    expect(docker.calls.indexOf('createNetwork:ah-ws-test')).toBeLessThan(
+      docker.calls.indexOf('createContainer:ah-ws-test-ws-1'),
+    );
+  });
+
+  /**
+   * The network already being there is the ordinary case, and it is not recreated.
+   *
+   * The name filter the daemon applies is a substring match, so a longer name containing this
+   * instance's is not this instance's network: `ah-ws-test-two` must not satisfy `ah-ws-test`.
+   */
+  it('reuses an existing network and is not fooled by a longer name', async () => {
+    const { runner, docker } = makeRunner();
+    docker.networks.add('ah-ws-test-two');
+
+    await createWorkspace(runner);
+
+    expect(docker.networkOptions.map((options) => options.Name)).toEqual(['ah-ws-test']);
+
+    docker.networkOptions.length = 0;
+    await runner.create(spec({ workspaceId: 'ws-2' }));
+
+    expect(docker.networkOptions).toStrictEqual([]);
+  });
+
+  /**
+   * Two workspaces created at the same moment both find the network missing and both try to make
+   * it. The daemon gives the loser a 409, which reports the state it was asking for, so the loser
+   * carries on rather than failing a workspace over a race it effectively won.
+   */
+  it('treats a lost race to create the network as success', async () => {
+    const { runner, docker } = makeRunner();
+
+    const both = await Promise.all([
+      runner.create(spec({ workspaceId: 'ws-1' })),
+      runner.create(spec({ workspaceId: 'ws-2' })),
+    ]);
+
+    expect(both.map((handle) => handle.workspaceId)).toEqual(['ws-1', 'ws-2']);
+    expect(docker.calls.filter((call) => call === 'createNetwork:ah-ws-test')).toHaveLength(2);
+    expect(docker.networkOptions).toHaveLength(1);
+  });
+
+  /**
+   * Any other refusal is a workspace that would have run unisolated, so it fails the create
+   * instead: a container is never made for a network the daemon would not provide.
+   */
+  it('fails the create when the network cannot be made', async () => {
+    const { runner, docker } = makeRunner();
+    docker.failures.createNetwork = dockerError(500, 'daemon is unhappy');
+
+    await expect(createWorkspace(runner)).rejects.toThrow(DockerRunnerError);
+    expect(docker.containers.size).toBe(0);
+  });
+
+  /**
    * A file the workspace must not be able to restate has to be in place before the workspace has
    * run anything at all. Placed after `start`, the first process would see whatever was there
    * before — or nothing — and a policy read at that moment would be the wrong one.

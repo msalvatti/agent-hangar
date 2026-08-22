@@ -68,6 +68,49 @@ export const LABEL_COMPOSE_SERVICE = 'com.docker.compose.service';
 /** Suffix that keeps the workspace compose project distinct from the stack's own project. */
 export const COMPOSE_PROJECT_SUFFIX = '-ws';
 
+/** Prefix of the network an instance's workspaces share. */
+const NETWORK_PREFIX = 'ah-ws-';
+
+/**
+ * Driver option that stops the members of a bridge network from addressing each other.
+ *
+ * Docker applies it as a filter on the bridge itself, so it governs traffic between containers on
+ * this network only; each one keeps the egress it was given, which every workspace needs to clone
+ * a repository and to reach the model.
+ */
+const DISABLE_INTER_CONTAINER_TRAFFIC = 'com.docker.network.bridge.enable_icc';
+
+/**
+ * Names the network an instance's workspaces run on.
+ *
+ * @param instance - Instance name.
+ * @returns The network name, distinct per instance so parallel checkouts never share one.
+ */
+export function workspaceNetworkName(instance: string): string {
+  return `${NETWORK_PREFIX}${instance}`;
+}
+
+/**
+ * Builds the create options for that network.
+ *
+ * Workspaces are put on a network of their own rather than on Docker's default `bridge`, where
+ * every container can address every other by IP. Two workspaces of the same user are as isolated
+ * from each other as a workspace is from the host: what one of them runs comes from a repository
+ * and a prompt, and neither is a reason to reach the other's shell. The one thing they still need
+ * is egress, which a bridge keeps.
+ *
+ * @param instance - Instance whose workspaces share the network.
+ * @returns Options for `createNetwork`, idempotent to apply.
+ */
+export function buildNetworkCreateOptions(instance: string): Dockerode.NetworkCreateOptions {
+  return {
+    Name: workspaceNetworkName(instance),
+    Driver: 'bridge',
+    Options: { [DISABLE_INTER_CONTAINER_TRAFFIC]: 'false' },
+    Labels: { [LABEL_INSTANCE]: instance },
+  };
+}
+
 /** Nanoseconds of CPU time per second, the unit Docker's `NanoCpus` is expressed in. */
 const NANO_CPUS_PER_CPU = 1_000_000_000;
 
@@ -200,7 +243,7 @@ export function buildContainerCreateOptions(
       CapDrop: ['ALL'],
       SecurityOpt: ['no-new-privileges'],
       Tmpfs: { '/tmp': '' },
-      NetworkMode: 'bridge',
+      NetworkMode: workspaceNetworkName(opts.instance),
       // Run a real init as PID 1. Two reasons, both measurable: the kernel discards signals that
       // PID 1 has no handler for, so the image's idling `sleep` never sees the SIGTERM `destroy`
       // sends and every teardown would burn the full stop grace before the SIGKILL; and an init

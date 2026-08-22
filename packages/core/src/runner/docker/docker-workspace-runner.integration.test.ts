@@ -373,6 +373,41 @@ if (!gate.run) {
   });
 
   /**
+   * Two workspaces of the same instance share a network and still cannot address each other.
+   *
+   * Regression, and the one assertion the unit suite cannot make: the flag has to reach the
+   * kernel, not just the create options. Every workspace used to sit on the default `bridge`,
+   * where the neighbour answers — a refusal from a closed port is an answer, and it is what this
+   * test saw before the change. With traffic between members disabled the packets are dropped
+   * instead, so the connection attempt runs out its own timeout with no reply at all.
+   *
+   * Egress is asserted in the same breath, because a network that isolated the workspaces by
+   * cutting them off from everything would pass the first half and break every clone.
+   */
+  it('keeps two workspaces of one instance from reaching each other, and keeps egress', async () => {
+    const a = await workspace();
+    const b = await workspace();
+    const info = await docker.getContainer(a.runnerRef).inspect();
+    const address = Object.values(info.NetworkSettings.Networks)[0]?.IPAddress;
+
+    const probe = (host: string, port: number): readonly string[] => [
+      'node',
+      '-e',
+      `const s = require('net').connect({ host: ${JSON.stringify(host)}, port: ${String(port)}, timeout: 3000 });` +
+        `s.on('connect', () => { console.log('ANSWERED:connected'); process.exit(0); });` +
+        `s.on('timeout', () => { console.log('SILENT'); process.exit(0); });` +
+        `s.on('error', (e) => { console.log('ANSWERED:' + e.code); process.exit(0); });`,
+    ];
+
+    expect(address).toBeTruthy();
+    const neighbour = await run(b, probe(String(address), 22));
+    expect(neighbour.stdout.trim()).toBe('SILENT');
+
+    const outward = await run(b, probe('1.1.1.1', 443));
+    expect(outward.stdout.trim()).toBe('ANSWERED:connected');
+  });
+
+  /**
    * The hardening the container spec promises, read back from the daemon. This is the assertion
    * that would catch a regression the unit suite cannot see: a flag Docker silently ignores, a
    * mount that slipped in, or a ceiling that never reached the kernel.
@@ -388,7 +423,7 @@ if (!gate.run) {
     expect(info.HostConfig.CapDrop).toContain('ALL');
     expect(info.HostConfig.SecurityOpt).toContain('no-new-privileges');
     expect(info.HostConfig.Tmpfs?.['/tmp']).toBeDefined();
-    expect(info.HostConfig.NetworkMode).toBe('bridge');
+    expect(info.HostConfig.NetworkMode).toBe(`ah-ws-${INSTANCE}`);
     expect(info.HostConfig.Init).toBe(true);
     expect(info.HostConfig.Binds ?? []).toEqual([]);
     expect(info.Mounts).toEqual([]);

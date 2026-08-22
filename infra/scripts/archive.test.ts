@@ -169,9 +169,14 @@ describe('archive.sh', () => {
       line.includes('ps -aq --filter label=ah.instance=feat-x'),
     );
     const rm = entries.findIndex((line) => line.includes('rm -f abc123 def456'));
+    // The network the workspaces shared is this instance's too, and archiving is the one moment
+    // it should go: the runner recreates it on the next create, so nothing needs it afterwards.
+    // It goes after the containers, because a network still holding one cannot be removed.
+    const network = entries.findIndex((line) => line.includes('network rm ah-ws-feat-x'));
     expect(down).toBeGreaterThanOrEqual(0);
     expect(ps).toBeGreaterThan(down);
     expect(rm).toBeGreaterThan(ps);
+    expect(network).toBeGreaterThan(rm);
     expect(existsSync(envFile)).toBe(false);
   });
 

@@ -75,6 +75,17 @@ else
   echo "No workspace containers for instance $AH_INSTANCE"
 fi
 
+# The network the workspaces of this instance shared. It outlives them by design -- the runner
+# expects to find it on the next create -- so archiving the instance is the one moment it should
+# go. Removal is best effort and comes last: a network still holding a container the reap above
+# could not remove is a failure worth reporting, not one worth stopping the teardown for.
+network="ah-ws-$AH_INSTANCE"
+if docker network rm "$network" >/dev/null 2>&1; then
+  echo "Removed workspace network $network"
+else
+  echo "No workspace network $network to remove"
+fi
+
 echo "3/3 Env file ($env_file)"
 if [ $keep_env -eq 1 ]; then
   echo "kept (--keep-env)"
