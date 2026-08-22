@@ -93,6 +93,9 @@ export async function takeWorkspaceCredentials(
 ): Promise<WorkspaceCredentials> {
   let raw: string;
   try {
+    // Stryker disable next-line StringLiteral: an encoding it does not recognise makes readFile
+    // answer with a Buffer instead of refusing, and JSON.parse decodes that Buffer as UTF-8 all
+    // the same, so the two spellings produce the same credentials from the same file.
     raw = await readFile(file, 'utf8');
   } catch (error) {
     throw new CredentialsUnavailable(`no workspace credentials at ${file}`, { cause: error });
@@ -128,6 +131,9 @@ function parseCredentials(raw: string, file: string): WorkspaceCredentials {
   const result = workspaceCredentialsSchema.safeParse(document);
   if (!result.success) {
     // Zod's own message quotes the offending value; only the field names are safe to report.
+    // Stryker disable next-line StringLiteral: the document is a flat object, so every issue
+    // names a top-level field and the path it is joined from is one segment long; the separator
+    // between segments is written for the shape, not reached by it.
     const fields = result.error.issues.map((issue) => issue.path.join('.')).join(', ');
     throw new CredentialsUnavailable(`workspace credentials at ${file} are incomplete (${fields})`);
   }

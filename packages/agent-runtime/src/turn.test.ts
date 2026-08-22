@@ -29,7 +29,12 @@ import { REDACTED } from './redact.js';
 import { createBareRepoWithSeed } from './testing/bare-repo.js';
 import type { BareRepo } from './testing/bare-repo.js';
 import { makeTempDir, removeTempDir } from './testing/temp-dir.js';
-import { CREDENTIALS_FAILURE_CODE, runTurnCommand } from './turn.js';
+import {
+  CREDENTIALS_FAILURE_CODE,
+  DEFAULT_RUNTIME_DIR,
+  DEFAULT_WORKSPACE_ROOT,
+  runTurnCommand,
+} from './turn.js';
 import type { TurnDeps } from './turn.js';
 
 let repo: BareRepo;
@@ -237,6 +242,23 @@ afterEach(async () => {
   await removeTempDir(runtimeDir);
 });
 
+describe('the container paths the defaults name', () => {
+  /**
+   * These two are a handshake with the image rather than a preference of this module: the
+   * Dockerfile creates `/workspace`, makes it the working directory and marks it a safe directory
+   * for git, and the runtime directory is the tmpfs the token file is written into. Every suite
+   * here passes both explicitly, so nothing else would notice either constant being emptied — and
+   * a runtime that then looked for the checkout at the filesystem root would find no repository at
+   * all.
+   */
+  it.each([
+    ['the checkout the image prepares', DEFAULT_WORKSPACE_ROOT, '/workspace'],
+    ['the private directory the token file lives in', DEFAULT_RUNTIME_DIR, '/tmp/ah-runtime'],
+  ])('names %s', (_name, actual, expected) => {
+    expect(actual).toBe(expected);
+  });
+});
+
 describe('what runTurnCommand asks to be given', () => {
   /**
    * Every turn builds a provider, and which one the environment names is not knowable when the
@@ -439,6 +461,54 @@ describe('runTurnCommand and secrets', () => {
     assertNoCanary(text);
     assertNoCanary(stderr.join(''));
     expect(text).toContain('env:[]');
+    expect(text).toContain(REDACTED);
+  });
+
+  /**
+   * The check above cannot tell the two halves of redaction apart: the canaries are shaped like the
+   * credentials they stand in for, so the shape patterns alone would blank them even if this turn
+   * had never told the redactor which values it was actually handed. A credential of no
+   * recognisable shape is only ever caught by the second half, and the mutation run showed both
+   * ways of severing it — dropping the option and emptying the list — surviving the check above.
+   */
+  it('redacts a credential no pattern would recognise, because the turn wires in its own values', async () => {
+    const opaque = 'workspace-credential-of-no-recognisable-shape';
+    await writeCredentials(JSON.stringify({ githubToken: opaque, openaiApiKey: OPENAI_CANARY }));
+    const script = {
+      'print the token file': [
+        {
+          events: [
+            {
+              type: 'tool_call',
+              callId: 'c1',
+              name: 'run_shell',
+              arguments: JSON.stringify({
+                command: 'cat "$AH_GIT_TOKEN_FILE"',
+                cwd: null,
+                timeoutMs: 15_000,
+              }),
+            },
+            { type: 'response.done', responseId: 'r1', usage: { inputTokens: 1, outputTokens: 1 } },
+          ],
+        },
+        {
+          events: [
+            { type: 'text.done', text: 'Nothing to see.' },
+            { type: 'response.done', responseId: 'r2', usage: { inputTokens: 1, outputTokens: 1 } },
+          ],
+        },
+      ],
+    };
+
+    const exit = await runTurn(
+      `${JSON.stringify(request('print the token file'))}\n`,
+      {},
+      { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) },
+    );
+
+    expect(exit).toBe(EXIT.ok);
+    const text = stdout.join('');
+    expect(text).not.toContain(opaque);
     expect(text).toContain(REDACTED);
   });
 });

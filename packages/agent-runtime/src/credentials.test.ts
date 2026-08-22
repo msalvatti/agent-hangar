@@ -74,8 +74,17 @@ describe('takeWorkspaceCredentials', () => {
    * path so an operator can see which side of the handoff is missing.
    */
   it('reports a file that is not there, naming the path', async () => {
-    await expect(takeWorkspaceCredentials(file)).rejects.toThrow(CredentialsUnavailable);
-    await expect(takeWorkspaceCredentials(file)).rejects.toThrow(file);
+    const failure = await takeWorkspaceCredentials(file).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(CredentialsUnavailable);
+    // The whole message, not a fragment of it: with the read's own failure swallowed, execution
+    // carries on to the unlink, which fails too because the file is not there, and the turn is
+    // then told the credentials could not be *removed* — a different thing to go and look at.
+    expect((failure as Error).message).toBe(`no workspace credentials at ${file}`);
+    // Named so an operator can tell it apart from the model's own errors in a log.
+    expect((failure as Error).name).toBe('CredentialsUnavailable');
+    // Without the cause there is nothing left saying which syscall failed or why.
+    expect((failure as Error).cause).toMatchObject({ code: 'ENOENT' });
   });
 
   /**
@@ -90,7 +99,12 @@ describe('takeWorkspaceCredentials', () => {
     const failure = await takeWorkspaceCredentials(file).catch((error: unknown) => error);
 
     expect(failure).toBeInstanceOf(CredentialsUnavailable);
-    expect((failure as Error).message).toContain('could not be removed');
+    expect((failure as Error).message).toBe(
+      `workspace credentials at ${file} could not be removed`,
+    );
+    expect((failure as Error).name).toBe('CredentialsUnavailable');
+    // The unlink's own failure is the only thing that says why it could not be removed.
+    expect((failure as Error).cause).toMatchObject({ code: 'EACCES' });
     // Still there, which is the state the failure is reporting.
     await expect(stat(file)).resolves.toBeTruthy();
   });
@@ -120,5 +134,20 @@ describe('takeWorkspaceCredentials', () => {
       assertNoCanary((failure as Error).message);
     }).not.toThrow();
     await expect(stat(file)).rejects.toThrow();
+  });
+
+  /**
+   * A document missing both credentials is the case that shows whether the field names are being
+   * listed or merely concatenated: with one name the separator never appears, so a message that
+   * would read `githubTokenopenaiApiKey` looks correct until the day two of them are wrong at once.
+   */
+  it('lists every field the document failed on, separated', async () => {
+    await place(JSON.stringify({ unrelated: true }));
+
+    const failure = await takeWorkspaceCredentials(file).catch((error: unknown) => error);
+
+    expect((failure as Error).message).toBe(
+      `workspace credentials at ${file} are incomplete (githubToken, openaiApiKey)`,
+    );
   });
 });

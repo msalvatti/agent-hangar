@@ -32,16 +32,18 @@ const env: Record<string, string> = { PATH: process.env.PATH ?? '' };
 /**
  * A spawn double whose child behaves as the script says.
  *
- * @param script - `error` emits a start failure; `hang` never closes on its own; `stdout` is
- *   written to the child's standard output before it closes; otherwise the child closes
- *   immediately with `exitCode`.
+ * @param script - `error` emits a start failure; `hang` never closes on its own; `stdout` and
+ *   `stderr` are written to those streams before the child closes; otherwise the child closes
+ *   immediately with `exitCode`. A chunk may be raw bytes, which is how a multi-byte character
+ *   arrives split across two reads.
  * @returns A spawn function and the signals its child received.
  */
 function scriptedSpawn(script: {
   error?: Error;
   hang?: boolean;
   exitCode?: number;
-  stdout?: readonly string[];
+  stdout?: readonly (string | Uint8Array)[];
+  stderr?: readonly (string | Uint8Array)[];
 }): {
   spawn: SpawnFunction;
   kills: (NodeJS.Signals | number | undefined)[];
@@ -69,6 +71,9 @@ function scriptedSpawn(script: {
       }
       for (const chunk of script.stdout ?? []) {
         child.stdout?.write(chunk);
+      }
+      for (const chunk of script.stderr ?? []) {
+        child.stderr?.write(chunk);
       }
       // A further turn of the loop, so the stream has delivered everything before the close.
       setImmediate(() => {
@@ -145,6 +150,49 @@ describe('createGitRunner', () => {
   });
 
   /** The default has to cover a full-depth clone over a slow link and still be finite. */
+  /**
+   * The container has no console, so a git command that reads standard input has nothing to read
+   * and must be told so at once. Handed an open pipe nobody ever writes to or closes, the same
+   * command waits until the timeout kills it, and the turn loses its budget to a command that was
+   * never going to finish.
+   */
+  it('gives the child no standard input to wait on', async () => {
+    const result = await createGitRunner().run(['hash-object', '--stdin'], {
+      cwd,
+      env,
+      timeoutMs: 3000,
+    });
+    expect(result.code).toBe(0);
+    // The hash of the empty blob: what git computes when it reads end-of-file straight away.
+    expect(result.stdout.trim()).toBe('e69de29bb2d1d6434b8b29ae775ad8c2e48c5391');
+  });
+
+  /**
+   * A character whose bytes land either side of a read boundary is only reassembled if the stream
+   * has been told how to decode; collected as raw chunks each half decodes on its own and both
+   * become the replacement character.
+   */
+  it('reassembles a multi-byte character split across two reads', async () => {
+    const bytes = new TextEncoder().encode('café');
+    const { spawn } = scriptedSpawn({
+      stdout: [bytes.slice(0, 4), bytes.slice(4)],
+    });
+    const result = await createGitRunner(spawn).run(['log', '-1'], { cwd, env });
+    expect(result.stdout).toBe('café');
+  });
+
+  /**
+   * The timeout exists to kill a command that outlives it, so once the command has settled the
+   * timer must be gone: left armed it fires afterwards at a child that has already closed, and
+   * holds the event loop open until it does.
+   */
+  it('disarms the timeout once the command has settled', async () => {
+    const { spawn, kills } = scriptedSpawn({ exitCode: 0 });
+    await createGitRunner(spawn).run(['status'], { cwd, env, timeoutMs: 20 });
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(kills).toStrictEqual([]);
+  });
+
   it('bounds a command that names no timeout', () => {
     expect(DEFAULT_GIT_TIMEOUT_MS).toBe(600_000);
   });
@@ -174,5 +222,20 @@ describe('gitOrThrow', () => {
     expect(error).toBeInstanceOf(GitError);
     expect((error as GitError).code).toBe(128);
     expect((error as GitError).stderr.length).toBeLessThanOrEqual(500);
+  });
+
+  /**
+   * The cap is what makes the previous check mean anything: with an empty stderr it passes whether
+   * the text is trimmed or not. Here git produces more than the cap allows, and the error carries
+   * exactly the cap — the rest of a runaway stderr must not travel into an event.
+   */
+  it('trims a stderr that runs past the cap to exactly the cap', async () => {
+    const { spawn } = scriptedSpawn({ exitCode: 128, stderr: ['x'.repeat(1200)] });
+    const error = await gitOrThrow(createGitRunner(spawn), ['fetch'], { cwd, env }).catch(
+      (caught: unknown) => caught,
+    );
+    expect((error as GitError).stderr).toBe('x'.repeat(500));
+    // Named so a caller can tell a git failure from any other rejection it might be handed.
+    expect((error as GitError).name).toBe('GitError');
   });
 });

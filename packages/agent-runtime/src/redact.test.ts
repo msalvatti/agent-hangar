@@ -91,6 +91,21 @@ describe('createRuntimeRedactor / redactText', () => {
     expect(redactor.redactText('abc is a common word')).toBe('abc is a common word');
   });
 
+  /**
+   * The minimum length is where a credential stops being a word, and it is a floor rather than a
+   * threshold to clear: a value of exactly that length is still the credential this turn was
+   * handed. Asserted at the limit and one below it, because a check written one step off passes
+   * every test that only tries values far from the boundary.
+   */
+  it.each([
+    ['at the minimum length', 'abcdefgh', true],
+    ['one character below it', 'abcdefg', false],
+  ])('treats a value %s as a secret: %s', (_name, value, redacted) => {
+    const redactor = createRuntimeRedactor({ values: [value] });
+    const output = redactor.redactText(`before ${value} after`);
+    expect(output).toBe(redacted ? `before ${REDACTED_TOKEN} after` : `before ${value} after`);
+  });
+
   /** The worker redacts again; a second pass must not mangle already-redacted text. */
   it('is idempotent', () => {
     const redactor = createRuntimeRedactor({ values: [GITHUB_CANARY] });

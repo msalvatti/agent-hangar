@@ -113,6 +113,9 @@ function redactArgs(args: unknown, redactText: (text: string) => string): unknow
  * @returns A redactor for text and for protocol events.
  */
 export function createRuntimeRedactor(options: RuntimeRedactorOptions = {}): RuntimeRedactor {
+  // Stryker disable next-line ArrayDeclaration: with no values given there is nothing to replace,
+  // and any list put here instead would only change the output for text that happened to contain
+  // one of its entries — which is a string no test can name.
   const values = usableValues(options.values ?? []);
 
   // Both passes use `split`/`join` rather than `replace`. For an exact value it sidesteps the
