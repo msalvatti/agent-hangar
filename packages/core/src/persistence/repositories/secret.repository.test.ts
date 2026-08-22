@@ -54,6 +54,9 @@ describe('PrismaSecretRepository', () => {
     const repo = new PrismaSecretRepository(client);
     const record = await repo.get('GITHUB_PAT');
     expect(record?.key).toBe('GITHUB_PAT');
+    // Addressed by the key that was asked for: without the filter the read answers with whichever
+    // secret row comes back first, so a request for one credential is handed the other.
+    expect(secret.findUnique.mock.calls).toStrictEqual([[{ where: { key: 'GITHUB_PAT' } }]]);
     secret.findUnique = vi.fn(() => Promise.resolve(null));
     expect(await repo.get('OPENAI_API_KEY')).toBeNull();
   });

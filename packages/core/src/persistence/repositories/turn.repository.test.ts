@@ -315,3 +315,95 @@ describe('PrismaTurnRepository', () => {
     });
   });
 });
+
+describe('what the turn repository asks the database for', () => {
+  /** A turn read by id is addressed by id, or the caller is shown some other chat's turn. */
+  it('reads one turn by its id', async () => {
+    const { client, turn } = fakePrisma();
+    const repo = new PrismaTurnRepository(client, fakeRedactor);
+
+    await repo.get('turn-1');
+
+    expect(turn.findUnique.mock.calls).toStrictEqual([[{ where: { id: 'turn-1' } }]]);
+  });
+
+  /**
+   * A status write carries exactly the fields it was given. A workspace or a queue job the caller
+   * did not mention must not appear in the write at all: present and undefined is what a write
+   * naming every column produces, and it is one Prisma release away from meaning "set to null".
+   */
+  it('writes only the fields the caller supplied with a status', async () => {
+    const { client, turn } = fakePrisma();
+    const repo = new PrismaTurnRepository(client, fakeRedactor);
+
+    await repo.setStatus('turn-1', 'RUNNING');
+
+    expect(turn.update.mock.calls).toStrictEqual([
+      [{ where: { id: 'turn-1' }, data: { status: 'RUNNING' } }],
+    ]);
+  });
+
+  /** Every write of this repository names the entity whose row was missing. */
+  it('names the entity of a row it could not update', async () => {
+    const { client } = fakePrisma({ update: vi.fn(() => Promise.reject(p2025())) });
+    const repo = new PrismaTurnRepository(client, fakeRedactor);
+
+    const failure = await repo.setStatus('turn-1', 'RUNNING').catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(NotFoundError);
+    expect((failure as NotFoundError).entity).toBe('Turn');
+  });
+});
+
+describe('what the turn repository reports and returns', () => {
+  /**
+   * A turn created against a chat that is not there reports the turn as the entity and the chat as
+   * the parent — the row that was missing is the chat, and the caller has to be told which of the
+   * two it was.
+   */
+  it('names the turn and the chat when a create finds no chat', async () => {
+    const foreignKey = Object.assign(new Error('Foreign key constraint failed'), {
+      code: 'P2003',
+    });
+    const { client } = fakePrisma({ create: vi.fn(() => Promise.reject(foreignKey)) });
+    const repo = new PrismaTurnRepository(client, fakeRedactor);
+
+    const failure = await repo
+      .create({ chatId: 'chat-1', model: 'gpt', queueJobId: null })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(NotFoundError);
+    expect((failure as NotFoundError).entity).toBe('Chat');
+  });
+
+  /**
+   * A create that finds no row of its own reports the turn rather than the chat: the two entities
+   * in that context answer different failures, and a caller told the wrong one goes looking for a
+   * chat that is perfectly well there.
+   */
+  it('names the turn when a create finds no row of its own', async () => {
+    const missing = Object.assign(new Error('Record not found'), { code: 'P2025' });
+    const { client } = fakePrisma({ create: vi.fn(() => Promise.reject(missing)) });
+    const repo = new PrismaTurnRepository(client, fakeRedactor);
+
+    const failure = await repo
+      .create({ chatId: 'chat-1', model: 'gpt', queueJobId: null })
+      .catch((error: unknown) => error);
+
+    expect((failure as NotFoundError).entity).toBe('Turn');
+  });
+
+  /**
+   * A guarded write that matched a row returns that row. Answered `null` regardless, the caller
+   * reads a finished turn as one somebody else had already finished, and the turn's own result is
+   * dropped.
+   */
+  it('returns the row a guarded finish matched', async () => {
+    const { client } = fakePrisma();
+    const repo = new PrismaTurnRepository(client, fakeRedactor);
+
+    await expect(
+      repo.finish('turn-1', 'SUCCEEDED', { inputTokens: 1, outputTokens: 2, stepCount: 1 }),
+    ).resolves.toMatchObject({ id: 'turn-1' });
+  });
+});

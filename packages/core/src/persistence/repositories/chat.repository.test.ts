@@ -256,3 +256,64 @@ describe('PrismaChatRepository', () => {
     await expect(repo.rename('missing', 'x')).rejects.toBeInstanceOf(NotFoundError);
   });
 });
+
+describe('what the chat repository asks the database for', () => {
+  /**
+   * A chat read by id is read by id: without the filter the query answers with whichever row the
+   * database returns first, so a caller asking about one chat is shown another's title, branch and
+   * history.
+   */
+  it('reads one chat by its id', async () => {
+    const { client, chat } = fakePrisma();
+    const repo = new PrismaChatRepository(client, fakeRedactor);
+
+    await repo.getById('chat-1');
+
+    expect(chat.findUnique.mock.calls).toStrictEqual([[{ where: { id: 'chat-1' } }]]);
+  });
+
+  /**
+   * Telling a delete apart from a live turn means asking whether the row is still there, by id and
+   * for nothing but its id: the answer decides between "already gone" and "still working", and
+   * either read without its filter answers about some other chat entirely.
+   */
+  it('checks whether the chat is still there by id alone', async () => {
+    const { client, chat } = fakePrisma({ deleteMany: vi.fn(() => Promise.resolve({ count: 0 })) });
+    const repo = new PrismaChatRepository(client, fakeRedactor);
+
+    await expect(repo.deleteIfIdle('chat-1')).resolves.toBe('LIVE_TURN');
+    expect(chat.findUnique.mock.calls).toStrictEqual([
+      [{ where: { id: 'chat-1' }, select: { id: true } }],
+    ]);
+  });
+
+  /**
+   * Restore hints are a partial patch: a turn that learned only the branch must not blank the sha
+   * it never mentioned. Written with every key present, an absent hint becomes an explicit
+   * `undefined` — which today means "leave alone" and which nothing here would notice changing.
+   */
+  it.each([
+    ['only the branch', { workBranch: 'agent/x' }, { workBranch: 'agent/x' }],
+    ['only the sha', { lastPushedSha: 'abc' }, { lastPushedSha: 'abc' }],
+  ])('writes %s when that is all the turn learned', async (_case, hints, written) => {
+    const { client, chat } = fakePrisma();
+    const repo = new PrismaChatRepository(client, fakeRedactor);
+
+    await repo.updateRestoreHints('chat-1', hints);
+
+    expect(chat.update.mock.calls).toStrictEqual([
+      [{ where: { id: 'chat-1' }, data: { ...written, updatedAt: expect.any(Date) as Date } }],
+    ]);
+  });
+
+  /** Every write of this repository reports which entity was missing when the row has gone. */
+  it('names the entity of a row it could not update', async () => {
+    const { client } = fakePrisma({ update: vi.fn(() => Promise.reject(p2025())) });
+    const repo = new PrismaChatRepository(client, fakeRedactor);
+
+    const failure = await repo.rename('chat-1', 'new title').catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(NotFoundError);
+    expect((failure as NotFoundError).entity).toBe('Chat');
+  });
+});

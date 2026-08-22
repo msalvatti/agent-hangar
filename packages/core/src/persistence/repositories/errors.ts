@@ -20,7 +20,7 @@ export { LiveWorkspaceExistsError, NotFoundError, UniqueViolationError } from '.
 
 /** A stored row holds a value that does not match any literal of its domain union. */
 export class PersistenceMappingError extends AgentHangarError {
-  override readonly code = 'PERSISTENCE_MAPPING' as const;
+  declare readonly code: 'PERSISTENCE_MAPPING';
 
   /**
    * @param detail - What could not be mapped and why.
@@ -44,7 +44,7 @@ export class PersistenceMappingError extends AgentHangarError {
  * only one of them enforces is a rule that holds in exactly the runs nobody is watching.
  */
 export class WorkspaceKindMismatchError extends AgentHangarError {
-  override readonly code = 'WORKSPACE_KIND_MISMATCH' as const;
+  declare readonly code: 'WORKSPACE_KIND_MISMATCH';
 
   /** The workspace that was named. */
   readonly workspaceId: string;

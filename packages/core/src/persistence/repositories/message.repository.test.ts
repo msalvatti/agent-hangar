@@ -163,3 +163,79 @@ describe('PrismaMessageRepository', () => {
     });
   });
 });
+
+describe('what the message repository asks the database for', () => {
+  /**
+   * The two raw statements are the whole of the sequencing guarantee: the first takes a row lock on
+   * the chat so two appends cannot compute the same number, and the second computes it. Emptied,
+   * the first locks nothing — appends race and two messages claim one sequence — and the second
+   * answers nothing, so every message is the first.
+   */
+  it('locks the chat row and computes the next sequence from the messages of that chat', async () => {
+    const { tx, queryRaw } = fakeTx({ locked: [{ id: 'chat-1' }], next: [{ next: 4 }] });
+    const repo = new PrismaMessageRepository(fakePrismaWithTx(tx), fakeRedactor);
+
+    await repo.append('chat-1', 'USER', 'hello');
+
+    const text = (call: unknown[]): string => (call[0] as string[]).join('?');
+    expect(text(queryRaw.mock.calls[0] ?? [])).toBe(
+      'SELECT id FROM "Chat" WHERE id = ? FOR UPDATE',
+    );
+    expect(text(queryRaw.mock.calls[1] ?? [])).toBe(
+      'SELECT COALESCE(MAX(seq), 0) + 1 AS next FROM "Message" WHERE "chatId" = ?',
+    );
+  });
+
+  /**
+   * The aggregate is over an `Int` column, so Postgres normally answers with a 32-bit integer — but
+   * the wire type is a driver detail, and a `bigint` handed on unconverted is a value Prisma will
+   * not write into an `Int` column and JSON cannot serialise.
+   */
+  it('converts a sequence the driver reports as a bigint', async () => {
+    const { tx, create } = fakeTx({ locked: [{ id: 'chat-1' }], next: [{ next: 7n }] });
+    const repo = new PrismaMessageRepository(fakePrismaWithTx(tx), fakeRedactor);
+
+    await repo.append('chat-1', 'USER', 'hello');
+
+    expect(create.mock.calls[0]?.[0].data.seq).toBe(7);
+  });
+
+  /**
+   * A listing with no limit asks for no limit. Sent one anyway — of nothing — the page size becomes
+   * whatever the driver makes of `undefined`, and a transcript that should show every message shows
+   * some other number of them.
+   */
+  it.each([
+    ['no limit', {}, undefined],
+    ['the limit it was given', { limit: 25 }, 25],
+  ])('asks for %s', async (_case, options, take) => {
+    const findMany = vi.fn(() => Promise.resolve([]));
+    const repo = new PrismaMessageRepository(
+      { message: { findMany } } as unknown as PrismaClient,
+      fakeRedactor,
+    );
+
+    await repo.listByChat('chat-1', options);
+
+    expect(findMany.mock.calls[0]?.[0]).toStrictEqual({
+      where: { chatId: 'chat-1' },
+      orderBy: { seq: 'desc' },
+      ...(take === undefined ? {} : { take }),
+    });
+  });
+
+  /**
+   * The lock is what proves the chat exists at the moment the sequence is computed; a chat that
+   * has gone in between is reported as that chat being missing, not as a message that could not be
+   * written.
+   */
+  it('names the chat when the lock finds no row', async () => {
+    const { tx } = fakeTx({ locked: [], next: [{ next: 1 }] });
+    const repo = new PrismaMessageRepository(fakePrismaWithTx(tx), fakeRedactor);
+
+    const failure = await repo.append('chat-1', 'USER', 'hello').catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(NotFoundError);
+    expect((failure as NotFoundError).entity).toBe('Chat');
+  });
+});

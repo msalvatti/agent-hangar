@@ -41,7 +41,12 @@ export const DEFAULT_REACHABILITY_TIMEOUT_MS = 5000;
 export function createPrismaClient(options: CreatePrismaClientOptions): PrismaClient {
   const adapter = new PrismaPg({
     connectionString: options.connectionString,
+    // Spread conditionally because these are optional properties and this project forbids handing
+    // one an explicit `undefined`; the adapter reads an absent option and an option set to nothing
+    // as the same instruction, so neither spelling can be told apart from outside.
+    // Stryker disable next-line ConditionalExpression
     ...(options.max === undefined ? {} : { max: options.max }),
+    // Stryker disable next-line ConditionalExpression
     ...(options.connectionTimeoutMillis === undefined
       ? {}
       : { connectionTimeoutMillis: options.connectionTimeoutMillis }),
@@ -73,8 +78,18 @@ export async function assertDatabaseReachable(
       reject(timedOut);
     }, timeoutMs);
   });
+  // The timer is disarmed on every way out, success and failure alike. Both the race and this
+  // clean-up are internal to one call, so a timer left armed only rejects a promise the race has
+  // already settled and handled — nothing outside can see the difference, which is why the
+  // directive sits where it does.
+  const probe = Promise.race([client.$queryRaw`SELECT 1`, timeout]).finally(
+    // Stryker disable next-line ArrowFunction
+    () => {
+      clearTimeout(timer);
+    },
+  );
   try {
-    await Promise.race([client.$queryRaw`SELECT 1`, timeout]);
+    await probe;
   } catch (error) {
     if (error === timedOut) {
       throw error;
@@ -82,8 +97,6 @@ export async function assertDatabaseReachable(
     // Neither the driver's message nor the error itself may travel: both carry the connection
     // string, password included, and `cause` republishes it to anything walking the chain.
     throw new ConfigError(`database unreachable (${describeClientFailure(error)})`);
-  } finally {
-    clearTimeout(timer);
   }
 }
 

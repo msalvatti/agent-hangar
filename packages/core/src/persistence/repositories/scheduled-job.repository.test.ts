@@ -198,3 +198,62 @@ describe('PrismaScheduledJobRepository', () => {
     await expect(repo.setRunTimes('missing', {})).rejects.toBeInstanceOf(NotFoundError);
   });
 });
+
+describe('what the scheduled-job repository asks the database for', () => {
+  /**
+   * A job read, updated or deleted by id is addressed by id. Without the filter a read answers
+   * about whichever job the database returns first, and a delete removes every job there is.
+   */
+  it('reads one job by its id', async () => {
+    const { client, scheduledJob } = fakePrisma();
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
+
+    await repo.get('job-1');
+
+    expect(scheduledJob.findUnique.mock.calls).toStrictEqual([[{ where: { id: 'job-1' } }]]);
+  });
+
+  /**
+   * The run times are a partial patch: a scheduler that computed only the next run must not blank
+   * the record of the last one. Written with every key present, an absent time becomes an explicit
+   * `undefined`, which today means "leave alone" and which nothing here would notice changing.
+   */
+  it.each([
+    ['only the next run', { nextRunAt: new Date('2026-02-01T00:00:00.000Z') }],
+    ['only the last run', { lastRunAt: new Date('2026-01-01T00:00:00.000Z') }],
+  ])('writes %s when that is all the scheduler computed', async (_case, times) => {
+    const { client, scheduledJob } = fakePrisma();
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
+
+    await repo.setRunTimes('job-1', times);
+
+    expect(scheduledJob.update.mock.calls).toStrictEqual([
+      [{ where: { id: 'job-1' }, data: { ...times, updatedAt: expect.any(Date) as Date } }],
+    ]);
+  });
+
+  /**
+   * Every write of this repository reports which entity was missing, because a caller that asked
+   * about a job and is told a row was not found has no other way to know which row.
+   */
+  it.each([
+    ['setRunTimes', async (repo: PrismaScheduledJobRepository) => repo.setRunTimes('job-1', {})],
+    [
+      'update',
+      async (repo: PrismaScheduledJobRepository) => repo.update('job-1', { enabled: false }),
+    ],
+    ['delete', async (repo: PrismaScheduledJobRepository) => repo.delete('job-1')],
+  ])('names the entity of a row %s could not find', async (_case, call) => {
+    const failing = vi.fn(() => Promise.reject(p2025()));
+    const { client } = fakePrisma({
+      update: failing,
+      delete: vi.fn(() => Promise.reject(p2025())),
+    });
+    const repo = new PrismaScheduledJobRepository(client, fakeRedactor);
+
+    const failure = await call(repo).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(NotFoundError);
+    expect((failure as NotFoundError).entity).toBe('ScheduledJob');
+  });
+});
