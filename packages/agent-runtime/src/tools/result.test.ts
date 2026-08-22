@@ -100,4 +100,15 @@ describe('truncateOutput', () => {
     expect(result.text).toBe('a\n[truncated: 30 bytes total]');
     expect(result.bytes).toBe(30);
   });
+
+  /**
+   * The case above cannot tell dropping the broken character apart from keeping only the first
+   * one: with a single character before the cut the two are the same string. Here three whole
+   * characters precede it, so everything except the split one has to survive.
+   */
+  it('keeps everything before the character the cut would have split', () => {
+    const result = truncateOutput('abcé'.repeat(6), 4);
+    expect(result.text).toBe('abc\n[truncated: 30 bytes total]');
+    expect(result.bytes).toBe(30);
+  });
 });

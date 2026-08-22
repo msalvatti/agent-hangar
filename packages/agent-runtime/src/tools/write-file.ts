@@ -42,6 +42,8 @@ export async function writeFile(
   const bytes = Buffer.byteLength(args.content);
   try {
     await mkdir(path.dirname(absolute), { recursive: true });
+    // Stryker disable next-line StringLiteral: an encoding it does not recognise makes writeFile
+    // fall back to UTF-8 rather than refuse, so the same bytes reach the file either way.
     await writeFileToDisk(absolute, args.content, 'utf8');
   } catch (error) {
     return failure(`could not write ${shown}: ${describeError(error)}`);

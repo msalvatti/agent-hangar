@@ -10,9 +10,10 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createGitRunner } from '../git.js';
+import type { GitRunner } from '../git.js';
 import { makeTempDir, removeTempDir } from '../testing/temp-dir.js';
 
 import { listDir } from './list-dir.js';
@@ -160,6 +161,94 @@ describe('listDir inside a repository', () => {
     expect(lines).toContain('src/a.ts');
     expect(lines).toContain('src/nested/');
     expect(lines).not.toContain('src/nested/b.ts');
+  });
+});
+
+describe('listDir rendering what git reports', () => {
+  /**
+   * A git runner that answers both questions from a script, so the listing can be driven by an
+   * output real git would never be asked to produce twice in a row.
+   *
+   * @param inside - Exit code of `rev-parse --is-inside-work-tree`.
+   * @param stdout - What `ls-files -z` writes, terminator included.
+   * @returns The runner and the spy its calls can be read from.
+   */
+  function scriptedGit(
+    inside: number,
+    stdout: string,
+  ): { git: GitRunner; run: ReturnType<typeof vi.fn<GitRunner['run']>> } {
+    const run = vi.fn<GitRunner['run']>((args) =>
+      Promise.resolve(
+        args[0] === 'rev-parse'
+          ? { code: inside, stdout: 'true\n', stderr: '' }
+          : { code: 0, stdout, stderr: '' },
+      ),
+    );
+    return { git: { run }, run };
+  }
+
+  /**
+   * Three things at once, because git's output is where all three are decided: the order it lists
+   * files in is its own, two files in one directory name that directory twice, and `-z` terminates
+   * the last name as well as separating them, leaving an empty string at the end. Sorted,
+   * deduplicated and filtered, that is two lines; without any one of those steps it is a listing
+   * the model cannot read - out of order, repeating itself, or opening with a blank line.
+   */
+  it('sorts, deduplicates and drops the terminator git leaves behind', async () => {
+    const { git } = scriptedGit(0, 'src/z.ts\0README.md\0src/a.ts\0');
+
+    const result = await listDir({ path: null, depth: 1 }, { ...context, git });
+
+    expect(result.output.split('\n')).toStrictEqual(['README.md', 'src/']);
+  });
+
+  /**
+   * Depth counts levels of directory, and the intermediate directories derived from a path must
+   * stop at the level asked for. A bound written one step wide, or one that takes the longer of
+   * the two numbers instead of the shorter, shows the model a directory it did not ask to see and
+   * that the listing does not go on to describe.
+   */
+  it('derives directories only as deep as the listing goes', async () => {
+    const { git } = scriptedGit(0, 'a/b/c.ts\0');
+
+    const result = await listDir({ path: null, depth: 1 }, { ...context, git });
+
+    expect(result.output.split('\n')).toStrictEqual(['a/']);
+  });
+
+  /**
+   * The first question is the gate. A directory git will not claim as part of a work tree is
+   * listed by walking it instead, whatever a second command might have answered - and here the
+   * second command answers with a file that is not in that directory at all.
+   */
+  it('walks the tree itself when git does not claim the directory', async () => {
+    const { git } = scriptedGit(128, 'somewhere/else.ts\0');
+
+    const result = await listDir({ path: null, depth: 1 }, { ...context, git });
+
+    expect(result.output.split('\n')).toStrictEqual(['README.md', 'src/']);
+  });
+
+  /**
+   * Both questions are about the directory being listed. Asked without one, git answers about
+   * whatever directory the process happens to be in - which in this repository is a work tree of
+   * its own, with a different `.gitignore` deciding what the model is allowed to see.
+   */
+  it('asks git about the directory being listed, not about the process', async () => {
+    const { git, run } = scriptedGit(0, 'a.ts\0');
+    const base = path.join(root, 'src');
+
+    await listDir({ path: 'src', depth: 1 }, { ...context, git });
+
+    expect(run).toHaveBeenNthCalledWith(1, ['rev-parse', '--is-inside-work-tree'], {
+      cwd: base,
+      env,
+    });
+    expect(run).toHaveBeenNthCalledWith(
+      2,
+      ['ls-files', '--cached', '--others', '--exclude-standard', '-z', '--', '.'],
+      { cwd: base, env },
+    );
   });
 });
 

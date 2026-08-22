@@ -144,6 +144,9 @@ function renderListing(entries: readonly string[], maxEntries: number): string {
 export async function listDir(args: ListDirArgs, context: ListDirContext): Promise<ToolResult> {
   let base: string;
   try {
+    // Stryker disable next-line StringLiteral: resolving the workspace root against the current
+    // directory and against an empty path both land on the root itself, so the two spellings of
+    // "no path was given" name the same directory.
     base = await resolveInsideWorkspace(context.workspaceRoot, args.path ?? '.');
   } catch (error) {
     return failure(error instanceof PathEscapeError ? error.message : 'path could not be resolved');

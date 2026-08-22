@@ -128,6 +128,21 @@ describe('readFile', () => {
     expect(result.output).toContain('run_shell with head or sed');
   });
 
+  /**
+   * The cap is the largest file the tool will load, not the first size it refuses, so a file of
+   * exactly that many bytes still has to come back. Measured at the limit as well as past it: the
+   * refusal above passes just as happily against a check written one byte early, and that check
+   * would turn a readable file into an instruction to go and use the shell instead.
+   */
+  it('reads a file of exactly the largest size it will load', async () => {
+    await writeFile(path.join(root, 'exact.bin'), Buffer.alloc(4 * 1024 * 1024, 0x61));
+
+    const result = await readFile({ path: 'exact.bin', startLine: null, endLine: null }, context);
+
+    expect(result.status).toBe('SUCCEEDED');
+    expect(result.output).not.toContain('too large to read whole');
+  });
+
   /** The budget protects the model's context; the notice tells it what it is missing. */
   it('truncates a long file and still reports its real size', async () => {
     await writeFile(path.join(root, 'big.txt'), 'x'.repeat(5000), 'utf8');

@@ -114,6 +114,21 @@ describe('createToolExecutor', () => {
     );
   });
 
+  /**
+   * With one problem the separator between problems never appears, so a message that would run
+   * them together reads correctly until the model gets two wrong at once - which is exactly when
+   * it most needs to be told what both of them were.
+   */
+  it('separates the problems when more than one argument is wrong', async () => {
+    const result = await executor.execute('run_shell', { command: '', cwd: 42, timeoutMs: null });
+
+    expect(result.status).toBe('FAILED');
+    expect(result.output).toBe(
+      'invalid arguments for run_shell: command: Too small: expected string to have >=1 ' +
+        'characters; cwd: Invalid input: expected string, received number',
+    );
+  });
+
   /** Zod quotes the offending keys, and the model chose them from repository content. */
   it('reports how many unrecognised arguments there were, never their names', async () => {
     const result = await executor.execute('write_file', {
