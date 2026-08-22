@@ -132,7 +132,13 @@ describe('parseJsonBody', () => {
    */
   it('rejects a body that is not JSON', async () => {
     const attempt = parseJsonBody(postRequest('{oops'), z.object({}));
-    await expect(attempt).rejects.toMatchObject({ status: 400, code: 'INVALID_JSON' });
+    await expect(attempt).rejects.toMatchObject({
+      status: 400,
+      code: 'INVALID_JSON',
+      // The parser's own message quotes the offending bytes, which the caller controls, so this
+      // fixed sentence is the whole answer — and it still has to say what was wrong.
+      message: 'Request body is not valid JSON',
+    });
     expect(await rejectionMessage(attempt)).not.toContain('oops');
   });
 
@@ -155,6 +161,18 @@ describe('parseJsonBody', () => {
     const message = await rejectionMessage(attempt);
     expect(message.split('; ')).toHaveLength(MAX_REPORTED_ISSUES);
     expect(message).toContain('a: ');
+  });
+
+  /**
+   * A field inside an object is named by its whole path. Run together, `repo` and `url` become a
+   * word that matches no field on the form, and the UI has nothing to point at.
+   */
+  it('names a nested field by its path', async () => {
+    const schema = z.object({ repo: z.object({ url: z.string() }) });
+
+    const attempt = parseJsonBody(postRequest('{"repo":{}}'), schema);
+
+    expect(await rejectionMessage(attempt)).toContain('repo.url: ');
   });
 
   /**
@@ -231,7 +249,18 @@ describe('withErrorHandling', () => {
     expect(await response.json()).toEqual({
       error: { code: 'INTERNAL', message: INTERNAL_ERROR_MESSAGE },
     });
-    expect(doubles.logOutput()).toContain('request failed');
+    // The classification and the status travel with the line; the error itself is logged whole
+    // because this is the server's own log rather than the response, and a 500 with no cause
+    // recorded anywhere is one nobody can act on.
+    expect(
+      doubles
+        .logOutput()
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({ msg: 'request failed', code: 'INTERNAL', status: 500 }),
+    );
   });
 
   /**

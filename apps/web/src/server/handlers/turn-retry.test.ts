@@ -184,8 +184,14 @@ describe('retryTurn', () => {
     const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
 
     expect(response.status).toBe(409);
+    // The sentence is the whole advice: this window always closes, so "press Retry again in a
+    // moment" is true rather than hopeful, and it is what keeps the user from thinking the button
+    // is broken.
     expect(await response.json()).toMatchObject({
-      error: { code: 'PREVIOUS_ATTEMPT_RUNNING' },
+      error: {
+        code: 'PREVIOUS_ATTEMPT_RUNNING',
+        message: 'The previous attempt is still finishing; press Retry again in a moment',
+      },
     });
     expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({
       status: 'FAILED',

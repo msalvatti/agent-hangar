@@ -127,7 +127,10 @@ describe('listRepos', () => {
     const { container, doubles } = createTestContainer();
     doubles.github.repos = [REPO, { ...REPO, fullName: 'other/thing' }];
     const response = await listRepos(container, readRequest('/api/repos?query=widg'));
-    expect(response.headers.get('cache-control')).toBe(REPOS_CACHE_CONTROL);
+    // Written out: `private` keeps a shared proxy from serving one user's repository list to
+    // another, and the half-minute is what stops the picker asking the forge on every keystroke.
+    expect(response.headers.get('cache-control')).toBe('private, max-age=30');
+    expect(REPOS_CACHE_CONTROL).toBe('private, max-age=30');
     expect(listReposResponse.parse(await response.json()).repos).toHaveLength(1);
   });
 
@@ -183,6 +186,9 @@ describe('listBranches', () => {
     );
     const body = listBranchesResponse.parse(await response.json());
     expect(body.branches).toEqual([{ name: 'main', sha: 'a'.repeat(40), protected: true }]);
+    // Cached the same way the repository list is, and for the same reasons: the branch picker
+    // refetches as the user types, and one user's branches must never sit in a shared cache.
+    expect(response.headers.get('cache-control')).toBe('private, max-age=30');
   });
 
   /**

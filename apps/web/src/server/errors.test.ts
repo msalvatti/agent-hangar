@@ -34,7 +34,12 @@ describe('error types', () => {
    * choosing a type rather than by repeating a number at every call site.
    */
   it('fixes the status and code of every subclass', () => {
-    expect(new ResourceNotFoundError()).toMatchObject({ status: 404, code: 'NOT_FOUND' });
+    // The default wording is what a caller sees when the thrower named nothing more specific.
+    expect(new ResourceNotFoundError()).toMatchObject({
+      status: 404,
+      code: 'NOT_FOUND',
+      message: 'Not found',
+    });
     expect(new ResourceNotFoundError('Chat not found').message).toBe('Chat not found');
     expect(new ConflictError('TURN_IN_PROGRESS', 'busy')).toMatchObject({
       status: 409,
@@ -73,9 +78,13 @@ describe('reportError', () => {
    * the UI can point at Settings; every other GitHub failure is an upstream problem (502).
    */
   it('splits GitHub failures into an auth problem and an upstream problem', () => {
+    // The sentence sends the user to Settings to replace the token, which is the one thing they
+    // can do about it — and it never repeats what the forge said, because a forge repeats what it
+    // was sent and that request carried the token.
     expect(reportError(new GithubApiError(401, 'x'))).toMatchObject({
       status: 401,
       code: 'GITHUB_AUTH',
+      message: 'GitHub rejected the stored token',
     });
     expect(reportError(new GithubApiError(403, 'x'))).toMatchObject({
       status: 401,
@@ -134,8 +143,11 @@ describe('reportError', () => {
     expect(reportError(driverError)).toEqual({
       status: 500,
       code: 'INTERNAL',
-      message: INTERNAL_ERROR_MESSAGE,
+      // Written out as well as read from the export: this is the whole of what an unrecognised
+      // failure is allowed to say, and emptied it would answer a 500 with no words at all.
+      message: 'Internal error',
     });
+    expect(INTERNAL_ERROR_MESSAGE).toBe('Internal error');
     expect(reportError('a bare string')).toMatchObject({ code: 'INTERNAL' });
   });
 });

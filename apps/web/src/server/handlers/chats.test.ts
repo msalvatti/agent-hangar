@@ -228,7 +228,10 @@ describe('createChat', () => {
     expect(response.status).toBe(500);
     const [chat] = await harness.doubles.repos.chats.list();
     const turns = await harness.doubles.repos.turns.listByChat(chat!.id);
-    expect(turns[0]).toMatchObject({ status: 'FAILED', error: ENQUEUE_FAILED });
+    // The sentence the user reads under a turn that never started, written out here as well as
+    // read from the export.
+    expect(turns[0]).toMatchObject({ status: 'FAILED', error: 'Could not enqueue the turn' });
+    expect(ENQUEUE_FAILED).toBe('Could not enqueue the turn');
   });
 
   /**

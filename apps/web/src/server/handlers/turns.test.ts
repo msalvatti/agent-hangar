@@ -44,6 +44,32 @@ describe('cancelTurn', () => {
    * says the turn is being stopped, and leaving the record to the worker is what let a turn the
    * API had already accepted a cancellation for come back as `FAILED`.
    */
+  /**
+   * Every state in which BullMQ has not handed the job to a worker is one this cancel can remove
+   * outright. A delivery that is delayed or prioritised has not started any more than a waiting
+   * one has, and a route that only recognised `waiting` would publish a command for work no
+   * worker is holding — and leave the delivery on the queue to run afterwards.
+   */
+  it.each(['waiting', 'delayed', 'prioritized'] as const)(
+    'removes a %s delivery instead of asking the worker',
+    async (state) => {
+      const harness = createTestContainer();
+      const turnId = await seedTurn(harness);
+      const job = harness.doubles.queues.chatTurns.jobs.get(turnId);
+      if (job === undefined) {
+        throw new Error('The seeded turn did not enqueue a job');
+      }
+      job.state = state;
+
+      const response = await cancelTurn(harness.container, cancelRequest(turnId), { id: turnId });
+
+      expect(response.status).toBe(200);
+      expect(harness.doubles.redis.published).toEqual([]);
+      expect(harness.doubles.queues.chatTurns.jobs.has(turnId)).toBe(false);
+      expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({ status: 'CANCELLED' });
+    },
+  );
+
   it('publishes a cancel command for a running turn and records the cancellation', async () => {
     const harness = createTestContainer();
     const turnId = await seedTurn(harness);
