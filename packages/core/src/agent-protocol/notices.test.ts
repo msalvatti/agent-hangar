@@ -12,6 +12,7 @@ import { describe, expect, it } from 'vitest';
 import {
   isPrepareWarning,
   prepareWarningText,
+  preparedNoticeText,
   pushedNoticeText,
   shortSha,
   systemNoticeTone,
@@ -26,6 +27,19 @@ describe('shortSha', () => {
   /** An already-short sha is returned untouched rather than padded out. */
   it('leaves a shorter sha alone', () => {
     expect(shortSha('abc')).toBe('abc');
+  });
+});
+
+describe('preparedNoticeText', () => {
+  /**
+   * The branch in full and the commit shortened, exactly as the push notice spells the same two
+   * things. The line has two builders — the live stream and the reload — and this is the one they
+   * share, so drift between them would have to start here.
+   */
+  it('names the branch in full and shortens the commit', () => {
+    expect(preparedNoticeText('agent/018f3a2b', '0123456789abcdef0123456789abcdef01234567')).toBe(
+      'Prepared agent/018f3a2b at 0123456',
+    );
   });
 });
 

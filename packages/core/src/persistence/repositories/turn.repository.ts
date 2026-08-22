@@ -156,10 +156,24 @@ export class PrismaTurnRepository implements TurnRepository {
         inputTokens: null,
         outputTokens: null,
         stepCount: 0,
+        // Part of the attempt being erased: a retry prepares its own workspace, and leaving these
+        // would have the transcript state the failed attempt's commit as this one's.
+        preparedBranch: null,
+        preparedSha: null,
       },
     });
     const row = rows[0];
     return row === undefined ? null : toTurn(row);
+  }
+
+  /** @inheritDoc */
+  async recordPrepared(id: string, prepared: { branch: string; headSha: string }): Promise<void> {
+    // `updateMany` rather than `update`: a turn deleted with its chat while the runtime was still
+    // preparing is not a failure of the run, and `update` would throw on the missing row.
+    await this.prisma.turn.updateMany({
+      where: { id },
+      data: { preparedBranch: prepared.branch, preparedSha: prepared.headSha },
+    });
   }
 
   /** @inheritDoc */

@@ -212,9 +212,11 @@ describe('DockerWorkspaceRunner.create', () => {
   });
 
   /**
-   * Security invariant: `spec.env` carries the GitHub PAT. It may reach the daemon and nothing
-   * else — not a thrown message on any failure path, and not a serialisation of the runner, which
-   * is why the runner keeps all of its state (including the Docker client) in private fields.
+   * Security invariant: whatever `spec.env` carries may reach the daemon and nothing else — not a
+   * thrown message on any failure path, and not a serialisation of the runner, which is why the
+   * runner keeps all of its state (including the Docker client) in private fields. Credentials no
+   * longer travel this way, but the operator's configuration does, and the rule is about the
+   * channel rather than about one value.
    */
   it('never leaks an environment value into an error or a serialisation', async () => {
     const { runner, docker } = makeRunner();

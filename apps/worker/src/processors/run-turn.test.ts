@@ -19,6 +19,7 @@ import {
   happyTurnScript,
   heldTurnScript,
   lastCreateSpec,
+  lastExecSpec,
   requestSentTo,
   runTurnOn,
   scriptedRuntime,
@@ -34,9 +35,10 @@ import { WORKSPACE_CONFLICT_CODE } from './run-turn.js';
 
 describe('createRunTurnProcessor, ensuring a workspace', () => {
   /**
-   * A first message: no workspace exists, so one is created with the credentials and the labels
-   * the collector selects on, the runtime is handed a cloning request built from the chat, and
-   * every event it emits becomes a stream entry and a row.
+   * A first message: no workspace exists, so one is created with the labels the collector selects
+   * on and an environment holding no credential, the runtime is handed a cloning request built
+   * from the chat and this turn's credentials as a file, and every event it emits becomes a stream
+   * entry and a row.
    */
   it('runs a first turn end to end', async () => {
     const container = setupProcessorContainer({
@@ -50,12 +52,20 @@ describe('createRunTurnProcessor, ensuring a workspace', () => {
     const spec = lastCreateSpec(container);
     expect(spec.kind).toBe('CHAT');
     expect(spec.env).toMatchObject({
-      GITHUB_TOKEN: GITHUB_CANARY,
-      OPENAI_API_KEY: OPENAI_CANARY,
       GIT_ASKPASS: '/opt/agent-runtime/askpass.sh',
       AGENT_MODEL_PROVIDER: 'fake',
       OPENAI_MODEL: 'test-model',
     });
+    // The environment of a container is readable by every process in it for as long as it lives,
+    // so the credentials travel with the execution instead — placed as a file the runtime unlinks.
+    expect(JSON.stringify(spec.env)).not.toContain(GITHUB_CANARY);
+    expect(JSON.stringify(spec.env)).not.toContain(OPENAI_CANARY);
+    expect(lastExecSpec(container).files).toStrictEqual([
+      {
+        path: '/opt/agent-runtime/handoff/credentials.json',
+        content: JSON.stringify({ githubToken: GITHUB_CANARY, openaiApiKey: OPENAI_CANARY }),
+      },
+    ]);
     expect(spec.labels).toEqual({
       'ah.instance': 'w2b-unit',
       'ah.workspace': spec.workspaceId,
@@ -124,6 +134,14 @@ describe('createRunTurnProcessor, ensuring a workspace', () => {
     expect(await container.repos.chats.getById(chat.id)).toMatchObject({
       workBranch: 'agent/feature',
       lastPushedSha: 'deadbee',
+    });
+
+    // The one part of a preparation that outlives it. Everything else the runtime says while the
+    // container is being set up is published and forgotten, but the transcript states this line
+    // again after a reload, and the event it was built from is not kept anywhere.
+    expect(await container.repos.turns.get(turn.id)).toMatchObject({
+      preparedBranch: 'main',
+      preparedSha: 'abc1234',
     });
   });
 

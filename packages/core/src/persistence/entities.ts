@@ -55,6 +55,10 @@ export interface Turn {
   outputTokens: number | null;
   stepCount: number;
   error: string | null;
+  /** Branch the workspace was prepared on, once it has been; `null` before that. */
+  preparedBranch: string | null;
+  /** Commit the workspace was prepared at, once it has been; `null` before that. */
+  preparedSha: string | null;
   queuedAt: Date;
   startedAt: Date | null;
   finishedAt: Date | null;

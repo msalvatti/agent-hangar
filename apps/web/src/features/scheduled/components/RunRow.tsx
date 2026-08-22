@@ -8,7 +8,8 @@
 import type { RunSummary } from '@agent-hangar/core';
 import { useEffect, useState } from 'react';
 
-import { formatDuration, formatTokens, relativeTime } from '@/shared/transcript';
+import { useLocalTimeZone } from '@/shared/lib/client-only';
+import { formatDuration, formatTimestamp, formatTokens, relativeTime } from '@/shared/transcript';
 import { Badge } from '@/shared/ui/badge';
 import { TableCell, TableRow } from '@/shared/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/shared/ui/tooltip';
@@ -68,7 +69,11 @@ export function RunRow({ run, onOpen }: RunRowProps) {
   const totalTokens = (run.usage.inputTokens ?? 0) + (run.usage.outputTokens ?? 0);
   const hasTokens = run.usage.inputTokens !== null || run.usage.outputTokens !== null;
 
-  const startedLabel = new Date(run.queuedAt).toLocaleString();
+  // The absolute instant in the reader's own zone, which only the browser knows. Until it has
+  // reported one the row says how long ago instead: an honest statement either way, and never
+  // the blank that an accessible name must not be.
+  const timeZone = useLocalTimeZone();
+  const startedLabel = formatTimestamp(run.queuedAt, timeZone) ?? relativeTime(run.queuedAt, now);
 
   return (
     <TableRow

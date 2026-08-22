@@ -3,10 +3,18 @@
  *
  * Layer: composition root of the runtime.
  *
+ * The first thing it does is take this turn's credentials off the filesystem, before a single byte
+ * is read or written. Two reasons, and both are the reason the order is not negotiable: the
+ * redactor that guards everything this process emits is built from those values, and the file they
+ * arrive in is unlinked as it is read — the sooner that happens, the shorter the window in which a
+ * shell command the agent runs could read the same file.
+ *
  * Exit codes carry only what the event stream cannot. A turn that failed on its own terms — bad
  * configuration, a repository that would not clone, a model error — still exits 0, because the
  * `turn.failed` event already says so and the worker reads it. A non-zero exit means the runtime
- * itself could not do its job, which is the one thing no event can report.
+ * itself could not do its job, which is the one thing no event can report — and a runtime with no
+ * credentials is exactly that, so it says so on both channels rather than starting a turn it
+ * cannot finish.
  */
 import { ConfigError } from '@agent-hangar/core';
 import type { AgentEvent, TurnRequest } from '@agent-hangar/core';
@@ -14,6 +22,8 @@ import type { AgentEvent, TurnRequest } from '@agent-hangar/core';
 import { createChildEnv, materializeGitToken, removeGitToken } from './child-env.js';
 import { EXIT } from './cli.js';
 import type { CliDeps, CliIo } from './cli.js';
+import { CREDENTIALS_FILE_VAR, takeWorkspaceCredentials } from './credentials.js';
+import type { WorkspaceCredentials } from './credentials.js';
 import { createGitRunner, GitError } from './git.js';
 import type { GitRunner } from './git.js';
 import { runTurnLoop } from './loop.js';
@@ -31,6 +41,9 @@ export const DEFAULT_WORKSPACE_ROOT = '/workspace';
 
 /** Private directory the git token file lives in; tmpfs in the container. */
 export const DEFAULT_RUNTIME_DIR = '/tmp/ah-runtime';
+
+/** `turn.failed` code reported when this turn's credentials could not be taken off the disk. */
+export const CREDENTIALS_FAILURE_CODE = 'credentials';
 
 /**
  * Everything the turn command needs.
@@ -109,12 +122,14 @@ interface TurnContext {
  * @param deps - Turn dependencies.
  * @param sink - Where events are written.
  * @param context - Paths, environment and collaborators for this turn.
+ * @param credentials - What the model provider and the git token file are built from.
  */
 async function prepareAndRun(
   request: TurnRequest,
   deps: TurnDeps,
   sink: FailureSink,
   context: TurnContext,
+  credentials: WorkspaceCredentials,
 ): Promise<void> {
   const { emit } = sink.writer;
   await emit({ type: 'turn.started', turnId: request.turnId, at: new Date().toISOString() });
@@ -122,6 +137,7 @@ async function prepareAndRun(
     resolveProviderName(deps.io.env),
     deps.io.env,
     deps.providerFactories,
+    credentials,
   );
   const prepared = await prepare(request.repo, request.prepare, {
     workspaceRoot: context.workspaceRoot,
@@ -152,12 +168,13 @@ async function prepareAndRun(
 }
 
 /**
- * Runs a validated request, owning the credential file and the cancellation subscription.
+ * Runs a validated request, owning the git token file and the cancellation subscription.
  *
  * @param request - The validated request.
  * @param deps - Turn dependencies.
  * @param sink - Where a failure is reported.
- * @param redactor - Redactor bound to this container's credentials.
+ * @param redactor - Redactor bound to this turn's credentials.
+ * @param credentials - This turn's credentials.
  * @returns The process exit code.
  */
 async function runRequest(
@@ -165,6 +182,7 @@ async function runRequest(
   deps: TurnDeps,
   sink: FailureSink,
   redactor: RuntimeRedactor,
+  credentials: WorkspaceCredentials,
 ): Promise<number> {
   const { io } = deps;
   const controller = new AbortController();
@@ -173,14 +191,23 @@ async function runRequest(
   });
   let tokenFile: string | null = null;
   try {
-    tokenFile = await materializeGitToken(io.env, deps.runtimeDir ?? DEFAULT_RUNTIME_DIR);
-    await prepareAndRun(request, deps, sink, {
-      workspaceRoot: deps.workspaceRoot ?? DEFAULT_WORKSPACE_ROOT,
-      childEnv: createChildEnv(io.env, { tokenFile }),
-      git: deps.git ?? createGitRunner(),
-      signal: controller.signal,
-      redactText: redactor.redactText,
-    });
+    tokenFile = await materializeGitToken(
+      credentials.githubToken,
+      deps.runtimeDir ?? DEFAULT_RUNTIME_DIR,
+    );
+    await prepareAndRun(
+      request,
+      deps,
+      sink,
+      {
+        workspaceRoot: deps.workspaceRoot ?? DEFAULT_WORKSPACE_ROOT,
+        childEnv: createChildEnv(io.env, { tokenFile }),
+        git: deps.git ?? createGitRunner(),
+        signal: controller.signal,
+        redactText: redactor.redactText,
+      },
+      credentials,
+    );
     return EXIT.ok;
   } catch (error) {
     return await reportFailure(error, sink);
@@ -193,6 +220,30 @@ async function runRequest(
 }
 
 /**
+ * Reports a turn that never started because its credentials were not there to be taken.
+ *
+ * Both channels are used and the exit code is non-zero. The event is what the operator reads in
+ * the transcript; the exit code is what distinguishes "the runtime could not do its job" from a
+ * turn that ran and failed. Proceeding instead — with an empty token, or with none — would turn a
+ * missing credential into an authentication failure against the real forge, which says nothing
+ * about what is actually wrong.
+ *
+ * The redactor here holds no exact values, for the obvious reason; its shape patterns still run,
+ * and the message names a path and a cause, never a content.
+ *
+ * @param io - Process resources.
+ * @param error - Why the credentials could not be taken.
+ * @returns The process exit code.
+ */
+async function reportMissingCredentials(io: CliIo, error: unknown): Promise<number> {
+  const redactor = createRuntimeRedactor();
+  const writer = createEventWriter(io.stdout, redactor);
+  createDiagnostics(io.stderr, redactor)(describeErrorWithStack(error));
+  await emitFailure(writer, CREDENTIALS_FAILURE_CODE, describeError(error));
+  return EXIT.runtimeFailure;
+}
+
+/**
  * Runs the `turn` command.
  *
  * @param deps - Process resources and overrides.
@@ -200,7 +251,15 @@ async function runRequest(
  */
 export async function runTurnCommand(deps: TurnDeps): Promise<number> {
   const { io } = deps;
-  const redactor = createRuntimeRedactor({ values: [io.env.GITHUB_TOKEN, io.env.OPENAI_API_KEY] });
+  let credentials: WorkspaceCredentials;
+  try {
+    credentials = await takeWorkspaceCredentials(io.env[CREDENTIALS_FILE_VAR]);
+  } catch (error) {
+    return reportMissingCredentials(io, error);
+  }
+  const redactor = createRuntimeRedactor({
+    values: [credentials.githubToken, credentials.openaiApiKey],
+  });
   const sink: FailureSink = {
     writer: createEventWriter(io.stdout, redactor),
     diag: createDiagnostics(io.stderr, redactor),
@@ -214,5 +273,5 @@ export async function runTurnCommand(deps: TurnDeps): Promise<number> {
     sink.diag(describeError(error));
     return EXIT.protocolError;
   }
-  return runRequest(request, deps, sink, redactor);
+  return runRequest(request, deps, sink, redactor, credentials);
 }

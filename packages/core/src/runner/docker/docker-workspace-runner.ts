@@ -8,10 +8,11 @@
  * driven deterministically by unit tests, and the real client is constructed in exactly one place
  * (`createDockerWorkspaceRunner`).
  *
- * Secret handling: `WorkspaceSpec.env` carries the GitHub PAT and the OpenAI key. They are passed
- * to the daemon and never stored on this object, never logged, and never interpolated into an
- * error. All state is held in `#private` fields, so even `JSON.stringify(runner)` cannot reach the
- * Docker client and the create options it remembers.
+ * Secret handling: a credential reaches a workspace as an {@link ExecSpec.files} entry, placed
+ * immediately before the process that reads it starts and removed by that process. It is passed to
+ * the daemon and never stored on this object, never logged, and never interpolated into an error.
+ * All state is held in `#private` fields, so even `JSON.stringify(runner)` cannot reach the Docker
+ * client and the create options it remembers.
  */
 import type { Clock } from '../../config/clock.ts';
 import { WorkspaceImageMissing } from '../../errors.ts';
@@ -190,14 +191,16 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
   }
 
   /**
-   * Places the spec's files, root-owned, before the container has run anything.
+   * Places files into the container, root-owned.
    *
-   * Before `start` on purpose. The workspace user cannot race a file into position that no process
-   * of its own has had the chance to touch yet, so what the first process sees is what the host
-   * asked for — which is the whole reason a policy the workspace must not be able to restate is
-   * delivered as a file rather than as an environment variable it could simply set again.
+   * A {@link WorkspaceSpec} places its files before `start`, so the workspace user cannot race one
+   * into position that no process of its own has had the chance to touch yet: what the first
+   * process sees is what the host asked for, which is the whole reason a policy the workspace must
+   * not be able to restate is delivered as a file rather than as an environment variable it could
+   * simply set again. An {@link ExecSpec} places its files immediately before its own process, for
+   * the values that must not still be there once that process has finished with them.
    *
-   * @param container - The created, not yet started container.
+   * @param container - The container to place them in.
    * @param files - Files to place; usually none or one.
    * @throws DockerRunnerError when a path is unusable; the daemon's own failures propagate.
    */
@@ -399,10 +402,11 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     try {
       return await this.#docker.createContainer(options);
     } catch (error) {
-      // Neither branch attaches a `cause`. This is the one daemon call whose request body carries
-      // the workspace environment — the GitHub PAT and the OpenAI key — and a rejection from it is
-      // the one place a daemon or proxy might echo that body back. The workspace id is enough to
-      // locate the failure in the daemon's own logs.
+      // Neither branch attaches a `cause`. This daemon call's request body carries the whole
+      // workspace environment, and a rejection from it is the one place a daemon or proxy might
+      // echo that body back. No credential travels in it any more, but the operator's own
+      // configuration does, and the workspace id is enough to locate the failure in the daemon's
+      // own logs.
       if (isDockerConflict(error)) {
         throw new DockerRunnerError(
           `container name already exists for workspace ${spec.workspaceId}`,
@@ -459,6 +463,10 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     }
 
     const container = this.#docker.getContainer(handle.runnerRef);
+    // Placed as late as possible and never earlier: these carry the credentials of one turn, and
+    // the window they are readable in is exactly the distance between this line and the first
+    // thing the started process does.
+    await this.#placeFiles(container, spec.files ?? []);
     const exec = await container.exec({
       Cmd: execWrapperCommand(execRef, spec.cmd),
       AttachStdin: true,

@@ -174,6 +174,20 @@ export interface TurnRepository {
    *   see the second reason.
    */
   requeue(id: string): Promise<Turn | null>;
+  /**
+   * Records what the workspace of this turn was prepared on.
+   *
+   * Written rather than published only, because the transcript states it and a reload has nothing
+   * else to state it from: the preparation is an event, and events are not kept. It is not a
+   * SYSTEM message for the reason `run-turn` gives about the rest of them — a message is part of
+   * the window a later turn carries to the model, and this describes a container the turn does not
+   * outlive.
+   *
+   * @param id - Turn the workspace belongs to.
+   * @param prepared - Branch and commit the workspace was put on.
+   * @returns Nothing; a turn that has vanished is not an error worth failing the run over.
+   */
+  recordPrepared(id: string, prepared: { branch: string; headSha: string }): Promise<void>;
   /** Turns of a chat, oldest first. */
   listByChat(chatId: string): Promise<Turn[]>;
 }

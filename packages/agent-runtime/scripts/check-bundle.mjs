@@ -3,11 +3,12 @@
  *
  * Layer: build.
  *
- * Four properties are checked, because each has already been a way for the image to break:
+ * Five properties are checked, because each has already been a way for the image to break:
  * the bundle stays small enough to ship in an image layer, no host-only dependency survived tree
  * shaking, the file runs on its own from a directory with no `node_modules` above it — which is
- * exactly the situation inside the workspace container — and a turn run through it reaches a real
- * model provider.
+ * exactly the situation inside the workspace container — a turn run through it reaches a real
+ * model provider, and that turn takes its credentials file off the disk instead of leaving it
+ * there.
  *
  * That last one exists because the entry point is the one module no unit test can import: it owns
  * `process.argv`, a top-level `await` and `process.exitCode`, so it is excluded from coverage, and
@@ -15,7 +16,15 @@
  * shipped artefact is the only way to see it.
  */
 import { execFileSync } from 'node:child_process';
-import { copyFileSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -146,8 +155,17 @@ const WIRING_PROBE = {
   prepare: { clone: true },
 };
 
-/** Placeholder credential: the provider only checks that a key is present, never uses it here. */
-const PROBE_API_KEY = 'check-bundle-placeholder';
+/**
+ * Placeholder credentials: the provider is constructed from them and never used here.
+ *
+ * A workspace receives these as a file the host places beside the container and the runtime
+ * unlinks as it starts, so the probe has to place one too — and the run doubles as proof that the
+ * shipped bundle really does take the file away, which is asserted below.
+ */
+const PROBE_CREDENTIALS = {
+  githubToken: 'check-bundle-placeholder-github',
+  openaiApiKey: 'check-bundle-placeholder-openai',
+};
 
 /**
  * The one failure this probe exists to catch, as `src/provider.ts` words it.
@@ -167,13 +185,19 @@ const UNWIRED_MESSAGE = 'not wired into this build';
  * @returns `undefined` when the turn got past provider construction, otherwise the failure text.
  */
 function runWiringProbe() {
+  const handoff = mkdtempSync(join(tmpdir(), 'agent-runtime-handoff-'));
+  const credentialsFile = join(handoff, 'credentials.json');
   let events;
+  let credentialsSurvived;
   try {
+    writeFileSync(credentialsFile, JSON.stringify(PROBE_CREDENTIALS), 'utf8');
     const stdout = runInScratchImage(
       ['turn'],
-      { OPENAI_API_KEY: PROBE_API_KEY },
+      { AH_CREDENTIALS_FILE: credentialsFile },
       `${JSON.stringify(WIRING_PROBE)}\n`,
     );
+    // Asked before the directory goes, which is the whole point of asking.
+    credentialsSurvived = existsSync(credentialsFile);
     events = stdout
       .split('\n')
       .filter((line) => line !== '')
@@ -181,6 +205,11 @@ function runWiringProbe() {
   } catch (error) {
     // Anything on stdout that is not one protocol event per line is itself a broken bundle.
     return `bundle could not run a turn: ${error instanceof Error ? error.message : 'unknown error'}`;
+  } finally {
+    rmSync(handoff, { recursive: true, force: true });
+  }
+  if (credentialsSurvived) {
+    return "bundle left this turn's credentials file in place; it must be unlinked as it is read";
   }
   if (!events.some((event) => event.type === 'turn.started')) {
     return 'bundle ran a turn without announcing one; expected a turn.started event';

@@ -2,9 +2,10 @@
  * Unit tests for workspace provisioning.
  *
  * Layer: unit.
- * Goal: the row precedes the container, the credentials reach the container environment and the
- * redactor and nothing else, the labels carry the run the workspace serves, and each failure
- * closes the row out with the right reason — with only an unreachable daemon rethrown. Plus the
+ * Goal: the row precedes the container, no credential is decrypted or injected here at all — a
+ * workspace outlives the turn that created it, so the two travel per execution instead — the
+ * labels carry the run the workspace serves, and each failure closes the row out with the right
+ * reason — with only an unreachable daemon rethrown. Plus the
  * one failure that cannot be closed out by anybody else: a reference the row refused to record,
  * and the forge allow-list, which is applied again here because a stored URL is cloned long after
  * the route that vetted it and because it is what binds the container to one origin.
@@ -23,11 +24,10 @@ import { FAKE_SCRIPT_ENV_KEY, fakeProviderScriptEnv } from '../fake-provider-scr
 import { createTestContainer, FakeSecretsService } from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
-import { ALLOWED_ORIGIN_PATH } from './constants.js';
+import { ALLOWED_ORIGIN_PATH, SECRETS_MISSING_REASON } from './constants.js';
 import {
   provisionWorkspace,
   REPO_URL_NOT_ALLOWED_REASON,
-  SECRETS_MISSING_REASON,
   UNRECORDED_WORKSPACE_REASON,
 } from './provision-workspace.js';
 
@@ -181,8 +181,8 @@ describe('provisionWorkspace', () => {
   });
 
   /**
-   * The happy path: a row, then the container with both credentials, the askpass helper and the
-   * labels the collector selects on, then the row again with the runner's reference.
+   * The happy path: a row, then the container with the askpass helper and the labels the collector
+   * selects on, then the row again with the runner's reference.
    */
   it('creates the row, the container and the labels a chat workspace needs', async () => {
     const container = createTestContainer();
@@ -196,11 +196,7 @@ describe('provisionWorkspace', () => {
 
     expect(result.ok).toBe(true);
     const spec = createSpec(container);
-    expect(spec.env).toMatchObject({
-      GITHUB_TOKEN: GITHUB_CANARY,
-      OPENAI_API_KEY: OPENAI_CANARY,
-      GIT_ASKPASS: '/opt/agent-runtime/askpass.sh',
-    });
+    expect(spec.env).toMatchObject({ GIT_ASKPASS: '/opt/agent-runtime/askpass.sh' });
     expect(spec.env.OPENAI_BASE_URL).toBeUndefined();
     expect(spec.limits).toEqual({ cpus: 2, memoryBytes: 2 * 1024 ** 3, pids: 512 });
     expect(spec.labels).toEqual({
@@ -281,16 +277,16 @@ describe('provisionWorkspace', () => {
   });
 
   /**
-   * The extra block is spread before the credentials, so a script can never shadow the token the
-   * clone authenticates with, the API key or the provider selection.
+   * The extra block is spread first, so a script can never shadow the provider selection or the
+   * helper git authenticates through.
    */
-  it('never lets the extra block shadow a credential', async () => {
+  it('never lets the extra block shadow what the container is created with', async () => {
     const base = createTestContainer();
     const container: TestContainer = {
       ...base,
       fakeProviderEnv: {
         [FAKE_SCRIPT_ENV_KEY]: '{}',
-        GITHUB_TOKEN: 'shadowed',
+        GIT_ASKPASS: '/tmp/shadowed.sh',
         AGENT_MODEL_PROVIDER: 'openai',
       },
     };
@@ -304,7 +300,7 @@ describe('provisionWorkspace', () => {
 
     const { env } = createSpec(container);
     expect(env[FAKE_SCRIPT_ENV_KEY]).toBe('{}');
-    expect(env.GITHUB_TOKEN).toBe(GITHUB_CANARY);
+    expect(env.GIT_ASKPASS).toBe('/opt/agent-runtime/askpass.sh');
     expect(env.AGENT_MODEL_PROVIDER).toBe('fake');
   });
 
@@ -326,12 +322,14 @@ describe('provisionWorkspace', () => {
   });
 
   /**
-   * Both credentials are revealed and registered with the redactor before the container starts, so
-   * anything the agent echoes back is scrubbed on the way out.
+   * Nothing is decrypted to build a workspace. The container outlives the turn that created it, so
+   * a credential revealed here would be one the workspace holds for as long as it stands; the two
+   * are revealed per execution instead, by `workspace-credentials.ts`.
    */
-  it('registers both credentials with the redactor', async () => {
+  it('reveals no credential and registers nothing with the redactor', async () => {
     const container = createTestContainer();
     const register = vi.spyOn(container.redactor, 'register');
+    const reveal = vi.spyOn(container.secrets, 'reveal');
 
     await provisionWorkspace(container, {
       kind: 'CHAT',
@@ -340,15 +338,15 @@ describe('provisionWorkspace', () => {
       branch: 'main',
     });
 
-    expect(register).toHaveBeenCalledExactlyOnceWith([GITHUB_CANARY, OPENAI_CANARY]);
-    expect(container.redactor.redact(`x ${OPENAI_CANARY}`)).toBe('x [REDACTED]');
+    expect(reveal).not.toHaveBeenCalled();
+    expect(register).not.toHaveBeenCalled();
   });
 
   /**
    * The write routes vet a repository URL when the chat or job is written, but the URL is stored
    * and cloned again by every later turn. An operator who removes an origin from
    * `ALLOWED_REPO_HOSTS` must stop the PAT reaching it, so the list is applied again here — before
-   * the reveal, so a repository that is no longer allowed decrypts nothing.
+   * anything is built, so a repository that is no longer allowed never gets a container.
    */
   it('refuses a stored repository that is no longer on the allow-list', async () => {
     const container = createTestContainer();
@@ -440,7 +438,7 @@ describe('provisionWorkspace', () => {
    * it becomes a deliberate edit here, and naming the keys is also what proves nothing added can
    * stand in for a credential.
    */
-  it('places the origin outside the environment, shadowing no credential', async () => {
+  it('places the origin outside the environment, which carries no credential at all', async () => {
     const container = createTestContainer();
 
     await provisionWorkspace(container, {
@@ -453,16 +451,14 @@ describe('provisionWorkspace', () => {
     const spec = createSpec(container);
     expect(Object.keys(spec.env).toSorted()).toStrictEqual([
       'AGENT_MODEL_PROVIDER',
-      'GITHUB_TOKEN',
       'GIT_ASKPASS',
-      'OPENAI_API_KEY',
       'OPENAI_MODEL',
     ]);
-    expect(spec.env).toMatchObject({
-      GITHUB_TOKEN: GITHUB_CANARY,
-      OPENAI_API_KEY: OPENAI_CANARY,
-      AGENT_MODEL_PROVIDER: 'fake',
-    });
+    expect(spec.env).toMatchObject({ AGENT_MODEL_PROVIDER: 'fake' });
+    // Whatever is in that environment is readable through `/proc/1/environ` by every process of
+    // the container, for its whole life, so the assertion that matters is what is NOT in it.
+    expect(JSON.stringify(spec.env)).not.toContain(GITHUB_CANARY);
+    expect(JSON.stringify(spec.env)).not.toContain(OPENAI_CANARY);
     expect(spec.files).toHaveLength(1);
   });
 

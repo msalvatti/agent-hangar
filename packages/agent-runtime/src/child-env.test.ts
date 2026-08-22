@@ -22,7 +22,13 @@ import {
 } from './child-env.js';
 import { makeTempDir, removeTempDir } from './testing/temp-dir.js';
 
-/** Environment of a runtime that has both credentials, as the worker injects them. */
+/**
+ * Environment of a runtime whose credentials were, wrongly, injected as variables.
+ *
+ * Production no longer does this — they arrive as a file the runtime unlinks — but the scrubbing
+ * is the boundary that has to hold whatever it inherits, so the input it is measured against is
+ * the environment it exists to refuse.
+ */
 const parentEnv = {
   PATH: '/usr/bin:/bin',
   HOME: '/home/agent',
@@ -80,7 +86,7 @@ describe('createChildEnv', () => {
     expect(createChildEnv({ ...parentEnv, ...overrides }).GIT_ASKPASS).toBe(expected);
   });
 
-  /** The helper falls back to GITHUB_TOKEN when the variable is absent, so it must not be empty. */
+  /** The askpass helper has no other source, so an absent variable is git with no credential. */
   it('advertises the token file only when one was written', () => {
     expect(createChildEnv(parentEnv, { tokenFile: '/tmp/ah/git-token' }).AH_GIT_TOKEN_FILE).toBe(
       '/tmp/ah/git-token',
@@ -94,30 +100,20 @@ describe('materializeGitToken', () => {
   /** Group- or world-readable would defeat moving the token out of the environment. */
   it('writes the token to an owner-only file inside an owner-only directory', async () => {
     const nested = path.join(directory, 'runtime');
-    const file = await materializeGitToken(parentEnv, nested);
+    const file = await materializeGitToken(GITHUB_CANARY, nested);
     expect(file).toBe(path.join(nested, 'git-token'));
-    await expect(readFile(file!, 'utf8')).resolves.toBe(GITHUB_CANARY);
-    expect((await stat(file!)).mode & 0o777).toBe(0o600);
+    await expect(readFile(file, 'utf8')).resolves.toBe(GITHUB_CANARY);
+    expect((await stat(file)).mode & 0o777).toBe(0o600);
     expect((await stat(nested)).mode & 0o777).toBe(0o700);
-  });
-
-  /** A missing PAT is an ordinary state: the turn simply cannot push. */
-  it.each([
-    ['no token is configured', undefined],
-    ['the token is empty', ''],
-  ])('writes nothing when %s', async (_name, token) => {
-    await expect(
-      materializeGitToken({ ...parentEnv, GITHUB_TOKEN: token }, directory),
-    ).resolves.toBeNull();
   });
 });
 
 describe('removeGitToken', () => {
   /** Cleanup runs in a `finally`, so it must be safe on every path out of a turn. */
   it('removes the file and tolerates a turn that never wrote one', async () => {
-    const file = await materializeGitToken(parentEnv, directory);
+    const file = await materializeGitToken(GITHUB_CANARY, directory);
     await removeGitToken(file);
-    await expect(stat(file!)).rejects.toThrow();
+    await expect(stat(file)).rejects.toThrow();
     await expect(removeGitToken(null)).resolves.toBeUndefined();
     await expect(removeGitToken(file)).resolves.toBeUndefined();
   });

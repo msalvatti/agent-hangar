@@ -9,6 +9,8 @@ import type { ChatDetail, MessageView, ToolCallView, TurnView } from '@agent-han
 import { pushedNoticeText } from '@agent-hangar/core';
 import { describe, expect, it } from 'vitest';
 
+import { prepareNoticeId } from '@/shared/transcript';
+
 import { mapChatDetail } from './map-chat-detail';
 
 /** Timestamp every fixture row shares unless it needs its own. */
@@ -61,6 +63,8 @@ function turn(
     workspaceId: null,
     usage: { inputTokens: null, outputTokens: null, stepCount: 0 },
     error: extra.error ?? null,
+    preparedBranch: null,
+    preparedSha: null,
     queuedAt: AT,
     startedAt: extra.startedAt ?? null,
     finishedAt: null,
@@ -140,6 +144,8 @@ function twoTurnTurns(): TurnView[] {
       workspaceId: 'workspace-1',
       usage: { inputTokens: 4_120, outputTokens: 980, stepCount: 3 },
       error: null,
+      preparedBranch: null,
+      preparedSha: null,
       queuedAt: '2026-08-19T10:00:00.100Z',
       startedAt: '2026-08-19T10:00:02.000Z',
       finishedAt: '2026-08-19T10:00:15.100Z',
@@ -151,6 +157,8 @@ function twoTurnTurns(): TurnView[] {
       workspaceId: 'workspace-1',
       usage: { inputTokens: null, outputTokens: null, stepCount: 1 },
       error: null,
+      preparedBranch: null,
+      preparedSha: null,
       queuedAt: '2026-08-19T10:01:00.100Z',
       startedAt: '2026-08-19T10:01:01.000Z',
       finishedAt: '2026-08-19T10:01:21.300Z',
@@ -671,6 +679,91 @@ describe('mapChatDetail', () => {
   it('parses the turn start time', () => {
     const mapped = mapChatDetail(detailWith({ turns: [turn('RUNNING', { startedAt: AT })] }));
     expect(mapped.startedAt).toBe(Date.parse(AT));
+  });
+
+  /**
+   * Everything else in a turn survives a reload; the preparation used to be the one thing that did
+   * not, because it is an event and events are not kept. It is now recorded on the turn, and the
+   * notice is spelled by the same builder the live stream uses so the two cannot say it
+   * differently.
+   */
+  it('states again what each turn prepared, after a reload', () => {
+    const turns = twoTurnTurns();
+    const [first, second] = turns;
+    const detail = twoTurnChat();
+    const mapped = mapChatDetail({
+      ...detail,
+      turns: [
+        { ...first!, preparedBranch: 'agent/aaa', preparedSha: '1111111abcdef' },
+        { ...second!, preparedBranch: 'agent/bbb', preparedSha: '2222222abcdef' },
+      ],
+    });
+    const notices = mapped.items.filter((item) => item.kind === 'notice');
+    expect(notices.map((n) => n.text)).toEqual(
+      expect.arrayContaining(['Prepared agent/aaa at 1111111', 'Prepared agent/bbb at 2222222']),
+    );
+  });
+
+  /**
+   * Two rules at once, and one id has to satisfy both. A reload of a live turn replays the stream
+   * from its first event, so `prepare.done` arrives again and the reducer writes this same row —
+   * the ids must agree or the reader is told it twice. And a chat keeps every turn it has run, so
+   * the ids must differ per turn or a new preparation overwrites the last one instead of joining
+   * it. A single shared constant satisfied the first and broke the second.
+   */
+  it('keys each notice on its turn, as the live reducer does', () => {
+    const turns = twoTurnTurns();
+    const [first, second] = turns;
+    const detail = twoTurnChat();
+    const mapped = mapChatDetail({
+      ...detail,
+      turns: [
+        { ...first!, preparedBranch: 'agent/aaa', preparedSha: '1111111abcdef' },
+        { ...second!, preparedBranch: 'agent/bbb', preparedSha: '2222222abcdef' },
+      ],
+    });
+    const ids = mapped.items.filter((item) => item.kind === 'notice').map((n) => n.id);
+    // One id per turn, and the same id the live reducer writes for that turn: they must agree so a
+    // replay lands on top, and differ so a new turn's line does not erase the previous one's.
+    expect(ids).toContain(prepareNoticeId('turn-1'));
+    expect(ids).toContain(prepareNoticeId('turn-2'));
+    expect(prepareNoticeId('turn-1')).not.toBe(prepareNoticeId('turn-2'));
+  });
+
+  /**
+   * The mapper reads whatever the API returns, and `startedAt` is nullable there: a turn whose
+   * start was never stamped still has a place in the order, and `queuedAt` is the instant that
+   * always exists.
+   */
+  it('places the notice at the queued instant when no start was stamped', () => {
+    const turns = twoTurnTurns();
+    const [first] = turns;
+    const detail = twoTurnChat();
+    const mapped = mapChatDetail({
+      ...detail,
+      turns: [
+        {
+          ...first!,
+          startedAt: null,
+          preparedBranch: 'agent/aaa',
+          preparedSha: '1111111abcdef',
+        },
+      ],
+    });
+    const notice = mapped.items.find(
+      (item) => item.kind === 'notice' && item.text.startsWith('Prepared '),
+    );
+    expect(notice).toBeDefined();
+  });
+
+  /**
+   * A turn that never got a workspace has nothing to state, and a line saying so would be a
+   * sentence about something that did not happen.
+   */
+  it('says nothing about a turn that never reported a prepared workspace', () => {
+    const mapped = mapChatDetail(twoTurnChat());
+    const texts = mapped.items.filter((item) => item.kind === 'notice').map((n) => n.text);
+    expect(texts.some((text) => text.startsWith('Prepared '))).toBe(false);
   });
 });
 

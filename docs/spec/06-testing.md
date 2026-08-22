@@ -91,13 +91,13 @@ Jobs on `ubuntu-latest`, Node 24, pnpm 11 via `pnpm/setup@v2` with store cache:
 2. **typecheck** — `tsc -b` across workspaces.
 3. **unit** — Vitest with coverage thresholds; uploads `coverage/`.
 4. **integration** — services `postgres:18`, `redis:8`; `AH_INSTANCE=test`, `DOCKER_AVAILABLE=1` and `AH_ALLOW_DESTRUCTIVE_TESTS=1` so nothing is skipped silently; builds the workspace image first.
-5. **e2e** — Playwright with the fake provider; traces on failure. While no spec file exists the job detects that and skips the browser install rather than paying for it.
+5. **e2e** — Playwright with the fake provider; traces on failure. One job, run twice from a matrix over `E2E_MODE`. The `mock` leg drives a production build against the in-browser mock API and is the only one that exercises the bootstrap the app ships for a developer with no infrastructure; the `real` leg runs the whole stack and is the only one that reaches the worker, a workspace container, the runtime and the local git server. Neither is a superset of the other, so both are required and `fail-fast` is off. Each leg uploads its report under its own name.
 6. **build** — `pnpm build` and `docker build` of the workspace image; smoke-start the image and run `node cli.js --version`.
 7. **secret-scan** — `gitleaks` through its container image: the working tree, the commits of the pull request, and the full history on `main`.
 
 The **mutation** job described in §5 is not part of the pipeline yet; it is added once both packages define `test:mutation` and pass their thresholds.
 
-Branch protection on `main`: all seven required. No `continue-on-error`. No job declares `timeout-minutes` yet, so a hung one holds a runner for the platform default.
+No `continue-on-error` anywhere, and every job declares `timeout-minutes`. Branch protection on `main` currently requires no check: the repository is a single-maintainer, pull-request-only branch, and the gate that holds is the review before the merge rather than a server-side rule. Requiring the checks is a settings change, not a pipeline one — the names to require are `lint`, `typecheck`, `unit`, `integration`, `e2e (mock)`, `e2e (real)`, `build` and `secret-scan`.
 
 ## 7. Test doubles (kept in `packages/core/src/testing/`)
 

@@ -1,6 +1,7 @@
 # Workspace image: the disposable container an agent runs in (one per chat / per scheduled run).
 # Base only: toolchain, non-root user, git helper. No secrets, no .env, no application source;
-# credentials arrive as container environment at `create` time and git reads the token through
+# credentials arrive as a file the host places under /opt/agent-runtime/handoff immediately before
+# each turn, which the runtime reads and unlinks at start-up, and git reads the token through
 # GIT_ASKPASS. The agent runtime bundle is copied in below, root-owned like askpass.sh.
 FROM node:24-bookworm-slim
 
@@ -18,14 +19,24 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/* \
     && corepack enable \
     && useradd -m -u 1001 -s /bin/bash agent \
-    && mkdir -p /workspace /opt/agent-runtime \
-    && chown agent:agent /workspace
+    && mkdir -p /workspace /opt/agent-runtime /opt/agent-runtime/handoff \
+    && chown agent:agent /workspace /opt/agent-runtime/handoff \
+    && chmod 700 /opt/agent-runtime/handoff
 
 # /opt/agent-runtime stays root-owned and world-readable: `agent` must execute what is in it but
 # must never be able to replace it. GIT_ASKPASS points here, so a writable directory would let
 # repository-controlled commands unlink askpass.sh (directory write permission governs unlink and
 # create, regardless of the file's own owner) and substitute a helper that exfiltrates the PAT the
 # next time git asks for credentials. Mutable per-exec state lives on the tmpfs /tmp instead.
+#
+# The one exception is the handoff directory created above, which `agent` owns and nothing
+# executable ever enters: the host places one root-owned credentials file in it per turn, and the
+# runtime has to be able to unlink that file once it has read it — unlink is governed by the
+# directory, so a root-owned directory would leave the credential readable for the whole life of
+# the container. Owning an empty subdirectory grants no reach over the files beside it, and 0700
+# keeps it out of reach of everything else. It is deliberately NOT a tmpfs: Docker's archive API
+# writes through the container's root filesystem on the host, so a file uploaded to a path a tmpfs
+# is mounted over lands under the mount and no process in the container ever sees it.
 COPY --chmod=755 askpass.sh /opt/agent-runtime/askpass.sh
 
 USER agent

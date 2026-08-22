@@ -185,6 +185,8 @@ export function toTurn(row: TurnRow): Turn {
     outputTokens: row.outputTokens,
     stepCount: row.stepCount,
     error: row.error,
+    preparedBranch: row.preparedBranch,
+    preparedSha: row.preparedSha,
     queuedAt: row.queuedAt,
     startedAt: row.startedAt,
     finishedAt: row.finishedAt,

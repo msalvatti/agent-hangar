@@ -4,8 +4,10 @@
  * Layer: service (port).
  *
  * Plaintext secrets exist only in the `PUT /api/settings/:key` request body, in worker memory
- * while a workspace is created, and in the container environment. Everything else sees
- * ciphertext, `last4`, or `[REDACTED]`.
+ * while one turn is started, and in the file the runner places for that turn — which the runtime
+ * reads and unlinks before the agent runs anything. Never in the container's environment, which
+ * every process of a workspace can read back for as long as the container lives. Everything else
+ * sees ciphertext, `last4`, or `[REDACTED]`.
  */
 
 /** Credentials the app stores. */

@@ -10,15 +10,16 @@
  *
  * A supplied script arrives as text, so a scripted step that has to carry the workspace's GitHub
  * credential — the way to prove the credential is redacted on its way to a row — writes a
- * placeholder instead and has it substituted here. That keeps the credential in the one variable
- * the workspace already holds it in, rather than copying it into a second one that crosses a
- * process boundary to get here.
+ * placeholder instead and has it substituted here. That keeps the credential where the runtime
+ * already holds it, rather than copying it into a variable that crosses a process boundary to get
+ * here.
  */
 import { ConfigError } from '@agent-hangar/core';
 import type { AgentModelProvider } from '@agent-hangar/core';
 import { FakeAgentModelProvider } from '@agent-hangar/core/testing';
 import type { ProviderScript } from '@agent-hangar/core/testing';
 
+import type { WorkspaceCredentials } from './credentials.js';
 import { builtInFakeScript } from './fake-scripts.js';
 
 /** Provider used when the environment names none. */
@@ -29,7 +30,7 @@ export const GITHUB_CREDENTIAL_PLACEHOLDER = '{{GITHUB_CANARY}}';
 
 /** Options a provider factory receives. */
 export interface ProviderFactoryOptions {
-  /** API key read from the container environment. */
+  /** API key of this turn. */
   apiKey: string;
   /** Alternative endpoint, when the environment names one. */
   baseURL?: string;
@@ -60,10 +61,6 @@ export function resolveProviderName(env: Readonly<Record<string, string | undefi
 /**
  * Fills the credential placeholder of a supplied script.
  *
- * A workspace without a GitHub credential leaves the placeholder as it is: substituting an empty
- * string would turn a script that asks for the credential into one that quietly asks for nothing,
- * and the literal placeholder is what makes the omission visible in whatever the step produced.
- *
  * The substitution is textual, and a script nests JSON inside JSON — a tool call's arguments are
  * a string of their own — so what goes in has to be a token: a value carrying a quote or a
  * backslash would not survive the encoding it lands in. It fails loudly when it does not, as an
@@ -71,13 +68,10 @@ export function resolveProviderName(env: Readonly<Record<string, string | undefi
  * token-shaped.
  *
  * @param script - Text of the supplied script.
- * @param credential - The workspace's GitHub credential, when it has one.
+ * @param credential - The workspace's GitHub credential.
  * @returns The text, with every placeholder replaced.
  */
-function fillCredentialPlaceholder(script: string, credential: string | undefined): string {
-  if (credential === undefined || credential.length === 0) {
-    return script;
-  }
+function fillCredentialPlaceholder(script: string, credential: string): string {
   return script.replaceAll(GITHUB_CREDENTIAL_PLACEHOLDER, credential);
 }
 
@@ -85,15 +79,19 @@ function fillCredentialPlaceholder(script: string, credential: string | undefine
  * Builds the scripted provider, from the environment's script when it supplies one.
  *
  * @param env - Container environment.
+ * @param credentials - The turn's credentials, for a script that asks for the GitHub one.
  * @returns The fake provider.
  * @throws ConfigError when `AGENT_FAKE_SCRIPT_JSON` is not valid JSON.
  */
-function createFakeProvider(env: Readonly<Record<string, string | undefined>>): AgentModelProvider {
+function createFakeProvider(
+  env: Readonly<Record<string, string | undefined>>,
+  credentials: WorkspaceCredentials,
+): AgentModelProvider {
   const override = env.AGENT_FAKE_SCRIPT_JSON;
   if (override === undefined) {
     return new FakeAgentModelProvider({ script: builtInFakeScript() });
   }
-  const filled = fillCredentialPlaceholder(override, env.GITHUB_TOKEN);
+  const filled = fillCredentialPlaceholder(override, credentials.githubToken);
   try {
     return new FakeAgentModelProvider({ script: JSON.parse(filled) as ProviderScript });
   } catch {
@@ -105,15 +103,21 @@ function createFakeProvider(env: Readonly<Record<string, string | undefined>>): 
 /**
  * Builds the OpenAI provider through the injected factory.
  *
- * @param env - Container environment.
+ * The key is never checked for emptiness here: it arrives from the credentials document, whose
+ * schema refuses an empty one, so a guard on this side could only ever be a branch no input
+ * reaches.
+ *
+ * @param env - Container environment, for the optional endpoint.
  * @param factories - Factories supplied by whoever composed the runtime, absent in a build that
  *   wired none.
+ * @param credentials - The turn's credentials.
  * @returns The provider.
- * @throws ConfigError when no factory was wired in or no API key was injected.
+ * @throws ConfigError when no factory was wired in.
  */
 function createOpenAiProvider(
   env: Readonly<Record<string, string | undefined>>,
   factories: ProviderFactories | undefined,
+  credentials: WorkspaceCredentials,
 ): AgentModelProvider {
   if (factories === undefined) {
     throw new ConfigError(
@@ -121,12 +125,9 @@ function createOpenAiProvider(
     );
   }
   const { openai } = factories;
-  const configured = env.OPENAI_API_KEY ?? '';
-  if (configured.length === 0) {
-    throw new ConfigError('OPENAI_API_KEY is not set in the workspace environment');
-  }
+  const apiKey = credentials.openaiApiKey;
   const baseURL = env.OPENAI_BASE_URL;
-  return openai(baseURL === undefined ? { apiKey: configured } : { apiKey: configured, baseURL });
+  return openai(baseURL === undefined ? { apiKey } : { apiKey, baseURL });
 }
 
 /**
@@ -139,6 +140,7 @@ function createOpenAiProvider(
  * @param name - Provider name, from {@link resolveProviderName}.
  * @param env - Container environment.
  * @param factories - Factories for the providers this module does not construct on its own.
+ * @param credentials - The turn's credentials, read from the file the host placed for it.
  * @returns The provider.
  * @throws ConfigError when the name is unknown or the provider cannot be configured.
  */
@@ -146,12 +148,13 @@ export function createProvider(
   name: string,
   env: Readonly<Record<string, string | undefined>>,
   factories: ProviderFactories | undefined,
+  credentials: WorkspaceCredentials,
 ): AgentModelProvider {
   if (name === 'fake') {
-    return createFakeProvider(env);
+    return createFakeProvider(env, credentials);
   }
   if (name === DEFAULT_PROVIDER_NAME) {
-    return createOpenAiProvider(env, factories);
+    return createOpenAiProvider(env, factories, credentials);
   }
   // The name is not echoed: this message becomes a persisted, displayed `turn.failed`, and the
   // operator can read their own environment. Naming the valid values is what helps them.

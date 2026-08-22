@@ -70,8 +70,9 @@ export function createSecretsService(deps: SecretsServiceDeps): SecretsService {
     },
 
     /**
-     * Worker-only. Never call from apps/web. The returned plaintext must be passed straight to
-     * `WorkspaceRunner.create()` env and to `Redactor.register()`; do not store it on any object.
+     * Worker-only. Never call from apps/web. The returned plaintext must be passed straight into
+     * the `ExecSpec.files` entry of the execution it belongs to and into `Redactor.register()`; do
+     * not store it on any object, and never put it in a container's environment.
      */
     async reveal(key: SecretKey): Promise<string | null> {
       const record = await repository.get(key);

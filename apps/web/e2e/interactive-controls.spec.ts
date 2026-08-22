@@ -289,3 +289,54 @@ test.describe('interactive controls are usable with a pointer', () => {
     await expectUsableControls(page, 'the chat search palette');
   });
 });
+
+/**
+ * The jump-to-latest pill floats over the transcript, and where a floating thing lands is a
+ * question only a layout engine answers. It was positioned inside the scrolling element, so its
+ * containing block was the scrolled content rather than the visible box: it drifted with the
+ * transcript and, since it is shown only while the reader is scrolled away from the live edge, it
+ * was off the screen exactly when it existed — measured 446 px above the visible area. jsdom lays
+ * nothing out and reports the same class name either way, which is why this is asserted here.
+ *
+ * The viewport is deliberately short, so the fixture transcript is taller than the box that shows
+ * it whatever its content grows to.
+ */
+test('the jump-to-latest pill floats over the visible transcript', async ({ page, mode }) => {
+  // Same reason the rest of this file is mock-only: the measurement needs a transcript of a known
+  // size, and the chat it reads is a seeded fixture that the real stack has never heard of. Left
+  // unguarded it asked the real API for `chat-finished` and was answered 404.
+  test.skip(mode === 'real', 'the layout is measured against the mock API seeded state');
+  await page.setViewportSize({ width: 420, height: 360 });
+  const chat = new ChatPage(page);
+  await chat.goto(MOCK_CHATS.finished);
+  await expect(chat.transcript).toBeVisible();
+  // Expanded so the transcript is taller than the box that shows it by more than the threshold
+  // that still counts as "at the live edge" — below which there is nothing to jump back to.
+  await chat.expandToolRow(chat.toolRows('run_shell').first());
+  await expect(chat.transcript.getByRole('heading', { name: 'Output' })).toBeVisible();
+
+  // Scrolled part of the way, not to the top. An absolutely-positioned child of a scrolling box
+  // is laid out against that box as if it were unscrolled and then travels with the content, so at
+  // offset zero the broken position and the correct one are the same point. The distance between
+  // them is the scroll offset, which is why this asserts from the middle.
+  await chat.transcript.evaluate((node) => {
+    node.scrollTop = Math.round((node.scrollHeight - node.clientHeight) / 2);
+  });
+
+  const pill = page.getByRole('button', { name: 'Jump to latest' });
+  await expect(pill).toBeVisible();
+
+  const box = await pill.boundingBox();
+  const region = await chat.transcript.boundingBox();
+  // Thrown rather than asserted, because this narrows the two to non-null for the arithmetic
+  // below. Returning early instead would let a pill with no box end the test green, which is the
+  // one outcome this must never report.
+  if (box === null || region === null) {
+    throw new Error('a visible pill and transcript must both have a box to be measured');
+  }
+  // Inside the visible transcript, not merely present in the document.
+  expect(box.y).toBeGreaterThanOrEqual(region.y);
+  expect(box.y + box.height).toBeLessThanOrEqual(region.y + region.height);
+  // And resting near its bottom edge, which is the whole of what "floating" means here.
+  expect(region.y + region.height - (box.y + box.height)).toBeLessThan(40);
+});

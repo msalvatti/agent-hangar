@@ -3,10 +3,11 @@
  *
  * Layer: integration (`@docker @db @redis`).
  * Goal: prove the flows the unit suite can only simulate — a turn that really clones a repository
- * and runs the bundled runtime in a container, the collector reclaiming an idle workspace and an
- * orphan container, a restored turn cloning into a brand-new workspace, a scheduled run whose
- * container is destroyed when it finishes, and a deleted chat leaving neither a container nor a
- * row that claims to have one. The model is the only fake.
+ * and runs the bundled runtime in a container, a workspace in which no shell command can find the
+ * credentials that turn ran with, the collector reclaiming an idle workspace and an orphan
+ * container, a restored turn cloning into a brand-new workspace, a scheduled run whose container
+ * is destroyed when it finishes, and a deleted chat leaving neither a container nor a row that
+ * claims to have one. The model is the only fake.
  * Mocks: `AGENT_MODEL_PROVIDER=fake` inside the container; everything else is production wiring.
  */
 import { mkdtemp, rm } from 'node:fs/promises';
@@ -20,11 +21,11 @@ import {
   workerHeartbeatKey,
   workerHeartbeatSchema,
 } from '@agent-hangar/core';
-import type { Chat } from '@agent-hangar/core';
-import { assertNoCanary } from '@agent-hangar/core/testing';
+import type { Chat, WorkspaceHandle } from '@agent-hangar/core';
+import { assertNoCanary, CANARY_MARKER } from '@agent-hangar/core/testing';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 
-import { LABELS, WORKSPACE_LIMITS } from '../processors/constants.js';
+import { CREDENTIALS_PATH, LABELS, WORKSPACE_LIMITS } from '../processors/constants.js';
 
 import { describeDocker } from './describe-docker.js';
 import {
@@ -102,6 +103,24 @@ describeDocker('worker end-to-end', () => {
   }
 
   /**
+   * Runs one command inside a live workspace and returns everything it wrote.
+   *
+   * @param handle - The workspace to run in.
+   * @param cmd - Argument vector.
+   * @returns Standard output and standard error, concatenated in arrival order.
+   */
+  async function execInWorkspace(handle: WorkspaceHandle, cmd: readonly string[]): Promise<string> {
+    const decoder = new TextDecoder();
+    let output = '';
+    for await (const event of harness.container.runner.exec(handle, { cmd })) {
+      if (event.type === 'stdout' || event.type === 'stderr') {
+        output += decoder.decode(event.data);
+      }
+    }
+    return output;
+  }
+
+  /**
    * A first message really creates a container, clones the repository, runs the bundled runtime
    * and turns everything it emits into stream entries and rows.
    */
@@ -144,6 +163,50 @@ describeDocker('worker end-to-end', () => {
     expect(() => {
       assertNoCanary(JSON.stringify(stream));
     }).not.toThrow();
+  });
+
+  /**
+   * What a `run_shell` command can find once a turn has run in the workspace it will run in again.
+   *
+   * This is the finding, measured where it lives. Every process of a workspace runs as the same
+   * unprivileged user, so `/proc/<pid>/environ` is an ordinary readable file to the agent and PID 1
+   * lives as long as the container — a credential put in the container's environment is one the
+   * model can read back at any point of any later turn. The credentials of a turn are placed as a
+   * file for that one execution instead, and the runtime unlinks them as it starts, so the search
+   * below runs after a real turn has completed and comes back with nothing.
+   *
+   * The canary marker is searched for as well as the canaries themselves: a partial or re-encoded
+   * credential is still a leak, and matching only the exact values would miss it.
+   */
+  it('leaves no credential a later shell command in the same workspace could read', async () => {
+    const workspace = await harness.container.repos.workspaces.findLiveByChat(chat.id);
+    const handle: WorkspaceHandle = {
+      workspaceId: workspace?.id ?? '',
+      runnerRef: workspace?.runnerRef ?? '',
+    };
+
+    const environ = await execInWorkspace(handle, [
+      'sh',
+      '-c',
+      'cat /proc/1/environ | tr "\\0" "\\n"',
+    ]);
+    const handoff = await execInWorkspace(handle, ['ls', '-A', '/opt/agent-runtime/handoff']);
+    const sweep = await execInWorkspace(handle, [
+      'sh',
+      '-c',
+      `grep -rl ${CANARY_MARKER} /proc/1/environ /proc/self/environ /opt/agent-runtime 2>/dev/null; echo "swept"`,
+    ]);
+
+    // The reads themselves worked, so what follows is an absence rather than a failed command.
+    expect(environ).toContain('AGENT_MODEL_PROVIDER=');
+    expect(sweep).toContain('swept');
+    expect(() => {
+      assertNoCanary(environ);
+    }).not.toThrow();
+    expect(environ).not.toContain(CANARY_MARKER);
+    expect(handoff.trim()).toBe('');
+    expect(sweep).not.toContain(CREDENTIALS_PATH);
+    expect(sweep.replace('swept', '').trim()).toBe('');
   });
 
   /**

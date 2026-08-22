@@ -29,10 +29,21 @@ const WORKSPACE_FILESYSTEM_FILES = [
   'src/tools/**/*.ts',
 ];
 
+/**
+ * Modules that act on a path the host named, not one the model chose.
+ *
+ * The credentials handoff reads and unlinks one file, at a path that is either a constant in the
+ * module itself or a variable the worker set before the container ran anything — the agent has no
+ * way to influence either, because it does not exist until after this has run. The rule's concern
+ * is a path an attacker controls, and there is none here; confining it the way the workspace
+ * modules confine theirs would mean confining it to itself.
+ */
+const HOST_SUPPLIED_PATH_FILES = ['src/credentials.ts'];
+
 export default defineConfig([
   ...rootConfig,
   {
-    files: WORKSPACE_FILESYSTEM_FILES,
+    files: [...WORKSPACE_FILESYSTEM_FILES, ...HOST_SUPPLIED_PATH_FILES],
     rules: { 'security/detect-non-literal-fs-filename': 'off' },
   },
 ]);

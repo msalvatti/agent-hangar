@@ -25,7 +25,8 @@
 # port. It is not a repository-level rule: another repository on the same origin is the same
 # origin, and the prompt does not reliably carry a path to judge anyway. And it is not a claim that
 # the PAT cannot leave the container by other means; the token file is readable by the workspace
-# user by design, so this closes the credential helper as an exfiltration tool, not egress.
+# user by design, and this script can be invoked by hand with a prompt of the caller's choosing, so
+# this closes the credential helper as a lever on WHERE the token goes, not as a way of reading it.
 #
 # POSIX sh, no external commands. Every failure path prints nothing on stdout and exits non-zero,
 # so git fails authentication instead of reading an empty string as a valid password.
@@ -125,16 +126,19 @@ case "$prompt" in
     printf '%s\n' "x-access-token"
     ;;
   *)
-    # Token source, in order: a tmpfs file named by AH_GIT_TOKEN_FILE, then GITHUB_TOKEN. The file
-    # exists so the agent runtime can keep the PAT out of the environment it hands to the shell
-    # tool's children while git, which runs with that same scrubbed environment, can still
-    # authenticate. The origin check above is deliberately independent of where the token came
+    # The token has exactly one source: the private tmpfs file named by AH_GIT_TOKEN_FILE, which
+    # the agent runtime writes for the duration of a turn and unlinks at the end of it. There is
+    # no environment fallback, because nothing puts the PAT in an environment any more — and a
+    # fallback to a variable would be a fallback to whatever the workspace chose to set, since the
+    # shell tool runs commands a model wrote and one assignment in front of a git command is all
+    # it would take. The origin check above is deliberately independent of where the token came
     # from.
-    token=${GITHUB_TOKEN:-}
+    #
+    # `read` is a shell builtin, so no PATH lookup happens: a workspace that controls PATH cannot
+    # interpose a program between the token file and this script. It reports failure on a file
+    # with no trailing newline while still assigning the value, hence the `|| :`.
+    token=""
     if [ -n "${AH_GIT_TOKEN_FILE:-}" ] && [ -r "$AH_GIT_TOKEN_FILE" ]; then
-      # `read` is a shell builtin, so no PATH lookup happens: a workspace that controls PATH cannot
-      # interpose a program between the token file and this script. It reports failure on a file
-      # with no trailing newline while still assigning the value, hence the `|| :`.
       IFS= read -r token < "$AH_GIT_TOKEN_FILE" || :
     fi
 

@@ -20,7 +20,7 @@ export interface CliIo {
   stdout: NodeJS.WritableStream;
   /** Redacted diagnostics. */
   stderr: NodeJS.WritableStream;
-  /** Container environment; the only place secrets reach the runtime. */
+  /** Container environment. Carries configuration and never a credential; see `credentials.ts`. */
   env: Readonly<Record<string, string | undefined>>;
   /** Cancellation signalling. */
   signals: {

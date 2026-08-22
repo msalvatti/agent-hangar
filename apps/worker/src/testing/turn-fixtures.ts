@@ -274,6 +274,17 @@ export function lastCreateSpec(container: TestContainer): WorkspaceSpec {
 }
 
 /**
+ * The exec spec of the last `exec` the runner recorded.
+ *
+ * @param container - The test container.
+ * @returns The spec the worker asked the runner for.
+ */
+export function lastExecSpec(container: TestContainer): ExecSpec {
+  const call = container.runner.calls.findLast((entry) => entry.method === 'exec');
+  return call?.args[1] as ExecSpec;
+}
+
+/**
  * The turn request the runtime was handed, read back from the recorded exec.
  *
  * @param container - The test container.

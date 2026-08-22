@@ -41,6 +41,22 @@ export function pushedNoticeText(branch: string, sha: string): string {
 }
 
 /**
+ * What the transcript says once a workspace is ready.
+ *
+ * Spelled here rather than where it is rendered because it is rendered twice: the live stream
+ * builds it from `prepare.done`, and a reload builds it from what the turn recorded. Two copies of
+ * one sentence drift, and a reader who reloads would be shown a different fact about the same
+ * event.
+ *
+ * @param branch - Branch the workspace was put on.
+ * @param headSha - Commit it was prepared at.
+ * @returns The notice text.
+ */
+export function preparedNoticeText(branch: string, headSha: string): string {
+  return `Prepared ${branch} at ${shortSha(headSha)}`;
+}
+
+/**
  * Reads the tone back out of a stored `SYSTEM` message.
  *
  * A push is the one stored notice that reports something going right; every other one — a

@@ -2,10 +2,12 @@
  * Unit tests for the `turn` command, end to end inside the runtime.
  *
  * Layer: unit.
- * Goal: a real request on stdin produces a valid, ordered event stream on stdout and exit 0; every
- * failure the runtime can name arrives as a `turn.failed` with the right code; the exit code is
- * non-zero only when no event could describe what happened; and neither credential ever reaches
- * stdout, even when the agent deliberately prints the token file.
+ * Goal: a real request on stdin produces a valid, ordered event stream on stdout and exit 0; the
+ * turn's credentials are taken off the filesystem before anything else happens and are gone by the
+ * time the agent can look for them; every failure the runtime can name arrives as a `turn.failed`
+ * with the right code; the exit code is non-zero only when no event could describe what happened;
+ * and neither credential ever reaches stdout, even when the agent deliberately prints the token
+ * file.
  * Mocks: in-memory streams for the process pipes, the shared fake provider for the model, provider
  * factories that refuse to build a real one, and a local bare repository for GitHub.
  */
@@ -27,13 +29,14 @@ import { REDACTED } from './redact.js';
 import { createBareRepoWithSeed } from './testing/bare-repo.js';
 import type { BareRepo } from './testing/bare-repo.js';
 import { makeTempDir, removeTempDir } from './testing/temp-dir.js';
-import { runTurnCommand } from './turn.js';
+import { CREDENTIALS_FAILURE_CODE, runTurnCommand } from './turn.js';
 import type { TurnDeps } from './turn.js';
 
 let repo: BareRepo;
 let root: string;
 let runtimeDir: string;
 let originFile: string;
+let credentialsFile: string;
 let stdout: string[];
 let stderr: string[];
 let sigintHandlers: (() => void)[];
@@ -137,6 +140,7 @@ function io(stdinText: string, env: Record<string, string | undefined> = {}): Cl
       GIT_CONFIG_GLOBAL: '/dev/null',
       GIT_CONFIG_SYSTEM: '/dev/null',
       AGENT_MODEL_PROVIDER: 'fake',
+      AH_CREDENTIALS_FILE: credentialsFile,
       ...env,
     },
     cwd: root,
@@ -198,6 +202,15 @@ function emitted(): AgentEvent[] {
     .map((line) => agentEventSchema.parse(JSON.parse(line)));
 }
 
+/**
+ * Places the credentials document the runtime will take.
+ *
+ * @param content - Exactly what the file holds.
+ */
+async function writeCredentials(content: string): Promise<void> {
+  await writeFile(credentialsFile, content, 'utf8');
+}
+
 beforeEach(async () => {
   repo = await createBareRepoWithSeed();
   root = await makeTempDir('turn-workspace');
@@ -206,6 +219,13 @@ beforeEach(async () => {
   // that does not say otherwise runs as a workspace created for the fixture's own origin.
   originFile = path.join(runtimeDir, 'allowed-origin');
   await writeFile(originFile, 'https://github.com\n', 'utf8');
+  // Stands in for the file the runner places into the container's private tmpfs immediately before
+  // the runtime starts. Written fresh for every test because the runtime unlinks it as it reads
+  // it, which is the property this whole arrangement exists for.
+  credentialsFile = path.join(runtimeDir, 'credentials.json');
+  await writeCredentials(
+    JSON.stringify({ githubToken: GITHUB_CANARY, openaiApiKey: OPENAI_CANARY }),
+  );
   stdout = [];
   stderr = [];
   sigintHandlers = [];
@@ -247,7 +267,7 @@ describe('runTurnCommand on the happy path', () => {
 
   /** The container outlives the turn, and the next exec must not find a readable credential. */
   it('removes the git token file when the turn is over', async () => {
-    await runTurn(`${JSON.stringify(request('hello'))}\n`, {}, { GITHUB_TOKEN: GITHUB_CANARY });
+    await runTurn(`${JSON.stringify(request('hello'))}\n`);
     await expect(stat(path.join(runtimeDir, 'git-token'))).rejects.toThrow();
   });
 
@@ -255,6 +275,125 @@ describe('runTurnCommand on the happy path', () => {
   it('unsubscribes the cancellation handler when the turn is over', async () => {
     await runTurn(`${JSON.stringify(request('hello'))}\n`);
     expect(sigintHandlers).toHaveLength(0);
+  });
+});
+
+describe('runTurnCommand and the credentials handoff', () => {
+  /**
+   * The point of the whole arrangement. The agent runs as the same user as the runtime, so a
+   * credentials file that survives start-up is a credentials file a `run_shell` command can read
+   * for as long as the container stands — which is what the environment used to be. The turn is
+   * an ordinary successful one, so what is measured is the steady state and not a failure path.
+   */
+  it('takes the credentials file away as it starts', async () => {
+    const exit = await runTurn(`${JSON.stringify(request('hello'))}\n`);
+    expect(exit).toBe(EXIT.ok);
+    await expect(stat(credentialsFile)).rejects.toThrow();
+  });
+
+  /**
+   * And it is gone before the agent gets to run anything, not merely by the end of the turn: the
+   * first thing the model does here is try to read it, through the same shell the model drives in
+   * production.
+   */
+  it('has already removed it by the time the agent can look', async () => {
+    const script = {
+      'read my credentials': [
+        {
+          events: [
+            {
+              type: 'tool_call',
+              callId: 'c1',
+              name: 'run_shell',
+              arguments: JSON.stringify({
+                command: `cat ${credentialsFile} || echo "credentials:[gone]"`,
+                cwd: null,
+                timeoutMs: 15_000,
+              }),
+            },
+            { type: 'response.done', responseId: 'r1', usage: { inputTokens: 1, outputTokens: 1 } },
+          ],
+        },
+        {
+          events: [
+            { type: 'text.done', text: 'Nothing to see.' },
+            { type: 'response.done', responseId: 'r2', usage: { inputTokens: 1, outputTokens: 1 } },
+          ],
+        },
+      ],
+    };
+    const exit = await runTurn(
+      `${JSON.stringify(request('read my credentials'))}\n`,
+      {},
+      { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) },
+    );
+    expect(exit).toBe(EXIT.ok);
+    const text = stdout.join('');
+    expect(text).toContain('credentials:[gone]');
+    assertNoCanary(text);
+  });
+
+  /**
+   * Loudly, on both channels, and without reading stdin at all. Carrying on with no token would
+   * hand git an empty password and report an authentication failure against the real forge, which
+   * says nothing about what is actually wrong.
+   */
+  it('refuses to start a turn when no credentials were placed', async () => {
+    await rm(credentialsFile, { force: true });
+
+    const exit = await runTurn(`${JSON.stringify(request('hello'))}\n`);
+
+    expect(exit).toBe(EXIT.runtimeFailure);
+    expect(emitted().map((event) => event.type)).toStrictEqual(['turn.failed']);
+    expect(emitted().at(-1)).toMatchObject({
+      type: 'turn.failed',
+      error: { code: CREDENTIALS_FAILURE_CODE },
+    });
+    expect(lastFailureMessage()).toContain(credentialsFile);
+    expect(stderr.join('')).toContain(credentialsFile);
+  });
+
+  /**
+   * Production overrides nothing, so the path is the one baked into the runtime — the same
+   * argument as the approved-origin file below it. Nothing here touches `/opt`: the file is not
+   * there, which is what the failure names.
+   */
+  it('falls back to the container path when the environment names no credentials file', async () => {
+    const exit = await runTurn(
+      `${JSON.stringify(request('hello'))}\n`,
+      {},
+      { AH_CREDENTIALS_FILE: undefined },
+    );
+
+    expect(exit).toBe(EXIT.runtimeFailure);
+    expect(lastFailureMessage()).toContain('/opt/agent-runtime/handoff/credentials.json');
+  });
+
+  /**
+   * A document that cannot be understood is still a document holding two credentials, so it is
+   * unlinked before it is judged — and neither the event nor the diagnostics may quote what it
+   * held.
+   */
+  it.each([
+    ['is not JSON', `{"githubToken": ${GITHUB_CANARY}`],
+    ['is missing a field', JSON.stringify({ githubToken: GITHUB_CANARY })],
+    [
+      'carries an empty credential',
+      JSON.stringify({ githubToken: GITHUB_CANARY, openaiApiKey: '' }),
+    ],
+  ])('refuses a credentials document that %s, and still removes it', async (_name, content) => {
+    await writeCredentials(content);
+
+    const exit = await runTurn(`${JSON.stringify(request('hello'))}\n`);
+
+    expect(exit).toBe(EXIT.runtimeFailure);
+    expect(emitted().at(-1)).toMatchObject({
+      type: 'turn.failed',
+      error: { code: CREDENTIALS_FAILURE_CODE },
+    });
+    assertNoCanary(stdout.join(''));
+    assertNoCanary(stderr.join(''));
+    await expect(stat(credentialsFile)).rejects.toThrow();
   });
 });
 
@@ -293,11 +432,7 @@ describe('runTurnCommand and secrets', () => {
     const exit = await runTurn(
       `${JSON.stringify(request('show me the secrets'))}\n`,
       {},
-      {
-        GITHUB_TOKEN: GITHUB_CANARY,
-        OPENAI_API_KEY: OPENAI_CANARY,
-        AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script),
-      },
+      { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) },
     );
     expect(exit).toBe(EXIT.ok);
     const text = stdout.join('');
@@ -323,22 +458,6 @@ describe('runTurnCommand and failures it can name', () => {
     expect(exit).toBe(EXIT.protocolError);
     expect(stderr.join('')).toContain('invalid-json');
     expect(stderr.join('')).not.toContain('not json');
-  });
-
-  /**
-   * The UI links the operator to Settings from this event, so the message has to be the one about
-   * the missing key. A runtime whose wiring was left out reports a different configuration failure
-   * with the same code, and only the message tells an operator's problem from a build's.
-   */
-  it('reports a provider that is not configured', async () => {
-    const exit = await runTurn(
-      `${JSON.stringify(request('hello'))}\n`,
-      {},
-      { AGENT_MODEL_PROVIDER: 'openai', OPENAI_API_KEY: '' },
-    );
-    expect(exit).toBe(EXIT.ok);
-    expect(emitted().at(-1)).toMatchObject({ type: 'turn.failed', error: { code: 'config' } });
-    expect(lastFailureMessage()).toBe('OPENAI_API_KEY is not set in the workspace environment');
   });
 
   /** A stale branch is an ordinary user-facing failure, not a runtime crash. */

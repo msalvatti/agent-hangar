@@ -137,15 +137,19 @@ const TIMESTAMP_LOCALE = 'en-US';
  *
  * The zone is a parameter, not a reading of the ambient one: `Intl` resolves the *running*
  * machine's zone, which on a server is not the reader's, so a caller that wants the reader's zone
- * has to obtain it in the browser and hand it in.
+ * has to obtain it in the browser and hand it in. It is nullable because that is what obtaining it
+ * in the browser yields while the markup is being produced and hydrated, and every caller then has
+ * the same "not yet" to render; taking it here keeps that ternary out of each of them.
  *
  * @param iso - ISO-8601 timestamp.
- * @param timeZone - IANA zone name to express the instant in.
- * @returns The formatted timestamp, or `null` when `iso` is not a timestamp at all.
+ * @param timeZone - IANA zone name to express the instant in, or `null` when the reader's zone is
+ *   not known yet.
+ * @returns The formatted timestamp, or `null` when the zone is unknown or `iso` is not a timestamp
+ *   at all.
  */
-export function formatTimestamp(iso: string, timeZone: string): string | null {
+export function formatTimestamp(iso: string, timeZone: string | null): string | null {
   const epochMs = Date.parse(iso);
-  if (Number.isNaN(epochMs)) {
+  if (timeZone === null || Number.isNaN(epochMs)) {
     return null;
   }
   return new Intl.DateTimeFormat(TIMESTAMP_LOCALE, {

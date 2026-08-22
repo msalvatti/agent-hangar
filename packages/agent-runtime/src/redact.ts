@@ -3,11 +3,11 @@
  *
  * Layer: utility.
  *
- * The runtime is the only process that sees the GitHub PAT and the OpenAI key in plaintext, and
- * everything it emits (events on stdout, diagnostics on stderr) is persisted and displayed. Two
- * passes therefore run over every string: the exact values present in the runtime's own
- * environment, then the shape patterns of the secrets contract, which also catch a credential the
- * agent produced itself — a token it printed from a file, or an `Authorization` header it echoed.
+ * The runtime is the only process in the container that sees the GitHub PAT and the OpenAI key in
+ * plaintext, and everything it emits (events on stdout, diagnostics on stderr) is persisted and
+ * displayed. Two passes therefore run over every string: the exact values this turn was handed,
+ * then the shape patterns of the secrets contract, which also catch a credential the agent
+ * produced itself — a token it printed from a file, or an `Authorization` header it echoed.
  *
  * The worker redacts again before persisting; this pass exists so a leak never reaches the pipe
  * in the first place.
@@ -21,9 +21,9 @@ export const REDACTED = REDACTED_TOKEN;
 /**
  * Shortest exact value that is worth replacing.
  *
- * A short environment value is far more likely to be an ordinary word that happens to sit in
- * `GITHUB_TOKEN` during a test than a credential, and replacing it would corrupt unrelated text.
- * Real PATs and API keys are dozens of characters long.
+ * A short value is far more likely to be an ordinary word that a test happened to pass in than a
+ * credential, and replacing it would corrupt unrelated text. Real PATs and API keys are dozens of
+ * characters long.
  */
 const MIN_EXACT_VALUE_LENGTH = 8;
 
@@ -43,7 +43,7 @@ export interface RuntimeRedactor {
 
 /** Options of {@link createRuntimeRedactor}. */
 export interface RuntimeRedactorOptions {
-  /** Live secret values, typically `GITHUB_TOKEN` and `OPENAI_API_KEY` from the container env. */
+  /** Live secret values: the two credentials this turn was handed. */
   values?: readonly (string | undefined)[];
 }
 

@@ -129,6 +129,8 @@ function runningTurnChat(): ChatDetail {
         workspaceId: 'workspace-1',
         usage: { inputTokens: null, outputTokens: null, stepCount: 2 },
         error: null,
+        preparedBranch: null,
+        preparedSha: null,
         queuedAt: '2026-08-19T10:00:00.100Z',
         startedAt: '2026-08-19T10:00:02.000Z',
         finishedAt: null,

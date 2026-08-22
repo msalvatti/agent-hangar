@@ -217,6 +217,10 @@ export const turnView = z.object({
   workspaceId: z.string().nullable(),
   usage: usageView,
   error: z.string().nullable(),
+  /** Branch the workspace was prepared on, `null` until it has been. */
+  preparedBranch: z.string().nullable(),
+  /** Commit it was prepared at, `null` until it has been. */
+  preparedSha: z.string().nullable(),
   queuedAt: isoDateTime,
   startedAt: isoDateTime.nullable(),
   finishedAt: isoDateTime.nullable(),

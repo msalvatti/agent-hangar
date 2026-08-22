@@ -17,7 +17,7 @@ import { Writable } from 'node:stream';
 
 import { agentEventSchema, loadOpenAIFixture } from '@agent-hangar/core';
 import type { AgentEvent, ModelEvent, TurnRequest } from '@agent-hangar/core';
-import { assertNoCanary, OPENAI_CANARY } from '@agent-hangar/core/testing';
+import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
@@ -66,6 +66,7 @@ let repo: BareRepo;
 let root: string;
 let runtimeDir: string;
 let originFile: string;
+let credentialsFile: string;
 let stdout: string[];
 let stderr: string[];
 let api: StubApi;
@@ -175,7 +176,8 @@ function request(): TurnRequest {
  * Builds the process resources with the given stdin content.
  *
  * `AGENT_MODEL_PROVIDER` is deliberately unset: the real provider is the default, so this is the
- * environment a workspace container actually receives.
+ * environment a workspace container actually receives — configuration, and no credential; the key
+ * arrives in the file named by `AH_CREDENTIALS_FILE`.
  *
  * @param stdinText - Everything the worker writes to stdin.
  * @returns The resources.
@@ -202,7 +204,7 @@ function io(stdinText: string): CliIo {
       PATH: process.env.PATH,
       GIT_CONFIG_GLOBAL: '/dev/null',
       GIT_CONFIG_SYSTEM: '/dev/null',
-      OPENAI_API_KEY: OPENAI_CANARY,
+      AH_CREDENTIALS_FILE: credentialsFile,
       OPENAI_BASE_URL: api.baseURL,
     },
     cwd: root,
@@ -240,6 +242,14 @@ beforeEach(async () => {
   runtimeDir = await makeTempDir('composition-runtime');
   originFile = path.join(runtimeDir, 'allowed-origin');
   await writeFile(originFile, `${REMOTE_ORIGIN}\n`, 'utf8');
+  // Placed fresh for every case: the runtime unlinks it as it starts, exactly as it does in a
+  // container.
+  credentialsFile = path.join(runtimeDir, 'credentials.json');
+  await writeFile(
+    credentialsFile,
+    JSON.stringify({ githubToken: GITHUB_CANARY, openaiApiKey: OPENAI_CANARY }),
+    'utf8',
+  );
   stdout = [];
   stderr = [];
   api = await startStubApi((await loadOpenAIFixture('text')).map(withEmptyMessageContent));
@@ -329,7 +339,7 @@ describe('the dispatcher underneath the composition', () => {
    * its own, so what the turn streams from is observable — and what it was built with is the key
    * and the endpoint the container environment carries, not a default from anywhere else.
    */
-  it('streams from the factories it was handed, with the credentials the environment carries', async () => {
+  it('streams from the factories it was handed, with the credentials the turn was placed', async () => {
     const seen: ProviderFactoryOptions[] = [];
 
     const exit = await runCli(['turn'], io(`${JSON.stringify(request())}\n`), {

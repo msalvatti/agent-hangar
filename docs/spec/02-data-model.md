@@ -117,6 +117,8 @@ model Turn {
   outputTokens  Int?
   stepCount     Int        @default(0)            // model round-trips in the loop
   error         String?                           // redacted
+  preparedBranch String?                          // branch the workspace was put on
+  preparedSha    String?                          // commit it was prepared at
   queuedAt      DateTime   @default(now())
   startedAt     DateTime?
   finishedAt    DateTime?
@@ -294,6 +296,8 @@ model Secret {
 ## 4. What "workspace context" must be persisted for faithful restore
 
 A restored chat must behave as if the workspace never disappeared, within the limits of what was pushed. The restore builder reads:
+
+The two `prepared*` columns on `Turn` are the only part of a workspace's setup that is kept. Everything else the runtime reports while a container is being built is published to the stream and forgotten, because it describes a container the turn does not outlive — but the transcript states one line about it, and a reload has nothing else to state it from. They are columns rather than a `SYSTEM` message for the reason the rest of those events are dropped: a message is part of the window a later turn carries to the model, and this is not something the model needs told. `requeue` clears them, so a retry does not inherit the commit of the attempt it replaces.
 
 | Field | Source | Used for |
 |---|---|---|

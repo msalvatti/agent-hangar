@@ -331,8 +331,16 @@ function makeTurnSink(
             stepCount: steps,
           });
           break;
-        case 'prepare.progress':
         case 'prepare.done':
+          // The only part of a preparation that outlives it. The notice the transcript shows is
+          // built from these two on a reload, because the event itself is not kept; see
+          // `TurnRepository.recordPrepared` for why this is a column and not a SYSTEM message.
+          await deps.repos.turns.recordPrepared(context.turnId, {
+            branch: event.branch,
+            headSha: event.headSha,
+          });
+          break;
+        case 'prepare.progress':
         case 'assistant.delta':
         case 'assistant.message':
         case 'heartbeat':

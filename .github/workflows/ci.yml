@@ -170,9 +170,20 @@ jobs:
       - run: pnpm test:integration
 
   e2e:
-    name: e2e
+    name: e2e (${{ matrix.mode }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
+    strategy:
+      # Both legs always run: which of the two modes a change breaks is the useful half of the
+      # answer, and stopping the other one hides it.
+      fail-fast: false
+      matrix:
+        # `mock` drives a production build against the in-browser mock API — no Docker, no worker,
+        # no database — and is the only leg that exercises the mock bootstrap the app ships for a
+        # developer with no infrastructure. `real` runs the whole stack and is the only leg that
+        # reaches the worker, a workspace container, the runtime and the local git server. Neither
+        # is a superset of the other, so neither replaces the other.
+        mode: [mock, real]
     services:
       postgres:
         image: postgres:18-alpine
@@ -209,10 +220,10 @@ jobs:
       AH_PORT_BASE: '3900'
       E2E_INSTANCE: test
       E2E_PORT_BASE: '3900'
-      # Mock mode runs the whole interface path against the in-browser mock API, and skips the
-      # assertions that need a worker, Docker and the local git server. Set this to `real` once
-      # the API and the worker are wired end to end; nothing else here has to change.
-      E2E_MODE: mock
+      # Supplied by the matrix above. Everything else in this job serves both legs already: the
+      # Postgres and Redis services, the workspace image built below, the fake model provider and
+      # the gateway address a workspace container reaches the git server by.
+      E2E_MODE: ${{ matrix.mode }}
       # Postgres and Redis are provided as services above, so the harness must not start compose.
       E2E_SKIP_COMPOSE: '1'
       # The docker0 gateway: the address a workspace container reaches the runner's host by.
@@ -271,7 +282,8 @@ jobs:
       - uses: actions/upload-artifact@v7
         if: failure()
         with:
-          name: playwright-report
+          # One name per leg: two uploads under the same name collide and the second is dropped.
+          name: playwright-report-${{ matrix.mode }}
           path: |
             apps/web/playwright-report
             apps/web/test-results

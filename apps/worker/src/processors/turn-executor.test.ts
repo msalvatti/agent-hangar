@@ -2,7 +2,10 @@
  * Unit tests for the runtime turn executor.
  *
  * Layer: unit.
- * Goal: the ordering guarantee (redact, publish, then persist), the cancellation escalation from
+ * Goal: the credentials of the turn reaching the container as a file placed for that one
+ * execution and never as part of its environment, the refusal to start a turn whose credentials
+ * are not configured, the ordering guarantee (redact, publish, then persist), the cancellation
+ * escalation from
  * `SIGINT` to `SIGKILL`, a cancellation that arrived before the exec did, redacted stderr
  * diagnostics, the refusal to publish a redacted event that no longer satisfies the protocol, an
  * outcome the runtime reported surviving a stream that breaks afterwards, and a publisher or sink
@@ -14,18 +17,24 @@ import type {
   AgentEvent,
   ExecEvent,
   ExecSignal,
+  ExecSpec,
   Redactor,
   TurnRequest,
   WorkspaceHandle,
 } from '@agent-hangar/core';
-import { FakeWorkspaceRunner, GITHUB_CANARY } from '@agent-hangar/core/testing';
+import { FakeWorkspaceRunner, GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { connectionRefused, createTestContainer } from '../testing/index.js';
+import {
+  connectionRefused,
+  createTestContainer,
+  FakeSecretsService,
+  lastExecSpec,
+} from '../testing/index.js';
 import type { TestContainer } from '../testing/index.js';
 
 import { openCancellationWatch } from './cancellation.js';
-import { CANCEL_GRACE_MS } from './constants.js';
+import { CANCEL_GRACE_MS, SECRETS_MISSING_CODE, SECRETS_MISSING_MESSAGE } from './constants.js';
 import { CLIENT_ERROR_CODE, executeRuntimeTurn, redactAgentEvent } from './turn-executor.js';
 import type { TurnSink } from './turn-executor.js';
 
@@ -124,7 +133,10 @@ class ScriptedExecRunner extends FakeWorkspaceRunner {
     super();
   }
 
-  override async *exec(): AsyncIterable<ExecEvent> {
+  override async *exec(handle: WorkspaceHandle, spec: ExecSpec): AsyncIterable<ExecEvent> {
+    // Recorded the way the fake records it, so a test can ask what the worker asked for — and so
+    // "no exec happened" is a statement about the worker rather than about this override.
+    this.calls.push({ method: 'exec', args: [handle, spec] });
     for (const event of this.events) {
       yield await Promise.resolve(event);
     }
@@ -243,6 +255,119 @@ async function execute(
 afterEach(() => {
   vi.useRealTimers();
   vi.restoreAllMocks();
+});
+
+describe('executeRuntimeTurn and the credentials of the turn', () => {
+  /**
+   * The credentials belong to this execution and to nothing else. A container serves every turn of
+   * a chat until the collector reclaims it, so anything handed over when it was built would stay
+   * readable inside it — through `/proc/1/environ` for an environment entry — for as long as it
+   * stands. The runner places the file immediately before the process starts and the runtime
+   * unlinks it as it reads it, so what is asserted here is that the file is on the exec and the
+   * secret is nowhere else on it.
+   */
+  it('places both credentials as a file on the exec and nowhere in its environment', async () => {
+    const container = createTestContainer({
+      runner: new ScriptedExecRunner([
+        { type: 'started', execRef: 'exec-1' },
+        { type: 'exit', code: 0 },
+      ]),
+    });
+
+    await execute(container, recordingSink().sink);
+
+    const spec = lastExecSpec(container);
+    expect(spec.files).toStrictEqual([
+      {
+        path: '/opt/agent-runtime/handoff/credentials.json',
+        content: JSON.stringify({ githubToken: GITHUB_CANARY, openaiApiKey: OPENAI_CANARY }),
+      },
+    ]);
+    expect(JSON.stringify(spec.env ?? {})).not.toContain(GITHUB_CANARY);
+    expect(JSON.stringify(spec.env ?? {})).not.toContain(OPENAI_CANARY);
+  });
+
+  /**
+   * Registered before the exec, so everything that execution produces is scrubbed against the two
+   * values — including in a container an earlier process of this worker created, which is exactly
+   * the case a per-create registration used to miss after a restart.
+   */
+  it('registers both credentials with the redactor before the runtime starts', async () => {
+    const container = createTestContainer({
+      runner: new ScriptedExecRunner([
+        { type: 'started', execRef: 'exec-1' },
+        { type: 'exit', code: 0 },
+      ]),
+    });
+    const register = vi.spyOn(container.redactor, 'register');
+
+    await execute(container, recordingSink().sink);
+
+    expect(register).toHaveBeenCalledExactlyOnceWith([GITHUB_CANARY, OPENAI_CANARY]);
+    expect(container.redactor.redact(`x ${OPENAI_CANARY}`)).toBe('x [REDACTED]');
+  });
+
+  /**
+   * The window the reveal opens, and the reason the state is captured after it rather than before.
+   *
+   * Stop is offered while a turn is preparing, and revealing two credentials is two decryptions
+   * against the database — long enough for a cancellation to land in the middle of it. The watch
+   * does not replay a request to a listener registered afterwards, so a `requested()` read taken
+   * before the reveal would miss exactly the requests that arrive during it, and the user's Stop
+   * would do nothing while the container ran the turn to completion. Driven by making the reveal
+   * itself the moment the cancellation arrives.
+   */
+  it('honours a cancellation that arrives while the credentials are being revealed', async () => {
+    const runner = new DrivenRunner();
+    const container = createTestContainer({ runner });
+    const watch = await openCancellationWatch(container, REQUEST.turnId);
+    const reveal = container.secrets.reveal.bind(container.secrets);
+    vi.spyOn(container.secrets, 'reveal').mockImplementation(async (key) => {
+      container.commands.emitCancel(REQUEST.turnId);
+      return reveal(key);
+    });
+    const { sink } = recordingSink();
+
+    const pending = executeRuntimeTurn(container, {
+      handle: HANDLE,
+      request: REQUEST,
+      sink,
+      watch,
+    });
+    runner.end();
+    const outcome = await pending;
+    await watch.close();
+
+    expect(watch.requested()).toBe(true);
+    expect(runner.signals).toEqual(['INT']);
+    expect(outcome.terminal).toBe('cancelled');
+  });
+
+  /**
+   * Asked of every turn and not only of every create, because the container outlives the create: an
+   * operator who removes a credential after the workspace was built must not have the next turn run
+   * in it anyway. Nothing is started, and what the user is told is what Settings can act on.
+   */
+  it('refuses to start the runtime when a credential is not configured', async () => {
+    const container = createTestContainer({
+      runner: new ScriptedExecRunner([
+        { type: 'started', execRef: 'exec-1' },
+        { type: 'exit', code: 0 },
+      ]),
+      secrets: new FakeSecretsService(),
+    });
+
+    const outcome = await execute(container, recordingSink().sink);
+
+    expect(outcome).toStrictEqual({
+      terminal: 'runner-error',
+      reportedByRuntime: false,
+      exitCode: null,
+      error: { code: SECRETS_MISSING_CODE, message: SECRETS_MISSING_MESSAGE },
+      protocolErrors: 0,
+    });
+    expect(container.runner.calls.some((entry) => entry.method === 'exec')).toBe(false);
+  });
 });
 
 describe('executeRuntimeTurn', () => {

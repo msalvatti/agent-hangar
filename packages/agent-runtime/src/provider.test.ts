@@ -4,8 +4,8 @@
  * Layer: unit.
  * Goal: `fake` works out of the box, honours a scripted override — including the key that selects
  * an answer and the placeholder that stands in for the workspace credential — `openai` is
- * constructed only through an injected factory and only with a key, and every configuration
- * problem surfaces as a `ConfigError` the turn command can map to
+ * constructed only through an injected factory and only from the credentials the turn was handed,
+ * and every configuration problem surfaces as a `ConfigError` the turn command can map to
  * `turn.failed { code: 'config' }`.
  * Mocks: a spy factory stands in for the OpenAI provider.
  */
@@ -21,6 +21,9 @@ import {
   resolveProviderName,
 } from './provider.js';
 import type { ProviderFactoryOptions } from './provider.js';
+
+/** What the runtime took off the filesystem before any of this ran. */
+const credentials = { githubToken: GITHUB_CANARY, openaiApiKey: OPENAI_CANARY };
 
 /** A provider that answers nothing; only its identity matters here. */
 const stubProvider: AgentModelProvider = {
@@ -68,7 +71,7 @@ describe('resolveProviderName', () => {
 describe('createProvider with the fake provider', () => {
   /** This is what makes the end-to-end suite runnable without an API key. */
   it('uses the built-in scripts when the environment supplies none', () => {
-    expect(createProvider('fake', {}, undefined).name).toBe('fake');
+    expect(createProvider('fake', {}, undefined, credentials).name).toBe('fake');
   });
 
   /** A spec that needs its own answer sets AGENT_FAKE_SCRIPT_JSON on the container. */
@@ -78,6 +81,7 @@ describe('createProvider with the fake provider', () => {
       'fake',
       { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) },
       undefined,
+      credentials,
     );
     const events = [];
     for await (const event of provider.stream({
@@ -105,6 +109,7 @@ describe('createProvider with the fake provider', () => {
       'fake',
       { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) },
       undefined,
+      credentials,
     );
 
     expect(await play(provider, 'print date')).toStrictEqual([
@@ -117,7 +122,7 @@ describe('createProvider with the fake provider', () => {
    * the script itself must not: it is a file, and a file is not where a credential lives. The
    * workspace already holds the credential, so the substitution happens here.
    */
-  it('fills the credential placeholder from the workspace environment', async () => {
+  it('fills the credential placeholder from the credentials of the turn', async () => {
     const script = {
       default: [
         {
@@ -134,8 +139,9 @@ describe('createProvider with the fake provider', () => {
     };
     const provider = createProvider(
       'fake',
-      { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script), GITHUB_TOKEN: GITHUB_CANARY },
+      { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) },
       undefined,
+      credentials,
     );
 
     expect(await play(provider)).toStrictEqual([
@@ -148,54 +154,29 @@ describe('createProvider with the fake provider', () => {
     ]);
   });
 
-  /**
-   * Substituting an empty string would turn a step that asks for the credential into one that
-   * quietly asks for nothing; the literal placeholder is what makes the omission visible.
-   */
-  it('leaves the placeholder alone when the workspace holds no credential', async () => {
-    const script = {
-      default: [{ events: [{ type: 'text.done', text: GITHUB_CREDENTIAL_PLACEHOLDER }] }],
-    };
-    const provider = createProvider(
-      'fake',
-      { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script) },
-      undefined,
-    );
-
-    expect(await play(provider)).toStrictEqual([
-      { type: 'text.done', text: GITHUB_CREDENTIAL_PLACEHOLDER },
-    ]);
-  });
-
-  /** An empty variable is the same statement as an absent one, and must not be substituted in. */
-  it('leaves the placeholder alone when the credential is empty', async () => {
-    const script = {
-      default: [{ events: [{ type: 'text.done', text: GITHUB_CREDENTIAL_PLACEHOLDER }] }],
-    };
-    const provider = createProvider(
-      'fake',
-      { AGENT_FAKE_SCRIPT_JSON: JSON.stringify(script), GITHUB_TOKEN: '' },
-      undefined,
-    );
-
-    expect(await play(provider)).toStrictEqual([
-      { type: 'text.done', text: GITHUB_CREDENTIAL_PLACEHOLDER },
-    ]);
-  });
-
-  /** The value came from the container environment, alongside the credentials. */
+  /** The value came from the container environment, which is not where a credential lives. */
   it('refuses a script that is not valid JSON, without quoting it', () => {
-    expect(() => createProvider('fake', { AGENT_FAKE_SCRIPT_JSON: '{oops' }, undefined)).toThrow(
-      new ConfigError('AGENT_FAKE_SCRIPT_JSON is not valid JSON'),
-    );
+    expect(() =>
+      createProvider('fake', { AGENT_FAKE_SCRIPT_JSON: '{oops' }, undefined, credentials),
+    ).toThrow(new ConfigError('AGENT_FAKE_SCRIPT_JSON is not valid JSON'));
   });
 });
 
 describe('createProvider with the openai provider', () => {
-  /** The runtime never reads the OpenAI SDK itself; the composition supplies the factory. */
-  it('builds it through the injected factory with the key from the environment', () => {
+  /**
+   * The runtime never reads the OpenAI SDK itself; the composition supplies the factory. The key
+   * comes from the credentials of the turn and never from the environment, which is the whole
+   * point of the change that moved it there: an environment entry is readable by every process in
+   * the container.
+   */
+  it('builds it through the injected factory with the key the turn was handed', () => {
     const openai = vi.fn((_options: ProviderFactoryOptions) => stubProvider);
-    const provider = createProvider('openai', { OPENAI_API_KEY: OPENAI_CANARY }, { openai });
+    const provider = createProvider(
+      'openai',
+      { OPENAI_API_KEY: 'sk-from-the-environment' },
+      { openai },
+      credentials,
+    );
     expect(provider).toBe(stubProvider);
     expect(openai).toHaveBeenCalledWith({ apiKey: OPENAI_CANARY });
   });
@@ -203,11 +184,7 @@ describe('createProvider with the openai provider', () => {
   /** Local proxies and compatible gateways are configured this way. */
   it('passes an alternative endpoint when the environment names one', () => {
     const openai = vi.fn((_options: ProviderFactoryOptions) => stubProvider);
-    createProvider(
-      'openai',
-      { OPENAI_API_KEY: OPENAI_CANARY, OPENAI_BASE_URL: 'https://proxy.test/v1' },
-      { openai },
-    );
+    createProvider('openai', { OPENAI_BASE_URL: 'https://proxy.test/v1' }, { openai }, credentials);
     expect(openai).toHaveBeenCalledWith({
       apiKey: OPENAI_CANARY,
       baseURL: 'https://proxy.test/v1',
@@ -219,26 +196,16 @@ describe('createProvider with the openai provider', () => {
    * first real turn; it stays a named failure rather than an undefined dereference.
    */
   it('reports that this build has no factory wired in', () => {
-    expect(() => createProvider('openai', { OPENAI_API_KEY: OPENAI_CANARY }, undefined)).toThrow(
+    expect(() => createProvider('openai', {}, undefined, credentials)).toThrow(
       /not wired into this build/,
     );
-  });
-
-  /** Settings is where the operator fixes this, and the UI links there from the failure. */
-  it.each([
-    ['no key at all', {}],
-    ['an empty key', { OPENAI_API_KEY: '' }],
-  ])('reports %s before calling the factory', (_name, env) => {
-    const openai = vi.fn((_options: ProviderFactoryOptions) => stubProvider);
-    expect(() => createProvider('openai', env, { openai })).toThrow(/OPENAI_API_KEY is not set/);
-    expect(openai).not.toHaveBeenCalled();
   });
 });
 
 describe('createProvider with an unknown name', () => {
   /** The message becomes a persisted, displayed event. */
   it('names the valid values without echoing the configured one', () => {
-    expect(() => createProvider('anthropic', {}, undefined)).toThrow(
+    expect(() => createProvider('anthropic', {}, undefined, credentials)).toThrow(
       new ConfigError('AGENT_MODEL_PROVIDER must be "openai" or "fake"'),
     );
   });

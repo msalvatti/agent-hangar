@@ -16,6 +16,7 @@ import { describe, expect, expectTypeOf, it } from 'vitest';
 import { createNodeIo, EXIT, runCli } from './cli.js';
 import type { CliDeps, CliIo, CliOverrides } from './cli.js';
 import type { ProviderFactories } from './provider.js';
+import { CREDENTIALS_FAILURE_CODE } from './turn.js';
 import { RUNTIME_VERSION } from './version.js';
 
 /** Builds a `CliIo` whose streams collect what was written. */
@@ -83,16 +84,20 @@ describe('runCli', () => {
   });
 
   /**
-   * Empty stdin is the shortest path through the turn command; the exit code proves it ran. It also
-   * stops before the provider, which is what lets the wiring here refuse to build one.
+   * A turn with no credentials placed for it is the shortest path through the turn command: it is
+   * the first thing that command does, before stdin is read and long before a provider is built,
+   * which is what lets the wiring here refuse to build one. The exit code and the event prove the
+   * dispatch reached it.
    */
   it('dispatches the turn command and passes the overrides through', async () => {
     const { io, stdout } = testIo();
     const { factories, calls } = unreachedFactories();
     await expect(
       runCli(['turn'], io, { providerFactories: factories, workspaceRoot: '/nowhere' }),
-    ).resolves.toBe(EXIT.protocolError);
-    expect(stdout()).toBe('');
+    ).resolves.toBe(EXIT.runtimeFailure);
+    const event: unknown = JSON.parse(stdout());
+    expect(event).toMatchObject({ type: 'turn.failed', error: { code: CREDENTIALS_FAILURE_CODE } });
+    expect(stdout()).toContain('credentials.json');
     expect(calls()).toBe(0);
   });
 

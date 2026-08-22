@@ -1,0 +1,93 @@
+Scope: 4 of 5 workspace projects
+##[group]@agent-hangar/core@0.1.0 : test:integration packages/core
+$ vitest run --project integration --coverage.enabled=false
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11 [39m[90m/home/runner/work/agent-hangar/agent-hangar/packages/core[39m
+
+ [32m✓[39m [30m[45m integration [49m[39m src/runner/docker/docker-workspace-runner.integration.test.ts [2m([22m[2m20 tests[22m[2m)[22m[33m 7947[2mms[22m[39m
+     [33m[2m✓[22m[39m creates a workspace that reports itself healthy [33m 315[2mms[22m[39m
+     [33m[2m✓[22m[39m reports a non-zero exit and honours the working directory [33m 369[2mms[22m[39m
+     [33m[2m✓[22m[39m times out a long command and leaves the workspace usable [33m 1363[2mms[22m[39m
+     [33m[2m✓[22m[39m delivers a signal to the running process [33m 513[2mms[22m[39m
+     [33m[2m✓[22m[39m snapshots a real git repository [33m 490[2mms[22m[39m
+     [33m[2m✓[22m[39m lists workspaces by label [33m 435[2mms[22m[39m
+     [33m[2m✓[22m[39m gives each workspace its own filesystem [33m 594[2mms[22m[39m
+     [33m[2m✓[22m[39m places an execution credential the workspace can read and remove, and nothing keeps it [33m 436[2mms[22m[39m
+     [33m[2m✓[22m[39m places the approved origin where the workspace can read it and cannot author it [33m 615[2mms[22m[39m
+     [33m[2m✓[22m[39m releases the token through askpass, from the file and never from the environment [33m 402[2mms[22m[39m
+     [33m[2m✓[22m[39m keeps the runtime directory unwritable by the workspace user [33m 412[2mms[22m[39m
+     [33m[2m✓[22m[39m ships an unprivileged user and the expected toolchain [33m 339[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/persistence/repositories/job-run.repository.integration.test.ts [2m([22m[2m21 tests[22m[2m)[22m[33m 1265[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/persistence/repositories/invariants.integration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[33m 632[2mms[22m[39m
+     [33m[2m✓[22m[39m redacts a canary written through any repository, never leaking it to a raw row [33m 341[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/persistence/repositories/workspace.repository.integration.test.ts [2m([22m[2m14 tests[22m[2m)[22m[33m 946[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/queues/queues.integration.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 580[2mms[22m[39m
+     [33m[2m✓[22m[39m answers live for a job a worker is still holding, and the enqueue is swallowed [33m 518[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/persistence/repositories/turn.repository.integration.test.ts [2m([22m[2m15 tests[22m[2m)[22m[33m 958[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/persistence/repositories/chat.repository.integration.test.ts [2m([22m[2m13 tests[22m[2m)[22m[33m 844[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/persistence/repositories/tool-call-log.repository.integration.test.ts [2m([22m[2m6 tests[22m[2m)[22m[33m 629[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/queues/schedulers.integration.test.ts [2m([22m[2m5 tests[22m[2m)[22m[32m 57[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/persistence/repositories/message.repository.integration.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 680[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/persistence/repositories/scheduled-job.repository.integration.test.ts [2m([22m[2m7 tests[22m[2m)[22m[33m 569[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/persistence/client.integration.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 1648[2mms[22m[39m
+     [33m[2m✓[22m[39m applies the migration including the partial unique index [33m 1425[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/persistence/repositories/secret.repository.integration.test.ts [2m([22m[2m4 tests[22m[2m)[22m[33m 423[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m13 passed[39m[22m[90m (13)[39m
+[2m      Tests [22m [1m[32m126 passed[39m[22m[90m (126)[39m
+[2m   Start at [22m 00:05:50
+[2m   Duration [22m 20.19s[2m (transform 443ms, setup 0ms, import 1.52s, tests 17.18s, environment 1ms)[22m
+
+##[endgroup]
+##[group]web@0.1.0 : test:integration apps/web
+$ vitest run --project integration --coverage.enabled=false
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11 [39m[90m/home/runner/work/agent-hangar/agent-hangar/apps/web[39m
+
+ [32m✓[39m [30m[45m integration [49m[39m src/server/handlers/retry.integration.test.ts [2m([22m[2m2 tests[22m[2m)[22m[33m 576[2mms[22m[39m
+     [33m[2m✓[22m[39m refuses while the previous attempt is still running, leaving the turn retryable [33m 552[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/server/sse.integration.test.ts [2m([22m[2m8 tests[22m[2m)[22m[32m 150[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/server/handlers/job-delete.integration.test.ts [2m([22m[2m2 tests[22m[2m)[22m[32m 105[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/server/handlers/chat-delete.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 414[2mms[22m[39m
+     [33m[2m✓[22m[39m never deletes a chat whose work slot a message claimed in the same window [33m 412[2mms[22m[39m
+ [32m✓[39m [30m[45m integration [49m[39m src/server/handlers/chat-delete-teardown.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 364[2mms[22m[39m
+     [33m[2m✓[22m[39m names the workspace on the teardown job, which the chat id no longer can [33m 362[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m5 passed[39m[22m[90m (5)[39m
+[2m      Tests [22m [1m[32m14 passed[39m[22m[90m (14)[39m
+[2m   Start at [22m 00:06:11
+[2m   Duration [22m 4.18s[2m (transform 517ms, setup 0ms, import 1.99s, tests 1.61s, environment 0ms)[22m
+
+##[endgroup]
+##[group]worker@0.1.0 : test:integration apps/worker
+$ DOCKER_AVAILABLE=1 vitest run --project integration --coverage.enabled=false
+
+[1m[30m[46m RUN [49m[39m[22m [36mv4.1.11 [39m[90m/home/runner/work/agent-hangar/agent-hangar/apps/worker[39m
+
+{"level":30,"time":"2026-08-22T00:06:17.357Z","name":"worker","upserted":0,"removed":0,"msg":"job schedulers reconciled"}
+{"level":30,"time":"2026-08-22T00:06:17.379Z","name":"worker","instance":"test","runner":"docker","concurrency":2,"msg":"worker ready"}
+{"level":40,"time":"2026-08-22T00:06:19.694Z","name":"worker","workspaceId":"orphan-mt3mbdw0","msg":"orphan workspace destroyed"}
+{"level":30,"time":"2026-08-22T00:06:19.695Z","name":"worker","reaped":1,"orphansDestroyed":1,"goneMarked":0,"teardownsFinished":0,"msg":"workspace collection finished"}
+{"level":30,"time":"2026-08-22T00:06:22.376Z","name":"worker","jobId":"cmt3mbgda000k72yyonew7ea5","runId":"cmt3mbgdj000m72yy2p1c6320","msg":"scheduled run skipped"}
+{"level":40,"time":"2026-08-22T00:06:23.310Z","name":"worker","workspaceId":"cmt3mbgwk000p72yyi1gys3ek","msg":"finished a teardown whose process never came back for the container"}
+{"level":30,"time":"2026-08-22T00:06:23.310Z","name":"worker","reaped":0,"orphansDestroyed":0,"goneMarked":0,"teardownsFinished":1,"msg":"workspace collection finished"}
+{"level":30,"time":"2026-08-22T00:06:23.807Z","name":"worker","msg":"stopping workers"}
+ [32m✓[39m [30m[45m integration [49m[39m src/integration/worker.integration.test.ts [2m([22m[2m9 tests[22m[2m)[22m[33m 6808[2mms[22m[39m
+     [33m[2m✓[22m[39m runs a turn in a real container and records everything it produced [33m 1562[2mms[22m[39m
+     [33m[2m✓[22m[39m reclaims an idle workspace and an orphan container [33m 681[2mms[22m[39m
+     [33m[2m✓[22m[39m restores the chat into a new workspace on the next message [33m 1018[2mms[22m[39m
+     [33m[2m✓[22m[39m runs a scheduled job in a fresh workspace and destroys it [33m 1518[2mms[22m[39m
+     [33m[2m✓[22m[39m leaves no live row behind when a chat with a workspace is deleted [33m 671[2mms[22m[39m
+     [33m[2m✓[22m[39m finishes a teardown whose process never came back for the container [33m 666[2mms[22m[39m
+{"level":30,"time":"2026-08-22T00:06:24.816Z","name":"worker","upserted":0,"removed":0,"msg":"job schedulers reconciled"}
+{"level":30,"time":"2026-08-22T00:06:24.837Z","name":"worker","instance":"test","runner":"docker","concurrency":2,"msg":"worker ready"}
+{"level":30,"time":"2026-08-22T00:06:26.004Z","name":"worker","msg":"stopping workers"}
+ [32m✓[39m [30m[45m integration [49m[39m src/integration/fake-provider-script.integration.test.ts [2m([22m[2m1 test[22m[2m)[22m[33m 1612[2mms[22m[39m
+     [33m[2m✓[22m[39m answers from the supplied script and redacts the credential it carried [33m 1045[2mms[22m[39m
+
+[2m Test Files [22m [1m[32m2 passed[39m[22m[90m (2)[39m
+[2m      Tests [22m [1m[32m10 passed[39m[22m[90m (10)[39m
+[2m   Start at [22m 00:06:15
+[2m   Duration [22m 10.15s[2m (transform 612ms, setup 0ms, import 1.48s, tests 8.42s, environment 0ms)[22m
+
+##[endgroup]
