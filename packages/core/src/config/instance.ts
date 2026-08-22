@@ -82,7 +82,13 @@ export interface InstanceInfo {
 export function slugifyInstance(raw: string): string {
   const slug = raw
     .toLowerCase()
-    .replace(/[^a-z0-9-]+/g, '-')
+    .replace(
+      // Stryker disable next-line Regex: whether a run of unusable characters becomes one dash or
+      // several is settled by the collapse below, which merges any run of dashes into one — so the
+      // two spellings of this one produce the same slug.
+      /[^a-z0-9-]+/g,
+      '-',
+    )
     .replace(/-+/g, '-')
     .replace(/^-|-$/g, '')
     .slice(0, INSTANCE_SLUG_MAX_LENGTH)

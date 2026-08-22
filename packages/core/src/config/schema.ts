@@ -264,7 +264,11 @@ export function loadConfig(env: RawEnv = process.env): AppConfig {
   const result = envSchema.safeParse(candidate);
   if (!result.success) {
     const problems = result.error.issues
-      .map((issue) => `  - ${issue.path.join('.')}: ${issue.message}`)
+      .map(
+        // Stryker disable next-line StringLiteral: every variable of this schema is a top-level
+        // key, so an issue names one segment and the separator between segments is never reached.
+        (issue) => `  - ${issue.path.join('.')}: ${issue.message}`,
+      )
       .join('\n');
     throw new ConfigError(`Invalid configuration:\n${problems}`);
   }

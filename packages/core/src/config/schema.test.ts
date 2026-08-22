@@ -387,6 +387,11 @@ describe('the loopback rules', () => {
     'localhost',
     '127.0.0.1',
     '127.0.0.53',
+    // Every group of the block, not just the last: the range is 127.0.0.0/8, so a second or third
+    // group of more than one digit is as much this machine as a third of one.
+    '127.10.0.1',
+    '127.0.10.1',
+    '127.255.255.255',
     '[::1]',
     '[::ffff:7f00:1]',
     '[::ffff:7fff:ffff]',
@@ -405,6 +410,12 @@ describe('the loopback rules', () => {
     'app.localhost',
     '0.0.0.0',
     '[::ffff:c000:201]',
+    // A name that merely ends with a loopback address is not one: the patterns are anchored at
+    // both ends, and either anchor removed lets a host somebody else controls inherit the trust
+    // that allows plaintext.
+    'evil.127.0.0.1',
+    'x[::ffff:7f00:1]',
+    '[::ffff:7f00:1]x',
   ])('treats %s as remote', (hostname) => {
     expect(isLoopbackHostname(hostname)).toBe(false);
   });
@@ -418,5 +429,88 @@ describe('the loopback rules', () => {
     expect(isCredentialSafeBaseUrl('http://127.0.0.1:3908')).toBe(true);
     expect(isCredentialSafeBaseUrl('http://api.github.com')).toBe(false);
     expect(isCredentialSafeBaseUrl('not a url')).toBe(false);
+    // A scheme that is neither of the two is not made safe by pointing at this machine: the rule
+    // is https anywhere, or http here, and nothing else.
+    expect(isCredentialSafeBaseUrl('ftp://127.0.0.1')).toBe(false);
+  });
+});
+
+describe('what the environment schema refuses, and what it says', () => {
+  /**
+   * Each of these variables is narrowed to the scheme its client actually speaks, and the refusal
+   * says so. A pattern that lost an anchor accepts a scheme that merely ends or begins with the
+   * right one — `postgresx://` for the database, `redisx://` for the queue — and the process then
+   * fails at the first connection instead of at start-up.
+   */
+  it.each([
+    ['DATABASE_URL', 'postgresx://localhost:5432/db'],
+    ['DATABASE_URL', 'xpostgres://localhost:5432/db'],
+    ['REDIS_URL', 'redissx://localhost:6379'],
+    ['REDIS_URL', 'xredis://localhost:6379'],
+    ['GITHUB_API_BASE_URL', 'httpsx://api.github.com'],
+    ['GITHUB_API_BASE_URL', 'xhttps://api.github.com'],
+  ])('refuses %s of %s, by the scheme', (name, value) => {
+    let message = '';
+
+    try {
+      loadConfig({ [name]: value });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    // Refused for its scheme rather than by whatever rule sits behind it: the two refusals read
+    // differently, and a person told the wrong one goes looking for the wrong problem.
+    expect(message).toContain(`  - ${name}: Invalid URL`);
+  });
+
+  /**
+   * The two refusals a person is most likely to meet say what to do about them: an allow-list
+   * entry that is not an origin, and a GitHub base URL that would send the token over plaintext to
+   * somewhere that is not this machine.
+   */
+  it.each([
+    [
+      { ALLOWED_REPO_HOSTS: 'https://github.com/acme' },
+      'each entry must be [http://|https://]host[:port]',
+    ],
+    [
+      { GITHUB_API_BASE_URL: 'http://api.github.com' },
+      'must use https, or http with a loopback host',
+    ],
+  ])('says why it refused %p', (env, message) => {
+    expect(() => loadConfig(env)).toThrow(message);
+  });
+
+  /**
+   * The problems are listed one per line, and every one of them is listed. Run together they are a
+   * single unreadable line, and an operator fixing the first of five never sees the other four.
+   */
+  it('lists every problem on a line of its own', () => {
+    let message = '';
+
+    try {
+      loadConfig({ WEB_PORT: '99999', LOG_LEVEL: 'loud' });
+    } catch (error) {
+      message = (error as Error).message;
+    }
+
+    expect(message.split('\n').filter((line) => line.startsWith('  - '))).toHaveLength(2);
+  });
+
+  /**
+   * A variable that is present and undefined is a variable the shell never set; asked to measure
+   * its length the loader would throw before any schema ran, and the operator would be shown a
+   * type error rather than a configuration one.
+   */
+  it('treats a variable set to nothing at all as unset', () => {
+    expect(loadConfig({ OPENAI_MODEL: undefined }).OPENAI_MODEL.length).toBeGreaterThan(0);
+  });
+
+  /**
+   * The compose credentials are a value the compose file and the derived DATABASE_URL have to
+   * agree on; nothing else in this package reads them back.
+   */
+  it('names the credentials the compose database is created with', () => {
+    expect(COMPOSE_DB_CREDENTIALS).toBe('ah:ah');
   });
 });
