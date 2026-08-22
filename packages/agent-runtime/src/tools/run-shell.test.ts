@@ -14,7 +14,7 @@ import path from 'node:path';
 import { PassThrough } from 'node:stream';
 
 import { GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { createChildEnv } from '../child-env.js';
 import type { SpawnFunction } from '../spawn.js';
@@ -77,7 +77,11 @@ describe('runShell', () => {
     );
     expect(result.output).toContain('a\n');
     expect(result.output).toContain('b\n');
-    expect(streamed.map(([stream]) => stream)).toContain('stderr');
+    // Both names, because the transcript separates the two and a stream that arrives unnamed is
+    // rendered as the other one.
+    expect(new Set(streamed.map(([stream]) => stream))).toStrictEqual(
+      new Set(['stdout', 'stderr']),
+    );
     expect(streamed.map(([, text]) => text).join('')).toBe(result.output);
   });
 
@@ -118,6 +122,31 @@ describe('runShell', () => {
     expect(result.status).toBe('TIMED_OUT');
     expect(result.exitCode).toBeNull();
     expect(Date.now() - started).toBeLessThan(5000);
+  });
+
+  /**
+   * The timeout gets one signal and no second chance, so it has to be the one a command cannot
+   * decline. Here the command declines SIGTERM and would then run to its own end: the run still
+   * reports a timeout either way, because that was decided before the signal was sent, but the
+   * exit code tells the two apart — a command that was killed reports none, and one that finished
+   * on its own reports zero.
+   */
+  it('kills a command that refuses the polite signal', async () => {
+    const result = await runShell(
+      { command: 'trap "" TERM; sleep 6', cwd: null, timeoutMs: 200 },
+      context,
+    );
+    expect(result).toMatchObject({ status: 'TIMED_OUT', exitCode: null });
+  });
+
+  /**
+   * The container has no console. A command that reads standard input has to be told so at once;
+   * handed a pipe nobody writes to or closes, it waits for the timeout instead and the turn loses
+   * that budget to a command that was never going to finish.
+   */
+  it('gives the command no standard input to wait on', async () => {
+    const result = await runShell({ command: 'cat', cwd: null, timeoutMs: 3000 }, context);
+    expect(result).toMatchObject({ status: 'SUCCEEDED', exitCode: 0, output: '' });
   });
 
   /** Cancellation reaches the runtime as SIGINT and has to stop the current tool. */
@@ -176,6 +205,10 @@ describe('runShell', () => {
     );
     expect(Buffer.byteLength(streamed.join(''))).toBe(budget);
     expect(result.bytes).toBe(500_000);
+    // Every chunk after the budget is spent must be dropped rather than streamed as nothing: an
+    // empty output event still costs a write and a transcript line, and there are as many of them
+    // as the command cares to produce.
+    expect(streamed.filter((piece) => piece === '')).toStrictEqual([]);
   });
 
   /** This is the guarantee that a command the model wrote cannot read the PAT or the API key. */
@@ -246,6 +279,89 @@ describe('runShell', () => {
     );
     expect(result).toMatchObject({ status: 'TIMED_OUT', exitCode: null });
   });
+
+  /**
+   * A pipe hands over whatever bytes have arrived, so a character can be split across two reads.
+   * Decoded chunk by chunk each half becomes a replacement character, and what the model is shown
+   * is not what the command printed — in a transcript of a repository that is not written in
+   * English, that is most of it.
+   */
+  it('reassembles a multi-byte character split across two reads', async () => {
+    const bytes = new TextEncoder().encode('café');
+    const spawn: SpawnFunction = () => {
+      const child = Object.assign(new EventEmitter(), {
+        pid: undefined,
+        stdout: new PassThrough(),
+        stderr: new PassThrough(),
+        kill: () => true,
+      });
+      setImmediate(() => {
+        child.stdout.write(Buffer.from(bytes.slice(0, 4)));
+        child.stdout.write(Buffer.from(bytes.slice(4)));
+        setImmediate(() => child.emit('close', 0));
+      });
+      return child;
+    };
+
+    const result = await runShell(
+      { command: 'cat name.txt', cwd: null, timeoutMs: null },
+      { ...context, spawn },
+    );
+
+    expect(result.output).toBe('café');
+  });
+
+  /**
+   * A run arms two things it must give back: a timer that would kill the command, and a listener
+   * that would do the same on cancellation. Left behind, the timer holds the event loop open and
+   * fires at a process that has already gone, and the listener arms a *further* timer every time
+   * the turn is cancelled afterwards. Counted rather than inferred, because neither leftover
+   * changes the result of the run that created it — which is exactly why nothing noticed.
+   *
+   * @param settle - How the child ends: closing normally, or failing to start.
+   */
+  it.each([
+    ['closes', 'close' as const],
+    ['fails to start', 'error' as const],
+  ])(
+    'disarms the timeout and the cancellation listener when the command %s',
+    async (_name, settle) => {
+      vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+      try {
+        const controller = new AbortController();
+        const spawn: SpawnFunction = () => {
+          const child = Object.assign(new EventEmitter(), {
+            pid: undefined,
+            stdout: new PassThrough(),
+            stderr: new PassThrough(),
+            kill: () => true,
+          });
+          setImmediate(() => {
+            if (settle === 'close') {
+              child.emit('close', 0);
+            } else {
+              child.emit('error', new Error('spawn bash ENOENT'));
+            }
+          });
+          return child;
+        };
+
+        await runShell(
+          { command: 'true', cwd: null, timeoutMs: 10_000 },
+          { ...context, spawn },
+          {
+            signal: controller.signal,
+          },
+        );
+
+        expect(vi.getTimerCount()).toBe(0);
+        controller.abort();
+        expect(vi.getTimerCount()).toBe(0);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
 
   /**
    * The grace period is two seconds, so this test genuinely waits for it: a command that traps
