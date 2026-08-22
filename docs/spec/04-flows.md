@@ -171,7 +171,7 @@ sequenceDiagram
 - Overlap policy: if a run is still executing when the next tick fires, the new run is recorded as `FAILED` with error `previous run still running` (no queueing pile-up). Stated in the UI.
 - Disable → `removeJobScheduler(jobId)`; enable/edit → `upsertJobScheduler` (idempotent by key). Delete → remove scheduler + cascade rows.
 - Worker boot → reconcile: for every enabled job upsert its scheduler; remove schedulers with no matching enabled row.
-- Manual run → `scheduled-jobs.add('run-scheduled-job', {jobId, trigger:'MANUAL'})`; identical consumer path.
+- Manual run → `scheduled-jobs.add('run-scheduled-job', {jobId, trigger:'MANUAL'})`; identical consumer path. A disabled job is refused at the route with `409 JOB_DISABLED` and no run row is created; the consumer keeps its own check for the job disabled after the request was accepted, which is a row to close rather than a request to refuse.
 
 ## (d) Secrets: save → encrypt → inject → redact
 
@@ -192,6 +192,7 @@ sequenceDiagram
   Note over U,PG: SAVE
   U->>UI: paste PAT, click Save
   UI->>WEB: PUT /api/settings/GITHUB_PAT {value}   (HTTPS-less localhost; value never logged)
+  WEB->>WEB: body narrowed to the addressed key's shape (github_pat_/ghp_, sk-); 400 without storing
   WEB->>S: set('GITHUB_PAT', value)
   S->>K: load 32-byte key (created 0600 on first run by `pnpm setup`)
   S->>S: iv = random(12); AES-256-GCM encrypt; authTag

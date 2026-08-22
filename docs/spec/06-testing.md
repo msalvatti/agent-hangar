@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | ✅ Approved — 2026-08-19 |
-| **Revision** | 2026-08-20 — corrected against `.github/workflows/ci.yml` and the Vitest configs: coverage policy raised from the tiered numbers originally written here to 100 % on four metrics everywhere, mutation scope expanded to `packages/agent-runtime`, and the CI job list matched to what actually runs |
+| **Revision** | 2026-08-22 — the `@docker` list records the network-isolation check. 2026-08-20 — corrected against `.github/workflows/ci.yml` and the Vitest configs: coverage policy raised from the tiered numbers originally written here to 100 % on four metrics everywhere, mutation scope expanded to `packages/agent-runtime`, and the CI job list matched to what actually runs |
 | **Owner** | Maximiliano |
 | **Last updated** | 2026-08-19 |
 
@@ -51,7 +51,7 @@ Coverage thresholds (Vitest `coverage.thresholds`): **100 % lines, branches, fun
 
 Run with `pnpm test:integration`; compose test profile brings up `postgres`/`redis` on `AH_INSTANCE=test` ports; Docker socket required (skipped with a loud message if absent, **never** silently green).
 
-- **DockerWorkspaceRunner** (`packages/core`, tag `@docker`): `create` → `health` healthy → `exec echo` streams stdout → `exec` with stdin → `exec` timeout kills → `signal INT` reaches process → `snapshot` on a real git repo (dirty/ahead) → `destroy` → `health` gone; `list` by labels; `imageExists` answers `true` for the built image and `false` for one the host does not have; two concurrent workspaces have different filesystems (write in A, not visible in B); limits applied (`docker inspect` shows memory/pids); env injected visible to process but image has none; missing image → `WorkspaceImageMissing`.
+- **DockerWorkspaceRunner** (`packages/core`, tag `@docker`): `create` → `health` healthy → `exec echo` streams stdout → `exec` with stdin → `exec` timeout kills → `signal INT` reaches process → `snapshot` on a real git repo (dirty/ahead) → `destroy` → `health` gone; `list` by labels; `imageExists` answers `true` for the built image and `false` for one the host does not have; two concurrent workspaces have different filesystems (write in A, not visible in B) and cannot address each other on the instance network — a connection attempt from one to the other's address runs out its own timeout instead of being answered, and the same test asserts the egress a clone and a model call need is untouched; limits applied (`docker inspect` shows memory/pids and the instance network); env injected visible to process but image has none; missing image → `WorkspaceImageMissing`.
 - **Persistence** (Prisma against Postgres): repositories redact on write (canary value never stored), message `seq` gap-free under concurrency (transaction), partial unique index "one live workspace per chat", cascades.
 - **Queues** (BullMQ against Redis): `upsertJobScheduler` creates exactly one scheduler per job; edit updates pattern; disable removes; reconcile on boot converges; worker `maxRetriesPerRequest:null`.
 - **SSE endpoint**: XADD events → client receives framed events; `Last-Event-ID` replay returns only later entries; heartbeat present; stream expiry → `event: expired`; a resume point a real `XTRIM` has removed → `event: expired` and close, never the surviving tail.

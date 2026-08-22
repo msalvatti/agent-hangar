@@ -151,7 +151,7 @@ Icons: Lucide, 16 px in nav/buttons, 18 px in cards, stroke 1.75. Never emoji as
 
 - Table (shadcn `Table`), dense rows 44 px; schedule shown as cron in mono + human-readable tooltip ("every day at 02:00 UTC"); status icons + text (never colour alone); toggle switch for enabled on the right; row menu: Run now / Edit / Delete.
 - **Job dialog** (create/edit, shadcn `Dialog`, 520 px): Name · Repository + Branch pickers (same as composer) · Cron input (mono) with live preview line *"Runs every weekday at 09:00 (next: Mon 09:00)"* and inline error for invalid expressions · Timezone combobox (IANA, default system) · Prompt textarea (6 rows) · Enabled switch · Save. Validation inline under fields.
-- **Job detail** (`/scheduled/:id`): header with name, schedule, toggle, Run now; runs table (started, duration, trigger, status, tokens) newest first; click → **run drawer** (shadcn `Sheet`, 720 px) showing the same transcript component as chat in read-only mode (streams live via SSE while running, with Stop). A reopened drawer rebuilds the run's rows from what was persisted: the job's prompt, the tool calls, the push line when the run pushed, the final output, and the cancellation or failure notice its status implies.
+- **Job detail** (`/scheduled/:id`): header with name, schedule, toggle, Run now (inert while the job is disabled, as the row menu's entry and the empty state's button are — the route refuses that request, so the page does not offer it); runs table (started, duration, trigger, status, tokens) newest first; click → **run drawer** (shadcn `Sheet`, 720 px) showing the same transcript component as chat in read-only mode (streams live via SSE while running, with Stop). A reopened drawer rebuilds the run's rows from what was persisted: the job's prompt, the tool calls, the push line when the run pushed, the final output, and the cancellation or failure notice its status implies.
 - Empty state: icon + *"No scheduled jobs yet."* + short explainer + New job button.
 
 ### 4.4 Settings (`/settings`)
@@ -180,7 +180,7 @@ Icons: Lucide, 16 px in nav/buttons, 18 px in cards, stroke 1.75. Never emoji as
 └───────────────────────────────────────────────────────────────────────────┘
 ```
 
-- Two cards: **Credentials** and **Environment** (read-only doctor summary). Inputs `type=password`, never pre-filled; once set, the field shows the mask `••••••••<last4>` in mono and switches to Replace/Remove actions (Remove confirms in an `AlertDialog`). Save shows a success toast *"GitHub token saved"*; errors inline. Helper text under each field states required scopes and that values never leave the machine except to GitHub/OpenAI.
+- Two cards: **Credentials** and **Environment** (read-only doctor summary). Inputs `type=password`, never pre-filled; once set, the field shows the mask `••••••••<last4>` in mono and switches to Replace/Remove actions (Remove confirms in an `AlertDialog`). Save shows a success toast *"GitHub token saved"*; errors inline — including a value that is not shaped like the credential the field holds, which is refused before it can replace the stored one. Helper text under each field states required scopes and that values never leave the machine except to GitHub/OpenAI.
 
 ## 5. Components (shadcn/ui + project components)
 
