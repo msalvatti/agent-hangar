@@ -890,8 +890,10 @@ describe('what the runner asks the daemon for, and what it does with the answer'
     await runner.snapshot(handle);
 
     expect(docker.execOptions.every((options) => !options.AttachStdin)).toBe(true);
-    expect(docker.execStartOptions.every((options) => !options.stdin)).toBe(true);
-    expect(docker.execStartOptions.map((options) => options.hijack)).not.toContain(false);
+    // Read whole rather than field by field: an options object emptied of both flags answers every
+    // question about either of them with "not set", which is not what was asked for.
+    const started = docker.execStartOptions.map((options) => ({ ...options }));
+    expect(started).toStrictEqual(started.map(() => ({ hijack: true, stdin: false })));
   });
 
   /**
