@@ -34,14 +34,6 @@ export const RECURSIVE_RUN_PATTERN = /(?:^|\s)(?:--recursive|-r)(?:\s|$)/u;
 const TEST_SCRIPT = 'test';
 
 /**
- * Wrapper scripts a root manifest hands its fan-out to.
- *
- * `test` and `test:integration` are one line each in `package.json` and the recursive pnpm command
- * lives in the file they name. Scanning only manifests would therefore report "no fan-out to
- * check" for both — the guard passing because it had stopped looking, which is the failure its own
- * message warns about.
- */
-/**
  * Reduces one line of a wrapper script to the command a manifest would have carried.
  *
  * A manifest's script is a bare command; a shell line is the same command wearing a pipeline, a
@@ -61,6 +53,14 @@ export function shellCommandOf(line: string): string {
     .trim();
 }
 
+/**
+ * Wrapper scripts a root manifest hands its fan-out to.
+ *
+ * `test` and `test:integration` are one line each in `package.json` and the recursive pnpm command
+ * lives in the file they name. Scanning only manifests would therefore report "no fan-out to
+ * check" for both — the guard passing because it had stopped looking, which is the failure its own
+ * message warns about.
+ */
 export const DELEGATED_TEST_SCRIPTS: readonly string[] = [
   'scripts/run-tests.sh',
   'scripts/run-integration.sh',
