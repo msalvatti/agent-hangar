@@ -149,17 +149,28 @@ describe('runShell', () => {
     expect(result).toMatchObject({ status: 'SUCCEEDED', exitCode: 0, output: '' });
   });
 
-  /** Cancellation reaches the runtime as SIGINT and has to stop the current tool. */
-  it('terminates the command when the turn is cancelled', async () => {
+  /**
+   * Cancellation reaches the runtime as SIGINT and has to stop the current tool — promptly. The
+   * polite signal is what makes it prompt: a command that honours it is gone as soon as it arrives,
+   * and without it the forceful one two seconds later is the only thing that ends the call. Both
+   * answer `[cancelled]`, so the wall clock is what tells them apart, and the operator who pressed
+   * Stop is the one who waits out the difference.
+   */
+  it('terminates the command as soon as the turn is cancelled', async () => {
     const controller = new AbortController();
     setTimeout(() => {
       controller.abort();
     }, 100);
+    const started = Date.now();
+
     const result = await runShell({ command: 'sleep 30', cwd: null, timeoutMs: 10_000 }, context, {
       signal: controller.signal,
     });
+
     expect(result.status).toBe('FAILED');
     expect(result.output).toContain('[cancelled]');
+    // Well inside the two-second grace period the forceful kill waits out.
+    expect(Date.now() - started).toBeLessThan(1000);
   });
 
   /** A listener added to an already-aborted signal is never called. */
