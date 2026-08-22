@@ -11,6 +11,8 @@
     "lint": "eslint .",
     "typecheck": "bash ../../scripts/tsc-build.sh",
     "test": "vitest run",
+    "test:mutation": "stryker run",
+    "test:mutation:scoped": "stryker run --incrementalFile .stryker-tmp/inc-scoped.json --mutate",
     "test:integration": "DOCKER_AVAILABLE=1 vitest run --project integration --coverage.enabled=false"
   },
   "dependencies": {

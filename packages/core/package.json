@@ -32,6 +32,8 @@
     "typecheck": "bash ../../scripts/tsc-build.sh",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration --coverage.enabled=false",
+    "test:mutation": "stryker run",
+    "test:mutation:scoped": "stryker run --incrementalFile .stryker-tmp/inc-scoped.json --mutate",
     "fixtures:record": "tsx scripts/record-fixtures.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate deploy",
