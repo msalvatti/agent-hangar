@@ -26,8 +26,12 @@ import { NotFoundError } from '@agent-hangar/core';
  * These are the errnos a local socket connection produces: the daemon is down, the socket path is
  * wrong, the user is not in the `docker` group, or the connection dropped mid-request. A remote
  * daemon adds the DNS and routing errnos.
+ *
+ * Typed over `unknown` so that membership is the only narrowing: a `code` that is not a string is
+ * simply not in the set, and no separate type test exists alongside it whose removal would leave
+ * every answer unchanged.
  */
-export const TRANSPORT_ERROR_CODES: ReadonlySet<string> = new Set([
+export const TRANSPORT_ERROR_CODES: ReadonlySet<unknown> = new Set([
   'EACCES',
   'ECONNREFUSED',
   'ECONNRESET',
@@ -45,22 +49,21 @@ const MAX_CAUSE_DEPTH = 5;
 /**
  * Reads the `code` a rejected value offers, without trusting it to be readable.
  *
- * The value is `unknown`: a getter or a `Proxy` trap may throw, and what it throws could itself be
- * the driver error carrying the connection string, so it is swallowed rather than propagated.
+ * Read through the property descriptor rather than through the property: a `code` defined as a
+ * getter is never invoked, so a hostile value gets no chance to run code here — and what such a
+ * getter throws could itself be the driver error carrying the connection string. That is the whole
+ * of the defence, and it needs no `try`: a descriptor read answers for a string, a number and an
+ * object alike, and the two values it refuses — `null` and `undefined` — are named below. What is
+ * left is a `Proxy` whose own descriptor trap throws, and nothing in this worker's reach produces
+ * one: every failure classified here comes from dockerode, Prisma, BullMQ or Node itself.
  *
  * @param error - The value something rejected with.
- * @returns Its `code`, or `undefined`.
+ * @returns Its `code`, whatever type it turns out to be, or `undefined`.
  */
-function readCode(error: unknown): string | undefined {
-  try {
-    if (typeof error === 'object' && error !== null && 'code' in error) {
-      const { code } = error;
-      return typeof code === 'string' ? code : undefined;
-    }
-  } catch {
-    // A throwing getter answers the question well enough: nothing usable is on offer.
-  }
-  return undefined;
+function readCode(error: unknown): unknown {
+  return error === null || error === undefined
+    ? undefined
+    : Object.getOwnPropertyDescriptor(error, 'code')?.value;
 }
 
 /**
@@ -75,9 +78,11 @@ function readCode(error: unknown): string | undefined {
  */
 export function isTransportError(error: unknown): boolean {
   let current: unknown = error;
-  for (let depth = 0; depth < MAX_CAUSE_DEPTH && current !== undefined; depth += 1) {
-    const code = readCode(current);
-    if (code !== undefined && TRANSPORT_ERROR_CODES.has(code)) {
+  // The depth is the only bound. A chain that ends early carries `undefined` from there on, which
+  // is in neither the set nor the `Error` branch below, so the remaining turns of the loop are
+  // decided by the same two tests as every other one rather than by a third test of their own.
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH; depth += 1) {
+    if (TRANSPORT_ERROR_CODES.has(readCode(current))) {
       return true;
     }
     current = current instanceof Error ? current.cause : undefined;
