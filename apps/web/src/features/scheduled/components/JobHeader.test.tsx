@@ -50,6 +50,33 @@ describe('JobHeader', () => {
     );
   });
 
+  /**
+   * A disabled job cannot be run, so the page does not offer to run it.
+   *
+   * Regression: the button stayed live while the job was off, and pressing it recorded a failed
+   * run in the job's history. The API refuses the request; this stops the page from asking.
+   */
+  it('offers no Run now while the job is disabled', async () => {
+    const user = userEvent.setup();
+    const onRunNow = vi.fn();
+    render(
+      <JobHeader
+        job={{ ...job, enabled: false }}
+        onEdit={vi.fn()}
+        onDelete={vi.fn()}
+        onToggle={vi.fn()}
+        onRunNow={onRunNow}
+        busy={false}
+        toggling={false}
+      />,
+    );
+
+    const button = screen.getByRole('button', { name: 'Run now' });
+    expect(button).toBeDisabled();
+    await user.click(button);
+    expect(onRunNow).not.toHaveBeenCalled();
+  });
+
   /** Toggling the switch calls onToggle. */
   it('calls onToggle', async () => {
     const user = userEvent.setup();

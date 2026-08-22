@@ -145,16 +145,37 @@ describe('ScheduledView', () => {
     PALETTE_TEST_TIMEOUT_MS,
   );
 
-  /** Run now, from the row menu, starts a run without throwing. */
+  /**
+   * Run now, from the row menu, starts a run without throwing.
+   *
+   * The job has to be an enabled one. A disabled job's entry is inert -- the API refuses that
+   * request -- so choosing it leaves the menu open, which is what this test would then be
+   * measuring instead of a run.
+   */
   it('starts a run from the row menu', async () => {
+    const user = userEvent.setup();
+    render(<ScheduledView />);
+    await screen.findByText('Nightly tests');
+    await user.click(screen.getByRole('button', { name: 'Actions for Nightly tests' }));
+    await user.click(await screen.findByText('Run now'));
+    await waitFor(() => {
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+    });
+  });
+
+  /**
+   * The row menu of a disabled job does not offer to run it.
+   *
+   * Regression, against the mock's own disabled job: choosing Run now recorded a failed run in
+   * that job's history, because nothing in the page or the API stopped the request.
+   */
+  it('offers no Run now for a disabled job', async () => {
     const user = userEvent.setup();
     render(<ScheduledView />);
     await screen.findByText('Dep audit');
     await user.click(screen.getByRole('button', { name: 'Actions for Dep audit' }));
     await user.click(await screen.findByText('Run now'));
-    await waitFor(() => {
-      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
-    });
+    expect(screen.getByRole('menu')).toBeInTheDocument();
   });
 
   /** Cancelling the delete dialog closes it without removing the job. */

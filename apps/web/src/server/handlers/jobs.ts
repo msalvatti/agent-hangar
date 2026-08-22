@@ -56,7 +56,7 @@ import {
 import type { CreateScheduledJobInput, JobRun, ScheduledJob } from '@agent-hangar/core';
 
 import type { ServerContainer } from '../container';
-import { ResourceNotFoundError } from '../errors';
+import { ConflictError, ResourceNotFoundError } from '../errors';
 import { jsonResponse, noContent, parseJsonBody, withErrorHandling } from '../http';
 import { allowedRepoHosts, assertRepoUrlAllowed } from '../repo-url';
 import { assertKnownHost, assertSameOrigin } from '../same-origin';
@@ -91,6 +91,26 @@ async function requireJob(container: ServerContainer, id: string): Promise<Sched
     throw new ResourceNotFoundError('Scheduled job not found');
   }
   return job;
+}
+
+/**
+ * Refuses a request that asks a disabled job to do something only an enabled one can.
+ *
+ * The worker checks this again when the run reaches it, and has to: a job can be disabled between
+ * an accepted request and the moment its run starts, and by then a row exists that has to be
+ * closed rather than refused. Here nothing exists yet, so nothing is written and no failed run
+ * joins the job's history.
+ *
+ * @param job - The job the request addressed.
+ * @throws ConflictError 409 `JOB_DISABLED` when the job is disabled.
+ */
+function assertJobEnabled(job: ScheduledJob): void {
+  if (!job.enabled) {
+    throw new ConflictError(
+      'JOB_DISABLED',
+      'This scheduled job is disabled; enable it and run it again.',
+    );
+  }
 }
 
 /**
@@ -465,6 +485,7 @@ export function triggerRun(
   return withErrorHandling(container, async () => {
     assertSameOrigin(request);
     const job = await requireJob(container, params.id);
+    assertJobEnabled(job);
     await requireSecrets(container);
     const run = await container.repos.jobRuns.create({
       jobId: job.id,

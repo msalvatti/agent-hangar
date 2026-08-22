@@ -164,6 +164,7 @@ export function JobDetailView({ jobId }: JobDetailViewProps) {
           description="Run now to start one in a fresh workspace."
           action={
             <Button
+              disabled={!job.enabled}
               onClick={() => {
                 void handleRunNow(job);
               }}

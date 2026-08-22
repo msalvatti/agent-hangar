@@ -90,4 +90,30 @@ describe('JobRowMenu', () => {
     expect(onDelete).not.toHaveBeenCalled();
     expect(screen.getByText('Edit')).not.toHaveAttribute('data-disabled');
   });
+
+  /**
+   * A disabled job cannot be run, so the row does not offer to run it.
+   *
+   * Regression: the entry stayed live while the job was off, and choosing it recorded a failed
+   * run in the job's history. Edit and Delete stay available: a disabled job is still one the
+   * user may want to change or remove.
+   */
+  it('offers no Run now for a disabled job', async () => {
+    const user = userEvent.setup();
+    const onRunNow = vi.fn();
+    const onDelete = vi.fn();
+    render(
+      <JobRowMenu
+        job={{ ...job, enabled: false }}
+        onEdit={vi.fn()}
+        onRunNow={onRunNow}
+        onDelete={onDelete}
+        busy={false}
+      />,
+    );
+    await user.click(screen.getByRole('button', { name: 'Actions for Nightly tests' }));
+    await user.click(await screen.findByText('Run now'));
+    expect(onRunNow).not.toHaveBeenCalled();
+    expect(screen.getByText('Delete')).not.toHaveAttribute('data-disabled');
+  });
 });

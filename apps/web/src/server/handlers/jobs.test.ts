@@ -657,6 +657,29 @@ describe('triggerRun', () => {
   });
 
   /**
+   * A disabled job has no runs to give, and asking for one is refused rather than recorded.
+   *
+   * Regression: "Run now" on a disabled job created a run row, enqueued it, and let the worker
+   * close it as failed with `job_disabled` -- so the job's history filled with failures the user
+   * caused by pressing a button the page still offered. The worker keeps that check, because the
+   * job can be disabled between an accepted request and the run; what changes is that the request
+   * itself is now refused, and nothing is written.
+   */
+  it('refuses a manual run on a disabled job without recording one', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness, { enabled: false });
+
+    const response = await triggerRun(harness.container, writeRequest('/api/jobs/x/run', 'POST'), {
+      id: job.id,
+    });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({ error: { code: 'JOB_DISABLED' } });
+    expect(await harness.doubles.repos.jobRuns.listByJob(job.id)).toStrictEqual([]);
+    expect(harness.doubles.queues.scheduledJobs.added).toStrictEqual([]);
+  });
+
+  /**
    * A run cannot start without both credentials, and an unknown job cannot run at all.
    */
   it('refuses to run without credentials or for an unknown job', async () => {
