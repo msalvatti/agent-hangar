@@ -324,11 +324,15 @@ test('the jump-to-latest pill floats over the visible transcript', async ({ page
 
   const box = await pill.boundingBox();
   const region = await chat.transcript.boundingBox();
-  expect(box, 'the pill must have a box to be anywhere').not.toBeNull();
-  expect(region, 'the transcript must have a box to be measured against').not.toBeNull();
+  // Thrown rather than asserted, because this narrows the two to non-null for the arithmetic
+  // below. Returning early instead would let a pill with no box end the test green, which is the
+  // one outcome this must never report.
+  if (box === null || region === null) {
+    throw new Error('a visible pill and transcript must both have a box to be measured');
+  }
   // Inside the visible transcript, not merely present in the document.
-  expect(box!.y).toBeGreaterThanOrEqual(region!.y);
-  expect(box!.y + box!.height).toBeLessThanOrEqual(region!.y + region!.height);
+  expect(box.y).toBeGreaterThanOrEqual(region.y);
+  expect(box.y + box.height).toBeLessThanOrEqual(region.y + region.height);
   // And resting near its bottom edge, which is the whole of what "floating" means here.
-  expect(region!.y + region!.height - (box!.y + box!.height)).toBeLessThan(40);
+  expect(region.y + region.height - (box.y + box.height)).toBeLessThan(40);
 });
