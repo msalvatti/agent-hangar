@@ -105,7 +105,8 @@ export interface WorkspaceRunner {
 ### `DockerWorkspaceRunner` behaviour (contract, not code)
 
 - Socket resolution order: `DOCKER_HOST` → `~/.docker/run/docker.sock` → `/var/run/docker.sock`.
-- Container: `--name ah-ws-<instance>-<workspaceId>`, `--user agent`, `--workdir /workspace`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--pids-limit`, `--memory`, `--cpus`, tmpfs `/tmp`, no volumes, no Docker socket, bridge network (egress only). Labels: `ah.instance`, `ah.workspace`, `ah.kind`, `ah.chat|ah.jobRun`.
+- Container: `--name ah-ws-<instance>-<workspaceId>`, `--user agent`, `--workdir /workspace`, `--cap-drop ALL`, `--security-opt no-new-privileges`, `--pids-limit`, `--memory`, `--cpus`, tmpfs `/tmp`, no volumes, no Docker socket. Labels: `ah.instance`, `ah.workspace`, `ah.kind`, `ah.chat|ah.jobRun`.
+- Network: `ah-ws-<instance>`, a bridge of the instance's own carrying `com.docker.network.bridge.enable_icc=false`, created by the runner before the container that joins it and removed by `pnpm archive`. Egress only, in both senses — the workspace reaches out, nothing reaches in, and it cannot reach the workspace beside it either. Docker's default `bridge` would give it that neighbour: every container there answers on its address.
 - `create` pulls/builds nothing: the image must exist (`pnpm infra:image`). Missing image → typed error `WorkspaceImageMissing` with the exact command to run.
 - `imageExists` is that same check, asked without creating anything: it answers `false` for exactly the image `create` would reject, and raises anything else. The worker's boot probe and its health heartbeat both use it, which is what keeps the health card and the error a turn would hit from disagreeing.
 - `exec` uses Docker exec with attached stdin, demuxes stdout/stderr, honours `timeoutMs` by sending `KILL` and yielding `exit { code: null, signal: 'TIMEOUT' }`.
@@ -250,7 +251,7 @@ All JSON; Zod-validated; errors `{ error: { code, message } }`.
 |---|---|
 | `GET /api/repos?query=` | List repos the PAT can access (GitHub API), for the picker |
 | `GET /api/repos/branches?repo=` | Branches of a repo |
-| `POST /api/chats` | `{ repoUrl, baseBranch, prompt }` → creates Chat + first Turn, enqueues |
+| `POST /api/chats` | `{ repoUrl, baseBranch, prompt }` → creates Chat + first Turn, enqueues. `baseBranch` is measured against the same rule the workspace applies (`branchName`, from `packages/core/src/git-ref.ts`), so a name `git` would refuse is refused here rather than after a container has been provisioned to discover it; the same rule governs a job's `branch` |
 | `GET /api/chats?status=` | Sidebar list |
 | `GET /api/chats/:id` | Chat + messages + turns + tool calls |
 | `PATCH /api/chats/:id` | `{ title }` → rename (title is editable inline in the chat header) |
@@ -260,12 +261,12 @@ All JSON; Zod-validated; errors `{ error: { code, message } }`.
 | `DELETE /api/chats/:id` | Cascade delete, refused with `409 TURN_IN_PROGRESS` while a turn of the chat is live; the condition is part of the delete statement, so a message claiming the chat at the same moment cannot be undone by it |
 | `GET /api/chats/:id/events` | **SSE** — live `AgentEvent`s for the chat; resumes from `Last-Event-ID` (or `?from=`), and answers `event: expired` when it cannot serve that position |
 | `GET /api/jobs` · `POST /api/jobs` · `PATCH /api/jobs/:id` · `DELETE /api/jobs/:id` | CRUD; upserts/removes the BullMQ Job Scheduler |
-| `POST /api/jobs/:id/run` | Manual trigger → JobRun |
+| `POST /api/jobs/:id/run` | Manual trigger → JobRun. Refused with `409 JOB_DISABLED` when the job is disabled, before a run row exists — the worker keeps its own check for the job disabled between an accepted request and the run reaching it, where a row exists to be closed rather than a request to be refused |
 | `GET /api/jobs/:id/runs` · `GET /api/runs/:id` | Run history and detail (output, tool calls, and where the run pushed when it pushed at all — detail only, since a run that pushed nothing is the common case and the history table has no room for it) |
 | `GET /api/runs/:id/events` | **SSE** for a running job run; same resume and `expired` rules |
 | `POST /api/runs/:id/cancel` | Stop a job run; same two shapes as the turn cancel, addressed by `JobRun.id` |
 | `GET /api/settings` | `{ githubPat: { set, last4 }, openaiKey: { set, last4 }, model }` |
-| `PUT /api/settings/:key` · `DELETE /api/settings/:key` | Save (encrypts) / remove |
+| `PUT /api/settings/:key` · `DELETE /api/settings/:key` | Save (encrypts) / remove. The body is narrowed to the shape of the key addressed — GitHub's `github_pat_`/`ghp_`, OpenAI's `sk-` — so a value from the wrong clipboard is refused where the person can still see what they typed, rather than replacing a working credential and surfacing later as a rejected repository listing. A shape check only: whether the credential is live, unexpired and scoped is the issuer's answer, on first use |
 | `GET /api/health` | DB, Redis and worker reachability, Docker reachability, image present. Docker and the image are the worker's own readings, taken from its heartbeat — the image is asked of the host on every beat, not remembered from the last workspace it created, so the card is true of a checkout where nothing has ever run. A host that answered the container listing but could not be asked about the image reports Docker as down rather than the image as absent: an operator told to rebuild an image they already have is worse off than one told the daemon is unwell. A silent worker reports `worker: false` and leaves both unknown rather than blaming the daemon; the worker check carries `lastSeenAt` when it is alive |
 
 **SSE framing:** `id: <redis-stream-id>`, `event: <AgentEvent.type>`, `data: <json>`. Heartbeat comment `: ping` every 15 s. No compression. Reconnect replays from `Last-Event-ID` via `XRANGE` on `events:turn:<turnId>` (1 h TTL), then tails with `XREAD BLOCK`.

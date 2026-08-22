@@ -9,9 +9,10 @@
  * references to the real factories in `@agent-hangar/core`, so nothing is re-implemented here.
  *
  * Security: this is the only module in the repository that hands a `SecretsService` with a working
- * `reveal` to anything. The plaintext it returns travels from the processor straight into
- * `WorkspaceRunner.create({ env })` and `Redactor.register`; it is never stored on the container,
- * on a processor context, or in a log record.
+ * `reveal` to anything. The plaintext it returns travels from the processor into `Redactor.register`
+ * and into the files of one `ExecSpec` — never into `WorkspaceSpec.env`, which forbids a credential
+ * outright, because a container's environment is readable by every process it runs for as long as
+ * it lives. It is never stored on the container, on a processor context, or in a log record.
  */
 import {
   closeConnection,

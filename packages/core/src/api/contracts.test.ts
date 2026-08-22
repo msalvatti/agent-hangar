@@ -9,7 +9,12 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.ts';
+import {
+  assertNoCanary,
+  CANARY_MARKER,
+  GITHUB_CANARY,
+  OPENAI_CANARY,
+} from '../testing/canaries.ts';
 
 import {
   apiError,
@@ -24,6 +29,7 @@ import {
   jobUpsertRequest,
   noContentResponse,
   putSecretRequest,
+  putSecretRequestFor,
   renameChatRequest,
   repoUrl,
   repoUrlForHosts,
@@ -408,6 +414,65 @@ describe('settings and health schemas', () => {
     expect(SETTINGS_FIELD_BY_KEY.OPENAI_API_KEY).toBe('openaiKey');
     expect(putSecretRequest.safeParse({ value: 'short' }).success).toBe(false);
     expect(putSecretRequest.safeParse({ value: 'long-enough-value' }).success).toBe(true);
+  });
+
+  /**
+   * Each credential is measured against the shape its issuer gives it.
+   *
+   * Regression for `PUT /api/settings/GITHUB_PAT` storing `not-a-token`: any eight characters were
+   * accepted, so a value pasted from the wrong clipboard replaced a working token and the mistake
+   * surfaced later and elsewhere, as a rejected listing in the repository picker. A canary of the
+   * right shape is still accepted, and neither key accepts the other's value.
+   */
+  it('narrows the settings body to the shape of the addressed credential', () => {
+    const github = putSecretRequestFor('GITHUB_PAT');
+    const openai = putSecretRequestFor('OPENAI_API_KEY');
+
+    // The fine-grained and project-scoped forms are assembled from the canary marker rather than
+    // written out: a credential-shaped literal without it is a string the secret scanners have no
+    // reason to forgive, and the repository allows exactly one shape of fake credential.
+    const fineGrained = `github_pat_${CANARY_MARKER}0123456789`;
+    const projectKey = `sk-proj-${CANARY_MARKER}0123456789`;
+
+    expect(github.safeParse({ value: GITHUB_CANARY }).success).toBe(true);
+    expect(github.safeParse({ value: fineGrained }).success).toBe(true);
+    expect(github.safeParse({ value: 'not-a-token' }).success).toBe(false);
+    expect(github.safeParse({ value: OPENAI_CANARY }).success).toBe(false);
+
+    expect(openai.safeParse({ value: OPENAI_CANARY }).success).toBe(true);
+    expect(openai.safeParse({ value: projectKey }).success).toBe(true);
+    expect(openai.safeParse({ value: 'not-a-token' }).success).toBe(false);
+    expect(openai.safeParse({ value: GITHUB_CANARY }).success).toBe(false);
+  });
+
+  /**
+   * A branch name the workspace would refuse is refused by the contract instead.
+   *
+   * Regression for a chat created with `baseBranch: 'main; rm -rf /'`: the API accepted it, the
+   * worker provisioned a container, and only `prepare` inside that container refused the name — so
+   * a malformed ref cost a whole workspace to discover. Both bodies that carry a ref now state the
+   * one rule, and the names a repository really carries still pass.
+   */
+  it('rejects a branch name the workspace would refuse', () => {
+    const chatBody = { repoUrl: 'https://github.com/acme/widgets', prompt: 'Fix the tests' };
+    const jobBody = {
+      name: 'Nightly',
+      cron: '0 2 * * *',
+      timezone: 'UTC',
+      prompt: 'Update the changelog',
+      repoUrl: 'https://github.com/acme/widgets',
+      enabled: true,
+    };
+
+    for (const branch of ['main', 'release/2.1', 'feature/add_widget', 'v1.0.0-rc.1']) {
+      expect(createChatRequest.safeParse({ ...chatBody, baseBranch: branch }).success).toBe(true);
+      expect(jobUpsertRequest.safeParse({ ...jobBody, branch }).success).toBe(true);
+    }
+
+    for (const branch of ['main; rm -rf /', '-delete', '.hidden', 'has space', 'quote"d', '']) {
+      expect(createChatRequest.safeParse({ ...chatBody, baseBranch: branch }).success).toBe(false);
+      expect(jobUpsertRequest.safeParse({ ...jobBody, branch }).success).toBe(false);
+    }
   });
 
   /**

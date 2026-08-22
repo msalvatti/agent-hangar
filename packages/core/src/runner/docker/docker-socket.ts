@@ -124,9 +124,10 @@ export function resolveDockerSocket(deps: ResolveDockerSocketDeps = {}): DockerS
     //
     // Any non-empty value counts, which is how Docker itself reads this variable — `true` and even
     // `0` enable verification, only unset or empty disables it. Matching just `'1'` would let
-    // `DOCKER_TLS_VERIFY=true` through and hand back a plaintext `http` client, and the request
-    // this runner then sends over it is `createContainer`, whose body carries the workspace
-    // environment: the GitHub PAT and the OpenAI key, in clear, over the network.
+    // `DOCKER_TLS_VERIFY=true` through and hand back a plaintext `http` client. No credential
+    // travels over it — they reach a workspace as the files of one exec, never in the create
+    // body — but the archive an exec uploads does travel over this connection, and that archive
+    // is where a credential is, so a plaintext downgrade here is exactly as bad as it sounds.
     if ((env.DOCKER_TLS_VERIFY ?? '') !== '') {
       throw new DockerRunnerError(
         'DOCKER_TLS_VERIFY is not supported by this runner; use a unix socket or plain tcp',

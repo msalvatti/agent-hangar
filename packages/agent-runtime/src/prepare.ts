@@ -35,7 +35,12 @@
  */
 import { mkdir, readFile } from 'node:fs/promises';
 
-import { ConfigError, prepareWarningText } from '@agent-hangar/core';
+import {
+  BRANCH_NAME_PATTERN,
+  BRANCH_NAME_RULE,
+  ConfigError,
+  prepareWarningText,
+} from '@agent-hangar/core';
 import type { AgentEvent, TurnRequest } from '@agent-hangar/core';
 import { z } from 'zod';
 
@@ -57,17 +62,6 @@ export const ALLOWED_ORIGIN_FILE = '/opt/agent-runtime/allowed-origin';
 
 /** Owner and repository name, with an optional `.git` suffix and nothing else. */
 const REPOSITORY_PATH = /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?$/;
-
-/**
- * Branch names this lane will hand to git.
- *
- * Deliberately narrower than what git itself accepts. Two of the invocations below take a branch
- * as a positional argument, where a name beginning with `-` would be read as an option instead —
- * `--upload-pack=…` is the classic way that turns into command execution on a non-https remote.
- * The names come from the host rather than from the model, so this is defence in depth, but it
- * costs one regular expression and removes the whole class.
- */
-const BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
 
 /** Preparation could not bring the workspace to a usable state. */
 export class PrepareError extends Error {
@@ -234,10 +228,14 @@ export function resolveRepoUrl(url: string, policy: RepositoryUrlPolicy): string
  * @throws PrepareError when the name is not one this lane will pass to git.
  */
 export function assertBranchName(branch: string, field: string): void {
-  if (!BRANCH_NAME.test(branch)) {
-    throw new PrepareError(
-      `${field} must start with a letter or digit and contain only letters, digits, dot, dash, underscore and slash`,
-    );
+  // Deliberately narrower than what git itself accepts. Two of the invocations in this module take
+  // a branch as a positional argument, where a name beginning with `-` would be read as an option
+  // instead — `--upload-pack=…` is the classic way that turns into command execution on a
+  // non-https remote. The names come from the host rather than from the model, so this is defence
+  // in depth; it is also the rule the API applies to the same value, imported rather than
+  // restated, because a name refused here after being accepted there costs a container to find out.
+  if (!BRANCH_NAME_PATTERN.test(branch)) {
+    throw new PrepareError(`${field} ${BRANCH_NAME_RULE}`);
   }
 }
 

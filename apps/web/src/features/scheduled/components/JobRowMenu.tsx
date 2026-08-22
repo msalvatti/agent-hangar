@@ -32,6 +32,7 @@ export interface JobRowMenuProps {
  *
  * Run now and Delete mutate the moment they are chosen, so a request already in flight disables
  * them — otherwise latency is long enough to start a second run, or a deletion, for the same job.
+ * Run now is also unavailable while the job is disabled, because the API refuses that request.
  * Edit only opens a dialog and stays available.
  *
  * @param props - The job, its action callbacks, and whether a mutation is in flight.
@@ -46,7 +47,7 @@ export function JobRowMenu({ job, onEdit, onRunNow, onDelete, busy }: JobRowMenu
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         <DropdownMenuItem
-          disabled={busy}
+          disabled={busy || !job.enabled}
           onClick={() => {
             onRunNow(job);
           }}

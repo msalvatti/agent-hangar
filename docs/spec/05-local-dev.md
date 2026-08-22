@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | ✅ Approved — 2026-08-19 |
-| **Revision** | 2026-08-20 — corrected against `infra/scripts/*` and `packages/core/src/config/schema.ts` (setup steps, script list, environment table, workspace image); doctor's Postgres/Redis rows and the instance-resolution paragraph corrected against `fix/instance-resolution` (checkout's `.env.local` wins over the shell, with a refusal on disagreement, replacing the shell-first behaviour this section previously described) |
+| **Revision** | 2026-08-22 — the instance's workspace network (`ah-ws-<instance>`) added to the derived-identity table and to what `archive` removes. 2026-08-20 — corrected against `infra/scripts/*` and `packages/core/src/config/schema.ts` (setup steps, script list, environment table, workspace image); doctor's Postgres/Redis rows and the instance-resolution paragraph corrected against `fix/instance-resolution` (checkout's `.env.local` wins over the shell, with a refusal on disagreement, replacing the shell-first behaviour this section previously described) |
 | **Owner** | Maximiliano |
 | **Last updated** | 2026-08-19 |
 
@@ -61,6 +61,7 @@ All configuration is read from environment variables, validated with Zod at boot
 | `MASTER_KEY_PATH` | `~/.agent-hangar/master.key` | secrets master key (shared across instances is fine; DBs differ) |
 | `WORKSPACE_IMAGE` | `agent-hangar/workspace:<instance>` | image used by the runner. Derived like the database and the container prefix, and for the same reason: `pnpm infra:image` writes a tag, so a tag every checkout resolves is a tag every checkout can overwrite — the rebuild would decide what another instance's next container runs |
 | `WORKSPACE_NAME_PREFIX` | `ah-ws-<instance>-` | container names/labels → GC only touches its own instance |
+| _(derived, not configurable)_ | network `ah-ws-<instance>` | the bridge this instance's workspaces share, with traffic between its members disabled |
 | `WORKSPACE_IDLE_TTL_MIN` | `30` | idle GC |
 | `WORKER_TURN_CONCURRENCY` | `2` | parallel chat turns |
 | `OPENAI_MODEL` | `gpt-5.6-sol` | model id sent to OpenAI |
@@ -114,7 +115,7 @@ Other scripts:
 | `pnpm test` · `test:integration` · `test:e2e` · `test:mutation` | see [06](06-testing.md) |
 | `pnpm lint` · `lint:fix` · `typecheck` · `format` · `format:check` | gates |
 | `pnpm ws:list` · `ws:reap` | list / destroy workspace containers of this instance (debug aid) |
-| `pnpm archive` | tear this instance's compose stack and workspaces down (Conductor's archive hook) |
+| `pnpm archive` | tear this instance's compose stack, workspaces and workspace network down (Conductor's archive hook) |
 | `pnpm run rotate-key` | re-encrypt every stored secret under a new master key (`--yes` commits to it, `--resume` finishes an interrupted run) |
 
 ## 5. docker-compose services
@@ -159,7 +160,7 @@ Conductor creates a git worktree per workspace under `~/conductor/workspaces/age
 [scripts]
 setup   = "./infra/scripts/setup.sh"     # AH_INSTANCE=$CONDUCTOR_WORKSPACE_NAME AH_PORT_BASE=$CONDUCTOR_PORT derived inside
 run     = "./infra/scripts/run.sh"       # pnpm dev on the derived ports; prints the URL
-archive = "./infra/scripts/archive.sh"   # compose down -v for this instance; reap ah-ws-<instance>-* containers
+archive = "./infra/scripts/archive.sh"   # compose down -v for this instance; reap ah-ws-<instance>-* containers and the ah-ws-<instance> network
 run_mode = "concurrent"
 ```
 

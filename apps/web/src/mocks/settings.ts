@@ -7,7 +7,7 @@
  * this file only mutates it. Plaintext never touches the store — only `last4` and `updatedAt`
  * are kept, matching spec 04 (d).
  */
-import { putSecretRequest, routes, settingsKeyParam } from '@agent-hangar/core';
+import { putSecretRequestFor, routes, settingsKeyParam } from '@agent-hangar/core';
 import type { SecretKey } from '@agent-hangar/core';
 import { HttpResponse, http } from 'msw';
 
@@ -39,15 +39,13 @@ export const settingsHandlers = [
     if (!isSecretKey(key)) {
       return notFound();
     }
-    const parsed = putSecretRequest.safeParse(await request.json());
+    const parsed = putSecretRequestFor(key).safeParse(await request.json());
     if (!parsed.success) {
       return badRequest(parsed.error.message);
     }
-    const trimmed = parsed.data.value.trim();
-    if (trimmed.length === 0) {
-      return badRequest('Value must not be empty');
-    }
-    const last4 = trimmed.slice(-MASK_LENGTH);
+    // No empty-value guard: the body schema is the credential's own shape, and no shape it accepts
+    // is blank or surrounded by whitespace, so a separate emptiness check here could never fire.
+    const last4 = parsed.data.value.slice(-MASK_LENGTH);
     store.secrets = { ...store.secrets, [key]: { last4, updatedAt: nowIso() } };
     return HttpResponse.json({ set: true, last4 });
   }),

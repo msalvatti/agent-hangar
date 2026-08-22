@@ -76,6 +76,8 @@ export interface FakeDockerFailures {
   containerKill?: Error | undefined;
   /** Thrown by `container.putArchive`. */
   containerPutArchive?: Error | undefined;
+  /** Thrown by `createNetwork`. */
+  createNetwork?: Error | undefined;
 }
 
 /** State the fake keeps per created container. */
@@ -400,6 +402,12 @@ export class FakeDockerApi implements DockerApi {
   /** Every exec option object the runner passed, in order. */
   readonly execOptions: DockerExecCreateOptions[] = [];
 
+  /** Networks the daemon holds, by name, with the options each was created with. */
+  readonly networks = new Map<string, Dockerode.NetworkCreateOptions>();
+
+  /** Every network create option object the runner passed, in order. */
+  readonly networkOptions: Dockerode.NetworkCreateOptions[] = [];
+
   /** Everything the runner wrote to an exec's stdin, decoded as UTF-8. */
   readonly stdinWrites: string[] = [];
 
@@ -508,5 +516,44 @@ export class FakeDockerApi implements DockerApi {
     }
 
     return Promise.resolve(matches);
+  }
+
+  /**
+   * Lists the networks the fake has been asked to create.
+   *
+   * Matches the filter as a substring, the way the daemon does, so a test can prove the runner
+   * compares the names it gets back rather than trusting the filter.
+   *
+   * @param opts - `filters.name` holds name selectors.
+   * @returns Matching networks.
+   */
+  listNetworks(opts: {
+    filters: { name: string[] };
+  }): Promise<{ Name: string; Options?: Record<string, string> | undefined }[]> {
+    this.calls.push(`listNetworks:${opts.filters.name.join(',')}`);
+    return Promise.resolve(
+      [...this.networks.values()]
+        .filter((network) => opts.filters.name.some((selector) => network.Name.includes(selector)))
+        .map((network) => ({ Name: network.Name, Options: network.Options })),
+    );
+  }
+
+  /**
+   * Creates a network, refusing a name it already holds the way the daemon does.
+   *
+   * @param opts - Create options, as produced by `buildNetworkCreateOptions`.
+   * @returns Resolves once the fake holds the name.
+   */
+  createNetwork(opts: Dockerode.NetworkCreateOptions): Promise<unknown> {
+    this.calls.push(`createNetwork:${opts.Name}`);
+    if (this.failures.createNetwork !== undefined) {
+      throw this.failures.createNetwork;
+    }
+    if (this.networks.has(opts.Name)) {
+      throw dockerError(CONFLICT, 'network with name already exists');
+    }
+    this.networkOptions.push(opts);
+    this.networks.set(opts.Name, opts);
+    return Promise.resolve({});
   }
 }

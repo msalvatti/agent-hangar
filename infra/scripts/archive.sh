@@ -75,6 +75,23 @@ else
   echo "No workspace containers for instance $AH_INSTANCE"
 fi
 
+# The network the workspaces of this instance shared. It outlives them by design -- the runner
+# expects to find it on the next create -- so archiving the instance is the one moment it should
+# go. Removal comes last and never stops the teardown, but the two ways it can fail are not the
+# same thing and are not reported as one: a network that was never there is the ordinary case,
+# while a network still holding a container the reap above could not remove is a leftover the
+# operator has to deal with, and calling that "nothing to remove" would hide it.
+network="ah-ws-$AH_INSTANCE"
+# stderr is captured and stdout discarded: the daemon's wording is the only thing that
+# distinguishes the two failures, and `docker network rm` prints the removed name on success.
+if network_error="$(docker network rm "$network" 2>&1 >/dev/null)"; then
+  echo "Removed workspace network $network"
+elif printf '%s' "$network_error" | grep -qi 'not found\|no such network'; then
+  echo "No workspace network $network to remove"
+else
+  echo "warning: could not remove workspace network $network: $network_error" >&2
+fi
+
 echo "3/3 Env file ($env_file)"
 if [ $keep_env -eq 1 ]; then
   echo "kept (--keep-env)"

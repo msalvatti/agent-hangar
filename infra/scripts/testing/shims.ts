@@ -53,6 +53,11 @@ export interface DockerShimOptions {
   execOutput?: string;
   /** Exit code of `docker compose … exec …`. Default `0`. */
   execExitCode?: number;
+  /**
+   * Outcome of `docker network rm`: the network was removed, was not there, or could not be
+   * removed because something is still attached to it. Default `'removed'`.
+   */
+  networkRm?: 'removed' | 'absent' | 'busy';
 }
 
 /** Canned behaviour of the shimmed `pnpm` executable. */
@@ -138,6 +143,8 @@ function dockerShimBody(options: DockerShimOptions): string {
   );
   const execOutput = shellSingleQuote(options.execOutput ?? '');
   const execExit = options.execExitCode ?? 0;
+  // The daemon's own wording for each outcome, because the script tells them apart by reading it.
+  const networkRm = options.networkRm ?? 'removed';
 
   return `
 log="\${AH_SHIM_LOG:?AH_SHIM_LOG is not set}"
@@ -181,6 +188,21 @@ case "\${1:-}" in
       printf '%s\\n' "$id"
     done
     exit 0
+    ;;
+  network)
+    case '${networkRm}' in
+      removed)
+        exit 0
+        ;;
+      absent)
+        printf '%s\\n' "Error response from daemon: network \${3:-} not found" >&2
+        exit 1
+        ;;
+      *)
+        printf '%s\\n' "Error response from daemon: error while removing network: network \${3:-} has active endpoints" >&2
+        exit 1
+        ;;
+    esac
     ;;
   build)
     exit 0

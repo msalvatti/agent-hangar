@@ -70,7 +70,9 @@ export function JobHeader({
             disabled={toggling}
             onCheckedChange={onToggle}
           />
-          <Button onClick={onRunNow} disabled={busy}>
+          {/* A disabled job has no runs to give: the API refuses the request, so the page does
+              not offer it either. */}
+          <Button onClick={onRunNow} disabled={busy || !job.enabled}>
             {busy ? (
               <Loader2 className="size-3.5 animate-spin" aria-hidden="true" />
             ) : (
