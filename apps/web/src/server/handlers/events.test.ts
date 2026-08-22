@@ -184,6 +184,7 @@ describe('chatEvents', () => {
       id: 'nope',
     });
     expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toMatchObject({ error: { message: 'Chat not found' } });
 
     const chat = await harness.doubles.repos.chats.create({
       title: 'Seeded',
@@ -194,7 +195,132 @@ describe('chatEvents', () => {
       id: chat.id,
     });
     expect(empty.status).toBe(404);
-    expect(await empty.json()).toMatchObject({ error: { code: 'NOT_FOUND' } });
+    // The two absences are told apart by their wording: a chat that is not there and a chat whose
+    // stream has not started are different things for the page to say, and only the sentence
+    // distinguishes them.
+    expect(await empty.json()).toMatchObject({
+      error: { code: 'NOT_FOUND', message: 'Chat has no turns yet' },
+    });
+  });
+
+  /**
+   * A resume point is an entry id and nothing else. The header comes from the browser's own
+   * reconnect, and a pattern that read part of one would hand Redis a cursor it refuses — or, worse,
+   * one it accepts and answers from the wrong place.
+   */
+  it.each(['1700000000000-0x', 'x1700000000000-0', '17000000000000', '-0'])(
+    'ignores %s as a resume point',
+    async (header) => {
+      const harness = createTestContainer();
+      const { chatId, turnId } = await seedChat(harness);
+      await harness.doubles.redis.xadd(
+        turnEventsStreamKey(turnId),
+        'event',
+        '{"type":"turn.cancelled"}',
+      );
+      const spy = vi.spyOn(FakeRedis.prototype, 'xrange');
+
+      const response = await chatEvents(
+        harness.container,
+        stream(`/api/chats/${chatId}/events`, { 'last-event-id': header }),
+        { id: chatId },
+      );
+      await response.text();
+
+      expect(spy).not.toHaveBeenCalled();
+    },
+  );
+
+  /**
+   * A resume point with more than one digit on either side of the dash is an ordinary Redis id —
+   * the left half is a millisecond timestamp — so it is used rather than ignored. A pattern that
+   * accepted only single digits would silently replay the whole transcript on every reconnect.
+   */
+  it('resumes from a full entry id', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.redis.xadd(
+      turnEventsStreamKey(turnId),
+      'event',
+      '{"type":"turn.cancelled"}',
+    );
+    const spy = vi.spyOn(FakeRedis.prototype, 'xrange');
+
+    const response = await chatEvents(
+      harness.container,
+      stream(`/api/chats/${chatId}/events`, { 'last-event-id': '1700000000000-12' }),
+      { id: chatId },
+    );
+    const text = await response.text();
+
+    // The resume point reaches Redis as the client sent it: first to ask whether that entry is
+    // still in the stream, then — when it is not — as the cursor the expiry frame echoes back.
+    expect(spy).toHaveBeenCalledWith(
+      turnEventsStreamKey(turnId),
+      '1700000000000-12',
+      '1700000000000-12',
+    );
+    expect(text).toContain('id: 1700000000000-12');
+  });
+
+  /**
+   * A turn whose row went while the stream was open — its chat deleted from another tab — is not
+   * live, so the stream ends. Reaching into a row that is not there would break the stream with a
+   * failure instead, and the page would show it as a transcript that stopped for no reason.
+   */
+  it('ends the stream when the turn row goes while it is open', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    vi.spyOn(harness.doubles.repos.turns, 'get').mockResolvedValue(null);
+
+    const response = await chatEvents(harness.container, stream(`/api/chats/${chatId}/events`), {
+      id: chatId,
+    });
+    const text = await response.text();
+
+    expect(turnId).toEqual(expect.any(String));
+    expect(text).toContain('event: expired');
+    expect(harness.doubles.logOutput()).not.toContain('event stream failed');
+  });
+
+  /**
+   * A stream stays open while its turn is live and closes itself once the turn is not. The route
+   * hands the stream the question rather than an answer, because the turn ends in another process
+   * while this connection is already open.
+   */
+  it('closes the stream once the turn it follows is no longer live', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+
+    const response = await chatEvents(harness.container, stream(`/api/chats/${chatId}/events`), {
+      id: chatId,
+    });
+
+    expect(await response.text()).toContain('event: expired');
+  });
+
+  /**
+   * A rebound host is refused before any row is read: this stream carries a chat's whole
+   * transcript, and rebinding is the case in which the browser lets an attacking page read it.
+   */
+  it('refuses a stream addressed to a rebound host', async () => {
+    const harness = createTestContainer();
+    const { chatId } = await seedChat(harness);
+
+    const response = await chatEvents(
+      harness.container,
+      new Request(`http://attacker.test/api/chats/${chatId}/events`, {
+        headers: { host: 'attacker.test' },
+      }),
+      { id: chatId },
+    );
+
+    expect(response.status).toBe(403);
   });
 });
 
@@ -236,5 +362,91 @@ describe('runEvents', () => {
       id: 'nope',
     });
     expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: { message: 'Run not found' } });
+  });
+
+  /**
+   * A run's stream closes itself once the run is over, for the same reason a turn's does.
+   */
+  it('closes the stream once the run it follows is no longer live', async () => {
+    const harness = createTestContainer();
+    const job = await harness.doubles.repos.scheduledJobs.create({
+      name: 'nightly',
+      cron: '0 3 * * *',
+      timezone: 'UTC',
+      prompt: 'do it',
+      repoUrl: REPO_URL,
+      branch: 'main',
+      enabled: true,
+    });
+    const run = await harness.doubles.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: 'test-model',
+      scheduledFor: harness.container.clock.now(),
+    });
+    await harness.doubles.repos.jobRuns.finish(run.id, {
+      status: 'SUCCEEDED',
+      usage: { inputTokens: 0, outputTokens: 0, stepCount: 0 },
+    });
+
+    const response = await runEvents(harness.container, stream(`/api/runs/${run.id}/events`), {
+      id: run.id,
+    });
+
+    expect(await response.text()).toContain('event: expired');
+  });
+
+  /**
+   * The same for a run whose row goes while its stream is open.
+   */
+  it('ends the run stream when the run row goes while it is open', async () => {
+    const harness = createTestContainer();
+    const job = await harness.doubles.repos.scheduledJobs.create({
+      name: 'nightly',
+      cron: '0 3 * * *',
+      timezone: 'UTC',
+      prompt: 'do it',
+      repoUrl: REPO_URL,
+      branch: 'main',
+      enabled: true,
+    });
+    const run = await harness.doubles.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: 'test-model',
+      scheduledFor: harness.container.clock.now(),
+    });
+    const get = harness.doubles.repos.jobRuns.get.bind(harness.doubles.repos.jobRuns);
+    let reads = 0;
+    vi.spyOn(harness.doubles.repos.jobRuns, 'get').mockImplementation(async (id: string) => {
+      reads += 1;
+      return reads === 1 ? get(id) : null;
+    });
+
+    const response = await runEvents(harness.container, stream(`/api/runs/${run.id}/events`), {
+      id: run.id,
+    });
+    const text = await response.text();
+
+    expect(text).toContain('event: expired');
+    expect(harness.doubles.logOutput()).not.toContain('event stream failed');
+  });
+
+  /**
+   * And a rebound host is refused here too, before the run is looked up.
+   */
+  it('refuses a run stream addressed to a rebound host', async () => {
+    const harness = createTestContainer();
+
+    const response = await runEvents(
+      harness.container,
+      new Request('http://attacker.test/api/runs/nope/events', {
+        headers: { host: 'attacker.test' },
+      }),
+      { id: 'nope' },
+    );
+
+    expect(response.status).toBe(403);
   });
 });
