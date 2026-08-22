@@ -112,6 +112,36 @@ describe('describeClientFailure', () => {
   });
 
   /**
+   * A code is read off an object and nowhere else. A function is not one, and a function carrying
+   * a field named `code` is exactly the shape a hostile argument takes: this is an exported
+   * function over `unknown`, so what arrives is whatever a caller passes, and a value read from
+   * something that is not a record is a value this function never promised to look at.
+   */
+  it('reads no code from a value that is not a record', () => {
+    const carrier = Object.assign(() => undefined, { code: 'ECONNREFUSED' });
+
+    expect(describeClientFailure(carrier)).toBe('unknown');
+  });
+
+  /**
+   * A driver that sets `code` to something that is not usable text has not classified anything, and
+   * the error's own class still can. Read as a classification anyway, a code of the wrong type or
+   * of no length replaces a name the set recognises with one it does not, and a failure that could
+   * have been reported precisely is reported as unknown.
+   */
+  it.each([
+    ['an empty one', ''],
+    ['one that is not text', 42],
+    ['one that merely has a length', { length: 3 }],
+  ])('falls back to the error class when the code is %s', (_name, code) => {
+    class ReplyError extends Error {
+      readonly code: unknown = code;
+    }
+
+    expect(describeClientFailure(new ReplyError('connection lost'))).toBe('ReplyError');
+  });
+
+  /**
    * The whole point: the reported error must carry the secret nowhere, including through the
    * cause chain that util.inspect, a structured logger and a test reporter all walk.
    */

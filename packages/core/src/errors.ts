@@ -19,7 +19,15 @@ export interface AgentHangarErrorOptions {
  * Subclasses narrow `code` to a literal type; never construct this class directly.
  */
 export class AgentHangarError extends Error {
-  /** Stable machine-readable identifier of the error kind. */
+  /**
+   * Stable machine-readable identifier of the error kind.
+   *
+   * Assigned here from the constructor argument, and narrowed to its own literal by each subclass
+   * with a declaration that carries no value of its own. A subclass that restated the literal as a
+   * field would define it after `super()` had already recorded one, so the two spellings would sit
+   * side by side with only the later one ever read — and the argument every subclass passes would
+   * be a value nothing could observe.
+   */
   readonly code: string;
 
   /**
@@ -38,7 +46,7 @@ export class AgentHangarError extends Error {
 
 /** The workspace image is not present on the Docker host. */
 export class WorkspaceImageMissing extends AgentHangarError {
-  override readonly code = 'WORKSPACE_IMAGE_MISSING' as const;
+  declare readonly code: 'WORKSPACE_IMAGE_MISSING';
   /** Image reference that was looked up. */
   readonly image: string;
 
@@ -58,7 +66,7 @@ export class WorkspaceImageMissing extends AgentHangarError {
 
 /** A stored secret failed authentication (tampered ciphertext, wrong key, or bad envelope). */
 export class SecretIntegrityError extends AgentHangarError {
-  override readonly code = 'SECRET_INTEGRITY' as const;
+  declare readonly code: 'SECRET_INTEGRITY';
 
   /**
    * @param message - Description of the integrity failure; never the secret itself.
@@ -74,7 +82,7 @@ export class SecretIntegrityError extends AgentHangarError {
 
 /** The host ↔ workspace NDJSON protocol was violated. */
 export class ProtocolError extends AgentHangarError {
-  override readonly code = 'PROTOCOL_ERROR' as const;
+  declare readonly code: 'PROTOCOL_ERROR';
 
   /**
    * @param message - What was malformed.
@@ -87,7 +95,7 @@ export class ProtocolError extends AgentHangarError {
 
 /** A cron expression or timezone could not be parsed. */
 export class InvalidCronError extends AgentHangarError {
-  override readonly code = 'INVALID_CRON' as const;
+  declare readonly code: 'INVALID_CRON';
   /** The offending expression. */
   readonly cron: string;
 
@@ -104,7 +112,7 @@ export class InvalidCronError extends AgentHangarError {
 
 /** A lifecycle state machine refused a transition. */
 export class IllegalTransitionError extends AgentHangarError {
-  override readonly code = 'ILLEGAL_TRANSITION' as const;
+  declare readonly code: 'ILLEGAL_TRANSITION';
   /** Entity type, e.g. `Workspace`, `Turn`. */
   readonly entity: string;
   /** State the entity was in. */
@@ -128,7 +136,7 @@ export class IllegalTransitionError extends AgentHangarError {
 
 /** A chat already has a live workspace (at most one per chat). */
 export class LiveWorkspaceExistsError extends AgentHangarError {
-  override readonly code = 'LIVE_WORKSPACE_EXISTS' as const;
+  declare readonly code: 'LIVE_WORKSPACE_EXISTS';
   /** Chat that already owns a live workspace. */
   readonly chatId: string;
 
@@ -144,7 +152,7 @@ export class LiveWorkspaceExistsError extends AgentHangarError {
 
 /** A row that a repository method needs does not exist. */
 export class NotFoundError extends AgentHangarError {
-  override readonly code = 'NOT_FOUND' as const;
+  declare readonly code: 'NOT_FOUND';
   /** Entity type, e.g. `Chat`. */
   readonly entity: string;
   /** Identifier that was looked up. */
@@ -164,7 +172,7 @@ export class NotFoundError extends AgentHangarError {
 
 /** A write violates a uniqueness invariant (mirrors a Postgres unique-violation). */
 export class UniqueViolationError extends AgentHangarError {
-  override readonly code = 'UNIQUE_VIOLATION' as const;
+  declare readonly code: 'UNIQUE_VIOLATION';
   /** Entity type, e.g. `JobRun`. */
   readonly entity: string;
   /** Field (or index name) that must be unique. */
@@ -184,7 +192,7 @@ export class UniqueViolationError extends AgentHangarError {
 
 /** Environment or instance configuration is invalid or a required resource is unreachable. */
 export class ConfigError extends AgentHangarError {
-  override readonly code = 'CONFIG_ERROR' as const;
+  declare readonly code: 'CONFIG_ERROR';
 
   /**
    * @param message - Readable list of configuration problems.
@@ -272,12 +280,20 @@ const REPORTABLE_FAILURES: ReadonlySet<string> = new Set([
  */
 function readClassification(error: unknown): string | undefined {
   try {
+    // Stryker disable next-line ConditionalExpression: only `null` reaches this question, and
+    // asking `in` of it throws into the catch below, which answers `unknown` — the same answer
+    // skipping the block gives. The check is here so the reason is the shape and not the throw.
     if (typeof error === 'object' && error !== null && 'code' in error) {
       const { code } = error;
       if (typeof code === 'string' && code.length > 0) {
         return code;
       }
     }
+    // Stryker disable next-line ConditionalExpression,LogicalOperator,StringLiteral: what these
+    // hold back is the name of a plain `Error`, or of whatever class a value that is not an error
+    // happens to have. Neither is a member of the reportable set, so the caller is told `unknown`
+    // however this reads. They are written out because the rule is "the class, when the class says
+    // something", and a bare `Error` says nothing.
     if (error instanceof Error && error.constructor.name !== 'Error') {
       return error.constructor.name;
     }
@@ -309,6 +325,9 @@ function readClassification(error: unknown): string | undefined {
  */
 export function describeClientFailure(error: unknown): string {
   const classification = readClassification(error);
+  // Stryker disable next-line ConditionalExpression: nothing absent is a member of the set, so
+  // asking first and asking the set are the same question; this one is asked so the narrowing is
+  // stated rather than inferred from a lookup.
   if (classification !== undefined && REPORTABLE_FAILURES.has(classification)) {
     return classification;
   }
