@@ -16,9 +16,12 @@ import type { WorkspaceSpec } from '../types.ts';
 import {
   buildContainerCreateOptions,
   buildNetworkCreateOptions,
+  LABEL_CHAT,
   LABEL_COMPOSE_PROJECT,
   LABEL_COMPOSE_SERVICE,
+  LABEL_JOB_RUN,
   toEnvArray,
+  WORKSPACE_HANDOFF_DIR,
 } from './container-spec.ts';
 import { DockerRunnerError } from './errors.ts';
 
@@ -227,9 +230,12 @@ describe('buildContainerCreateOptions', () => {
     ['shell metacharacter', 'ws;rm'],
     ['too long', 'a'.repeat(65)],
   ])('rejects a workspace id that is %s', (_case, workspaceId) => {
-    expect(() => buildContainerCreateOptions(spec({ workspaceId }), OPTIONS)).toThrow(
-      DockerRunnerError,
-    );
+    const build = (): unknown => buildContainerCreateOptions(spec({ workspaceId }), OPTIONS);
+
+    expect(build).toThrow(DockerRunnerError);
+    // Naming the id, because a create refused with an empty message tells an operator that
+    // something about the workspace was wrong and nothing about what.
+    expect(build).toThrow(`invalid workspace id "${workspaceId}"`);
   });
 
   /**
@@ -237,11 +243,36 @@ describe('buildContainerCreateOptions', () => {
    * call rather than hand the workspace the whole host.
    */
   it.each([
-    ['cpus', { cpus: 0, memoryBytes: 1024, pids: 8 }],
     ['memoryBytes', { cpus: 1, memoryBytes: 0, pids: 8 }],
     ['pids', { cpus: 1, memoryBytes: 1024, pids: -1 }],
+    // Zero, not merely negative: Docker reads a `PidsLimit` of zero as no limit at all, and a
+    // check that only refuses negatives hands the workspace every process slot on the host.
+    ['zero pids', { cpus: 1, memoryBytes: 1024, pids: 0 }],
   ])('rejects a non-positive %s limit', (_case, limits) => {
-    expect(() => buildContainerCreateOptions(spec({ limits }), OPTIONS)).toThrow(DockerRunnerError);
+    const build = (): unknown => buildContainerCreateOptions(spec({ limits }), OPTIONS);
+
+    expect(build).toThrow(DockerRunnerError);
+    expect(build).toThrow(
+      'workspace ws-1 must have finite positive cpus, memoryBytes and pids limits',
+    );
+  });
+
+  /**
+   * A cpus limit of zero is refused for being non-positive rather than for what it rounds to. The
+   * two refusals have different messages, and the second exists for a limit that is positive and
+   * still rounds away — so a reader told the wrong one goes looking for a rounding problem in a
+   * value that was never positive.
+   */
+  it('refuses a zero cpus limit as a non-positive limit', () => {
+    const build = (): unknown =>
+      buildContainerCreateOptions(
+        spec({ limits: { cpus: 0, memoryBytes: 1024, pids: 8 } }),
+        OPTIONS,
+      );
+
+    expect(build).toThrow(
+      'workspace ws-1 must have finite positive cpus, memoryBytes and pids limits',
+    );
   });
 
   /**
@@ -289,5 +320,23 @@ describe('buildContainerCreateOptions', () => {
 
     expect(message).toContain('1BAD');
     expect(message).not.toContain(CANARY_MARKER);
+  });
+
+  /**
+   * Three values that only mean something to somebody else. The handoff directory is a path the
+   * image creates and the runtime reads; the two caller-set labels are what the reaper and the
+   * dashboards select workspaces by. Nothing in this package reads any of them back, so each is
+   * pinned to the spelling the other side uses.
+   */
+  it.each([
+    [
+      'the handoff directory the image prepares',
+      WORKSPACE_HANDOFF_DIR,
+      '/opt/agent-runtime/handoff',
+    ],
+    ['the label a chat workspace is found by', LABEL_CHAT, 'ah.chat'],
+    ['the label a scheduled run is found by', LABEL_JOB_RUN, 'ah.jobRun'],
+  ])('names %s', (_case, actual, expected) => {
+    expect(actual).toBe(expected);
   });
 });
