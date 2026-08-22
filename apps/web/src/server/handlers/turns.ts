@@ -175,6 +175,9 @@ async function requireRetryableTurn(container: ServerContainer, turnId: string):
   }
   await requireNoLiveTurn(container, turn.chatId);
   const turns = await container.repos.turns.listByChat(turn.chatId);
+  // Stryker disable next-line OptionalChaining: the list is of the chat this turn belongs to, and
+  // the turn was read from the database a moment ago — so it is in there, and the guard is for a
+  // shape the type admits rather than for a state this route can reach.
   if (turns.at(-1)?.id !== turn.id) {
     throw new ConflictError('TURN_NOT_RETRYABLE', RETRY_SUPERSEDED);
   }

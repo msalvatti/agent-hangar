@@ -149,6 +149,9 @@ describe('cancelTurn', () => {
     const response = await cancelTurn(harness.container, cancelRequest(turnId), { id: turnId });
 
     expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'TURN_NOT_CANCELLABLE', message: 'This turn has already finished' },
+    });
     expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({ status: 'FAILED' });
     expect(harness.doubles.queues.chatTurns.added).toHaveLength(1);
   });
@@ -199,7 +202,14 @@ describe('cancelTurn', () => {
     });
     const response = await cancelTurn(harness.container, cancelRequest(turnId), { id: turnId });
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: { code: 'TURN_NOT_CANCELLABLE' } });
+    // The code the page branches on and the sentence it shows.
+    expect(await response.json()).toMatchObject({
+      error: { code: 'TURN_NOT_CANCELLABLE', message: 'This turn has already finished' },
+    });
+    // And the worker is not told to stop something that has already stopped: the command channel
+    // is shared, and a cancel published for a finished turn reaches a listener that may still be
+    // there to act on it.
+    expect(harness.doubles.redis.published).toEqual([]);
   });
 
   /**
@@ -242,7 +252,17 @@ describe('cancelTurn', () => {
 
     expect(response.status).toBe(500);
     expect(harness.doubles.queues.chatTurns.jobs.has(turnId)).toBe(false);
-    expect(harness.doubles.logOutput()).toContain('could not undo a partial turn cancel');
+    // The turn is named on the line: this row is now `QUEUED` with no job behind it, and its id is
+    // all anyone has to find it by.
+    expect(
+      harness.doubles
+        .logOutput()
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({ msg: 'could not undo a partial turn cancel', turnId }),
+    );
   });
 
   /**
@@ -252,6 +272,7 @@ describe('cancelTurn', () => {
     const { container } = createTestContainer();
     const response = await cancelTurn(container, cancelRequest('nope'), { id: 'nope' });
     expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: { message: 'Turn not found' } });
   });
 
   /**

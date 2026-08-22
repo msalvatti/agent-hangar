@@ -138,7 +138,14 @@ describe('retryTurn', () => {
     const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
 
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: { code: 'TURN_NOT_RETRYABLE' } });
+    // Superseded is its own refusal, told apart from "not a failed turn" by its wording: the user
+    // is being told the transcript has moved on, not that this turn was the wrong kind.
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: 'TURN_NOT_RETRYABLE',
+        message: 'A later turn has superseded this one; only the most recent turn can be retried',
+      },
+    });
     expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({ status: 'FAILED' });
     expect(harness.doubles.queues.chatTurns.added).toEqual([]);
   });
@@ -217,6 +224,73 @@ describe('retryTurn', () => {
    * rather than recover from an accident, so it is refused with a code the UI can render; sending
    * the prompt again is the way to run it, and that records a new intent where it can be seen.
    */
+  /**
+   * A turn of an archived chat is not retried: the workspace it would need is gone, and the chat
+   * has to be restored first. That is a different refusal from the ones about the turn's own
+   * state, and the sentence is what says which of the two the user is looking at.
+   */
+  it('refuses to retry a turn whose chat was archived', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedFailedTurn(harness);
+    await harness.doubles.repos.chats.setStatus(chatId, 'ARCHIVED');
+
+    const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'CHAT_ARCHIVED', message: 'Restore the chat before retrying the turn' },
+    });
+    expect(harness.doubles.queues.chatTurns.added).toEqual([]);
+  });
+
+  /**
+   * A turn whose row is gone, and one whose chat is gone, are both missing — the second is the
+   * case a delete leaves behind, and reaching for the last turn of a chat that has none would fail
+   * on nothing rather than say so.
+   */
+  it('reports a turn and a chat that are no longer there', async () => {
+    const harness = createTestContainer();
+    const { turnId } = await seedFailedTurn(harness);
+
+    const unknown = await retryTurn(harness.container, retryRequest('nope'), { id: 'nope' });
+    expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toMatchObject({ error: { message: 'Turn not found' } });
+
+    vi.spyOn(harness.doubles.repos.chats, 'getById').mockResolvedValue(null);
+    const orphaned = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
+    expect(orphaned.status).toBe(404);
+    expect(await orphaned.json()).toMatchObject({ error: { message: 'Chat not found' } });
+  });
+
+  /**
+   * When the claim cannot be given back either, the turn is left queued with nothing behind it and
+   * the log is the only record — so it names both the chat and the turn.
+   */
+  it('reports a retried claim it could not release', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedFailedTurn(harness);
+    vi.spyOn(harness.doubles.repos.chats, 'touch').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+    vi.spyOn(harness.doubles.repos.turns, 'finish').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+
+    const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
+
+    expect(response.status).toBe(500);
+    expect(
+      harness.doubles
+        .logOutput()
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({ msg: 'could not release a retried turn claim', chatId, turnId }),
+    );
+    vi.restoreAllMocks();
+  });
+
   it('refuses to retry a cancelled turn', async () => {
     const harness = createTestContainer();
     const { chatId, turnId } = await seedChatTurn(harness);
@@ -229,7 +303,14 @@ describe('retryTurn', () => {
     const response = await retryTurn(harness.container, retryRequest(turnId), { id: turnId });
 
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: { code: 'TURN_NOT_RETRYABLE' } });
+    // And a turn that was stopped on purpose is refused as the wrong kind of turn, with the advice
+    // that does apply: send the prompt again, which records a new intent where it can be seen.
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: 'TURN_NOT_RETRYABLE',
+        message: 'Only a failed turn can be retried; send the prompt again to start a new one',
+      },
+    });
     expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({ status: 'CANCELLED' });
     expect(await userPrompts(harness, chatId)).toEqual([PROMPT]);
   });
