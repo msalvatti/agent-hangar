@@ -39,6 +39,9 @@ apps/web/e2e/.tmp/
 !.vscode/extensions.json
 !.vscode/settings.json
 *.log
+# Except the recorded pnpm runs the integration wrapper's contract test replays. They are
+# evidence, not noise: without them the test has no input and cannot fail.
+!packages/core/fixtures/integration/*.log
 .turbo/
 
 # Claude Code harness state (isolated agent worktrees live under .claude/worktrees/)

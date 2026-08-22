@@ -37,12 +37,25 @@ if [ "$status" -ne 0 ]; then
   exit "$status"
 fi
 
+# The summary is read without its colours. On GitHub's runners Vitest colours its output even
+# though `tee` has put a pipe on the other end, so every summary line arrives wrapped in CSI
+# sequences: `ESC[2m      Tests ESC[22m ESC[1mESC[32m126 passed…`. An anchor on leading whitespace
+# matches none of that, so a run of 150 real assertions was counted as zero and the guard below
+# reported NOTHING RAN over three suites that had just passed. Only there: no local spelling
+# reproduces it — neither `FORCE_COLOR`, nor `--color`, nor a pty — because pnpm decides its
+# children's colour from its own stdout, which is a pipe here. So the runner's output is the only
+# evidence there is, and it is recorded in `packages/core/fixtures/integration/` rather than
+# described. What is stripped is the escape sequence, never a digit or a word, so the two readings
+# below see the same text on both machines.
+escape=$(printf '\033')
+plain=$(sed -E "s/${escape}\[[0-9;?]*[A-Za-z]//g" "$log")
+
 # Vitest's own summary line, one per workspace: "Tests  126 passed (126)" or "Tests  150 skipped".
 # Counting the lines that report a pass answers the only question asked here.
-executed=$(grep -cE '^[[:space:]]*Tests[[:space:]].*[0-9]+ passed' "$log" || true)
+executed=$(printf '%s\n' "$plain" | grep -cE '^[[:space:]]*Tests[[:space:]].*[0-9]+ passed' || true)
 # Only Vitest's `Tests` line: its `Test Files` line reports skipped files with the same words,
 # and counting both told the reader a number that was neither.
-skipped=$(grep -E '^[[:space:]]*Tests[[:space:]]' "$log" | grep -oE '[0-9]+ skipped' \
+skipped=$(printf '%s\n' "$plain" | grep -E '^[[:space:]]*Tests[[:space:]]' | grep -oE '[0-9]+ skipped' \
   | awk '{ total += $1 } END { print total + 0 }')
 
 if [ "$executed" -gt 0 ]; then

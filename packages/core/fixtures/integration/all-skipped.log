@@ -1,0 +1,32 @@
+Scope: 4 of 5 workspace projects
+$ vitest run --project integration --coverage.enabled=false
+
+ RUN  v4.1.11 /home/runner/work/agent-hangar/agent-hangar/packages/core
+
+set DOCKER_AVAILABLE=1 (and build the image with pnpm infra:image) to run the @docker suite
+
+ Test Files  13 skipped (13)
+      Tests  126 skipped (126)
+   Start at  21:21:55
+   Duration  2.06s (transform 273ms, setup 0ms, import 1.03s, tests 0ms, environment 1ms)
+
+$ vitest run --project integration --coverage.enabled=false
+
+ RUN  v4.1.11 /home/runner/work/agent-hangar/agent-hangar/apps/web
+
+
+ Test Files  5 skipped (5)
+      Tests  14 skipped (14)
+   Start at  21:21:57
+   Duration  1.66s (transform 361ms, setup 0ms, import 1.30s, tests 0ms, environment 0ms)
+
+$ DOCKER_AVAILABLE=1 vitest run --project integration --coverage.enabled=false
+
+ RUN  v4.1.11 /home/runner/work/agent-hangar/agent-hangar/apps/worker
+
+
+ Test Files  2 skipped (2)
+      Tests  10 skipped (10)
+   Start at  21:21:59
+   Duration  1.09s (transform 386ms, setup 0ms, import 950ms, tests 0ms, environment 0ms)
+
