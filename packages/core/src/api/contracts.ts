@@ -9,6 +9,7 @@
 import { z } from 'zod';
 
 import type { AgentEventType } from '../agent-protocol/types.ts';
+import { BRANCH_NAME_PATTERN, BRANCH_NAME_RULE } from '../git-ref.ts';
 import { credentialFreeUrl, repoUrl } from '../repo-url.ts';
 
 // ────────────────────────────── shared ──────────────────────────────
@@ -57,6 +58,19 @@ export const MAX_CRON_LENGTH = 100;
 export const MAX_TIMEZONE_LENGTH = 64;
 
 export { repoUrl, repoUrlForHosts } from '../repo-url.ts';
+export { BRANCH_NAME_PATTERN, BRANCH_NAME_RULE } from '../git-ref.ts';
+
+/**
+ * A git branch name, stated once for every body that carries one.
+ *
+ * The rule is the workspace's own, imported rather than restated, so a name this schema accepts is
+ * a name `git` will be given without the round trip through a container that discovers otherwise.
+ */
+export const branchName = z
+  .string()
+  .min(1)
+  .max(MAX_BRANCH_LENGTH)
+  .regex(BRANCH_NAME_PATTERN, `Branch name ${BRANCH_NAME_RULE}`);
 
 // ──────────────────────────────── repos ─────────────────────────────
 
@@ -160,7 +174,7 @@ export const workspaceStatus = z.enum([
  */
 export const createChatRequest = z.object({
   repoUrl,
-  baseBranch: z.string().min(1).max(MAX_BRANCH_LENGTH),
+  baseBranch: branchName,
   prompt: z.string().min(1).max(MAX_PROMPT_LENGTH),
 });
 
@@ -295,7 +309,7 @@ export const jobUpsertRequest = z.object({
   timezone: z.string().trim().min(1).max(MAX_TIMEZONE_LENGTH),
   prompt: z.string().min(1).max(MAX_PROMPT_LENGTH),
   repoUrl,
-  branch: z.string().min(1).max(MAX_BRANCH_LENGTH),
+  branch: branchName,
   enabled: z.boolean(),
 });
 
@@ -388,6 +402,43 @@ export const settingsStatus = z.object({
 
 /** `PUT /api/settings/:key` body — the only place a plaintext secret travels. */
 export const putSecretRequest = z.object({ value: z.string().min(8).max(4096) });
+
+/**
+ * What each credential looks like, and what to say when it does not.
+ *
+ * The prefixes are the issuers' own: GitHub stamps a type marker on every credential it mints
+ * (`ghp_` for a classic personal access token, `github_pat_` for a fine-grained one, and the
+ * remaining `gh?_` forms for the app and OAuth tokens that authenticate the same endpoints), and
+ * OpenAI stamps `sk-`. Checking the marker refuses the realistic mistake — a value pasted from the
+ * wrong clipboard, or a token truncated on the way — where the person can still see what they
+ * typed, instead of at the next repository listing. It is a shape check and nothing more: whether
+ * the credential is live, unexpired and scoped is the issuer's answer, and it arrives on first use.
+ *
+ * The message names the expected prefix and never the value, which is plaintext here.
+ */
+const SECRET_SHAPE = {
+  GITHUB_PAT: {
+    pattern: /^(gh[pousr]_|github_pat_)[A-Za-z0-9_]+$/,
+    message: 'A GitHub token starts with "github_pat_" (fine-grained) or "ghp_" (classic)',
+  },
+  OPENAI_API_KEY: {
+    pattern: /^sk-[A-Za-z0-9_-]+$/,
+    message: 'An OpenAI API key starts with "sk-"',
+  },
+} as const satisfies Record<z.infer<typeof settingsKeyParam>, { pattern: RegExp; message: string }>;
+
+/**
+ * Narrows {@link putSecretRequest} to the credential the route addresses.
+ *
+ * @param key - Which credential the request is storing.
+ * @returns The body schema for that credential, refusing a value of the wrong shape.
+ */
+export function putSecretRequestFor(
+  key: z.infer<typeof settingsKeyParam>,
+): z.ZodObject<{ value: z.ZodString }> {
+  const shape = SECRET_SHAPE[key];
+  return z.object({ value: putSecretRequest.shape.value.regex(shape.pattern, shape.message) });
+}
 
 /** `PUT /api/settings/:key` response. */
 export const putSecretResponse = z.object({ set: z.literal(true), last4: z.string().length(4) });

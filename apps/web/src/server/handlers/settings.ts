@@ -13,7 +13,7 @@
  * beside the ciphertext, so a response cannot carry a value even by accident.
  */
 import {
-  putSecretRequest,
+  putSecretRequestFor,
   putSecretResponse,
   SETTINGS_FIELD_BY_KEY,
   settingsKeyParam,
@@ -106,7 +106,7 @@ export function putSetting(
   return withErrorHandling(container, async () => {
     assertSameOrigin(request);
     const key = requireSecretKey(params.key);
-    const body = await parseJsonBody(request, putSecretRequest);
+    const body = await parseJsonBody(request, putSecretRequestFor(key));
     const last4 = await store(container, key, body.value);
     container.logger.info({ key, action: 'set' }, 'secret updated');
     return jsonResponse(putSecretResponse, { set: true, last4 }, { headers: NO_STORE });

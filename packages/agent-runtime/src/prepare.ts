@@ -35,7 +35,12 @@
  */
 import { mkdir, readFile } from 'node:fs/promises';
 
-import { ConfigError, prepareWarningText } from '@agent-hangar/core';
+import {
+  BRANCH_NAME_PATTERN,
+  BRANCH_NAME_RULE,
+  ConfigError,
+  prepareWarningText,
+} from '@agent-hangar/core';
 import type { AgentEvent, TurnRequest } from '@agent-hangar/core';
 import { z } from 'zod';
 
@@ -66,8 +71,11 @@ const REPOSITORY_PATH = /^\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(\.git)?$/;
  * `--upload-pack=…` is the classic way that turns into command execution on a non-https remote.
  * The names come from the host rather than from the model, so this is defence in depth, but it
  * costs one regular expression and removes the whole class.
+ *
+ * The pattern is the one the API states in its own request schemas, imported rather than restated:
+ * a name refused here after being accepted there would have cost a container to find out.
  */
-const BRANCH_NAME = /^[A-Za-z0-9][A-Za-z0-9._/-]*$/;
+const BRANCH_NAME = BRANCH_NAME_PATTERN;
 
 /** Preparation could not bring the workspace to a usable state. */
 export class PrepareError extends Error {
@@ -235,9 +243,7 @@ export function resolveRepoUrl(url: string, policy: RepositoryUrlPolicy): string
  */
 export function assertBranchName(branch: string, field: string): void {
   if (!BRANCH_NAME.test(branch)) {
-    throw new PrepareError(
-      `${field} must start with a letter or digit and contain only letters, digits, dot, dash, underscore and slash`,
-    );
+    throw new PrepareError(`${field} ${BRANCH_NAME_RULE}`);
   }
 }
 

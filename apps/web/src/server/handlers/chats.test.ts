@@ -97,6 +97,28 @@ describe('createChat', () => {
   });
 
   /**
+   * A branch name the workspace would refuse costs nothing to discover.
+   *
+   * Regression: `baseBranch: 'main; rm -rf /'` used to be accepted here, and the chat, the message
+   * and the turn were written and enqueued before a container was started and `prepare` inside it
+   * refused the name. Nothing about the value changed — the workspace still refuses it — but the
+   * route now refuses it first, so no row and no container are spent on a name that cannot work.
+   */
+  it('rejects a branch name the workspace would refuse, before writing anything', async () => {
+    const { container, doubles } = createTestContainer();
+
+    const response = await createChat(
+      container,
+      writeRequest('/api/chats', 'POST', { ...CREATE_BODY, baseBranch: 'main; rm -rf /' }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
+    expect(await doubles.repos.chats.list()).toHaveLength(0);
+    expect(doubles.queues.chatTurns.added).toHaveLength(0);
+  });
+
+  /**
    * A repository on a host the operator did not allow is refused before any row exists; the URL
    * ends up on a clone command line inside a container, so the check belongs at the boundary. The
    * URL is well-formed on purpose: a malformed one is refused by the contract instead, which would

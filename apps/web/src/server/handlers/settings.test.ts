@@ -160,6 +160,39 @@ describe('putSetting', () => {
   });
 
   /**
+   * A credential is measured against the shape of the key the route addresses.
+   *
+   * Regression: `{"value":"not-a-token"}` was stored under `GITHUB_PAT` and answered `200`, because
+   * the body contract only asked for eight characters. A value from the wrong clipboard therefore
+   * replaced a working token silently, and the mistake surfaced later and somewhere else, as a
+   * rejected repository listing. It is refused here now, and the stored credential is left alone —
+   * that last part is the point: the previous behaviour overwrote it.
+   */
+  it('refuses a value that is not shaped like the addressed credential', async () => {
+    const { container, doubles } = harness({ secretsSet: true });
+
+    const garbage = await putSetting(
+      container,
+      write('GITHUB_PAT', 'PUT', { value: 'not-a-token' }),
+      { key: 'GITHUB_PAT' },
+    );
+    expect(garbage.status).toBe(400);
+    expect(await garbage.json()).toMatchObject({ error: { code: 'VALIDATION_ERROR' } });
+
+    const swapped = await putSetting(
+      container,
+      write('OPENAI_API_KEY', 'PUT', { value: GITHUB_CANARY }),
+      { key: 'OPENAI_API_KEY' },
+    );
+    expect(swapped.status).toBe(400);
+    assertNoCanary(await swapped.text());
+
+    const status = await doubles.secrets.status();
+    expect(status.GITHUB_PAT.set).toBe(true);
+    expect(status.OPENAI_API_KEY.set).toBe(true);
+  });
+
+  /**
    * Canary regression on the failure path: a storage error quotes what it was asked to store, so
    * only its class name is logged and the response says nothing about the value.
    */
