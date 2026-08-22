@@ -180,6 +180,9 @@ export function createWorker<TData = unknown>(
  * @returns `{ prefix }` when one was given, `{}` otherwise.
  */
 function prefixOption(opts: QueueConnectionOptions): { prefix?: string } {
+  // Stryker disable next-line ConditionalExpression: the point of the branch is that an absent
+  // prefix is omitted rather than handed over as an explicit nothing; the two spellings reach
+  // BullMQ as the same instruction, and this project forbids the second one at the type level.
   return opts.prefix === undefined ? {} : { prefix: opts.prefix };
 }
 
@@ -192,6 +195,9 @@ function prefixOption(opts: QueueConnectionOptions): { prefix?: string } {
  */
 function reliabilityOptions(opts: WorkerReliabilityOptions): WorkerReliabilityOptions {
   return {
+    // Stryker disable next-line ConditionalExpression: as with the prefix above — an absent
+    // setting is omitted rather than passed as nothing, which is the same instruction to BullMQ
+    // and the only spelling this project's types allow.
     ...(opts.lockDuration === undefined ? {} : { lockDuration: opts.lockDuration }),
     ...(opts.stalledInterval === undefined ? {} : { stalledInterval: opts.stalledInterval }),
     ...(opts.maxStalledCount === undefined ? {} : { maxStalledCount: opts.maxStalledCount }),

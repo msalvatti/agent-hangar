@@ -37,6 +37,11 @@ export default {
     '!src/**/*.test.ts',
     '!src/persistence/generated/**',
     '!src/**/testing/**',
+    // A helper for the integration suites rather than code that ships: it calls `describe` and
+    // `describe.skip` to gate them, and its own exercisers are the `@redis` runs, which cannot
+    // decide whether a mutant lives. It sits outside a `testing` folder only because the suites it
+    // gates sit beside it.
+    '!src/queues/redis.integration-helper.ts',
   ],
   // The gate this package is held to. A survivor is a defect the suite cannot see, so the only
   // score that closes the lane is the whole of it.
