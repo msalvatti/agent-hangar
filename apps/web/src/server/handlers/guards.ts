@@ -70,6 +70,9 @@ export async function requireSecrets(container: ServerContainer): Promise<void> 
  * @returns `true` while the work is queued or executing.
  */
 export function isLive(status: string | undefined): boolean {
+  // Stryker disable next-line ConditionalExpression: the undefined test narrows the type for the
+  // membership check beside it — a row that is gone is not a live status either, which is the same
+  // answer that check gives.
   return status !== undefined && LIVE_STATUSES.includes(status);
 }
 
