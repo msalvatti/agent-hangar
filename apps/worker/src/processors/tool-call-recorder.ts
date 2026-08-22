@@ -51,15 +51,25 @@ export interface ToolCallRecorder {
 }
 
 /** What the recorder remembers about one call between its start and its result. */
-interface CallState extends ToolCallSummaryInput {
+interface CallState {
   /** `ToolCallLog.id`. */
   logId: string;
   /** Position within the turn, used to order the summaries. */
   seq: number;
+  /** The tool the agent called. */
+  toolName: ToolCallSummaryInput['toolName'];
+  /** Arguments as logged; treated as untrusted and read defensively. */
+  args: unknown;
   /** First {@link TOOL_OUTPUT_HEAD_BYTES} of the output. */
   head: string;
-  /** Whether a result has been recorded. */
-  finished: boolean;
+  /**
+   * What the call ended as, present only once a result has arrived.
+   *
+   * Its absence is what "still running" means here, rather than a placeholder outcome standing in
+   * until a real one replaces it: a call with no result has no exit code, no duration and no
+   * status to report, and a summary rendered from invented ones would read like a call that ended.
+   */
+  outcome?: ToolCallSummaryInput;
 }
 
 /**
@@ -74,14 +84,10 @@ interface CallState extends ToolCallSummaryInput {
  * @returns The head, extended by as much of the chunk as fits.
  */
 export function appendWithinBudget(head: string, text: string, maxBytes: number): string {
-  const used = Buffer.byteLength(head);
-  if (used >= maxBytes) {
-    return head;
-  }
-  const budget = maxBytes - used;
-  if (Buffer.byteLength(text) <= budget) {
-    return head + text;
-  }
+  // One loop and no fast paths. A chunk that fits whole is the loop running to the end, and a head
+  // that has already spent the budget is the loop stopping at its first character — so a shortcut
+  // for either would be a branch no input could tell apart from the path it skips.
+  const budget = maxBytes - Buffer.byteLength(head);
   let taken = '';
   let bytes = 0;
   for (const character of text) {
@@ -120,7 +126,13 @@ export function createToolCallRecorder(
     async start(event): Promise<void> {
       const log = await deps.repos.toolCalls.start({
         workspaceId: target.workspaceId,
+        // Spread conditionally because these are optional properties this project may not hand an
+        // explicit `undefined`, and a row belongs to a turn or to a run and never to both. The
+        // repository writes the absent one as `null` either way, so no caller can tell the two
+        // spellings apart.
+        // Stryker disable next-line ConditionalExpression
         ...(target.turnId === undefined ? {} : { turnId: target.turnId }),
+        // Stryker disable next-line ConditionalExpression
         ...(target.jobRunId === undefined ? {} : { jobRunId: target.jobRunId }),
         callId: event.callId,
         seq: event.seq,
@@ -132,12 +144,7 @@ export function createToolCallRecorder(
         seq: event.seq,
         toolName: event.name,
         args: event.args,
-        exitCode: null,
-        status: 'RUNNING',
-        durationMs: null,
-        resultBytes: null,
         head: '',
-        finished: false,
       });
     },
 
@@ -153,11 +160,14 @@ export function createToolCallRecorder(
       if (state === undefined) {
         return;
       }
-      state.status = event.status;
-      state.exitCode = event.exitCode;
-      state.durationMs = event.durationMs;
-      state.resultBytes = event.bytes;
-      state.finished = true;
+      state.outcome = {
+        toolName: state.toolName,
+        args: state.args,
+        status: event.status,
+        exitCode: event.exitCode,
+        durationMs: event.durationMs,
+        resultBytes: event.bytes,
+      };
       await deps.repos.toolCalls.finish(state.logId, {
         status: event.status,
         exitCode: event.exitCode,
@@ -169,9 +179,8 @@ export function createToolCallRecorder(
 
     summaries(): string[] {
       return [...calls.values()]
-        .filter((state) => state.finished)
         .toSorted((left, right) => left.seq - right.seq)
-        .map((state) => toolSummaryText(state));
+        .flatMap((state) => (state.outcome === undefined ? [] : [toolSummaryText(state.outcome)]));
     },
   };
 }
