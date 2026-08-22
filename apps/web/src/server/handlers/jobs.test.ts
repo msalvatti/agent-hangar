@@ -17,6 +17,7 @@ import {
 } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ServerContainer } from '../container';
 import { REPO_URL_NOT_ALLOWED } from '../repo-url';
 import { foreignRequest, readRequest, writeRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
@@ -169,8 +170,72 @@ describe('createJob', () => {
     );
 
     expect(response.status).toBe(500);
-    expect(harness.doubles.logOutput()).toContain('could not undo a partial scheduled-job write');
+    // The job is named on the line: a row was written and its scheduler never registered, so the
+    // job sits in the table looking enabled and never fires — and its id is the only handle on it.
+    expect(records(harness)).toContainEqual(
+      expect.objectContaining({
+        msg: 'could not undo a partial scheduled-job write',
+        jobId: expect.any(String) as unknown,
+      }),
+    );
   });
+});
+
+/** The records the harness collected, parsed back from the lines pino wrote. */
+function records(harness: ReturnType<typeof createTestContainer>): Record<string, unknown>[] {
+  return harness.doubles
+    .logOutput()
+    .split('\n')
+    .filter((line) => line !== '')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+describe('what every scheduled-job route refuses before it does anything', () => {
+  /**
+   * Each guard is called by the handler rather than by the route file, so each is asked here. A
+   * rebound host is refused by every export, reads included — the listing carries every job's
+   * prompt and repository — and the state-changing ones refuse a foreign origin as well.
+   */
+  const params = { id: 'job-1' };
+  const routes: [string, (container: ServerContainer, request: Request) => Promise<Response>][] = [
+    ['POST /api/jobs', (container, request) => createJob(container, request)],
+    ['GET /api/jobs', (container, request) => listJobs(container, request)],
+    ['GET /api/jobs/:id', (container, request) => getJob(container, request, params)],
+    ['PATCH /api/jobs/:id', (container, request) => updateJob(container, request, params)],
+    ['DELETE /api/jobs/:id', (container, request) => deleteJob(container, request, params)],
+    ['POST /api/jobs/:id/run', (container, request) => triggerRun(container, request, params)],
+  ];
+
+  it.each(routes)('refuses %s addressed to a rebound host', async (_route, invoke) => {
+    const harness = createTestContainer({ now: NOW });
+
+    const response = await invoke(
+      harness.container,
+      new Request('http://attacker.test/api/jobs', {
+        method: 'POST',
+        headers: { host: 'attacker.test', 'content-type': 'application/json' },
+        body: JSON.stringify(JOB_BODY),
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(await harness.doubles.repos.scheduledJobs.list()).toStrictEqual([]);
+  });
+
+  it.each(routes.filter(([route]) => !route.startsWith('GET')))(
+    'refuses %s from a foreign origin',
+    async (_route, invoke) => {
+      const harness = createTestContainer({ now: NOW });
+
+      const response = await invoke(
+        harness.container,
+        foreignRequest('/api/jobs', 'POST', JOB_BODY),
+      );
+
+      expect(response.status).toBe(403);
+      expect(await harness.doubles.repos.scheduledJobs.list()).toStrictEqual([]);
+    },
+  );
 });
 
 describe('listJobs and getJob', () => {
@@ -207,6 +272,24 @@ describe('listJobs and getJob', () => {
       id: 'nope',
     });
     expect(missing.status).toBe(404);
+    expect(await missing.json()).toMatchObject({ error: { message: 'Scheduled job not found' } });
+  });
+
+  /**
+   * The status shown beside a job is its most recent run and nothing else. Reading the whole
+   * history to answer it would grow with every run of every job, on a page that lists them all.
+   */
+  it('reads only the newest run to state the status', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    const listByJob = harness.doubles.repos.jobRuns.listByJob.bind(harness.doubles.repos.jobRuns);
+    const reads = vi
+      .spyOn(harness.doubles.repos.jobRuns, 'listByJob')
+      .mockImplementation((id, options) => listByJob(id, options));
+
+    await listJobs(harness.container, writeRequest('/api/jobs', 'GET'));
+
+    expect(reads).toHaveBeenCalledWith(job.id, { limit: 1 });
   });
 });
 
@@ -229,6 +312,46 @@ describe('updateJob', () => {
       nextRunAt({ cron: '30 4 * * *', timezone: JOB_BODY.timezone }, NOW).toISOString(),
     );
     expect(harness.doubles.queues.scheduledJobs.schedulers.get(job.id)?.pattern).toBe('30 4 * * *');
+  });
+
+  /**
+   * The undo is declined when anything about the row has moved since, not only its editable
+   * fields: a run that finished while the edit was in flight moves `nextRunAt` and nothing else,
+   * and writing the pre-edit snapshot over that would put back a fire time the schedule has
+   * already passed.
+   */
+  it('declines to undo an edit a finished run has stamped since', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    const moved = new Date(NOW.getTime() + 3_600_000);
+    vi.spyOn(harness.doubles.queues.scheduledJobs, 'upsertJobScheduler').mockImplementation(
+      async () => {
+        await harness.doubles.repos.scheduledJobs.setRunTimes(job.id, {
+          lastRunAt: NOW,
+          nextRunAt: moved,
+        });
+        throw new Error('redis unreachable');
+      },
+    );
+
+    const response = await updateJob(
+      harness.container,
+      writeRequest(`/api/jobs/${job.id}`, 'PATCH', { name: 'Renamed' }),
+      { id: job.id },
+    );
+
+    expect(response.status).toBe(500);
+    expect(await harness.doubles.repos.scheduledJobs.get(job.id)).toMatchObject({
+      name: 'Renamed',
+      nextRunAt: moved,
+    });
+    expect(records(harness)).toContainEqual(
+      expect.objectContaining({
+        msg: 'declined to undo a scheduled-job edit a later write already replaced',
+        jobId: job.id,
+      }),
+    );
+    vi.restoreAllMocks();
   });
 
   /**
@@ -309,6 +432,46 @@ describe('updateJob', () => {
   });
 
   /**
+   * And when the undo itself cannot be written, the row is left saying one schedule while the
+   * scheduler holds another — the line naming the job is the only record of the mismatch.
+   */
+  it('reports an edit it could not roll back', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    vi.spyOn(harness.doubles.queues.scheduledJobs, 'upsertJobScheduler').mockRejectedValue(
+      new Error('redis unreachable'),
+    );
+    const update = harness.doubles.repos.scheduledJobs.update.bind(
+      harness.doubles.repos.scheduledJobs,
+    );
+    let writes = 0;
+    vi.spyOn(harness.doubles.repos.scheduledJobs, 'update').mockImplementation(
+      async (id, patch) => {
+        writes += 1;
+        if (writes > 1) {
+          throw new Error('database unreachable');
+        }
+        return update(id, patch);
+      },
+    );
+
+    const response = await updateJob(
+      harness.container,
+      writeRequest(`/api/jobs/${job.id}`, 'PATCH', { cron: '30 4 * * *' }),
+      { id: job.id },
+    );
+
+    expect(response.status).toBe(500);
+    expect(records(harness)).toContainEqual(
+      expect.objectContaining({
+        msg: 'could not undo a partial scheduled-job write',
+        jobId: job.id,
+      }),
+    );
+    vi.restoreAllMocks();
+  });
+
+  /**
    * The undo restores a snapshot taken before this request wrote, so it must not run once another
    * edit owns the row. The rule this protects is that a request that failed never reverts a
    * request that succeeded: writing the pre-edit values back over a later edit would lose a change
@@ -335,7 +498,12 @@ describe('updateJob', () => {
     expect(await harness.doubles.repos.scheduledJobs.get(job.id)).toMatchObject({
       name: 'The later edit',
     });
-    expect(harness.doubles.logOutput()).toContain('declined to undo a scheduled-job edit');
+    expect(records(harness)).toContainEqual(
+      expect.objectContaining({
+        msg: 'declined to undo a scheduled-job edit a later write already replaced',
+        jobId: job.id,
+      }),
+    );
   });
 
   /**
@@ -360,7 +528,12 @@ describe('updateJob', () => {
 
     expect(response.status).toBe(500);
     expect(await harness.doubles.repos.scheduledJobs.get(job.id)).toBeNull();
-    expect(harness.doubles.logOutput()).toContain('declined to undo a scheduled-job edit');
+    expect(records(harness)).toContainEqual(
+      expect.objectContaining({
+        msg: 'declined to undo a scheduled-job edit a later write already replaced',
+        jobId: job.id,
+      }),
+    );
   });
 
   /**
@@ -510,6 +683,34 @@ describe('deleteJob', () => {
   });
 
   /**
+   * And when that compensation cannot be written either, the scheduler is left registered for a
+   * row nobody will find — the line naming the job is the only record of it.
+   */
+  it('reports a scheduler it could not put back after a failed delete', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    vi.spyOn(harness.doubles.repos.scheduledJobs, 'delete').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+    vi.spyOn(harness.doubles.queues.scheduledJobs, 'upsertJobScheduler').mockRejectedValue(
+      new Error('redis unreachable'),
+    );
+
+    const response = await deleteJob(harness.container, writeRequest('/api/jobs', 'DELETE'), {
+      id: job.id,
+    });
+
+    expect(response.status).toBe(500);
+    expect(records(harness)).toContainEqual(
+      expect.objectContaining({
+        msg: 'could not undo a partial scheduled-job write',
+        jobId: job.id,
+      }),
+    );
+    vi.restoreAllMocks();
+  });
+
+  /**
    * An unknown job is missing rather than a silent success, so a double delete is visible.
    */
   it('reports an unknown job as missing', async () => {
@@ -518,6 +719,7 @@ describe('deleteJob', () => {
       id: 'nope',
     });
     expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: { message: 'Scheduled job not found' } });
   });
 });
 
@@ -591,6 +793,8 @@ describe('deleteJob overlapping updateJob', () => {
 
     expect(deletes.map((response) => response.status)).toEqual([204]);
     expect(edited.status).toBe(404);
+    // The edit reports the job as missing, in the words every other missing job gets.
+    expect(await edited.json()).toMatchObject({ error: { message: 'Scheduled job not found' } });
     expect(await harness.doubles.repos.scheduledJobs.get(job.id)).toBeNull();
     expect([...harness.doubles.queues.scheduledJobs.schedulers.keys()]).toEqual([]);
   });
@@ -628,7 +832,12 @@ describe('deleteJob overlapping updateJob', () => {
     );
 
     expect(edited.status).toBe(404);
-    expect(harness.doubles.logOutput()).toContain('could not undo a partial scheduled-job write');
+    expect(records(harness)).toContainEqual(
+      expect.objectContaining({
+        msg: 'could not undo a partial scheduled-job write',
+        jobId: job.id,
+      }),
+    );
   });
 });
 
@@ -674,7 +883,12 @@ describe('triggerRun', () => {
     });
 
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: { code: 'JOB_DISABLED' } });
+    expect(await response.json()).toMatchObject({
+      error: {
+        code: 'JOB_DISABLED',
+        message: 'This scheduled job is disabled; enable it and run it again.',
+      },
+    });
     expect(await harness.doubles.repos.jobRuns.listByJob(job.id)).toStrictEqual([]);
     expect(harness.doubles.queues.scheduledJobs.added).toStrictEqual([]);
   });
@@ -696,6 +910,7 @@ describe('triggerRun', () => {
       id: 'nope',
     });
     expect(missing.status).toBe(404);
+    expect(await missing.json()).toMatchObject({ error: { message: 'Scheduled job not found' } });
   });
 
   /**
@@ -712,5 +927,31 @@ describe('triggerRun', () => {
     expect(response.status).toBe(500);
     const [run] = await harness.doubles.repos.jobRuns.listByJob(job.id);
     expect(run).toMatchObject({ status: 'FAILED', error: 'Could not enqueue the run' });
+  });
+
+  /**
+   * And when even that cannot be written, the run is left `QUEUED` with no delivery behind it —
+   * a row that never moves, on a page that polls it. The line names the job it belongs to.
+   */
+  it('reports a run it could neither enqueue nor close', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const job = await seedJob(harness);
+    harness.doubles.queues.scheduledJobs.addFailure = new Error('redis unreachable');
+    vi.spyOn(harness.doubles.repos.jobRuns, 'finish').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+
+    const response = await triggerRun(harness.container, writeRequest('/api/jobs/x/run', 'POST'), {
+      id: job.id,
+    });
+
+    expect(response.status).toBe(500);
+    expect(records(harness)).toContainEqual(
+      expect.objectContaining({
+        msg: 'could not undo a partial scheduled-job write',
+        jobId: job.id,
+      }),
+    );
+    vi.restoreAllMocks();
   });
 });
