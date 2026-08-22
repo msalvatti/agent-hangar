@@ -153,38 +153,47 @@ export function Transcript({
     (phase === 'preparing' || phase === 'running') && !isLastItemStreamingAssistant;
 
   return (
-    <div
-      ref={containerRef}
-      data-testid="transcript"
-      role="region"
-      aria-label="Transcript"
-      onScroll={handleScroll}
-      className={cn('relative h-full overflow-y-auto', className)}
-    >
-      <div className="mx-auto flex max-w-210 flex-col gap-4 px-6 py-4">
-        {isEmpty && phase === 'idle' ? (
-          <p className="text-muted-foreground py-12 text-center text-sm">{emptyText}</p>
-        ) : (
-          items.map((item) => {
-            // Asked here rather than inside the memoized row so a caller-supplied renderer, whose
-            // closure changes identity every render, cannot defeat the memoization of every other
-            // row in the list.
-            const custom =
-              (item.kind === 'error' && renderError !== undefined ? renderError(item) : null) ??
-              null;
-            return custom === null ? (
-              <TranscriptRow
-                key={item.id}
-                item={item}
-                readOnly={readOnly}
-                onStopTool={onStopTool}
-              />
-            ) : (
-              <Fragment key={item.id}>{custom}</Fragment>
-            );
-          })
-        )}
-        {showBareCursor && <StreamCursor />}
+    // Two boxes rather than one, and the outer is what the pill is positioned against. An
+    // absolutely-positioned child of a scrolling element is laid out against that element's
+    // padding box, whose bottom edge is the end of the *scrolled content* — not the end of what
+    // the reader can see. The pill therefore travelled with the transcript instead of floating
+    // over it, and since it only appears while the reader is scrolled away from the live edge, it
+    // was off-screen whenever it existed: measured at 446 px above the visible area on a 3289 px
+    // transcript. The outer box does not scroll, so `bottom` there means what it reads as.
+    <div className={cn('relative h-full', className)}>
+      <div
+        ref={containerRef}
+        data-testid="transcript"
+        role="region"
+        aria-label="Transcript"
+        onScroll={handleScroll}
+        className="h-full overflow-y-auto"
+      >
+        <div className="mx-auto flex max-w-210 flex-col gap-4 px-6 py-4">
+          {isEmpty && phase === 'idle' ? (
+            <p className="text-muted-foreground py-12 text-center text-sm">{emptyText}</p>
+          ) : (
+            items.map((item) => {
+              // Asked here rather than inside the memoized row so a caller-supplied renderer, whose
+              // closure changes identity every render, cannot defeat the memoization of every other
+              // row in the list.
+              const custom =
+                (item.kind === 'error' && renderError !== undefined ? renderError(item) : null) ??
+                null;
+              return custom === null ? (
+                <TranscriptRow
+                  key={item.id}
+                  item={item}
+                  readOnly={readOnly}
+                  onStopTool={onStopTool}
+                />
+              ) : (
+                <Fragment key={item.id}>{custom}</Fragment>
+              );
+            })
+          )}
+          {showBareCursor && <StreamCursor />}
+        </div>
       </div>
       {!atBottom && items.length > 0 && <JumpToLatest onClick={jumpToLatest} />}
     </div>
