@@ -53,18 +53,36 @@ export type CaptureExec = (cmd: readonly string[]) => Promise<CaptureResult>;
  * @returns The summary unchanged, or its head plus a truncation marker, never over the budget.
  */
 export function truncateSummary(summary: string): string {
+  // The three encodings named in this function are stated for the reader: Node falls back to UTF-8
+  // for a name it does not recognise rather than refusing, so no observation can tell one spelling
+  // from another — which is why the directives below sit on those three lines.
+  // Stryker disable next-line StringLiteral
   const bytes = Buffer.from(summary, 'utf8');
   if (bytes.length <= MAX_SUMMARY_BYTES) {
     return summary;
   }
+  // Stryker disable next-line StringLiteral
   const keep = MAX_SUMMARY_BYTES - Buffer.byteLength(TRUNCATION_NOTICE, 'utf8');
   let head = bytes.subarray(0, keep).toString('utf8');
   // Drop the trailing replacement character produced by a cut inside a sequence, then any further
   // character whose re-encoding still does not fit.
+  // Stryker disable next-line StringLiteral,ConditionalExpression,EqualityOperator: the encoding is
+  // as above, and the emptiness guard cannot decide anything — a head with nothing in it encodes to
+  // no bytes at all, which is never over the budget, so the loop has already ended.
   while (head.length > 0 && Buffer.byteLength(head, 'utf8') > keep) {
     head = head.slice(0, -1);
   }
   return `${head}${TRUNCATION_NOTICE}`;
+}
+
+/**
+ * Whether a parsed field is a count this can report.
+ *
+ * @param value - One field of the command's output, already through `Number`.
+ * @returns `true` when it is a whole number, narrowing it to one.
+ */
+function isCount(value: number | undefined): value is number {
+  return Number.isInteger(value);
 }
 
 /**
@@ -78,12 +96,11 @@ export function truncateSummary(summary: string): string {
  */
 export function parseAheadBehind(output: string): { ahead: number; behind: number } {
   const [behind, ahead] = output.trim().split(/\s+/).map(Number);
-  if (
-    behind === undefined ||
-    ahead === undefined ||
-    !Number.isInteger(behind) ||
-    !Number.isInteger(ahead)
-  ) {
+  // Asked as one question rather than four. A field that is missing and a field that is not a
+  // whole number are the same answer here, and `Number.isInteger` already refuses both — but it
+  // says nothing about the type, so the two would still have to be narrowed by hand. A predicate
+  // that carries the narrowing removes that second pair of checks entirely.
+  if (!isCount(behind) || !isCount(ahead)) {
     return { ahead: 0, behind: 0 };
   }
   return { ahead, behind };

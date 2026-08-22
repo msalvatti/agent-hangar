@@ -52,7 +52,10 @@ describe('truncateSummary', () => {
    * with the marker, so a reader can tell the summary is incomplete.
    */
   it('cuts an oversized summary to the budget and marks it', () => {
-    expect(truncateSummary('x'.repeat(16_384))).toHaveLength(16_384);
+    // Unchanged, not merely the same length: a summary of exactly the budget that came back cut
+    // and marked would also measure 16 384, and the marker would be reporting a loss that never
+    // happened.
+    expect(truncateSummary('x'.repeat(16_384))).toBe('x'.repeat(16_384));
 
     const truncated = truncateSummary('x'.repeat(16_385));
 
@@ -88,6 +91,10 @@ describe('truncateSummary', () => {
       const truncated = truncateSummary(summary);
 
       expect(Buffer.byteLength(truncated, 'utf8')).toBeLessThanOrEqual(16_384);
+      // And no further from it than the character that had to be dropped: walking back from the
+      // wrong end of the head would leave a summary of one character where the budget allowed
+      // sixteen thousand, which reads as a repository with nothing in it.
+      expect(Buffer.byteLength(truncated, 'utf8')).toBeGreaterThan(16_384 - 4);
       expect(truncated.endsWith('\n[truncated]')).toBe(true);
     }
   });
@@ -111,8 +118,26 @@ describe('parseAheadBehind', () => {
     ['a single number', '3'],
     ['non-numeric output', 'fatal: bad revision'],
     ['a fractional count', '1.5\t2'],
+    // The right-hand count alone is as unusable as the left-hand one alone, and each is guarded
+    // separately: a check that asks about only one of them reads the other's absence as zero and
+    // reports a branch as level with its upstream when nothing is known about it at all.
+    ['a fractional count on the right', '2\t1.5'],
+    ['a count that is not a number on the right', '2\tmany'],
   ])('falls back to zeros for %s', (_case, output) => {
     expect(parseAheadBehind(output)).toEqual({ ahead: 0, behind: 0 });
+  });
+
+  /**
+   * git separates the two counts with a tab, and a reader that splits on one space sees a single
+   * field. Any run of whitespace is one separator here, because what arrives is whatever the
+   * command printed and the two numbers are what matter.
+   */
+  it.each([
+    ['a tab', '2\t5\n'],
+    ['spaces', '2  5\n'],
+    ['a mixture', ' 2 \t 5 \n'],
+  ])('reads the two counts separated by %s', (_case, output) => {
+    expect(parseAheadBehind(output)).toEqual({ behind: 2, ahead: 5 });
   });
 });
 
@@ -138,7 +163,18 @@ describe('captureGitSnapshot', () => {
       git: { branch: 'feature', headSha: 'b'.repeat(40), dirty: true, ahead: 4, behind: 1 },
       summary: ' M f.txt\n\n f.txt | 2 +-\n',
     });
-    expect(commands.some((cmd) => cmd.includes('origin/feature...HEAD'))).toBe(true);
+    // The exact commands, in order. Each of these is a separate contract with git — the
+    // subcommand, its flags and the ref it is asked about — and a snapshot assembled from
+    // different ones would still be a snapshot, of something else. The upstream comparison in
+    // particular must ask about the branch that was just read rather than a name fixed here.
+    expect(commands).toStrictEqual([
+      'git rev-parse --is-inside-work-tree',
+      'git rev-parse --abbrev-ref HEAD',
+      'git rev-parse HEAD',
+      'git status --porcelain',
+      'git rev-list --left-right --count origin/feature...HEAD',
+      'git diff --stat',
+    ]);
   });
 
   /**
@@ -190,6 +226,43 @@ describe('captureGitSnapshot', () => {
     expect(snapshot.git.branch).toBeNull();
     expect(snapshot.git).toMatchObject({ ahead: 0, behind: 0 });
     expect(commands.some((cmd) => cmd.includes('--left-right'))).toBe(false);
+  });
+
+  /**
+   * Three separate reasons a branch name is not one, each of which the other two would cover for.
+   * A command that failed has no answer whatever it printed; an answer of nothing is not a name;
+   * and `HEAD` is what git says on a detached checkout. Any of them taken as a branch sends the
+   * upstream comparison after `origin/` plus that, and puts it in the persisted snapshot.
+   */
+  it.each([
+    ['the command failed but printed something', { code: 128, stdout: 'feature\n' }],
+    ['the command succeeded and printed nothing', { code: 0, stdout: '\n' }],
+  ])('reports no branch when %s', async (_case, answer) => {
+    const { run, commands } = runnerFor({
+      '--is-inside-work-tree': { stdout: 'true\n' },
+      '--abbrev-ref': answer,
+    });
+
+    const snapshot = await captureGitSnapshot(run, TAKEN_AT);
+
+    expect(snapshot.git.branch).toBeNull();
+    expect(commands.some((cmd) => cmd.includes('--left-right'))).toBe(false);
+  });
+
+  /**
+   * A comparison that failed has no counts, whatever it printed on its way out. Read anyway, the
+   * numbers in a `fatal:` line become an ahead/behind the chat is told about.
+   */
+  it('reports no divergence when the comparison failed', async () => {
+    const { run } = runnerFor({
+      '--is-inside-work-tree': { stdout: 'true\n' },
+      '--abbrev-ref': { stdout: 'feature\n' },
+      '--left-right': { code: 128, stdout: '3\t4\n' },
+    });
+
+    const snapshot = await captureGitSnapshot(run, TAKEN_AT);
+
+    expect(snapshot.git).toMatchObject({ ahead: 0, behind: 0 });
   });
 
   /**
