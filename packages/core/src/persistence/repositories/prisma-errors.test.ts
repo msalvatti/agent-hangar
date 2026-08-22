@@ -245,3 +245,70 @@ describe('translatePrismaError', () => {
     }
   });
 });
+
+describe('what the translator refuses to read as a Prisma failure', () => {
+  /**
+   * A value that is not a record has no code and no message of Prisma's kind, and a function that
+   * happens to carry both is still not one. Read as one, whatever it says would decide which typed
+   * error a repository raises — from a value that reached the catch by some other route entirely.
+   */
+  it.each([
+    [
+      'a function carrying the right fields',
+      Object.assign(() => undefined, { code: 'P2025', message: 'gone' }),
+    ],
+    ['a record with a code and no message', { code: 'P2025' }],
+    ['a record with a message and no code', { message: 'Unique constraint failed' }],
+    ['a record whose code is not text', { code: 2025, message: 'gone' }],
+  ])('rethrows %s unchanged', (_case, error) => {
+    expect(() => translatePrismaError(error, { entity: 'Chat', id: 'c1' })).toThrow();
+    try {
+      translatePrismaError(error, { entity: 'Chat', id: 'c1' });
+    } catch (thrown) {
+      expect(thrown).toBe(error);
+    }
+  });
+
+  /**
+   * The driver adapter's shape is deeply nested and every level of it is optional: a P2002 that
+   * carries the adapter error but no cause, or a cause with no constraint, is an ordinary unique
+   * violation. Read without the optional steps it is a type error thrown out of the translator,
+   * which turns a violated constraint into a crash in the repository that was handling it.
+   */
+  it.each([
+    ['no adapter error at all', {}],
+    ['no cause under the adapter error', { driverAdapterError: {} }],
+    ['no constraint under the cause', { driverAdapterError: { cause: {} } }],
+    ['no fields under the constraint', { driverAdapterError: { cause: { constraint: {} } } }],
+  ])('translates a P2002 with %s to a unique violation', (_case, meta) => {
+    const error = { code: 'P2002', message: 'Unique constraint failed', meta };
+
+    expect(() => translatePrismaError(error, { entity: 'Chat', id: 'c1' })).toThrow(
+      UniqueViolationError,
+    );
+  });
+
+  /**
+   * Both places the violated fields can be named list more than one of them, and both are joined
+   * with a separator. Run together, `chatId` and `seq` become one name that matches no column and
+   * no index, which is what a person then goes looking for.
+   */
+  it.each([
+    ['meta.target', { target: ['chatId', 'seq'] }],
+    [
+      'the driver adapter constraint',
+      { driverAdapterError: { cause: { constraint: { fields: ['"chatId"', '"seq"'] } } } },
+    ],
+  ])('names every field of a violation reported through %s', (_case, meta) => {
+    const error = { code: 'P2002', message: 'Unique constraint failed', meta };
+    let caught: unknown;
+
+    try {
+      translatePrismaError(error, { entity: 'Message', id: 'm1' });
+    } catch (thrown) {
+      caught = thrown;
+    }
+
+    expect((caught as UniqueViolationError).field).toBe('chatId,seq');
+  });
+});

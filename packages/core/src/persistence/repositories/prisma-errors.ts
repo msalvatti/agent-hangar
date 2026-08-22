@@ -67,6 +67,9 @@ function isKnownRequestError(error: unknown): error is KnownRequestErrorShape {
     return false;
   }
   const candidate = error as Record<string, unknown>;
+  // Stryker disable next-line ConditionalExpression: a code that is not text reaches the switch
+  // below, which recognises none of its cases and rethrows the value untouched — the same answer
+  // refusing it here gives. The check is written because the shape is what is being narrowed.
   return typeof candidate.code === 'string' && typeof candidate.message === 'string';
 }
 
@@ -97,6 +100,9 @@ function targetText(meta: KnownRequestErrorShape['meta']): string {
  * @param error - The known-request error.
  */
 function constraintMentionText(error: KnownRequestErrorShape): string {
+  // Stryker disable next-line StringLiteral: this stands in for a message that is not there, and
+  // what the result is searched for are the names of constraints — so any text put here instead
+  // matches nothing, exactly as nothing does.
   const originalMessage = error.meta?.driverAdapterError?.cause?.originalMessage ?? '';
   return `${targetText(error.meta)} ${originalMessage} ${error.message}`;
 }
