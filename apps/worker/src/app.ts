@@ -124,15 +124,31 @@ export const defaultWorkerFactories: StartWorkerFactories<Redis> = {
  * once instead of waiting out a grace period nothing is watching.
  *
  * @param ms - How long to wait.
- * @returns A promise resolving to `true` once the wait is over, which is what the shutdown race
- *   reads as "the workers did not stop in time".
+ * @returns A promise resolving, once the wait is over, to the ending that abandons whatever is
+ *   still in flight.
  */
-function delay(ms: number): Promise<boolean> {
-  return new Promise<boolean>((resolve) => {
+function delay(ms: number): Promise<DrainOutcome> {
+  return new Promise<DrainOutcome>((resolve) => {
     setTimeout(() => {
-      resolve(true);
+      resolve({ warning: 'workers did not stop in time; abandoning jobs still in flight' });
     }, ms).unref();
   });
+}
+
+/**
+ * How the drain ended, and what the operator is told about it.
+ *
+ * Carried as one value rather than as a boolean, because the two endings that abandon work are
+ * different events: the grace period ran out with turns still running, or the drain could not be
+ * asked for at all because the connection had already gone. Reported identically, an operator
+ * chasing a worker that keeps abandoning jobs cannot tell which of the two is happening.
+ */
+interface DrainOutcome {
+  /**
+   * What to warn about, and the whole of what distinguishes the endings: present means work was
+   * abandoned and the close is forced, absent means the drain finished and nothing was lost.
+   */
+  readonly warning?: string;
 }
 
 /**
@@ -170,16 +186,18 @@ function createShutdown(
   const run = async (): Promise<void> => {
     container.logger.info('stopping workers');
     heartbeat.stop();
-    const drained = Promise.all(workers.map((worker) => worker.pause())).then(
-      () => false,
-      () => true,
+    const drained: Promise<DrainOutcome> = Promise.all(
+      workers.map((worker) => worker.pause()),
+    ).then(
+      () => ({}),
+      () => ({ warning: 'the drain failed outright; abandoning jobs still in flight' }),
     );
-    const force = await Promise.race([drained, delay(SHUTDOWN_GRACE_MS)]);
-    if (force) {
-      container.logger.warn('workers did not stop in time; abandoning jobs still in flight');
+    const { warning } = await Promise.race([drained, delay(SHUTDOWN_GRACE_MS)]);
+    if (warning !== undefined) {
+      container.logger.warn(warning);
     }
     try {
-      await Promise.all(workers.map((worker) => worker.close(force)));
+      await Promise.all(workers.map((worker) => worker.close(warning !== undefined)));
     } finally {
       await container.close();
     }
