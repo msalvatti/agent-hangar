@@ -301,7 +301,11 @@ test.describe('interactive controls are usable with a pointer', () => {
  * The viewport is deliberately short, so the fixture transcript is taller than the box that shows
  * it whatever its content grows to.
  */
-test('the jump-to-latest pill floats over the visible transcript', async ({ page }) => {
+test('the jump-to-latest pill floats over the visible transcript', async ({ page, mode }) => {
+  // Same reason the rest of this file is mock-only: the measurement needs a transcript of a known
+  // size, and the chat it reads is a seeded fixture that the real stack has never heard of. Left
+  // unguarded it asked the real API for `chat-finished` and was answered 404.
+  test.skip(mode === 'real', 'the layout is measured against the mock API seeded state');
   await page.setViewportSize({ width: 420, height: 360 });
   const chat = new ChatPage(page);
   await chat.goto(MOCK_CHATS.finished);
