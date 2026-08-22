@@ -82,13 +82,16 @@ export function fixtureSpec(overrides: Partial<WorkspaceSpec> = {}): WorkspaceSp
 /**
  * Builds a runner over a fake daemon that already knows the workspace image.
  *
- * @param options - Exec scripts the daemon replays and a readiness budget override.
+ * @param options - Exec scripts the daemon replays, a readiness budget override, and a delay: the
+ *   default is a no-op, and `useRealDelay` asks for the runner's own, which is the only way to
+ *   exercise the waiting the readiness loop is written around.
  * @returns The runner, the fake daemon and the clock.
  */
 export function makeRunnerFixture(
   options: {
     execScripts?: FakeExecScript[];
     readiness?: { attempts: number; delayMs: number };
+    useRealDelay?: boolean;
   } = {},
 ): RunnerFixture {
   const docker = new FakeDockerApi({
@@ -102,8 +105,8 @@ export function makeRunnerFixture(
     namePrefix: FIXTURE_NAME_PREFIX,
     clock,
     readiness: options.readiness ?? { attempts: 3, delayMs: 1 },
-    // No delay: the readiness back-off is never what a unit test is about.
-    sleep: async () => Promise.resolve(),
+    // No delay by default: the readiness back-off is never what a unit test is about.
+    ...(options.useRealDelay === true ? {} : { sleep: async () => Promise.resolve() }),
     randomUUID: () => FIXTURE_EXEC_REF,
   });
   return { runner, docker, clock };

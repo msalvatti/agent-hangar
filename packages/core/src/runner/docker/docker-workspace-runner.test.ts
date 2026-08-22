@@ -105,7 +105,17 @@ describe('DockerWorkspaceRunner.create', () => {
     const { runner, docker } = makeRunner();
     docker.networks.set('ah-ws-test', { Name: 'ah-ws-test', Driver: 'bridge' });
 
-    await expect(createWorkspace(runner)).rejects.toThrow(/ah-ws-test/);
+    const failure = await createWorkspace(runner).catch((error: unknown) => error);
+
+    // The whole message: it names the network, the option that is missing, and the one command
+    // that repairs it. An operator who is told only that something is wrong has to read this
+    // module to find out what, and a network left in place keeps every workspace on it reachable
+    // from every other.
+    expect((failure as Error).message).toBe(
+      'the workspace network ah-ws-test does not isolate its members ' +
+        '(com.docker.network.bridge.enable_icc is not "false"); ' +
+        'remove it with "docker network rm ah-ws-test" and it will be recreated',
+    );
     expect(docker.containers.size).toBe(0);
     expect(docker.networkOptions).toStrictEqual([]);
   });
@@ -660,5 +670,297 @@ describe('DockerWorkspaceRunner.list', () => {
     await expect(runner.health({ workspaceId: 'ws-x', runnerRef: 'c8' })).resolves.toMatchObject({
       status: 'healthy',
     });
+  });
+});
+
+describe('what the runner says when the daemon refuses', () => {
+  /**
+   * Each of these wraps a daemon failure in an error of this module's own, and the wrapping is the
+   * whole of what the caller gets: the message says which operation failed and on which workspace,
+   * and the cause is the only place the daemon's own reason survives. Emptied, the message names
+   * nothing an operator can act on; dropped, the cause leaves the failure with no reason at all.
+   *
+   * Asserted per operation rather than in one place, because each of these is a different call and
+   * a message that has stopped naming its own would send the reader to the wrong one.
+   */
+  it('reports an image it cannot inspect, with the daemon failure as the cause', async () => {
+    const { runner, docker } = makeRunner();
+    const refusal = dockerError(500, 'daemon is unhappy');
+    docker.failures.imageInspect = refusal;
+
+    const failure = await createWorkspace(runner).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(DockerRunnerError);
+    expect((failure as Error).message).toBe(`cannot inspect image ${IMAGE}`);
+    expect((failure as Error).cause).toBe(refusal);
+  });
+
+  /** A missing image is its own error, and the daemon's reason is what says it was a 404. */
+  it('reports a missing image as such, with the daemon failure as the cause', async () => {
+    const { runner, docker } = makeRunner();
+    const refusal = dockerError(404, 'no such image');
+    docker.failures.imageInspect = refusal;
+
+    const failure = await createWorkspace(runner).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(WorkspaceImageMissing);
+    expect((failure as Error).cause).toBe(refusal);
+  });
+
+  /** The network is created before the container that joins it; a refusal names the network. */
+  it('reports a network it could not create, with the daemon failure as the cause', async () => {
+    const { runner, docker } = makeRunner();
+    const refusal = dockerError(500, 'daemon is unhappy');
+    docker.failures.createNetwork = refusal;
+
+    const failure = await createWorkspace(runner).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(DockerRunnerError);
+    expect((failure as Error).message).toBe(
+      `could not create the workspace network ${buildNetworkCreateOptions('test').Name}`,
+    );
+    expect((failure as Error).cause).toBe(refusal);
+  });
+
+  /**
+   * The create call is the one exception: its request body carries the whole workspace
+   * configuration, and a daemon or proxy rejecting it is the one place that body might be echoed
+   * back. So this failure carries no cause at all, and the workspace id in the message is what
+   * locates it in the daemon's own logs.
+   */
+  it.each([
+    ['refuses outright', 500, 'cannot create workspace ws-1'],
+    ['reports the name as taken', 409, 'container name already exists for workspace ws-1'],
+  ])('reports a container the daemon %s, without a cause', async (_name, status, message) => {
+    const { runner, docker } = makeRunner();
+    docker.failures.createContainer = dockerError(status, 'daemon is unhappy');
+
+    const failure = await createWorkspace(runner).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(DockerRunnerError);
+    expect((failure as Error).message).toBe(message);
+    expect((failure as Error).cause).toBeUndefined();
+  });
+
+  /** A workspace whose container the daemon cannot describe is a failure, not a health reading. */
+  it('reports a workspace it cannot inspect, with the daemon failure as the cause', async () => {
+    const { runner, docker } = makeRunner();
+    const handle = await createWorkspace(runner);
+    const refusal = dockerError(500, 'daemon is unhappy');
+    docker.failures.containerInspect = refusal;
+
+    const failure = await runner.health(handle).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(DockerRunnerError);
+    expect((failure as Error).message).toBe(`cannot inspect workspace ${handle.workspaceId}`);
+    expect((failure as Error).cause).toBe(refusal);
+  });
+});
+
+describe('what teardown and termination say when the daemon refuses', () => {
+  /**
+   * Teardown tolerates the three refusals that mean the work is already done — gone, not modified,
+   * already in progress — and reports everything else. What it reports is the operation and the
+   * container, with the daemon's own reason as the cause; a workspace that cannot be torn down is
+   * a container left running against a chat that thinks it is finished.
+   */
+  it.each([
+    ['stop', 'containerStop' as const, 'cannot stop container c1'],
+    ['remove', 'containerRemove' as const, 'cannot remove container c1'],
+  ])(
+    'reports a container it cannot %s, with the daemon failure as the cause',
+    async (_name, hook, message) => {
+      const { runner, docker } = makeRunner();
+      const handle = await createWorkspace(runner);
+      const refusal = dockerError(500, 'daemon is unhappy');
+      docker.failures[hook] = refusal;
+
+      const failure = await runner.destroy(handle).catch((error: unknown) => error);
+
+      expect(failure).toBeInstanceOf(DockerRunnerError);
+      expect((failure as Error).message).toBe(message);
+      expect((failure as Error).cause).toBe(refusal);
+    },
+  );
+
+  /**
+   * The kill exec is allowed to fail — the container may be gone, or out of exec slots — and the
+   * answer to that is the container-level kill, not a diagnosis. Read as a delivered signal
+   * instead, the fallback never runs and a process the caller asked to stop keeps running.
+   */
+  it('falls back to killing the container when the kill exec fails', async () => {
+    const { runner, docker } = makeRunner({
+      execScripts: [
+        { match: (cmd) => cmd.join(' ').includes('kill'), failStart: true },
+        { match: (cmd) => cmd.includes('sleep'), hang: true },
+      ],
+    });
+    const handle = await createWorkspace(runner);
+
+    const events = runner.exec(handle, { cmd: ['sleep', '30'], timeoutMs: 40 });
+    await drain(events);
+
+    expect(docker.calls).toContain('kill:c1');
+  });
+
+  /**
+   * And when that last resort fails too, the caller is told so: this is the one termination
+   * failure with nothing behind it, so the daemon's reason is the only thing that says why.
+   */
+  it('reports a container it cannot kill, with the daemon failure as the cause', async () => {
+    const refusal = dockerError(500, 'daemon is unhappy');
+    const { runner, docker } = makeRunner({
+      execScripts: [
+        { match: (cmd) => cmd.join(' ').includes('kill'), failStart: true },
+        { match: (cmd) => cmd.includes('sleep'), hang: true },
+      ],
+    });
+    const handle = await createWorkspace(runner);
+    docker.failures.containerKill = refusal;
+
+    const events = runner.exec(handle, { cmd: ['sleep', '30'], timeoutMs: 40 });
+    const failure = await drain(events).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(DockerRunnerError);
+    expect((failure as Error).message).toMatch(/^cannot terminate exec /);
+    expect((failure as Error).cause).toBe(refusal);
+  });
+});
+
+describe('what the runner asks the daemon for, and what it does with the answer', () => {
+  /**
+   * The two streams are kept apart. Read as one, a probe's error output lands in the value the
+   * caller parses — for the git snapshot that is a branch name with a warning glued to it, which
+   * is then persisted as where the work is.
+   */
+  it('keeps the two output streams of a probe apart', async () => {
+    const { runner } = makeRunner({
+      execScripts: [
+        { match: (cmd) => cmd.includes('--is-inside-work-tree'), stdout: 'true\n' },
+        {
+          match: (cmd) => cmd.includes('--abbrev-ref'),
+          stdout: 'feature/work\n',
+          stderr: 'warning: refname is ambiguous\n',
+        },
+      ],
+    });
+    const handle = await createWorkspace(runner);
+
+    const snapshot = await runner.snapshot(handle);
+
+    expect(snapshot.git.branch).toBe('feature/work');
+  });
+
+  /**
+   * The exec is created without a TTY, which is what makes the daemon multiplex the two streams
+   * into one framed channel; with one, the same bytes arrive raw and every frame header the
+   * demultiplexer expects is missing. It attaches the two output streams because a probe that
+   * cannot be read is a probe that reports nothing.
+   */
+  it('creates its probe execs framed rather than on a terminal', async () => {
+    const { runner, docker } = makeRunner({
+      execScripts: [
+        { match: (cmd) => cmd.includes('--is-inside-work-tree'), stdout: 'true\n' },
+        { match: (cmd) => cmd.includes('--abbrev-ref'), stdout: 'main\n' },
+      ],
+    });
+    const handle = await createWorkspace(runner);
+
+    await runner.snapshot(handle);
+
+    expect(docker.execOptions.every((options) => !options.Tty)).toBe(true);
+    expect(docker.execOptions.every((options) => options.AttachStdout)).toBe(true);
+  });
+
+  /**
+   * Nothing writes to a probe's standard input, so the exec is created without one and started
+   * without one: attached and never closed, the process on the other side waits for an end of file
+   * that never comes. The daemon's behaviour there is not something a double can reproduce — it
+   * hands back a stream that has already finished — so this is read off the request instead.
+   */
+  it('creates and starts its probe execs with no standard input', async () => {
+    const { runner, docker } = makeRunner({
+      execScripts: [
+        { match: (cmd) => cmd.includes('--is-inside-work-tree'), stdout: 'true\n' },
+        { match: (cmd) => cmd.includes('--abbrev-ref'), stdout: 'main\n' },
+      ],
+    });
+    const handle = await createWorkspace(runner);
+
+    await runner.snapshot(handle);
+
+    expect(docker.execOptions.every((options) => !options.AttachStdin)).toBe(true);
+    expect(docker.execStartOptions.every((options) => !options.stdin)).toBe(true);
+    expect(docker.execStartOptions.map((options) => options.hijack)).not.toContain(false);
+  });
+
+  /**
+   * Without an injected delay the runner waits for real between readiness attempts. A delay that
+   * returns nothing at all makes the whole budget elapse in one turn of the event loop, so a
+   * container that needs a moment is declared unusable and destroyed while it was still starting.
+   */
+  it('waits between readiness attempts when no delay is injected', async () => {
+    const { runner } = makeRunner({
+      readiness: { attempts: 2, delayMs: 60 },
+      execScripts: [{ match: (cmd) => cmd.join(' ') === 'true', exitCode: 1 }],
+      useRealDelay: true,
+    });
+    const started = Date.now();
+
+    await createWorkspace(runner).catch(() => undefined);
+
+    expect(Date.now() - started).toBeGreaterThanOrEqual(50);
+  });
+});
+
+describe('what the runner reads back from the daemon', () => {
+  /**
+   * The listing is what the reaper works from, and a workspace that has stopped is exactly the one
+   * it has to find. Asked for the running containers only, the daemon returns nothing about it and
+   * a stopped container stays on the host until somebody notices by hand.
+   */
+  it('lists a workspace whose container has stopped', async () => {
+    const { runner, docker } = makeRunner();
+    const handle = await createWorkspace(runner);
+    const record = docker.containers.get(handle.runnerRef);
+    if (record !== undefined) {
+      record.running = false;
+    }
+
+    await expect(runner.list({})).resolves.toStrictEqual([handle]);
+  });
+
+  /**
+   * A container carrying the instance label but no workspace of its own is not a workspace, and a
+   * handle built from it names one that cannot be found. Read as a workspace it would be reaped,
+   * inspected and reported against an id that is the empty string.
+   */
+  it('skips a container whose workspace label is empty', async () => {
+    const { runner, docker } = makeRunner();
+    await createWorkspace(runner);
+    docker.containers.set('c-empty', {
+      options: { Labels: { 'ah.instance': 'test', 'ah.workspace': '' } },
+      running: true,
+      execCommands: [],
+    });
+
+    const listed = await runner.list({});
+
+    expect(listed.map((entry) => entry.runnerRef)).toStrictEqual(['c1']);
+  });
+
+  /**
+   * The readiness budget is a count of attempts, not a count of gaps: one more than it says is one
+   * more exec against a container that has already been given every chance the operator configured.
+   */
+  it('probes exactly as many times as the readiness budget allows', async () => {
+    const { runner, docker } = makeRunner({
+      readiness: { attempts: 2, delayMs: 1 },
+      execScripts: [{ match: (cmd) => cmd.join(' ') === 'true', exitCode: 1 }],
+    });
+
+    await createWorkspace(runner).catch(() => undefined);
+
+    expect(docker.calls.filter((call) => call.endsWith(':true'))).toHaveLength(2);
   });
 });
