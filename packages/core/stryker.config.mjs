@@ -32,7 +32,12 @@ export default {
   testRunner: 'vitest',
   plugins: ['@stryker-mutator/vitest-runner'],
   vitest: { configFile: 'vitest.stryker.config.ts' },
-  mutate: ['src/**/*.ts', '!src/**/*.test.ts', '!src/persistence/generated/**', '!src/testing/**'],
+  mutate: [
+    'src/**/*.ts',
+    '!src/**/*.test.ts',
+    '!src/persistence/generated/**',
+    '!src/**/testing/**',
+  ],
   // The gate this package is held to. A survivor is a defect the suite cannot see, so the only
   // score that closes the lane is the whole of it.
   thresholds: { high: 100, low: 100, break: 100 },
