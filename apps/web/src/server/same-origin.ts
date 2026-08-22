@@ -48,8 +48,14 @@ import { isLoopbackHostname } from '@agent-hangar/core';
 
 import { ForbiddenOriginError } from './errors';
 
-/** `Sec-Fetch-Site` values a state-changing request may carry when it sends no `Origin`. */
-export const ALLOWED_FETCH_SITES: ReadonlySet<string> = new Set(['same-origin', 'none']);
+/**
+ * `Sec-Fetch-Site` values a state-changing request may carry when it sends no `Origin`.
+ *
+ * Typed over `unknown` so membership is the whole test: a header that is not there is not one of
+ * these either, and a separate check for its absence would be a branch no request could tell apart
+ * from the one beside it.
+ */
+export const ALLOWED_FETCH_SITES: ReadonlySet<unknown> = new Set(['same-origin', 'none']);
 
 /**
  * Characters a `Host` header may contain: a host, an optional port, and nothing else.
@@ -83,6 +89,10 @@ interface AddressedHost {
  */
 function addressedHost(request: Request): AddressedHost | null {
   const host = request.headers.get('host');
+  // The null test is what narrows the type for the pattern beside it; a header that is not there
+  // is refused by that pattern too, which reads a missing one as the four letters of `null` — and
+  // no loopback name is spelled that way.
+  // Stryker disable next-line ConditionalExpression
   if (host === null || !HOST_HEADER.test(host)) {
     return null;
   }
@@ -189,8 +199,11 @@ export function assertSameOrigin(request: Request): void {
     }
     return;
   }
+  // A header that is not there is not a member of the set either, so its absence needs no test of
+  // its own: a request that labelled itself as nothing has proved nothing, which is the same
+  // refusal as one that labelled itself as another site.
   const site = request.headers.get('sec-fetch-site');
-  if (site === null || !ALLOWED_FETCH_SITES.has(site)) {
+  if (!ALLOWED_FETCH_SITES.has(site)) {
     throw new ForbiddenOriginError(
       'Request must carry an Origin header or Sec-Fetch-Site: same-origin',
     );

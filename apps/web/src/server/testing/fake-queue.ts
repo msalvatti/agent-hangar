@@ -91,8 +91,20 @@ export class FakeQueue {
   /** Registered Job Schedulers, keyed by scheduler key. */
   readonly schedulers = new Map<string, RecordedScheduler>();
 
+  /**
+   * How many times {@link FakeQueue.close} was called.
+   *
+   * A count rather than a flag, because closing twice is not the same as closing once: the real
+   * `close` tears down a connection, and a second one on a queue whose socket has gone is an
+   * error a caller has to be idempotent about — which a double that only remembered "closed" would
+   * report as tidy either way.
+   */
+  closes = 0;
+
   /** Whether {@link FakeQueue.close} was called. */
-  closed = false;
+  get closed(): boolean {
+    return this.closes > 0;
+  }
 
   /** Set to make the next `add` reject, exercising the enqueue-failure path. */
   addFailure: Error | null = null;
@@ -105,8 +117,14 @@ export class FakeQueue {
 
   /**
    * @param name - Queue name.
+   * @param opts - What the producer built the queue over; recorded because the connection is the
+   *   one the container owns and closes, and a queue opened on a second one is a socket nothing
+   *   releases.
    */
-  constructor(readonly name: string) {
+  constructor(
+    readonly name: string,
+    readonly opts?: { connection?: unknown },
+  ) {
     created.set(name, this);
   }
 
@@ -191,7 +209,7 @@ export class FakeQueue {
    * @returns Resolves once closed.
    */
   close(): Promise<void> {
-    this.closed = true;
+    this.closes += 1;
     return Promise.resolve();
   }
 }

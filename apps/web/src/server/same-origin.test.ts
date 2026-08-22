@@ -106,6 +106,41 @@ describe('assertKnownHost', () => {
    * `127.0.0.1`, so a request that arrives naming one has been told the wrong thing about where it
    * points.
    */
+  it('says what it refused, so a misconfigured proxy is not read as a bug', () => {
+    const rebound = new Request('http://127.0.0.1:3000/api/chats', {
+      headers: { host: 'attacker.test' },
+    });
+    const foreign = new Request('http://127.0.0.1:3000/api/chats', {
+      headers: { host: '127.0.0.1:3000', origin: 'http://evil.example' },
+    });
+    const crossSite = new Request('http://127.0.0.1:3000/api/chats', {
+      headers: { host: '127.0.0.1:3000', 'sec-fetch-site': 'cross-site' },
+    });
+    const unlabelled = new Request('http://127.0.0.1:3000/api/chats', {
+      headers: { host: '127.0.0.1:3000' },
+    });
+
+    // The four sentences are written out here: each reaches a caller as the body of a 403, they
+    // are the only thing that distinguishes a rebound host from a foreign origin from a request
+    // that proved nothing, and a developer reading one of them is deciding whether their proxy is
+    // misconfigured or their page is on the wrong origin.
+    expect(() => {
+      assertKnownHost(rebound);
+    }).toThrow('Request was addressed to a host this instance does not serve');
+    expect(() => {
+      assertNoForeignOrigin(foreign);
+    }).toThrow('Request origin is not allowed');
+    expect(() => {
+      assertNoForeignOrigin(crossSite);
+    }).toThrow('Request must not be issued from another site');
+    expect(() => {
+      assertSameOrigin(foreign);
+    }).toThrow('Request origin is not allowed');
+    expect(() => {
+      assertSameOrigin(unlabelled);
+    }).toThrow('Request must carry an Origin header or Sec-Fetch-Site: same-origin');
+  });
+
   it('rejects an address that is not this machine', () => {
     for (const authority of ['192.168.1.10:3000', '0.0.0.0:3000', 'example.com']) {
       expect(() => {
@@ -132,7 +167,17 @@ describe('assertKnownHost', () => {
    * parsed at all.
    */
   it('rejects a Host header that is not just a host and a port', () => {
-    for (const authority of ['127.0.0.1@evil.example', 'evil.example/@127.0.0.1', '127.0.0.1 x']) {
+    for (const authority of [
+      '127.0.0.1@evil.example',
+      'evil.example/@127.0.0.1',
+      '127.0.0.1 x',
+      // The two shapes that make `http://<host>` parse as an authority other than the one it looks
+      // like: a userinfo section, whose host is what follows the `@`, and a path, whose host is
+      // what precedes the `/`. Both end at a loopback name, so a check that read anywhere but the
+      // whole header would admit a page on `evil.example` as this instance.
+      'evil.example@127.0.0.1',
+      '127.0.0.1/evil.example',
+    ]) {
       const request = new Request('http://127.0.0.1:3000/api/chats', {
         headers: { host: authority },
       });

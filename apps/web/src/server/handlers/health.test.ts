@@ -8,7 +8,7 @@
  * on Docker, and no failure detail carries text a driver produced.
  * Mocks: the `bullmq` module; fake timers where a probe has to time out.
  */
-import { healthResponse, workerHeartbeatKey } from '@agent-hangar/core';
+import { healthResponse, workerHeartbeatKey, WORKER_HEARTBEAT_TTL_SEC } from '@agent-hangar/core';
 import type { WorkerHeartbeat } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -84,13 +84,63 @@ describe('getHealth', () => {
       postgres: harness.container.config.POSTGRES_PORT,
       redis: harness.container.config.REDIS_PORT,
     });
-    expect(body.checks).toEqual({
+    // Strictly: a check carrying `detail: undefined` beside its `ok` is a check the contract does
+    // not describe, and one that reaches the browser as a key with no value.
+    expect(body.checks).toStrictEqual({
       db: { ok: true },
       redis: { ok: true },
       docker: { ok: true },
       image: { ok: true },
       worker: { ok: true, lastSeenAt: NOW.toISOString() },
     });
+    // The database is made to do something rather than merely connected to: a pool hands back a
+    // connection that was opened long ago, and only a statement proves the server behind it is
+    // still answering.
+    expect(harness.doubles.prisma.queries).toStrictEqual(['SELECT 1']);
+    // Never cached. This answer is read by a page that polls it, and a proxy or a browser holding
+    // the last one would show a database that came back as still unreachable.
+    expect(
+      (await getHealth(harness.container, readRequest('/api/health'))).headers.get('Cache-Control'),
+    ).toBe('no-store');
+  });
+
+  /**
+   * One dependency down is enough to say the instance is not healthy. Reported the other way
+   * round, a page whose database is gone would show a green banner because Redis answered.
+   */
+  it.each([
+    ['the database', 'db'],
+    ['redis', 'redis'],
+  ])('is not ok when %s alone is unreachable', async (_case, failing) => {
+    const harness = createTestContainer({ now: NOW });
+    await writeHeartbeat(harness);
+    const refused = Object.assign(new Error('connect ECONNREFUSED'), { code: 'ECONNREFUSED' });
+    if (failing === 'db') {
+      harness.doubles.prisma.queryFailure = refused;
+    } else {
+      vi.spyOn(harness.doubles.redis, 'ping').mockRejectedValue(refused);
+    }
+
+    const { body } = await report(harness);
+
+    expect(body.ok).toBe(false);
+    expect(body.checks[failing === 'db' ? 'db' : 'redis']).toStrictEqual({
+      ok: false,
+      detail: 'ECONNREFUSED',
+    });
+  });
+
+  /**
+   * A heartbeat exactly as old as its lifetime is still the worker's last word: the key is written
+   * on a shorter interval than it lives, so the reading at the boundary is the one that arrived a
+   * whole interval ago and has not yet been replaced. Refused there, a healthy worker flickers.
+   */
+  it('accepts a heartbeat exactly as old as its lifetime', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const at = new Date(NOW.getTime() - WORKER_HEARTBEAT_TTL_SEC * 1000).toISOString();
+    await writeHeartbeat(harness, { at });
+
+    expect((await report(harness)).body.checks.worker).toStrictEqual({ ok: true, lastSeenAt: at });
   });
 
   /**
@@ -102,9 +152,39 @@ describe('getHealth', () => {
     const harness = createTestContainer({ now: NOW });
     const { body } = await report(harness);
     expect(body.ok).toBe(false);
-    expect(body.checks.worker).toEqual({ ok: false, detail: WORKER_SILENT });
-    expect(body.checks.docker).toEqual({ ok: false, detail: UNKNOWN_WITHOUT_WORKER });
-    expect(body.checks.image).toEqual({ ok: false, detail: UNKNOWN_WITHOUT_WORKER });
+    // The four sentences are written out here as well as read from the exports: they are what the
+    // settings page shows a user whose instance is not healthy, and compared only against the
+    // constants they came from every one of them could be emptied without a check noticing.
+    expect(body.checks.worker).toStrictEqual({ ok: false, detail: 'worker has not reported' });
+    expect(body.checks.docker).toStrictEqual({
+      ok: false,
+      detail: 'unknown while the worker is down',
+    });
+    expect(body.checks.image).toStrictEqual({
+      ok: false,
+      detail: 'unknown while the worker is down',
+    });
+    expect([WORKER_SILENT, UNKNOWN_WITHOUT_WORKER]).toStrictEqual([
+      'worker has not reported',
+      'unknown while the worker is down',
+    ]);
+  });
+
+  /**
+   * A rebound host is refused here as everywhere else. This route answers before authentication of
+   * any kind, and a `Host` a DNS rebinding attack chose is what turns a page on another origin
+   * into a reader of this instance's ports and its dependency state.
+   */
+  it('refuses a request addressed to a host this instance does not answer for', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const rebound = new Request('http://attacker.test/api/health', {
+      headers: { host: 'attacker.test' },
+    });
+
+    const response = await getHealth(harness.container, rebound);
+
+    expect(response.status).toBe(403);
+    expect(await response.text()).not.toContain('ports');
   });
 
   /**
@@ -152,8 +232,15 @@ describe('getHealth', () => {
     const harness = createTestContainer({ now: NOW });
     await writeHeartbeat(harness, { dockerOk: false, imagePresent: false });
     const { body } = await report(harness);
-    expect(body.checks.docker).toEqual({ ok: false, detail: DOCKER_UNREACHABLE });
-    expect(body.checks.image).toEqual({ ok: false, detail: IMAGE_MISSING });
+    expect(body.checks.docker).toStrictEqual({
+      ok: false,
+      detail: 'docker did not answer the worker',
+    });
+    expect(body.checks.image).toStrictEqual({ ok: false, detail: 'run pnpm infra:image' });
+    expect([DOCKER_UNREACHABLE, IMAGE_MISSING]).toStrictEqual([
+      'docker did not answer the worker',
+      'run pnpm infra:image',
+    ]);
   });
 
   /**
@@ -174,9 +261,25 @@ describe('getHealth', () => {
     expect(text).not.toContain('hunter2');
     const body = healthResponse.parse(JSON.parse(text));
     expect(body.ok).toBe(false);
-    expect(body.checks.db).toEqual({ ok: false, detail: 'ECONNREFUSED' });
-    expect(body.checks.redis).toEqual({ ok: false, detail: 'ECONNREFUSED' });
-    expect(harness.doubles.logOutput()).toContain('health probe failed');
+    expect(body.checks.db).toStrictEqual({ ok: false, detail: 'ECONNREFUSED' });
+    expect(body.checks.redis).toStrictEqual({ ok: false, detail: 'ECONNREFUSED' });
+    // Which probe failed, and how it is classified. Two dependencies are probed together, and a
+    // line naming neither leaves an operator unable to tell which one to go and look at.
+    const logged = harness.doubles
+      .logOutput()
+      .split('\n')
+      .filter((line) => line !== '')
+      .map((line) => JSON.parse(line) as Record<string, unknown>);
+    expect(logged).toContainEqual(
+      expect.objectContaining({ msg: 'health probe failed', probe: 'db', failure: 'ECONNREFUSED' }),
+    );
+    expect(logged).toContainEqual(
+      expect.objectContaining({
+        msg: 'health probe failed',
+        probe: 'redis',
+        failure: 'ECONNREFUSED',
+      }),
+    );
   });
 
   /**
@@ -191,7 +294,8 @@ describe('getHealth', () => {
       const pending = getHealth(harness.container, readRequest('/api/health'));
       await vi.advanceTimersByTimeAsync(PROBE_TIMEOUT_MS);
       const body = healthResponse.parse(await (await pending).json());
-      expect(body.checks.db).toEqual({ ok: false, detail: TIMED_OUT });
+      expect(body.checks.db).toStrictEqual({ ok: false, detail: 'timeout' });
+      expect(TIMED_OUT).toBe('timeout');
       expect(vi.getTimerCount()).toBe(0);
     } finally {
       vi.useRealTimers();
@@ -202,6 +306,25 @@ describe('getHealth', () => {
    * Reading the heartbeat is bounded the same way: a Redis that accepted the connection and then
    * stopped answering must not stall the route.
    */
+  it('leaves no timer behind for a probe that answered', async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = createTestContainer({ now: NOW });
+      await writeHeartbeat(harness);
+
+      const body = healthResponse.parse(
+        await (await getHealth(harness.container, readRequest('/api/health'))).json(),
+      );
+
+      // Every probe answered, so every deadline is disarmed. A timer left armed for each poll of a
+      // page that polls every few seconds is a process that never falls idle.
+      expect(body.ok).toBe(true);
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('gives up on a heartbeat read that never answers', async () => {
     vi.useFakeTimers();
     try {

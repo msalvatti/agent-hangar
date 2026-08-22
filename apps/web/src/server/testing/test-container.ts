@@ -105,11 +105,18 @@ export class FakeDatabase implements DatabaseClient {
   /** Set to make the health probe never settle, so the probe timeout is exercised. */
   shouldHang = false;
 
+  /** Every raw query issued, as the text of its template. */
+  readonly queries: string[] = [];
+
   /**
+   * @param query - Template parts of the tagged query, recorded so a caller can be asked what it
+   *   sent: the probe's whole job is to make the database do something, and a probe that sent no
+   *   statement would answer for a connection nobody used.
    * @returns An empty row set, which is what the probe query yields once mapped.
    * @throws Error When {@link FakeDatabase.queryFailure} is set.
    */
-  async $queryRaw<T = unknown>(): Promise<T> {
+  async $queryRaw<T = unknown>(query?: TemplateStringsArray): Promise<T> {
+    this.queries.push((query ?? []).join('?'));
     if (this.queryFailure !== null) {
       throw this.queryFailure;
     }

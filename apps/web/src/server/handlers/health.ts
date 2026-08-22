@@ -48,16 +48,15 @@ export const IMAGE_MISSING = 'run pnpm infra:image';
  * @param container - The server container.
  * @param name - Probe name, used only in the log line.
  * @param work - The command to await.
- * @returns Whether it answered, and how long it took.
+ * @returns Whether it answered, and why it did not when it did not.
  */
 async function probe(
   container: ServerContainer,
   name: string,
   work: () => Promise<unknown>,
 ): Promise<ProbeResult> {
-  const startedAt = Date.now();
   const attempt = work().then(
-    (): ProbeResult => ({ ok: true, latencyMs: Date.now() - startedAt }),
+    (): ProbeResult => ({ ok: true }),
     (error: unknown): ProbeResult => {
       const detail = describeClientFailure(error);
       container.logger.warn({ probe: name, failure: detail }, 'health probe failed');
@@ -75,34 +74,43 @@ async function probe(
  */
 async function readHeartbeat(container: ServerContainer): Promise<WorkerHeartbeat | null> {
   const raw = await withTimeout(
-    container.redis.get(workerHeartbeatKey(container.config.AH_INSTANCE)).catch(() => null),
+    container.redis.get(workerHeartbeatKey(container.config.AH_INSTANCE)).catch(
+      // Stryker disable next-line ArrowFunction
+      () => null,
+    ),
     PROBE_TIMEOUT_MS,
+    // Stryker disable next-line ArrowFunction
     () => null,
   );
+  // Nothing read and nothing readable are the same answer, which is why neither the failure above
+  // nor the timeout beside it needs a value of its own: both say only that no heartbeat arrived.
+  // Stryker disable next-line ConditionalExpression,BlockStatement
   if (raw === null) {
     return null;
   }
-  const parsed = workerHeartbeatSchema.safeParse(parseJson(raw));
-  if (!parsed.success) {
+  const stored = parseStoredHeartbeat(raw);
+  if (stored === null) {
     return null;
   }
-  const age = container.clock.now().getTime() - new Date(parsed.data.at).getTime();
-  return age <= WORKER_HEARTBEAT_TTL_SEC * 1000 ? parsed.data : null;
+  const age = container.clock.now().getTime() - new Date(stored.at).getTime();
+  return age <= WORKER_HEARTBEAT_TTL_SEC * 1000 ? stored : null;
 }
 
 /**
- * Parses JSON without throwing.
+ * Reads a heartbeat out of the text stored under the key.
+ *
+ * Another process writes that key, so neither the JSON nor the shape is trusted: text that is not
+ * JSON, and JSON that is not a heartbeat, are both a worker reporting nothing.
  *
  * @param raw - Text read from Redis.
- * @returns The parsed value, or `undefined` when the text is not JSON.
+ * @returns The heartbeat, or `null` when the text is not one.
  */
-function parseJson(raw: string): unknown {
+function parseStoredHeartbeat(raw: string): WorkerHeartbeat | null {
   try {
-    return JSON.parse(raw);
+    const parsed = workerHeartbeatSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? parsed.data : null;
   } catch {
-    // A heartbeat that is not JSON is a worker reporting nothing, which the caller already
-    // handles; there is no separate failure to raise.
-    return undefined;
+    return null;
   }
 }
 
@@ -113,6 +121,10 @@ function parseJson(raw: string): unknown {
  * @returns `{ ok }`, plus a detail when there is one worth showing.
  */
 function toCheck(result: ProbeResult): { ok: boolean; detail?: string } {
+  // The key is left out rather than set to nothing, because this project may not hand an optional
+  // property an explicit `undefined` — and JSON drops such a key on the way out anyway, which is
+  // why no reader of this response can tell the two spellings apart.
+  // Stryker disable next-line ConditionalExpression
   return result.detail === undefined ? { ok: result.ok } : { ok: result.ok, detail: result.detail };
 }
 

@@ -49,6 +49,12 @@ export default {
   reporters: ['html', 'clear-text', 'progress', 'json'],
   htmlReporter: { fileName: 'reports/mutation/index.html' },
   jsonReporter: { fileName: 'reports/mutation/mutation.json' },
+  // Stryker's default is to prepend a type-checking suppression header to every source file it
+  // copies into a sandbox, for runners that type-check as they go. Vitest strips types without
+  // checking them, so nothing here needs one — and the edit is not free: `vendored.test.ts` hashes
+  // the shadcn primitives to prove they are still generator output, and a line added to the top of
+  // them makes every digest wrong, which aborts the run before a single mutant is tested.
+  disableTypeChecks: false,
   incremental: false,
   cleanTempDir: 'always',
   tempDirName: '.stryker-tmp',
