@@ -30,11 +30,114 @@ import {
 
 import { ABANDONED_TEARDOWN_REASON, CONTAINER_MISSING_REASON } from './gc.js';
 
+/** The records the container collected, parsed back from the lines pino wrote. */
+function records(logs: string[]): Record<string, unknown>[] {
+  return logs.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
 describe('createGcProcessor', () => {
   /**
    * Only `READY` workspaces past the TTL are reclaimed: a fresh one is still in use, and a `BUSY`
    * one is running a turn.
    */
+  it('never considers a workspace the idle selection did not pick', async () => {
+    const container = createTestContainer({ clock: new FakeClock() });
+    const fresh = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 0,
+      withContainer: true,
+    });
+
+    const result = await collect(container, JOB_NAMES.reapIdle);
+
+    // The selection is what decides, and it decides once, from the listing. A pass that handed
+    // every live row to the reclaim would re-read each of them and report each as "no longer idle"
+    // — a line per workspace per tick, saying nothing, about work that was never selected.
+    expect(result.reaped).toBe(0);
+    expect((await container.repos.workspaces.get(fresh.id))?.status).toBe('READY');
+    expect(container.logs.join('')).not.toContain('no longer idle');
+  });
+
+  /**
+   * The label sweep of a chat's containers is scoped to that chat as well as to this instance. A
+   * sweep by instance alone would find every container this worker owns and destroy all of them
+   * because one chat was deleted.
+   */
+  it('destroys only the deleted chat’s containers, not the instance’s', async () => {
+    const container = createTestContainer();
+    const limits = { cpus: 1, memoryBytes: 1, pids: 1 };
+    await container.runner.create({
+      workspaceId: 'ws-deleted-chat',
+      kind: 'CHAT',
+      image: 'image',
+      env: {},
+      limits,
+      labels: { 'ah.instance': container.config.AH_INSTANCE, 'ah.chat': 'chat-that-went' },
+    });
+    await container.runner.create({
+      workspaceId: 'ws-other-chat',
+      kind: 'CHAT',
+      image: 'image',
+      env: {},
+      limits,
+      labels: { 'ah.instance': container.config.AH_INSTANCE, 'ah.chat': 'chat-still-here' },
+    });
+
+    const result = await collect(container, JOB_NAMES.destroyChatWorkspace, {
+      chatId: 'chat-that-went',
+    });
+
+    expect(result.orphansDestroyed).toBe(1);
+    expect(container.runner.getWorkspace('ws-deleted-chat')?.status).toBe('gone');
+    expect(container.runner.getWorkspace('ws-other-chat')?.status).toBe('running');
+  });
+
+  it('leaves an idle workspace whose claim is already held, naming it', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 120,
+      withContainer: true,
+    });
+    container.claims.claim(workspaceClaimKey(workspace));
+
+    const result = await collect(container, JOB_NAMES.reapIdle);
+
+    // A claim held by something else is a turn about to run in this container: reclaiming it would
+    // pull the filesystem out from under work that has already started.
+    expect(result.reaped).toBe(0);
+    expect(container.runner.getWorkspace(workspace.id)?.status).toBe('running');
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'workspace is in use; left for the next pass',
+        workspaceId: workspace.id,
+      }),
+    );
+  });
+
+  /**
+   * The note the model is left with says the workspace went because it sat idle, and for how long.
+   * An idle reclaim and an archive are different events to the person reading the transcript, and
+   * a teardown told neither would describe one as the other.
+   */
+  it('tells the chat its workspace went for being idle, and for how long', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 120,
+      withContainer: true,
+    });
+    const chatId = workspace.chatId ?? '';
+
+    expect((await collect(container, JOB_NAMES.reapIdle)).reaped).toBe(1);
+
+    const messages = await container.repos.messages.listByChat(chatId);
+    expect(messages.at(-1)?.content).toBe(
+      `Workspace reclaimed after ${String(container.config.WORKSPACE_IDLE_TTL_MIN)} min idle; ` +
+        'no uncommitted changes. It will be recreated from history on the next message.',
+    );
+  });
+
   it('reclaims only idle ready workspaces', async () => {
     const container = createTestContainer({ clock: new FakeClock() });
     const old = await seedWorkspace(container, {
@@ -105,7 +208,11 @@ describe('createGcProcessor', () => {
     expect(result.orphansDestroyed).toBe(1);
     expect(container.runner.getWorkspace('orphan-1')?.status).toBe('gone');
     expect(container.runner.getWorkspace('other-instance')?.status).toBe('running');
-    expect(container.logs.join('')).toContain('orphan workspace destroyed');
+    // Which container was removed. An operator reading "an orphan was destroyed" and nothing else
+    // cannot tell whether the collector took the container they were about to look at.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({ msg: 'orphan workspace destroyed', workspaceId: 'orphan-1' }),
+    );
   });
 
   /**
@@ -126,7 +233,13 @@ describe('createGcProcessor', () => {
     const result = await collect(container, JOB_NAMES.reapIdle);
 
     expect(result.orphansDestroyed).toBe(0);
-    expect(container.logs.join('')).toContain('destroying an orphan workspace failed');
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'destroying an orphan workspace failed',
+        workspaceId: 'orphan-1',
+        err: expect.objectContaining({ message: 'remove refused' }) as unknown,
+      }),
+    );
     vi.restoreAllMocks();
   });
 
@@ -143,10 +256,13 @@ describe('createGcProcessor', () => {
     const result = await collect(container, JOB_NAMES.reapIdle);
 
     expect(result.goneMarked).toBe(1);
+    // The reason is written out as well as read from the export: it is what an operator finds on
+    // the row, and compared only against the constant it came from it could be emptied unnoticed.
     expect(await container.repos.workspaces.get(ready.id)).toMatchObject({
       status: 'DESTROYED',
-      failureReason: CONTAINER_MISSING_REASON,
+      failureReason: 'container missing',
     });
+    expect(CONTAINER_MISSING_REASON).toBe('container missing');
     expect((await container.repos.workspaces.get(busy.id))?.status).toBe('BUSY');
   });
 
@@ -212,7 +328,11 @@ describe('createGcProcessor', () => {
     expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0, teardownsFinished: 0 });
     expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
     expect(container.runner.getWorkspace(workspace.id)?.status).toBe('running');
-    expect(container.logs.join('')).toContain('left for the idle collector');
+    // The chat is on the line. The archive was asked for by a chat, and that is the identifier the
+    // operator has; the workspace it maps to is not something they are holding.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({ msg: 'workspace is in use; left for the idle collector', chatId }),
+    );
   });
 
   /**
@@ -251,7 +371,36 @@ describe('createGcProcessor', () => {
     const result = await collect(container, JOB_NAMES.destroyChatWorkspace, { chatId: chat.id });
 
     expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0, teardownsFinished: 0 });
-    expect(container.logs.join('')).toContain('chat had no live workspace');
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({ msg: 'chat had no live workspace', chatId: chat.id }),
+    );
+  });
+
+  /**
+   * A delivery naming a workspace whose row is gone falls back to the label sweep, exactly as one
+   * naming no workspace does. The row is the only thing that has vanished — a container created
+   * under that chat's label may well still be running — and a lookup that treated a missing row as
+   * a live one would reach for a status that is not there.
+   */
+  it('falls back to the label when the workspace it names is gone', async () => {
+    const container = createTestContainer();
+    const chatId = 'chat-whose-row-went';
+    await container.runner.create({
+      workspaceId: 'ws-orphan',
+      kind: 'CHAT',
+      image: 'image',
+      env: {},
+      limits: { cpus: 1, memoryBytes: 1, pids: 1 },
+      labels: { 'ah.instance': container.config.AH_INSTANCE, 'ah.chat': chatId },
+    });
+
+    const result = await collect(container, JOB_NAMES.destroyChatWorkspace, {
+      chatId,
+      workspaceId: 'workspace-row-that-was-deleted',
+    });
+
+    expect(result.orphansDestroyed).toBe(1);
+    expect(container.runner.getWorkspace('ws-orphan')?.status).toBe('gone');
   });
 
   /**
@@ -331,6 +480,15 @@ describe('createGcProcessor', () => {
 
     expect(result.orphansDestroyed).toBe(1);
     expect(container.runner.getWorkspace('ws-orphan')?.status).toBe('gone');
+    // Both identifiers: the chat the delivery named, and the container that was found under its
+    // label with no row left pointing at it.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'orphan workspace destroyed',
+        chatId,
+        workspaceId: 'ws-orphan',
+      }),
+    );
   });
 
   /**
@@ -353,7 +511,13 @@ describe('createGcProcessor', () => {
     const result = await collect(container, JOB_NAMES.destroyChatWorkspace, { chatId });
 
     expect(result.orphansDestroyed).toBe(0);
-    expect(container.logs.join('')).toContain('destroying an orphan workspace failed');
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'destroying an orphan workspace failed',
+        workspaceId: 'ws-orphan',
+        err: expect.objectContaining({ message: 'remove refused' }) as unknown,
+      }),
+    );
     vi.restoreAllMocks();
   });
 
@@ -417,15 +581,31 @@ describe('createGcProcessor', () => {
       withContainer: true,
     });
     await container.repos.workspaces.setStatus(workspace.id, 'STOPPING');
+    const recordedRef = (await container.repos.workspaces.get(workspace.id))?.runnerRef;
 
     const result = await collect(container, JOB_NAMES.reapIdle);
 
+    expect(recordedRef).toEqual(expect.any(String));
     expect(container.runner.getWorkspace(workspace.id)?.status).toBe('gone');
     expect(result.teardownsFinished).toBe(1);
+    // Written out as well as read from the export: this is the sentence on the row that tells an
+    // operator the container went because nobody came back for it, not because it failed.
     expect(await container.repos.workspaces.get(workspace.id)).toMatchObject({
       status: 'DESTROYED',
-      failureReason: ABANDONED_TEARDOWN_REASON,
+      failureReason: 'teardown abandoned',
     });
+    expect(ABANDONED_TEARDOWN_REASON).toBe('teardown abandoned');
+    // The daemon is asked about the reference the row recorded, not about some other container.
+    expect(container.runner.calls).toContainEqual({
+      method: 'destroy',
+      args: [{ workspaceId: workspace.id, runnerRef: recordedRef }],
+    });
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'finished a teardown whose process never came back for the container',
+        workspaceId: workspace.id,
+      }),
+    );
   });
 
   /**
@@ -450,7 +630,13 @@ describe('createGcProcessor', () => {
       status: 'FAILED',
       failureReason: 'daemon is busy',
     });
-    expect(container.logs.join('')).toContain('finishing an abandoned teardown failed');
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'finishing an abandoned teardown failed',
+        workspaceId: workspace.id,
+        err: expect.objectContaining({ message: 'daemon is busy' }) as unknown,
+      }),
+    );
   });
 
   /**
@@ -472,6 +658,7 @@ describe('createGcProcessor', () => {
     await container.repos.workspaces.setStatus(workspace.id, 'STOPPING');
     vi.spyOn(container.runner, 'destroy').mockRejectedValue('daemon said no');
 
+    const destroy = vi.spyOn(container.runner, 'destroy');
     const result = await collect(container, JOB_NAMES.reapIdle);
 
     expect(result.teardownsFinished).toBe(0);
@@ -479,6 +666,9 @@ describe('createGcProcessor', () => {
       status: 'FAILED',
       failureReason: 'daemon said no',
     });
+    // Empty rather than invented: there is no reference on the row to give, and any value put here
+    // would send the daemon looking for a container this row never recorded.
+    expect(destroy.mock.calls[0]).toStrictEqual([{ workspaceId: workspace.id, runnerRef: '' }]);
   });
 
   /**
@@ -502,7 +692,93 @@ describe('createGcProcessor', () => {
     expect(result.teardownsFinished).toBe(0);
     expect(container.runner.getWorkspace(workspace.id)?.status).toBe('running');
     expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('STOPPING');
-    expect(container.logs.join('')).toContain('a teardown is still running');
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'a teardown is still running; its workspace is left for the next pass',
+        workspaceId: workspace.id,
+      }),
+    );
+  });
+
+  /**
+   * Every pass gives the claim back, whatever it did with the workspace. The collector runs on a
+   * schedule against the same rows, so a claim kept after a pass is a workspace this worker can
+   * never touch again — the container stays until the process is restarted, and the log says only
+   * that something is in use. Each of the four passes is driven twice here, the first time into a
+   * failure that leaves the row exactly where it was.
+   */
+  it('gives every claim back, so the next pass can take the same workspace', async () => {
+    const container = createTestContainer();
+    const idle = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 120,
+      withContainer: true,
+    });
+    const destroy = vi
+      .spyOn(container.runner, 'destroy')
+      .mockRejectedValueOnce(new Error('daemon is busy'));
+
+    // First pass: the teardown fails, the row is left FAILED — nothing here released by accident.
+    expect((await collect(container, JOB_NAMES.reapIdle)).reaped).toBe(0);
+    destroy.mockRestore();
+    // Put the row back the way the failed pass found it, which is what a retry of the daemon call
+    // would have left, and run the collector again over the very same workspace.
+    const row = container.repos.store.workspaces.get(idle.id);
+    if (row !== undefined) {
+      row.status = 'READY';
+    }
+
+    expect((await collect(container, JOB_NAMES.reapIdle)).reaped).toBe(1);
+    expect(container.logs.join('')).not.toContain('workspace is in use');
+  });
+
+  /**
+   * The same for the archive path, which is delivered by BullMQ and therefore retried: a claim
+   * held past a failed delivery would make every retry of it report the workspace as in use.
+   */
+  it('gives the archive claim back, so a redelivery can take the same workspace', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 0,
+      withContainer: true,
+    });
+    const chatId = workspace.chatId ?? '';
+    const destroy = vi
+      .spyOn(container.runner, 'destroy')
+      .mockRejectedValueOnce(new Error('daemon is busy'));
+
+    expect((await collect(container, JOB_NAMES.destroyChatWorkspace, { chatId })).reaped).toBe(0);
+    destroy.mockRestore();
+    const row = container.repos.store.workspaces.get(workspace.id);
+    if (row !== undefined) {
+      row.status = 'READY';
+    }
+
+    expect((await collect(container, JOB_NAMES.destroyChatWorkspace, { chatId })).reaped).toBe(1);
+    expect(container.logs.join('')).not.toContain('left for the idle collector');
+  });
+
+  /**
+   * And for the two reconciliation passes, whose rows are found by the same claim key: a pass that
+   * closed out a gone row, or finished an abandoned teardown, must leave the key free for whatever
+   * comes next — including the teardown that is about to be created for the same chat.
+   */
+  it('gives the reconciliation claims back', async () => {
+    const container = createTestContainer();
+    const gone = await seedWorkspace(container, { status: 'READY', idleMinutes: 1 });
+    const stopping = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 1,
+      withContainer: true,
+    });
+    await container.repos.workspaces.setStatus(stopping.id, 'STOPPING');
+
+    const result = await collect(container, JOB_NAMES.reapIdle);
+
+    expect(result).toMatchObject({ goneMarked: 1, teardownsFinished: 1 });
+    expect(container.claims.claim(workspaceClaimKey(gone))).toBe(true);
+    expect(container.claims.claim(workspaceClaimKey(stopping))).toBe(true);
   });
 
   /**
@@ -526,7 +802,15 @@ describe('createGcProcessor', () => {
 
     expect(result.goneMarked).toBe(0);
     expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
-    expect(container.logs.join('')).toContain('moved on since the listing');
+    // The status the listing reported is on the line beside the row: that is what the write was
+    // conditioned on, and without it nobody can tell a row that moved from one that never existed.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'workspace moved on since the listing; left for the next pass',
+        workspaceId: workspace.id,
+        expectedStatus: 'READY',
+      }),
+    );
     vi.restoreAllMocks();
   });
 
@@ -544,7 +828,12 @@ describe('createGcProcessor', () => {
 
     expect(result.goneMarked).toBe(0);
     expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('READY');
-    expect(container.logs.join('')).toContain('left for the next pass');
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'workspace is in use; left for the next pass',
+        workspaceId: workspace.id,
+      }),
+    );
   });
 
   /**
@@ -608,13 +897,22 @@ describe('createGcProcessor', () => {
    */
   it('leaves an idle workspace whose row is gone', async () => {
     const container = createTestContainer();
-    await seedWorkspace(container, { status: 'READY', idleMinutes: 120, withContainer: true });
+    const workspace = await seedWorkspace(container, {
+      status: 'READY',
+      idleMinutes: 120,
+      withContainer: true,
+    });
     vi.spyOn(container.repos.workspaces, 'get').mockResolvedValue(null);
 
     const result = await collect(container, JOB_NAMES.reapIdle);
 
     expect(result.reaped).toBe(0);
-    expect(container.logs.join('')).toContain('no longer idle');
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'workspace is no longer idle; left alone',
+        workspaceId: workspace.id,
+      }),
+    );
     vi.restoreAllMocks();
   });
 
@@ -654,6 +952,10 @@ describe('createGcProcessor', () => {
     const result = await collect(container, 'compact-everything');
 
     expect(result).toEqual({ reaped: 0, orphansDestroyed: 0, goneMarked: 0, teardownsFinished: 0 });
-    expect(container.logs.join('')).toContain('unknown workspace-gc job');
+    // The name is on the line. A collector that reported "an unknown job" without saying which one
+    // leaves nobody able to find the producer that enqueued it.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({ msg: 'unknown workspace-gc job', name: 'compact-everything' }),
+    );
   });
 });
