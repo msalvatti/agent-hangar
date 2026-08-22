@@ -11,23 +11,88 @@
 import { chatDetail, chatSummary, JOB_NAMES, listChatsResponse } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ServerContainer } from '../container';
 import { REPO_URL_NOT_ALLOWED } from '../repo-url';
 import { CREATE_BODY, REPO_URL, seedChat } from '../testing/chat-fixtures';
-import { foreignRequest, readRequest, writeRequest } from '../testing/requests';
+import { foreignRequest, readRequest, reboundRequest, writeRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 
 import {
   archiveChat,
   createChat,
+  deleteChat,
   getChat,
   listChats,
+  postMessage,
   renameChat,
+  restoreChat,
   TITLE_LENGTH,
   titleFromPrompt,
 } from './chats';
 import { ENQUEUE_FAILED } from './dispatch';
 
 vi.mock('bullmq', () => import('../testing/fake-queue'));
+
+describe('what every chat route refuses before it does anything', () => {
+  /**
+   * Each of these guards is called by the handler itself, not by the route file, so each has to be
+   * asked here. A rebound host is the case an origin comparison cannot see — the request is
+   * internally consistent, and it is exactly the situation in which the browser treats the answer
+   * as same-origin and lets an attacking page read it — so every export refuses it, reads
+   * included. The state-changing ones refuse a foreign origin as well, before the body is read.
+   */
+  const params = { params: Promise.resolve({ id: 'chat-1' }) };
+  const routes: [string, (container: ServerContainer, request: Request) => Promise<Response>][] = [
+    ['POST /api/chats', (container, request) => createChat(container, request)],
+    ['GET /api/chats', (container, request) => listChats(container, request)],
+    ['GET /api/chats/:id', (container, request) => getChat(container, request, params)],
+    ['PATCH /api/chats/:id', (container, request) => renameChat(container, request, params)],
+    [
+      'POST /api/chats/:id/messages',
+      (container, request) => postMessage(container, request, params),
+    ],
+    [
+      'POST /api/chats/:id/archive',
+      (container, request) => archiveChat(container, request, params),
+    ],
+    [
+      'POST /api/chats/:id/restore',
+      (container, request) => restoreChat(container, request, params),
+    ],
+    ['DELETE /api/chats/:id', (container, request) => deleteChat(container, request, params)],
+  ];
+
+  it.each(routes)('refuses %s addressed to a rebound host', async (route, invoke) => {
+    const harness = createTestContainer();
+    const [method, path] = route.split(' ');
+
+    const response = await invoke(
+      harness.container,
+      reboundRequest(path ?? '', method ?? 'GET', method === 'GET' ? undefined : {}),
+    );
+
+    expect(response.status).toBe(403);
+    expect(await response.json()).toMatchObject({ error: { code: 'FORBIDDEN_ORIGIN' } });
+    expect(await harness.doubles.repos.chats.list()).toEqual([]);
+  });
+
+  it.each(routes.filter(([route]) => !route.startsWith('GET')))(
+    'refuses %s from a foreign origin',
+    async (route, invoke) => {
+      const harness = createTestContainer();
+      const [method, path] = route.split(' ');
+
+      const response = await invoke(
+        harness.container,
+        foreignRequest(path ?? '', method ?? '', {}),
+      );
+
+      expect(response.status).toBe(403);
+      expect(await response.json()).toMatchObject({ error: { code: 'FORBIDDEN_ORIGIN' } });
+      expect(await harness.doubles.repos.chats.list()).toEqual([]);
+    },
+  );
+});
 
 describe('titleFromPrompt', () => {
   /**

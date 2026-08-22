@@ -73,7 +73,11 @@ describe('postMessage', () => {
       { id: chatId },
     );
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: { code: 'CHAT_ARCHIVED' } });
+    // The sentence as well as the code: the code is what the page branches on, the sentence is
+    // what it shows, and only the sentence tells the user what to do about it.
+    expect(await response.json()).toMatchObject({
+      error: { code: 'CHAT_ARCHIVED', message: 'Restore the chat before sending messages' },
+    });
   });
 
   /**
@@ -372,9 +376,28 @@ describe('postMessage', () => {
     );
 
     expect(response.status).toBe(500);
-    expect(harness.doubles.logOutput()).toContain('could not release a chat turn claim');
+    // Both ids: the chat whose next message will be refused, and the turn row still holding the
+    // claim that refuses it.
+    expect(records(harness)).toContainEqual(
+      expect.objectContaining({
+        msg: 'could not release a chat turn claim',
+        chatId,
+        // The turn the request opened, not the one already on the chat: that row is the claim, and
+        // its id is the only handle anyone has on what has to be finished by hand.
+        turnId: expect.any(String) as unknown,
+      }),
+    );
   });
 });
+
+/** The records the harness collected, parsed back from the lines pino wrote. */
+function records(harness: ReturnType<typeof createTestContainer>): Record<string, unknown>[] {
+  return harness.doubles
+    .logOutput()
+    .split('\n')
+    .filter((line) => line !== '')
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
 
 describe('archiveChat and restoreChat', () => {
   /**
@@ -427,7 +450,9 @@ describe('archiveChat and restoreChat', () => {
       id: chatId,
     });
     expect(again.status).toBe(409);
-    expect(await again.json()).toMatchObject({ error: { code: 'ILLEGAL_TRANSITION' } });
+    expect(await again.json()).toMatchObject({
+      error: { code: 'ILLEGAL_TRANSITION', message: 'Chat is not active' },
+    });
   });
 
   /**
@@ -482,7 +507,17 @@ describe('archiveChat and restoreChat', () => {
     });
 
     expect(response.status).toBe(500);
-    expect(harness.doubles.logOutput()).toContain('could not undo a partial chat archive');
+    // The chat is named on the line: this is the row left in a status nothing else will move it
+    // out of, and an operator has no other way to find which one it was.
+    expect(
+      harness.doubles
+        .logOutput()
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({ msg: 'could not undo a partial chat archive', chatId }),
+    );
   });
 
   /**
@@ -538,6 +573,65 @@ describe('archiveChat and restoreChat', () => {
   });
 
   /**
+   * And when the undo cannot be written either, the chat is left `ACTIVE` with no notice — a state
+   * only the log records, so it records which chat.
+   */
+  it('reports a restore it could not undo', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    await archiveChat(harness.container, writeRequest('/api/chats', 'POST'), { id: chatId });
+    vi.spyOn(harness.doubles.repos.messages, 'append').mockRejectedValue(
+      new Error('database unreachable'),
+    );
+    const setStatus = harness.doubles.repos.chats.setStatus.bind(harness.doubles.repos.chats);
+    vi.spyOn(harness.doubles.repos.chats, 'setStatus').mockImplementation(async (id, status) =>
+      status === 'ARCHIVED' && (await harness.doubles.repos.chats.getById(id))?.status === 'ACTIVE'
+        ? Promise.reject(new Error('database unreachable'))
+        : setStatus(id, status),
+    );
+
+    const response = await restoreChat(harness.container, writeRequest('/api/chats', 'POST'), {
+      id: chatId,
+    });
+
+    expect(response.status).toBe(500);
+    expect(records(harness)).toContainEqual(
+      expect.objectContaining({ msg: 'could not undo a partial chat restore', chatId }),
+    );
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * The notice the model is left with names when the chat came back and the branch its work is on,
+   * because the container it wrote that work in is gone.
+   */
+  it('tells the model when it came back and where its work is', async () => {
+    const harness = createTestContainer();
+    const { chatId, turnId } = await seedChat(harness);
+    await harness.doubles.repos.turns.finish(turnId, 'SUCCEEDED', {
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    await harness.doubles.repos.chats.updateRestoreHints(chatId, {
+      workBranch: 'agent/earlier',
+      lastPushedSha: 'deadbee',
+    });
+    await archiveChat(harness.container, writeRequest('/api/chats', 'POST'), { id: chatId });
+
+    await restoreChat(harness.container, writeRequest('/api/chats', 'POST'), { id: chatId });
+
+    const messages = await harness.doubles.repos.messages.listByChat(chatId);
+    expect(messages.at(-1)?.content).toContain('agent/earlier');
+    expect(messages.at(-1)?.content).toContain('Workspace recreated from history');
+  });
+
+  /**
    * Restoring an active chat is an illegal transition; an unknown one is missing. Both are checked
    * before the notice is written, so a failed restore leaves no trace.
    */
@@ -548,10 +642,15 @@ describe('archiveChat and restoreChat', () => {
       id: chatId,
     });
     expect(active.status).toBe(409);
+    expect(await active.json()).toMatchObject({
+      error: { code: 'ILLEGAL_TRANSITION', message: 'Chat is not archived' },
+    });
     const missing = await restoreChat(harness.container, writeRequest('/api/chats', 'POST'), {
       id: 'nope',
     });
     expect(missing.status).toBe(404);
+    // The sentence a user reads when they follow a link to a chat somebody else deleted.
+    expect(await missing.json()).toMatchObject({ error: { message: 'Chat not found' } });
     const bad = await restoreChat(
       harness.container,
       writeRequest(`/api/chats/${chatId}/restore?warm=maybe`, 'POST'),
@@ -671,6 +770,9 @@ describe('deleteChat', () => {
     });
 
     expect(response.status).toBe(404);
+    // The row went between the read and the delete, and what the caller is told is that the chat is
+    // not there — the same answer as for one that never was.
+    expect(await response.json()).toMatchObject({ error: { message: 'Chat not found' } });
     expect(harness.doubles.queues.workspaceGc.added).toEqual([]);
   });
 
@@ -684,9 +786,11 @@ describe('deleteChat', () => {
       id: chatId,
     });
     expect(busy.status).toBe(409);
+    expect(await busy.json()).toMatchObject({ error: { code: 'TURN_IN_PROGRESS' } });
     const missing = await deleteChat(harness.container, writeRequest('/api/chats', 'DELETE'), {
       id: 'nope',
     });
     expect(missing.status).toBe(404);
+    expect(await missing.json()).toMatchObject({ error: { message: 'Chat not found' } });
   });
 });
