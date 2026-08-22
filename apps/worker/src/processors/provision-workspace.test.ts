@@ -104,10 +104,14 @@ describe('provisionWorkspace', () => {
     ).rejects.toThrow('database is down');
 
     const row = [...container.repos.store.workspaces.values()][0];
+    // The reason is written out here as well as read from the export: this text is what an
+    // operator finds on a `FAILED` row, and compared only against the constant it came from it
+    // could be emptied without a single check noticing.
     expect(row).toMatchObject({
       status: 'FAILED',
-      failureReason: UNRECORDED_WORKSPACE_REASON,
+      failureReason: 'container reference was never recorded',
     });
+    expect(UNRECORDED_WORKSPACE_REASON).toBe('container reference was never recorded');
     const created = container.runner.calls.find((call) => call.method === 'create');
     expect(
       container.runner.calls.some(
@@ -148,7 +152,16 @@ describe('provisionWorkspace', () => {
       status: 'FAILED',
       failureReason: UNRECORDED_WORKSPACE_REASON,
     });
-    expect(container.logs.join('')).toContain('whose reference was never recorded failed');
+    // Which row leaked, and what the daemon said about the container it could not remove.
+    expect(
+      container.logs.map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({
+        msg: 'destroying a workspace whose reference was never recorded failed',
+        workspaceId: [...container.repos.store.workspaces.values()][0]?.id,
+        err: expect.objectContaining({ message: 'daemon busy' }) as unknown,
+      }),
+    );
     vi.restoreAllMocks();
   });
 
@@ -175,7 +188,16 @@ describe('provisionWorkspace', () => {
 
     expect(container.runner.calls.some((call) => call.method === 'destroy')).toBe(true);
     const logged = container.logs.join('');
-    expect(logged).toContain('could not close out a workspace whose reference was never recorded');
+    // Classified, never quoted, and still naming the row nobody will be able to close out later.
+    expect(
+      container.logs.map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({
+        msg: 'could not close out a workspace whose reference was never recorded',
+        workspaceId: [...container.repos.store.workspaces.values()][0]?.id,
+        failure: 'ECONNREFUSED',
+      }),
+    );
     expect(logged).not.toContain('hunter2');
     vi.restoreAllMocks();
   });
@@ -364,7 +386,14 @@ describe('provisionWorkspace', () => {
     expect(container.runner.calls).toHaveLength(0);
     expect([...container.repos.store.workspaces.values()][0]).toMatchObject({
       status: 'FAILED',
-      failureReason: REPO_URL_NOT_ALLOWED_REASON,
+      failureReason: 'repository host is not allowed',
+    });
+    expect(REPO_URL_NOT_ALLOWED_REASON).toBe('repository host is not allowed');
+    // And the sentence the user is shown names the variable to change and quotes no URL back: the
+    // repository is a value the redactor knows nothing about, and this message is persisted and
+    // displayed.
+    expect(result).toMatchObject({
+      message: 'This repository is not on an origin listed in ALLOWED_REPO_HOSTS.',
     });
     vi.restoreAllMocks();
   });
