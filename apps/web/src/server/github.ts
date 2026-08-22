@@ -284,6 +284,9 @@ async function listPages<T>(
   // listing is incomplete: a walk also stops when the offered link points off the configured API,
   // and a listing cut short by this client's own refusal is every bit as partial as one cut short
   // by the page limit.
+  // Stryker disable next-line BooleanLiteral: the loop below runs at least once — its first
+  // cursor is never null and the page limit is never zero — so what this holds afterwards always
+  // came from a page that was read.
   let offeredMore = false;
   while (next !== null && pages < GITHUB_MAX_PAGES) {
     const response = await request(deps, next, revealed);
@@ -382,6 +385,8 @@ interface NextPage {
  * @returns The next page to read, and whether one was offered at all.
  */
 function nextPageUrl(baseUrl: string, header: string | null): NextPage {
+  // Stryker disable next-line ConditionalExpression: the null test narrows the type for `exec`,
+  // which reads a missing header as the four letters of `null` and matches no link in it either.
   const candidate = (header === null ? null : NEXT_LINK_PATTERN.exec(header))?.[1];
   if (candidate === undefined) {
     return { url: null, offered: false };
