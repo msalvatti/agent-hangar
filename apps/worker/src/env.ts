@@ -49,7 +49,16 @@ export function parseWorkerEnv(env: NodeJS.ProcessEnv = process.env): WorkerEnv 
     return result.data;
   }
   const problems = result.error.issues
-    .map((issue) => `  - ${issue.path.join('.')}: ${issue.message}`)
+    // The separator falls between the segments of a nested path, and this schema is flat: every
+    // issue names one variable and nothing under it, so it is written for the schema this may
+    // grow into rather than for the one it is.
+    .map(
+      (issue) =>
+        `  - ${issue.path.join(
+          // Stryker disable next-line StringLiteral: no issue path here has a second segment.
+          '.',
+        )}: ${issue.message}`,
+    )
     .join('\n');
   throw new ConfigError(`Invalid worker environment:\n${problems}`);
 }

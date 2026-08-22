@@ -38,6 +38,30 @@ describe('parseWorkerEnv', () => {
   });
 
   /**
+   * More than one variable can be wrong at once, and the message is what the operator reads at a
+   * terminal. Each problem is a line of its own naming the variable and what is wrong with it, so
+   * a boot that failed for three reasons does not report one of them, and a list run together on
+   * a single line is not something anyone reads twice.
+   */
+  it('lists every problem, one indented line each, naming the variable', () => {
+    const failure = ((): Error => {
+      try {
+        parseWorkerEnv({ WORKSPACE_RUNNER: 'podman', FAKE_PROVIDER_SCRIPT_PATH: '' });
+        throw new Error('the environment was accepted');
+      } catch (error) {
+        return error as Error;
+      }
+    })();
+
+    const [headline, ...problems] = failure.message.split('\n');
+    expect(headline).toBe('Invalid worker environment:');
+    expect(problems).toHaveLength(2);
+    for (const problem of problems) {
+      expect(problem).toMatch(/^ {2}- (FAKE_PROVIDER_SCRIPT_PATH|WORKSPACE_RUNNER): \S/);
+    }
+  });
+
+  /**
    * The path of a supplied scripted-provider script is worker-local: the web app can do nothing
    * with it, and only the worker builds a container environment.
    */

@@ -40,6 +40,10 @@ export function createLogger(options: CreateWorkerLoggerOptions): Logger {
     level: options.level,
     redactor: options.redactor,
     name: WORKER_LOGGER_NAME,
+    // Spread conditionally because `destination` is an optional property this project may not hand
+    // an explicit `undefined`, and the factory below reads an absent option and one set to nothing
+    // as the same instruction — so neither spelling can be told apart from outside.
+    // Stryker disable next-line ConditionalExpression
     ...(options.destination === undefined ? {} : { destination: options.destination }),
   });
 }
