@@ -54,13 +54,15 @@ let repo: BareRepo;
 let root: string;
 let events: AgentEvent[];
 let seenEnvs: Record<string, string>[];
+let seenArgs: GitArgs[];
 let deps: PrepareDeps;
 
-/** Wraps a runner so the tests can inspect the environment git was actually given. */
+/** Wraps a runner so the tests can inspect what git was actually given. */
 function recordingRunner(inner: GitRunner): GitRunner {
   return {
     run(args: GitArgs, options: GitRunOptions) {
       seenEnvs.push(options.env);
+      seenArgs.push(args);
       return inner.run(args, options);
     },
   };
@@ -170,6 +172,7 @@ beforeEach(async () => {
   root = await makeTempDir('prepare-root');
   events = [];
   seenEnvs = [];
+  seenArgs = [];
   deps = {
     workspaceRoot: root,
     git: recordingRunner(createGitRunner()),
@@ -212,6 +215,11 @@ describe('resolveRepoUrl', () => {
    */
   it.each([
     ['embedded credentials', `https://x-access-token:${GITHUB_CANARY}@github.com/acme/widgets`],
+    // Each half on its own as well as together: a URL carrying only one of them still hands git a
+    // credential the workspace did not issue, and a check that reads only the other half refuses
+    // the pair above while letting these through.
+    ['a user name and no password', 'https://x-access-token@github.com/acme/widgets'],
+    ['a password and no user name', `https://:${GITHUB_CANARY}@github.com/acme/widgets`],
     ['a plaintext scheme', 'http://github.com/acme/widgets'],
     ['another host', 'https://gitlab.com/acme/widgets'],
     ['a host that merely ends in the allowed one', 'https://github.com.evil.test/acme/widgets'],
@@ -377,7 +385,10 @@ describe('branch names', () => {
   ])('refuses %s', (_name, branch) => {
     expect(() => {
       assertBranchName(branch, 'workBranch');
-    }).toThrow(PrepareError);
+    }).toThrow(
+      `workBranch must start with a letter or digit and contain only letters, digits, dot, dash, ` +
+        `underscore and slash`,
+    );
   });
 
   /** The check runs ahead of the clone, so nothing reaches git at all. */
@@ -385,10 +396,22 @@ describe('branch names', () => {
     ['the base branch', { baseBranch: '--upload-pack=/bin/sh' }],
     ['the work branch', { workBranch: '-f' }],
   ])('refuses %s before running any git command', async (_name, overrides) => {
-    await expect(prepare(repoSection(overrides), { clone: true }, deps)).rejects.toThrow(
-      PrepareError,
+    const [field] = Object.keys(overrides);
+    const failure = await prepare(repoSection(overrides), { clone: true }, deps).catch(
+      (error: unknown) => error,
     );
+
+    expect(failure).toBeInstanceOf(PrepareError);
+    // Which of the two branches was wrong, because the host sends both and the message is all the
+    // operator gets to tell them apart.
+    expect((failure as Error).message.startsWith(`${String(field)} `)).toBe(true);
     expect(seenEnvs).toHaveLength(0);
+  });
+
+  /** The loop maps this class to `turn.failed { code: 'prepare' }` without matching the message. */
+  it('carries a stable code and a name of its own', () => {
+    expect(new PrepareError('nope').code).toBe('prepare');
+    expect(new PrepareError('nope').name).toBe('PrepareError');
   });
 });
 
@@ -461,12 +484,17 @@ describe('prepare with a workspace that already holds the repository', () => {
     await prepare(repoSection({ workBranch: 'main' }), { clone: true }, deps);
     events = [];
     seenEnvs = [];
+    seenArgs = [];
   });
 
   /** A live workspace that is asked to prepare again must not try to clone into itself. */
   it('refreshes instead of cloning again when cloning is requested', async () => {
     const result = await prepare(repoSection({ workBranch: 'main' }), { clone: true }, deps);
     expect(progressMessages()[0]).toBe('Refreshing the existing checkout…');
+    // The refresh names its remote and asks for pruning: without the remote git falls back to
+    // whatever the branch is configured to track, and without the prune a branch deleted on the
+    // forge keeps a remote-tracking ref here that later comparisons still believe in.
+    expect(seenArgs).toContainEqual(['fetch', 'origin', '--prune']);
     expect(result.headSha).toBe(repo.headSha);
   });
 
@@ -514,6 +542,7 @@ describe('prepare on a second turn of the same chat', () => {
     await prepare(repoSection(), { clone: true }, deps);
     events = [];
     seenEnvs = [];
+    seenArgs = [];
   });
 
   /**
@@ -577,6 +606,33 @@ describe('prepare when the work branch is on the remote', () => {
     expect(progressMessages().at(-1)).toBe(`Checked out agent/existing at ${tip.slice(0, 7)}`);
   });
 
+  /**
+   * `ls-remote` prints one line per matching ref and nothing at all when there are none, so what
+   * decides the question is whether there is a ref name in the answer rather than whether the
+   * answer is an empty string. A remote that replies with a bare newline - a proxy that adds one,
+   * a transport that keeps the terminator - would otherwise be read as a branch that exists, and
+   * preparation would try to check out a ref the remote does not have.
+   */
+  it('reads an answer of nothing but whitespace as no branch on the remote', async () => {
+    const git: GitRunner = {
+      run: (args: GitArgs, options: GitRunOptions) =>
+        args[0] === 'ls-remote'
+          ? Promise.resolve({ code: 0, stdout: '\n', stderr: '' })
+          : plainGit.run(args, options),
+    };
+
+    const result = await prepare(
+      repoSection({ workBranch: 'agent/fresh' }),
+      { clone: true },
+      { ...deps, git },
+    );
+
+    expect(result.branch).toBe('agent/fresh');
+    expect(progressMessages().at(-1)).toBe(
+      `Created agent/fresh from main at ${result.headSha.slice(0, 7)}`,
+    );
+  });
+
   describe('and in the workspace as well', () => {
     beforeEach(async () => {
       // The first turn of a chat that pushed: the branch now exists on both sides.
@@ -585,6 +641,7 @@ describe('prepare when the work branch is on the remote', () => {
       await runGit(root, ['push', 'origin', 'agent/work']);
       events = [];
       seenEnvs = [];
+      seenArgs = [];
     });
 
     /** Nothing happened between the turns; silence is the signal that the branch is in sync. */
@@ -638,6 +695,27 @@ describe('prepare when the work branch is on the remote', () => {
 
       expect(result.notes).toStrictEqual([
         'Warning: agent/work and origin/agent/work have diverged (1 commit here, 1 commit on the remote); preparation merged neither into the other.',
+      ]);
+    });
+
+    /**
+     * The two counts are read from a pair of ranges, and each range names a full ref rather than a
+     * bare branch. A bare name resolves through git's own precedence rules, so a tag or a remote
+     * of the same name would silently be the thing measured, and the note the model is handed
+     * would describe a branch nobody is working on.
+     */
+    it('counts the two tips apart by their full refs', async () => {
+      await prepare(repoSection(), { clone: false }, deps);
+
+      expect(seenArgs).toContainEqual([
+        'rev-list',
+        '--count',
+        'refs/remotes/origin/agent/work..refs/heads/agent/work',
+      ]);
+      expect(seenArgs).toContainEqual([
+        'rev-list',
+        '--count',
+        'refs/heads/agent/work..refs/remotes/origin/agent/work',
       ]);
     });
 

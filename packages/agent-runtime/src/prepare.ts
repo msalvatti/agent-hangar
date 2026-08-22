@@ -93,9 +93,7 @@ export type RepositoryUrlPolicy =
  * default. A value that survives this round-trip is already normalised, so comparing it to
  * `URL.origin` is a comparison of two canonical forms rather than of two spellings.
  */
-const allowedOriginSchema = z.string().refine((value) => URL.parse(value)?.origin === value, {
-  message: 'must be <scheme>://<host>[:<port>] and nothing else',
-});
+const allowedOriginSchema = z.string().refine((value) => URL.parse(value)?.origin === value);
 
 /**
  * Reads the origin this workspace was created for from the file the host placed.
@@ -111,6 +109,9 @@ const allowedOriginSchema = z.string().refine((value) => URL.parse(value)?.origi
 export async function repositoryUrlPolicyFromFile(
   file: string = ALLOWED_ORIGIN_FILE,
 ): Promise<RepositoryUrlPolicy> {
+  // Stryker disable next-line ArrowFunction: a file that could not be read is passed on as a value
+  // that has no `trim`, and the optional call below turns any such value into the same missing
+  // input for the schema — so which of the two absent values is produced here cannot be observed.
   const content = await readFile(file, 'utf8').catch(() => null);
   const parsed = allowedOriginSchema.safeParse(content?.trim());
   if (!parsed.success) {
