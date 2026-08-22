@@ -12,6 +12,7 @@ import { DEFAULT_CHAT_TURN_LIMITS, isTerminalRunStatus } from '@agent-hangar/cor
 import { GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 
+import { turnClaimKey } from '../claims.js';
 import {
   FIXTURE_NOTES_CONTENT,
   FIXTURE_REPO_URL,
@@ -31,7 +32,11 @@ import {
 } from '../testing/index.js';
 
 import { STALLED_RECOVERY_NOTE, STALLED_RECOVERY_REASON } from './constants.js';
-import { WORKSPACE_CONFLICT_CODE } from './run-turn.js';
+
+/** The records the container collected, parsed back from the lines pino wrote. */
+function records(logs: string[]): Record<string, unknown>[] {
+  return logs.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
 
 describe('createRunTurnProcessor, ensuring a workspace', () => {
   /**
@@ -228,7 +233,13 @@ describe('createRunTurnProcessor, ensuring a workspace', () => {
 
     await runTurnOn(container, turn.id);
 
-    expect(container.runner.calls.some((call) => call.method === 'destroy')).toBe(true);
+    // The daemon is asked about the reference the row recorded, not about some other container:
+    // this is a workspace an earlier process left behind, and the reference is the only handle on
+    // it that survived that process.
+    expect(container.runner.calls).toContainEqual({
+      method: 'destroy',
+      args: [{ workspaceId: stalled.id, runnerRef: 'ref-1' }],
+    });
     expect(await container.repos.workspaces.get(stalled.id)).toMatchObject({
       status: 'DESTROYED',
       failureReason: STALLED_RECOVERY_REASON,
@@ -260,7 +271,33 @@ describe('createRunTurnProcessor, ensuring a workspace', () => {
       status: 'DESTROYED',
       runnerRef: null,
     });
+    // Empty rather than invented: there is no reference on the row to give, and any value put here
+    // would send the daemon looking for a container this row never created.
+    expect(container.runner.calls).toContainEqual({
+      method: 'destroy',
+      args: [{ workspaceId: creating.id, runnerRef: '' }],
+    });
     expect((await container.repos.turns.get(turn.id))?.status).toBe('SUCCEEDED');
+  });
+
+  /**
+   * A chat that has already pushed work carries a work branch, and the next turn's container is
+   * cloned from it rather than from the branch the chat started on — otherwise every turn after
+   * the first would begin from a checkout without the work the one before it pushed.
+   */
+  it('clones a chat that has pushed from the branch it pushed to', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
+    const { chat, turn } = await seedChatWithTurn(container);
+    await container.repos.chats.updateRestoreHints(chat.id, {
+      workBranch: 'agent/earlier-work',
+      lastPushedSha: 'deadbee',
+    });
+
+    await runTurnOn(container, turn.id);
+
+    expect([...container.repos.store.workspaces.values()][0]).toMatchObject({
+      branch: 'agent/earlier-work',
+    });
   });
 
   /**
@@ -287,7 +324,15 @@ describe('createRunTurnProcessor, ensuring a workspace', () => {
     await runTurnOn(container, turn.id);
 
     expect(await container.repos.workspaces.get(stale.id)).toMatchObject({ status: 'DESTROYED' });
-    expect(container.logs.join('')).toContain('destroying a stalled workspace failed');
+    // Which container was left behind, and what the daemon said about it: the row is closed out
+    // either way, so this line is the only record that a container may still be on the host.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'destroying a stalled workspace failed',
+        workspaceId: stale.id,
+        err: expect.objectContaining({ message: 'daemon busy' }) as unknown,
+      }),
+    );
     expect((await container.repos.turns.get(turn.id))?.status).toBe('SUCCEEDED');
     vi.restoreAllMocks();
   });
@@ -359,7 +404,13 @@ describe('createRunTurnProcessor, two turns of one chat', () => {
 
     const refused = await container.repos.turns.get(second.id);
     expect(refused?.status).toBe('FAILED');
-    expect(refused?.error).toContain(WORKSPACE_CONFLICT_CODE);
+    // The whole sentence, which is what the user reads: a code alone does not tell them the thing
+    // that matters, which is that sending the message again in a moment will work.
+    expect(refused?.error).toBe(
+      'workspace_conflict: The workspace of this chat is busy with another operation; ' +
+        'send the message again in a moment.',
+    );
+
     expect(container.publisher.eventsFor(second.id).at(-1)).toMatchObject({ type: 'turn.failed' });
     expect([...container.repos.store.workspaces.values()]).toHaveLength(1);
     expect(container.runner.calls.filter((call) => call.method === 'exec')).toHaveLength(1);
@@ -455,11 +506,35 @@ describe('createRunTurnProcessor, one job delivered twice', () => {
     expect(
       container.publisher.eventsFor(turn.id).some((event) => event.type === 'turn.failed'),
     ).toBe(false);
-    expect(container.logs.join('')).toContain('this turn is already running here');
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'run-turn skipped: this turn is already running here',
+        turnId: turn.id,
+      }),
+    );
     expect(container.runner.calls.filter((call) => call.method === 'exec')).toHaveLength(1);
 
     container.commands.emitCancel(turn.id);
     await first;
     expect((await container.repos.turns.get(turn.id))?.status).toBe('CANCELLED');
+  });
+
+  /**
+   * And the claim comes back when the delivery is over, so the next delivery of the same turn is
+   * not refused as a redelivery of one still running. A turn is retried by hand from the UI, and a
+   * claim held past the first attempt would make every retry of it a no-op for the life of the
+   * process.
+   */
+  it('gives the turn claim back, so the turn can be delivered again', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
+    const { chat, turn } = await seedChatWithTurn(container);
+
+    await runTurnOn(container, turn.id);
+    const retry = await container.repos.turns.create({ chatId: chat.id, model: 'test-model' });
+    await runTurnOn(container, retry.id);
+
+    expect((await container.repos.turns.get(retry.id))?.status).toBe('SUCCEEDED');
+    expect(container.claims.claim(turnClaimKey(turn.id))).toBe(true);
+    expect(container.logs.join('')).not.toContain('already running here');
   });
 });

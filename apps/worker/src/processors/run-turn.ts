@@ -22,6 +22,7 @@ import {
   buildTurnRequest,
   defaultWorkBranch,
   ensureWorkspaceDecision,
+  assertNever,
   isTerminalRunStatus,
   LiveWorkspaceExistsError,
   pushedNoticeText,
@@ -351,6 +352,14 @@ function makeTurnSink(
           // answer. Keeping them would also cost the model a line of history per turn, since a
           // stored SYSTEM message is part of the window a later turn carries.
           break;
+        // Every event of the protocol is named above, either because it is written down or because
+        // it deliberately is not. This clause is the compiler's, not the runtime's: `assertNever`
+        // takes a `never`, so adding an event to the protocol without adding it here stops the
+        // build. Nothing can reach it while the union is closed — the stream is parsed against that
+        // same union, and a line outside it arrives as a `protocol.error`.
+        // Stryker disable next-line ConditionalExpression
+        default:
+          return assertNever(event);
       }
     },
   };
@@ -448,15 +457,17 @@ async function finalizeTurn(
  * @param workspaceId - The workspace it ran in.
  */
 async function settleTurn(deps: ProcessorDeps, turnId: string, workspaceId: string): Promise<void> {
-  const turn = await deps.repos.turns.get(turnId);
-  if (turn !== null && !isTerminalRunStatus(turn.status)) {
-    await deps.repos.turns.finish(
-      turnId,
-      'FAILED',
-      NO_USAGE,
-      `${WORKER_ERROR_PREFIX}: the worker stopped before the turn finished`,
-    );
-  }
+  // Offered unconditionally, because refusing it is the repository's job and it does that in the
+  // write itself: `finish` applies only to a turn that is still live, so a turn that already
+  // recorded its own outcome — or one that is no longer there — is left exactly as it is. Reading
+  // the row first and deciding here would be the same answer arrived at a moment earlier, over a
+  // row a second writer can still move in between.
+  await deps.repos.turns.finish(
+    turnId,
+    'FAILED',
+    NO_USAGE,
+    `${WORKER_ERROR_PREFIX}: the worker stopped before the turn finished`,
+  );
   const workspace = await deps.repos.workspaces.get(workspaceId);
   if (workspace !== null && workspace.status === 'BUSY') {
     await deps.repos.workspaces.setStatus(workspaceId, 'READY');

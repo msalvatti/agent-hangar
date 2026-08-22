@@ -33,6 +33,11 @@ import type { TestContainer } from '../testing/index.js';
 import { WORKER_ERROR_PREFIX } from './constants.js';
 import { createRunTurnProcessor, WORKSPACE_CONFLICT_CODE } from './run-turn.js';
 
+/** The records the container collected, parsed back from the lines pino wrote. */
+function records(logs: string[]): Record<string, unknown>[] {
+  return logs.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
 describe('createRunTurnProcessor, failing a turn', () => {
   /**
    * Without both credentials there is nothing to inject, so no container is started at all and the
@@ -74,6 +79,60 @@ describe('createRunTurnProcessor, failing a turn', () => {
    * A runtime that reports its own failure is recorded verbatim, and its workspace goes back to
    * ready: the container is fine, the turn is not.
    */
+  it('counts the highest step and keeps nothing from the live-view events', async () => {
+    const container = setupProcessorContainer({
+      script: scriptedRuntime([
+        { type: 'turn.started', turnId: 'x', at: '2026-01-01T00:00:00.000Z' },
+        { type: 'prepare.progress', message: 'Cloning…' },
+        { type: 'heartbeat', at: '2026-01-01T00:00:01.000Z' },
+        { type: 'assistant.delta', text: 'thinking' },
+        { type: 'assistant.message', text: 'done thinking' },
+        { type: 'protocol.error', reason: 'schema-violation', length: 12 },
+        { type: 'step.started', step: 3 },
+        { type: 'step.started', step: 2 },
+        { type: 'turn.failed', error: { code: 'runtime_exit', message: 'the runtime gave up' } },
+      ]),
+    });
+    const { chat, turn } = await seedChatWithTurn(container);
+
+    await runTurnOn(container, turn.id);
+
+    // Every one of those events is named in the sink, six of them deliberately kept nowhere. The
+    // step count is the highest reached rather than the last reported: steps can arrive out of
+    // order when one ends after the next begins, and a turn that did three would be recorded as
+    // having done two.
+    expect(await container.repos.turns.get(turn.id)).toMatchObject({
+      status: 'FAILED',
+      stepCount: 3,
+    });
+    // And none of the six left a message behind: a stored SYSTEM line is part of the window every
+    // later turn of this chat carries.
+    expect(await container.repos.messages.listByChat(chat.id)).toHaveLength(1);
+  });
+
+  /**
+   * A cancelled turn records what it spent as well, for the same reason a failed one does.
+   */
+  it('records what a cancelled turn had spent', async () => {
+    const container = setupProcessorContainer({
+      script: scriptedRuntime([
+        { type: 'turn.started', turnId: 'x', at: '2026-01-01T00:00:00.000Z' },
+        { type: 'step.started', step: 2 },
+        { type: 'turn.cancelled' },
+      ]),
+    });
+    const { turn } = await seedChatWithTurn(container);
+
+    await runTurnOn(container, turn.id);
+
+    expect(await container.repos.turns.get(turn.id)).toMatchObject({
+      status: 'CANCELLED',
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 2,
+    });
+  });
+
   it('records a failure the runtime reported', async () => {
     const container = setupProcessorContainer({
       script: scriptedRuntime([
@@ -85,9 +144,17 @@ describe('createRunTurnProcessor, failing a turn', () => {
 
     await runTurnOn(container, turn.id);
 
-    expect((await container.repos.turns.get(turn.id))?.error).toBe(
-      'auth: OpenAI rejected the API key',
-    );
+    expect(await container.repos.turns.get(turn.id)).toMatchObject({
+      status: 'FAILED',
+      error: 'auth: OpenAI rejected the API key',
+      // A turn that failed still cost what it spent getting there, and the row is where that is
+      // read from. Recorded as nothing, a failed turn reads as one that never started — and the
+      // start stamp is what tells the UI the difference.
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
+    expect((await container.repos.turns.get(turn.id))?.startedAt).not.toBeNull();
     expect((await container.repos.workspaces.findLiveByChat(chat.id))?.status).toBe('READY');
   });
 
@@ -338,7 +405,12 @@ describe('createRunTurnProcessor, failing a turn', () => {
     await expect(runTurnOn(container, turn.id)).rejects.toThrow(/unreachable/);
 
     expect((await container.repos.turns.get(turn.id))?.status).toBe('FAILED');
-    expect([...container.repos.store.workspaces.values()][0]?.status).toBe('FAILED');
+    // The reason on the row says the daemon, not the turn: this workspace is not handed to the
+    // next turn of the chat, and an operator reading the row has to know it was the host.
+    expect([...container.repos.store.workspaces.values()][0]).toMatchObject({
+      status: 'FAILED',
+      failureReason: 'docker unreachable',
+    });
     expect(await container.repos.workspaces.findLiveByChat(chat.id)).toBeNull();
   });
 
@@ -441,6 +513,18 @@ describe('createRunTurnProcessor, failing a turn', () => {
 
     expect(container.runner.calls).toHaveLength(0);
     expect(container.publisher.records).toHaveLength(0);
+    // The turn is named on both lines. A delivery skipped without saying which turn it was about
+    // is a delivery nobody can match to the message the user is still waiting on.
+    expect(records(container.logs)).toStrictEqual([
+      expect.objectContaining({
+        msg: 'run-turn skipped: the turn is gone or already finished',
+        turnId: 'no-such-turn',
+      }),
+      expect.objectContaining({
+        msg: 'run-turn skipped: the turn is gone or already finished',
+        turnId: turn.id,
+      }),
+    ]);
   });
 
   /**
@@ -453,7 +537,11 @@ describe('createRunTurnProcessor, failing a turn', () => {
 
     await runTurnOn(container, turn.id);
 
-    expect((await container.repos.turns.get(turn.id))?.error).toContain('chat_not_found');
+    // The whole sentence, which is what the user reads under a turn that never ran: a code with no
+    // explanation beside it is not something anyone can act on.
+    expect((await container.repos.turns.get(turn.id))?.error).toBe(
+      'chat_not_found: the chat this turn belongs to no longer exists',
+    );
   });
 
   /**
@@ -662,7 +750,73 @@ describe('createRunTurnProcessor, racing another writer of the same chat', () =>
     expect(failed?.error).toContain(WORKSPACE_CONFLICT_CODE);
     expect(container.runner.calls.some((call) => call.method === 'exec')).toBe(false);
     expect([...container.repos.store.workspaces.values()][0]?.status).toBe('STOPPING');
-    expect(container.logs.join('')).toContain("another writer took this chat's workspace first");
+    // Both identifiers on the line: the turn that could not proceed and the workspace it wanted.
+    // Two writers reaching for one container is exactly the case an operator has to be able to
+    // reconstruct, and neither id can be recovered from the other.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: "another writer took this chat's workspace first",
+        turnId: turn.id,
+        workspaceId: [...container.repos.store.workspaces.values()][0]?.id,
+      }),
+    );
+    vi.restoreAllMocks();
+  });
+});
+
+describe('createRunTurnProcessor, when another writer got there first', () => {
+  /**
+   * A chat has one live workspace, and the database says so. Two deliveries of two turns of the
+   * same chat can reach the create together — one in each of two workers — and the one that loses
+   * is told by the row itself. It is refused rather than retried, because the workspace that now
+   * exists belongs to the turn that won and this one has no claim on it.
+   */
+  it('refuses the turn whose create the row refused, naming the chat', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
+    const { chat, turn } = await seedChatWithTurn(container);
+    vi.spyOn(container.repos.workspaces, 'create').mockRejectedValueOnce(
+      new LiveWorkspaceExistsError(chat.id),
+    );
+
+    await runTurnOn(container, turn.id);
+
+    const refused = await container.repos.turns.get(turn.id);
+    expect(refused?.status).toBe('FAILED');
+    expect(refused?.error).toBe(
+      'workspace_conflict: The workspace of this chat is busy with another operation; ' +
+        'send the message again in a moment.',
+    );
+    expect(container.runner.calls.some((call) => call.method === 'exec')).toBe(false);
+    // The chat is on the line: the workspace this turn lost belongs to the chat, not to the turn,
+    // and the chat is the only identifier both writers share.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'another writer created the workspace of this chat first',
+        chatId: chat.id,
+      }),
+    );
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * The wind-up releases the workspace it ran in — unless the row is no longer there to release.
+   * A chat deleted mid-turn cascades its workspace away, and a wind-up that reached for the status
+   * of a row that had gone would throw out of the `finally` and fail a delivery whose turn had
+   * already been recorded.
+   */
+  it('winds a turn up whose workspace row was deleted under it', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
+    const { turn } = await seedChatWithTurn(container);
+    const markActive = container.repos.workspaces.markActive.bind(container.repos.workspaces);
+    vi.spyOn(container.repos.workspaces, 'markActive').mockImplementation(async (id: string) => {
+      await markActive(id);
+      container.repos.store.workspaces.delete(id);
+    });
+
+    await expect(runTurnOn(container, turn.id)).resolves.toBeUndefined();
+
+    expect((await container.repos.turns.get(turn.id))?.status).toBe('SUCCEEDED');
+    expect(container.repos.store.workspaces.size).toBe(0);
     vi.restoreAllMocks();
   });
 });
@@ -693,7 +847,12 @@ describe('createRunTurnProcessor, winding a turn up under a delete', () => {
     await expect(runTurnOn(container, turn.id)).resolves.toBeUndefined();
 
     expect(outcomes).toEqual(['DELETED']);
-    expect(container.logs.join('')).toContain('chat was deleted while its turn was being wound up');
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'chat was deleted while its turn was being wound up',
+        chatId: chat.id,
+      }),
+    );
   });
 
   /**
