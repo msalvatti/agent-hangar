@@ -178,10 +178,16 @@ export interface DockerApi {
   /**
    * Lists networks matching a name selector.
    *
+   * The driver options come back with each entry because a network is reused by name and has to be
+   * judged by what it does: a name is not evidence that the isolation this runner depends on is in
+   * force.
+   *
    * @param opts - `filters.name` holds name selectors; the daemon matches them as substrings.
-   * @returns One entry per matching network.
+   * @returns One entry per matching network, with the driver options it was created with.
    */
-  listNetworks(opts: { filters: { name: string[] } }): Promise<{ Name: string }[]>;
+  listNetworks(opts: {
+    filters: { name: string[] };
+  }): Promise<{ Name: string; Options?: Record<string, string> | undefined }[]>;
   /**
    * Creates a network.
    *

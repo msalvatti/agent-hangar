@@ -15,6 +15,7 @@ import { describe, expect, it } from 'vitest';
 import { WorkspaceImageMissing } from '../../errors.ts';
 import { CANARY_MARKER } from '../../testing/canaries.ts';
 
+import { buildNetworkCreateOptions } from './container-spec.ts';
 import { DockerWorkspaceRunner } from './docker-workspace-runner.ts';
 import { DockerRunnerError } from './errors.ts';
 import { dockerError, FakeDockerApi } from './testing/fake-docker-api.ts';
@@ -80,7 +81,7 @@ describe('DockerWorkspaceRunner.create', () => {
    */
   it('reuses an existing network and is not fooled by a longer name', async () => {
     const { runner, docker } = makeRunner();
-    docker.networks.add('ah-ws-test-two');
+    docker.networks.set('ah-ws-test-two', buildNetworkCreateOptions('test-two'));
 
     await createWorkspace(runner);
 
@@ -89,6 +90,23 @@ describe('DockerWorkspaceRunner.create', () => {
     docker.networkOptions.length = 0;
     await runner.create(spec({ workspaceId: 'ws-2' }));
 
+    expect(docker.networkOptions).toStrictEqual([]);
+  });
+
+  /**
+   * A network that carries this name but not the isolation is refused, not adopted.
+   *
+   * Reuse is by name, and a name is not evidence: a network created by hand, or by an earlier
+   * version of these options, would be joined silently and every workspace on it could address
+   * every other. The check reads the option back and fails the create naming the network, because
+   * running unisolated is the outcome this whole network exists to prevent.
+   */
+  it('refuses a network of the right name that does not isolate its members', async () => {
+    const { runner, docker } = makeRunner();
+    docker.networks.set('ah-ws-test', { Name: 'ah-ws-test', Driver: 'bridge' });
+
+    await expect(createWorkspace(runner)).rejects.toThrow(/ah-ws-test/);
+    expect(docker.containers.size).toBe(0);
     expect(docker.networkOptions).toStrictEqual([]);
   });
 

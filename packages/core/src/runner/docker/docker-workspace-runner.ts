@@ -32,6 +32,7 @@ import { buildContainerFileArchive } from './container-files.ts';
 import {
   buildContainerCreateOptions,
   buildNetworkCreateOptions,
+  DISABLE_INTER_CONTAINER_TRAFFIC,
   LABEL_INSTANCE,
   LABEL_WORKSPACE,
   toEnvArray,
@@ -406,7 +407,9 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     // The daemon matches a name filter as a substring, so an instance whose name is a prefix of
     // another's would find the wrong network. Compare the names it returns.
     const existing = await this.#docker.listNetworks({ filters: { name: [options.Name] } });
-    if (existing.some((network) => network.Name === options.Name)) {
+    const found = existing.find((network) => network.Name === options.Name);
+    if (found !== undefined) {
+      assertNetworkIsolates(found);
       return;
     }
     try {
@@ -676,5 +679,30 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
    */
   async #discard(container: DockerContainerApi): Promise<void> {
     await this.#destroyContainer(container).catch(() => undefined);
+  }
+}
+
+/**
+ * Refuses a network that carries the right name without the isolation the runner depends on.
+ *
+ * Reuse is by name, and a name is not evidence. A network made by hand, or by an earlier version
+ * of these options, would otherwise be joined in silence and every workspace on it could address
+ * every other — the exact state this network exists to prevent, arrived at without a word. Failing
+ * the create is the safe answer: a workspace that cannot be isolated is one that should not start,
+ * and the operator is told which network to remove.
+ *
+ * @param network - The existing network, as the daemon reports it.
+ * @throws DockerRunnerError naming the network and the option it lacks.
+ */
+function assertNetworkIsolates(network: {
+  Name: string;
+  Options?: Record<string, string> | undefined;
+}): void {
+  if (network.Options?.[DISABLE_INTER_CONTAINER_TRAFFIC] !== 'false') {
+    throw new DockerRunnerError(
+      `the workspace network ${network.Name} does not isolate its members ` +
+        `(${DISABLE_INTER_CONTAINER_TRAFFIC} is not "false"); ` +
+        `remove it with "docker network rm ${network.Name}" and it will be recreated`,
+    );
   }
 }

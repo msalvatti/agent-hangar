@@ -77,8 +77,11 @@ const NETWORK_PREFIX = 'ah-ws-';
  * Docker applies it as a filter on the bridge itself, so it governs traffic between containers on
  * this network only; each one keeps the egress it was given, which every workspace needs to clone
  * a repository and to reach the model.
+ *
+ * Exported because a network is reused by name, and the runner has to be able to ask an existing
+ * one whether it still carries this — a name alone says nothing about what the network does.
  */
-const DISABLE_INTER_CONTAINER_TRAFFIC = 'com.docker.network.bridge.enable_icc';
+export const DISABLE_INTER_CONTAINER_TRAFFIC = 'com.docker.network.bridge.enable_icc';
 
 /**
  * Names the network an instance's workspaces run on.

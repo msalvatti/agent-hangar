@@ -680,6 +680,11 @@ export const apiOperations = {
   getRun: op({ method: 'GET', path: routes.run, response: runDetail }),
   cancelRun: op({ method: 'POST', path: routes.runCancel, response: okResponse }),
   getSettings: op({ method: 'GET', path: routes.settings, response: settingsStatus }),
+  // The body here is the envelope, not the whole rule: what the route accepts also depends on
+  // which key the path names, and `op` carries one static schema. `putSecretRequestFor(key)` is
+  // the rule, applied by the handler; the client validates the envelope and lets the server answer
+  // on the shape, which is why a value of the wrong shape comes back as a 400 rather than being
+  // stopped in the browser.
   putSecret: op({
     method: 'PUT',
     path: routes.settingsKey,

@@ -181,6 +181,35 @@ describe('archive.sh', () => {
   });
 
   /**
+   * A network that could not be removed is reported as such, not as one that was never there.
+   *
+   * Regression: the script treated every non-zero exit as "nothing to remove" and printed
+   * `No workspace network …`. The realistic failure is a container the reap above could not
+   * remove still holding the network — the daemon answers `has active endpoints` — and telling
+   * the operator the network was absent hides exactly the leftover they need to deal with.
+   */
+  it('reports a network it could not remove, and an absent one as absent', () => {
+    const busy = checkout();
+    const busyResult = spawnScript(scriptPath, {
+      shimDir: createShimDir({ log: busy.log, docker: { psIds: [], networkRm: 'busy' } }),
+      env: { HOME: busy.dir, AH_ENV_FILE: busy.envFile, AH_SHIM_LOG: busy.log },
+    });
+    expect(busyResult.status).toBe(0);
+    expect(busyResult.stderr).toContain('could not remove workspace network ah-ws-feat-x');
+    expect(busyResult.stderr).toContain('has active endpoints');
+    expect(busyResult.stdout).not.toContain('No workspace network');
+
+    const absent = checkout();
+    const absentResult = spawnScript(scriptPath, {
+      shimDir: createShimDir({ log: absent.log, docker: { psIds: [], networkRm: 'absent' } }),
+      env: { HOME: absent.dir, AH_ENV_FILE: absent.envFile, AH_SHIM_LOG: absent.log },
+    });
+    expect(absentResult.status).toBe(0);
+    expect(absentResult.stdout).toContain('No workspace network ah-ws-feat-x to remove');
+    expect(absentResult.stderr).not.toContain('could not remove');
+  });
+
+  /**
    * `--keep-env` leaves the env file in place.
    */
   it('keeps the env file with --keep-env', () => {

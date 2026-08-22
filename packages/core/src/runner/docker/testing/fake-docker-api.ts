@@ -402,8 +402,8 @@ export class FakeDockerApi implements DockerApi {
   /** Every exec option object the runner passed, in order. */
   readonly execOptions: DockerExecCreateOptions[] = [];
 
-  /** Networks the daemon holds, by name. */
-  readonly networks = new Set<string>();
+  /** Networks the daemon holds, by name, with the options each was created with. */
+  readonly networks = new Map<string, Dockerode.NetworkCreateOptions>();
 
   /** Every network create option object the runner passed, in order. */
   readonly networkOptions: Dockerode.NetworkCreateOptions[] = [];
@@ -527,12 +527,15 @@ export class FakeDockerApi implements DockerApi {
    * @param opts - `filters.name` holds name selectors.
    * @returns Matching networks.
    */
-  listNetworks(opts: { filters: { name: string[] } }): Promise<{ Name: string }[]> {
+  listNetworks(opts: {
+    filters: { name: string[] };
+  }): Promise<{ Name: string; Options?: Record<string, string> | undefined }[]> {
     this.calls.push(`listNetworks:${opts.filters.name.join(',')}`);
-    const matches = [...this.networks].filter((name) =>
-      opts.filters.name.some((selector) => name.includes(selector)),
+    return Promise.resolve(
+      [...this.networks.values()]
+        .filter((network) => opts.filters.name.some((selector) => network.Name.includes(selector)))
+        .map((network) => ({ Name: network.Name, Options: network.Options })),
     );
-    return Promise.resolve(matches.map((Name) => ({ Name })));
   }
 
   /**
@@ -550,7 +553,7 @@ export class FakeDockerApi implements DockerApi {
       throw dockerError(CONFLICT, 'network with name already exists');
     }
     this.networkOptions.push(opts);
-    this.networks.add(opts.Name);
+    this.networks.set(opts.Name, opts);
     return Promise.resolve({});
   }
 }

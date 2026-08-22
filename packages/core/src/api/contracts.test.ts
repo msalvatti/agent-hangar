@@ -9,7 +9,12 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '../testing/canaries.ts';
+import {
+  assertNoCanary,
+  CANARY_MARKER,
+  GITHUB_CANARY,
+  OPENAI_CANARY,
+} from '../testing/canaries.ts';
 
 import {
   apiError,
@@ -423,13 +428,19 @@ describe('settings and health schemas', () => {
     const github = putSecretRequestFor('GITHUB_PAT');
     const openai = putSecretRequestFor('OPENAI_API_KEY');
 
+    // The fine-grained and project-scoped forms are assembled from the canary marker rather than
+    // written out: a credential-shaped literal without it is a string the secret scanners have no
+    // reason to forgive, and the repository allows exactly one shape of fake credential.
+    const fineGrained = `github_pat_${CANARY_MARKER}0123456789`;
+    const projectKey = `sk-proj-${CANARY_MARKER}0123456789`;
+
     expect(github.safeParse({ value: GITHUB_CANARY }).success).toBe(true);
-    expect(github.safeParse({ value: 'github_pat_11ABCDE0Y0abcdefghij_klmno' }).success).toBe(true);
+    expect(github.safeParse({ value: fineGrained }).success).toBe(true);
     expect(github.safeParse({ value: 'not-a-token' }).success).toBe(false);
     expect(github.safeParse({ value: OPENAI_CANARY }).success).toBe(false);
 
     expect(openai.safeParse({ value: OPENAI_CANARY }).success).toBe(true);
-    expect(openai.safeParse({ value: 'sk-proj-abcdefghij0123456789' }).success).toBe(true);
+    expect(openai.safeParse({ value: projectKey }).success).toBe(true);
     expect(openai.safeParse({ value: 'not-a-token' }).success).toBe(false);
     expect(openai.safeParse({ value: GITHUB_CANARY }).success).toBe(false);
   });
