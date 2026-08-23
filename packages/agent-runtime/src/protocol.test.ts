@@ -155,6 +155,22 @@ describe('createEventWriter', () => {
   });
 
   /**
+   * A `Writable` reports a failed write twice: through the callback the caller acts on, and as an
+   * `error` event. Node turns an `error` event with no listener into an uncaught exception, so the
+   * runtime would die without the exit code the worker reads — a broken pipe on stdout would look
+   * like a crashed container rather than a finished turn. The listener is asserted by name, since
+   * one registered under any other name absorbs nothing.
+   */
+  it('listens for the stream own report of a failure', () => {
+    const { stream } = recordingStream({});
+    expect(stream.listenerCount('error')).toBe(0);
+
+    createEventWriter(stream, createRuntimeRedactor());
+
+    expect(stream.listenerCount('error')).toBe(1);
+  });
+
+  /**
    * A poisoned promise chain would make every later event reject with the first failure and never
    * be attempted, hiding the real state of the pipe from the loop. No `error` listener is added
    * here on purpose: the writer installs its own, and without it the stream's own report of the
