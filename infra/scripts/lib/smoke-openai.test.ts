@@ -708,7 +708,15 @@ describe('runSmoke, interrupted streams', () => {
     expect(result.exitCode).toBe(EXIT_FAILED);
     expect(lines).toContain('problem timed out after 1 s — is the worker running?');
     expect(lines).toContain('cancel turn=turn-1 HTTP 202');
-    expect(calls.some((call) => call.url.endsWith('/api/turns/turn-1/cancel'))).toBe(true);
+    // The cancel is a state-changing request and is issued as one: a `GET` reads the route rather
+    // than acting on it, and a request that cannot show where it came from is refused by the
+    // same-origin guard — either way the turn keeps its container and the workspace stays up,
+    // which is the outcome this whole path exists to prevent.
+    const cancel = calls.find((call) => call.url.endsWith('/api/turns/turn-1/cancel'));
+    expect(cancel?.init).toStrictEqual({
+      method: 'POST',
+      headers: { 'sec-fetch-site': 'same-origin' },
+    });
     expect(lines).toContain('cleanup ok chat=chat-1 workspace teardown queued');
   });
 

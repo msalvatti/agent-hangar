@@ -17,6 +17,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { json, options, runCheck, stubFetch } from '../testing/smoke-openai-harness.js';
 
+import { SmokeAbort } from './smoke-openai-client.js';
 import {
   EXIT_FAILED,
   EXIT_OK,
@@ -27,6 +28,15 @@ import { runSmoke } from './smoke-openai.js';
 
 /** Milliseconds between cleanup attempts, mirrored from the module under test. */
 const CLEANUP_RETRY_MS = 500;
+
+/**
+ * How many times a refused delete is retried, mirrored from the module under test.
+ *
+ * Written here rather than imported, for the same reason as the interval above: the report claims
+ * a number of attempts in words an operator reads, and a test that read the same constant the
+ * report formats would agree with any number.
+ */
+const CLEANUP_ATTEMPTS = 20;
 
 afterEach(() => {
   vi.useRealTimers();
@@ -123,6 +133,45 @@ describe('runSmoke, preconditions', () => {
   });
 });
 
+describe('the requests the check issues', () => {
+  /**
+   * Every request states what it will accept, and the one that carries a body states what it is
+   * sending. A server is entitled to negotiate something else when asked for nothing, and the
+   * check would then be parsing a document it cannot read — a failure it would report against the
+   * product rather than against itself.
+   */
+  it('asks for and sends JSON', async () => {
+    const result = await runCheck();
+
+    const reads = result.calls.filter(
+      (call) => call.url.endsWith('/api/health') || call.url.endsWith('/api/settings'),
+    );
+    expect(reads).toHaveLength(2);
+    for (const read of reads) {
+      expect(read.init?.headers).toStrictEqual({ accept: 'application/json' });
+    }
+
+    const created = result.calls.find((call) => call.url.endsWith('/api/chats'));
+    expect(created?.init?.headers).toStrictEqual({
+      accept: 'application/json',
+      'sec-fetch-site': 'same-origin',
+      'content-type': 'application/json',
+    });
+  });
+
+  /**
+   * The class names itself, which is what an unexpected escape or a stack trace would carry: this
+   * error is thrown across the whole check, and `Error` tells a reader nothing about where it came
+   * from.
+   */
+  it('names its own abort class', () => {
+    const abort = new SmokeAbort(EXIT_PRECONDITION, 'not ready');
+
+    expect(abort.name).toBe('SmokeAbort');
+    expect(abort.exitCode).toBe(EXIT_PRECONDITION);
+  });
+});
+
 describe('runSmoke, cleanup', () => {
   /**
    * The delete is refused while the chat still carries a live turn, and the transcript reaches
@@ -160,8 +209,12 @@ describe('runSmoke, cleanup', () => {
    */
   it('fails when the delete is refused for good', async () => {
     vi.useFakeTimers();
+    let attempts = 0;
     const { fetch: fetchImpl } = stubFetch({
-      deleteChat: () => json({ error: { code: 'TURN_IN_PROGRESS', message: 'wait' } }, 409),
+      deleteChat: () => {
+        attempts += 1;
+        return json({ error: { code: 'TURN_IN_PROGRESS', message: 'wait' } }, 409);
+      },
     });
     const lines: string[] = [];
     const pending = runSmoke(options(), {
@@ -169,9 +222,26 @@ describe('runSmoke, cleanup', () => {
       now: () => 0,
       log: (line) => lines.push(line),
     });
-    await vi.advanceTimersByTimeAsync(CLEANUP_RETRY_MS * 25);
+    let waits = 0;
+    // Held on an object rather than in a local: a `let` assigned only inside a callback keeps its
+    // initialiser as far as control-flow analysis is concerned, which makes the loop condition read
+    // as a constant.
+    const cleanup = { settled: false };
+    void pending.then(() => {
+      cleanup.settled = true;
+    });
+    // Advanced one retry at a time, so the count is what the loop actually waited rather than how
+    // long the test was willing to wait: the report claims twenty attempts spaced by the retry
+    // interval, and both halves of that claim are checked here.
+    while (!cleanup.settled && waits < CLEANUP_ATTEMPTS * 2) {
+      await vi.advanceTimersByTimeAsync(CLEANUP_RETRY_MS);
+      waits += 1;
+    }
+
     const result = await pending;
     expect(result.exitCode).toBe(EXIT_FAILED);
+    expect(attempts).toBe(CLEANUP_ATTEMPTS);
+    expect(waits).toBe(CLEANUP_ATTEMPTS - 1);
     expect(lines).toContain('cleanup failed chat=chat-1 still HTTP 409 after 20 attempts');
     expect(lines).toContain(
       'problem the chat was not deleted, so its workspace may still be running',
