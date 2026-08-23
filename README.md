@@ -488,17 +488,47 @@ Without `AH_ALLOW_DESTRUCTIVE_TESTS=1` every `@db` test fails with an explanatio
 
 Locally the suites still skip themselves when a resource is missing — that is the right answer for a developer without Docker — but the command does not call that a pass. `pnpm test:integration` prints what ran and **exits non-zero when nothing did**, naming the commands above. A real failure still decides the exit code first; the check only speaks when the run was entirely empty.
 
+### Running the mutation suites
+
+`pnpm test:mutation` runs every scope through `scripts/run-mutation.sh`: each one runs whatever the ones before it did, **one at a time**, and the exit code is non-zero if any fell under its threshold. The serialisation is not politeness — a `Timeout` counts as killed and is measured in wall-clock, so two runs on one machine change each other's verdicts rather than merely slowing them down.
+
+A full sweep is about two hours, which is why it is **not** a pull-request gate and no continuous-integration job runs it. While working on one module you scope the run instead, which takes seconds to minutes:
+
+```bash
+# One package.
+pnpm --filter @agent-hangar/core test:mutation
+
+# One file, or a glob of them, from inside that package.
+cd packages/core && npx stryker run --mutate 'src/secrets/**/*.ts'
+
+# The infra helpers live outside the workspaces, so their run is the repository root's.
+npx stryker run --mutate 'infra/scripts/lib/rotate-key.ts'
+```
+
+Read the **per-file table**, not the `All files` line, when the run was scoped: the score of a subset says nothing about the rest. Never combine a scoped `--mutate` with `incremental: true` — the report would mix fresh verdicts with cached ones for files the run never touched. Reports are written to `reports/mutation/` (gitignored); open `index.html` to see each survivor beside the code it survived in.
+
+Each scope has a Stryker configuration and, where the ordinary Vitest configuration cannot survive the sandbox, a mutation-only one beside it. The reasons are written in those files: `packages/core`'s repository gates climb out of the package, `apps/web` cannot let Stryker prepend a header that changes the digests `vendored.test.ts` verifies, `apps/worker` needs unhandled rejections ignored or a broken dependency reads as a _survivor_ while a hundred tests fail, and `infra/scripts`' shell suites prove their entry points by spawning them — a spawned process never sees the instrumentation, so those tests can kill nothing.
+
+**What is mutated is the code that decides something.** `.tsx` is left out: its dominant mutant is the class-name string literal, and a test asserting on class names is one this project forbids — what a class produces is size, position or colour, which jsdom neither lays out nor resolves, so it belongs to the Playwright suite. The branching a component does have is reachable through the hooks and helpers behind it, which are mutated. Composition roots (`apps/worker/src/main.ts`, `packages/agent-runtime/src/bin.ts`, `infra/scripts/lib/*.main.ts`) are excluded for the same reason they sit outside the coverage gate: they are wiring with no branch of their own.
+
+**A surviving mutant is closed by strengthening the test**, or by simplifying the code to the value that serves. Where neither is possible — a guard whose two answers no observer can tell apart — the mutant carries a `// Stryker disable` naming the reason, in the source rather than in a report, because that is where the next reader looks. One trap worth knowing: Stryker resolves a directive by **comment attachment, not by line**, so one placed above `}, []);` or above `} finally {` is a trailing comment of the statement before it and never binds. It has to lead the whole statement it applies to.
+
+The badge at the top states the score rather than reading it from the Stryker dashboard, which no run here publishes to: that badge reports the last score **uploaded**, so on a project that uploads nothing it would read `unknown` beside a score of 100. The command's own exit code is the claim. The last full sweep:
+
+| Scope                    |    Mutants |     Killed | Timeout | Survived | Score      |
+| ------------------------ | ---------: | ---------: | ------: | -------: | ---------- |
+| `packages/core`          |      3,927 |      3,909 |      18 |        0 | **100.00** |
+| `apps/web`               |      3,728 |      3,716 |      12 |        0 | **100.00** |
+| `apps/worker`            |      1,574 |      1,573 |       1 |        0 | **100.00** |
+| `packages/agent-runtime` |      1,423 |      1,376 |      47 |        0 | **100.00** |
+| `infra/scripts/lib`      |        836 |        819 |      17 |        0 | **100.00** |
+| **Total**                | **11,488** | **11,393** |  **95** |    **0** |            |
+
 ### Coverage policy
 
 100 % of lines, branches, functions and statements on every path a package lists in `coverage.include` — enforced by the Vitest thresholds, never lowered. Composition roots that only wire real clients together are excluded and their logic tested through fakes instead (`apps/worker/src/main.ts`, `packages/agent-runtime/src/bin.ts`), and `apps/web/src/shared/ui/**` is generated shadcn code, excluded as vendor code. Every `it()` carries a comment naming the behaviour it proves.
 
-**Mutation testing runs at 100 and breaks below it.** Coverage says every line ran; a mutation score says a test would have noticed if the line changed. Every package and `infra/scripts/lib` carries a Stryker configuration with `break: 100`, and `pnpm test:mutation` runs them one at a time — sequentially on purpose, because `Timeout` counts as killed and is measured in wall-clock, so two runs at once change each other's verdicts rather than merely slowing them down. It is not a pull-request gate: a full sweep is about two hours, which belongs in a nightly job or a deliberate local run rather than in front of every change.
-
-What is mutated is the code that decides something. `.tsx` is left out: its dominant mutant is the class-name string literal, and a test asserting on class names is one this project forbids — the outcome of a class is size, position or colour, which jsdom neither lays out nor resolves, so it belongs to the Playwright suite. The branching a component does have is reachable through the hooks and helpers behind it, which are mutated. Composition roots (`apps/worker/src/main.ts`, `packages/agent-runtime/src/bin.ts`, `infra/scripts/lib/*.main.ts`) are excluded for the same reason they are outside the coverage gate: they are wiring with no branch of their own.
-
-A surviving mutant is closed by strengthening the test, or by simplifying the code to the value that serves. Where neither is possible — a guard whose two answers no observer can tell apart — the mutant carries a `// Stryker disable` naming the reason, and the reason is stated in the source rather than in a report.
-
-The badge above states the score rather than reading it from the Stryker dashboard, which no run here publishes to: the dashboard badge reports the last score that was **uploaded**, so on a project that uploads nothing it would show `unknown` while the score is 100. Reproduce it with `pnpm test:mutation` — every scope's configuration breaks below 100, so the command's own exit code is the claim. The last full sweep was **11,488 mutants, 11,393 killed, 95 timed out, none survived**: `packages/core` 3,927 · `apps/web` 3,728 · `apps/worker` 1,574 · `packages/agent-runtime` 1,423 · `infra/scripts/lib` 836.
+Coverage is the floor, not the goal: it says every line ran, not that a test would notice if the line changed. That second question is the mutation score's, and it is answered above at 100 for every scope.
 
 ### Quality bar
 
