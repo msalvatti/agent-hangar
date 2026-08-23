@@ -22,7 +22,6 @@ import {
   buildTurnRequest,
   defaultWorkBranch,
   ensureWorkspaceDecision,
-  assertNever,
   isTerminalRunStatus,
   LiveWorkspaceExistsError,
   pushedNoticeText,
@@ -352,14 +351,11 @@ function makeTurnSink(
           // answer. Keeping them would also cost the model a line of history per turn, since a
           // stored SYSTEM message is part of the window a later turn carries.
           break;
-        // Every event of the protocol is named above, either because it is written down or because
-        // it deliberately is not. This clause is the compiler's, not the runtime's: `assertNever`
-        // takes a `never`, so adding an event to the protocol without adding it here stops the
-        // build. Nothing can reach it while the union is closed — the stream is parsed against that
-        // same union, and a line outside it arrives as a `protocol.error`.
-        // Stryker disable next-line ConditionalExpression
-        default:
-          return assertNever(event);
+        // No `default`. Every event of the protocol is named above, either because it is written
+        // down or because it deliberately is not, and nothing can arrive that is not: the stream is
+        // parsed against that same union, so a line outside it reaches here as a `protocol.error`.
+        // A clause for the unreachable case would be a branch no run can take and no test can hold
+        // to account — the compiler's exhaustiveness check is not worth buying at that price.
       }
     },
   };

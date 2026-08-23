@@ -505,16 +505,19 @@ describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
       scheduledFor: container.clock.now(),
     });
 
-    const failure = await run(container, delivery(job.id, 'MANUAL', { runId: foreign.id })).catch(
-      (error: unknown) => error as Error,
-    );
+    const failure: unknown = await run(
+      container,
+      delivery(job.id, 'MANUAL', { runId: foreign.id }),
+    ).catch((error: unknown) => error);
 
     // The refusal says which run and which job, and identifies itself by name: this is the one
     // rejection a delivery answers with, it reaches an operator through BullMQ's failed set, and
     // the two ids are what turn it into something anyone can look up.
     expect(failure).toBeInstanceOf(IneligibleRunError);
-    expect(failure.name).toBe('IneligibleRunError');
-    expect(failure.message).toBe(`run ${foreign.id} is not an open manual run of job ${job.id}`);
+    expect(failure).toMatchObject({
+      name: 'IneligibleRunError',
+      message: `run ${foreign.id} is not an open manual run of job ${job.id}`,
+    });
     expect((await container.repos.jobRuns.get(foreign.id))?.status).toBe('QUEUED');
     expect(await container.repos.jobRuns.listByJob(job.id)).toHaveLength(0);
     expect(container.runner.calls).toHaveLength(0);

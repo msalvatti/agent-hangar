@@ -239,12 +239,13 @@ export class FakeRedis implements RedisCommands {
    * @param id - Exclusive lower bound.
    * @returns The matching entries, oldest first.
    */
-  private entriesAfter(key: string, id: unknown): StreamEntry[] {
+  private entriesAfter(key: string, id: string): StreamEntry[] {
     // Redis refuses a cursor that is not an id, and so does this: a caller that lost track of
     // where it was and sent nothing would otherwise be handed the whole stream, or none of it,
-    // depending on how the comparison happened to coerce.
-    if (typeof id !== 'string' || !/^[-+]$|^\d+-\d+$/u.test(id)) {
-      throw new Error(`ERR Invalid stream ID specified as stream command argument: ${String(id)}`);
+    // depending on how the comparison happened to coerce. The shape is the whole test — a value
+    // that is not a string cannot match it either, so there is no separate type check to make.
+    if (!/^[-+]$|^\d+-\d+$/u.test(id)) {
+      throw new Error(`ERR Invalid stream ID specified as stream command argument: ${id}`);
     }
     return (this.store.streams.get(key) ?? []).filter(([entryId]) => entryId > id);
   }

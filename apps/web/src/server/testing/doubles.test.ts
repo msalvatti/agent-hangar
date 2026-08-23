@@ -91,6 +91,36 @@ describe('FakeRedis', () => {
   });
 
   /**
+   * Both keywords are checked, because both are part of the command and either one wrong is a
+   * syntax error to Redis. A double that read the arguments positionally and ignored their names
+   * would accept a call the real server refuses, and the caller would find out in production.
+   */
+  it.each([
+    ['BLOCKING', 'STREAMS'],
+    ['BLOCK', 'STREAM'],
+  ])('refuses a read spelled %s ... %s', async (blockToken, streamsToken) => {
+    const redis = new FakeRedis();
+
+    await expect(redis.xread(blockToken, 10, streamsToken, 's', '0-0')).rejects.toThrow(
+      `ERR syntax error near '${blockToken}' '${streamsToken}'`,
+    );
+  });
+
+  /**
+   * A cursor that is not an id is refused rather than compared. Redis refuses it too, and the
+   * comparison here is between strings: a caller that lost its place and sent something else would
+   * otherwise be handed the whole stream or none of it, depending on how the two happened to sort.
+   */
+  it.each(['', 'nonsense', '12345'])('refuses %s as a cursor', async (cursor) => {
+    const redis = new FakeRedis();
+    await redis.xadd('s', 'event', '1');
+
+    await expect(redis.xread('BLOCK', 10, 'STREAMS', 's', cursor)).rejects.toThrow(
+      `ERR Invalid stream ID specified as stream command argument: ${cursor}`,
+    );
+  });
+
+  /**
    * The tail read really waits: an entry appended while it is blocked is delivered by that same
    * read, which is what makes the stream pump a loop rather than a poll.
    */

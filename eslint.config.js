@@ -23,6 +23,11 @@ const IGNORED_GLOBS = [
   '**/coverage/**',
   '**/reports/**',
   '**/node_modules/**',
+  // Harness state, and gitignored. Its `worktrees/` hold checkouts of *other* branches: linting
+  // them reports on code this working tree does not contain, against a TypeScript program that
+  // has never been built there — which is every type-aware rule failing at once, and enough of a
+  // second program to exhaust the default heap.
+  '.claude/**',
   '**/playwright-report/**',
   '**/test-results/**',
   'packages/core/src/persistence/generated/**',
