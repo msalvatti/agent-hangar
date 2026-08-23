@@ -15,6 +15,9 @@ import {
   DEFAULT_REPO_URL,
   DEFAULT_TIMEOUT_SECONDS,
   resolveOptions,
+  SETTINGS_MISSING_MESSAGE,
+  SMOKE_PROMPT,
+  USAGE,
 } from './smoke-openai-options.js';
 
 /** Base URL the resolved options are compared against. */
@@ -59,20 +62,61 @@ describe('resolveOptions', () => {
    * alternative is a check that runs against something other than what was asked for.
    */
   it.each([
-    ['a base URL that is not a URL', { 'base-url': 'not a url' }],
-    ['a base URL on another scheme', { 'base-url': 'ftp://127.0.0.1' }],
-    ['a flag with no value', { 'base-url': true as const }],
-    ['a repository with no branch', { repo: 'https://github.com/o/r' }],
+    [
+      'a base URL that is not a URL',
+      { 'base-url': 'not a url' },
+      '--base-url must be an absolute http(s) URL',
+    ],
+    [
+      'a base URL on another scheme',
+      { 'base-url': 'ftp://127.0.0.1' },
+      '--base-url must be an absolute http(s) URL',
+    ],
+    ['a flag with no value', { 'base-url': true as const }, '--base-url needs a value'],
+    [
+      'a repository with no branch',
+      { repo: 'https://github.com/o/r' },
+      '--branch is required with --repo: the default branch cannot be discovered',
+    ],
     [
       'a repository URL carrying credentials',
       { repo: 'https://u:t@github.com/o/r', branch: 'main' },
+      '--repo must be <scheme>://<host>/<owner>/<repository>, with no credentials, query string or fragment',
     ],
-    ['a repository URL that is not one', { repo: 'https://github.com/o', branch: 'main' }],
-    ['a timeout that is not a number', { timeout: 'soon' }],
-    ['a timeout of zero', { timeout: '0' }],
-    ['a fractional timeout', { timeout: '1.5' }],
-  ])('refuses %s', (_case, flags) => {
-    expect(() => resolveOptions(flags, {})).toThrow();
+    [
+      'a repository URL that is not one',
+      { repo: 'https://github.com/o', branch: 'main' },
+      '--repo must be <scheme>://<host>/<owner>/<repository>, with no credentials, query string or fragment',
+    ],
+    [
+      'a timeout that is not a number',
+      { timeout: 'soon' },
+      '--timeout must be a whole number of seconds greater than zero',
+    ],
+    [
+      'a timeout of zero',
+      { timeout: '0' },
+      '--timeout must be a whole number of seconds greater than zero',
+    ],
+    [
+      'a fractional timeout',
+      { timeout: '1.5' },
+      '--timeout must be a whole number of seconds greater than zero',
+    ],
+  ])('refuses %s', (_case, flags, message) => {
+    // The message, not merely the throw: it is printed next to the usage line and is the whole of
+    // what tells an operator which flag to correct. A refusal that says nothing sends them to read
+    // the source of a script they were trying to run.
+    expect(() => resolveOptions(flags, {})).toThrow(message);
+  });
+
+  /**
+   * A base URL on either scheme is accepted. The instance is served over plain HTTP on the loopback
+   * address, and a developer running it behind a TLS proxy is naming the same instance — refusing
+   * `https:` would make the check unusable there while reporting it as a bad command line.
+   */
+  it.each(['http://127.0.0.1:3500', 'https://127.0.0.1:3500'])('accepts %s', (baseUrl) => {
+    expect(resolveOptions({ 'base-url': baseUrl }, {}).baseUrl).toBe(baseUrl);
   });
 
   /**
@@ -109,5 +153,29 @@ describe('resolveOptions', () => {
     } catch (error) {
       expect(String(error)).not.toContain('sekret');
     }
+  });
+});
+
+describe('the fixed contract of the check', () => {
+  /**
+   * The parts an operator reads or types, written out. Each is a promise this script makes to
+   * whoever runs it, and none of them is derivable from anything else here: the pinned repository
+   * and its branch are a pair chosen because the repository is public, tiny and stable, so a check
+   * that started resolving them live would be measuring GitHub rather than this product; the prompt
+   * is what makes the turn do both halves of what the check then asserts, and one that stopped
+   * asking for the file would turn every run into a reported defect; and the usage line is what a
+   * refused command line is printed beside.
+   */
+  it('states its defaults, its prompt and its usage', () => {
+    expect(DEFAULT_REPO_URL).toBe('https://github.com/octocat/Hello-World');
+    expect(DEFAULT_BRANCH).toBe('master');
+    expect(SMOKE_PROMPT).toBe(
+      'List the files in this repository, then create a file SMOKE.md containing the current date ' +
+        'and a one-line summary of the repo. Do not push.',
+    );
+    expect(SETTINGS_MISSING_MESSAGE).toBe('Enter your keys in Settings first');
+    expect(USAGE).toBe(
+      'usage: pnpm smoke:openai [--base-url URL] [--repo URL --branch NAME] [--timeout SECONDS] [--keep]',
+    );
   });
 });

@@ -89,6 +89,9 @@ function deadline(timeoutMs: number): Deadline {
   let timer: NodeJS.Timeout | undefined;
   const expired = new Promise<never>((_resolve, reject) => {
     timer = setTimeout(() => {
+      // Stryker disable next-line StringLiteral: every caller races this promise and discards
+      // whatever it rejected with — the verdict is drawn from the two literals above, never from an
+      // error's text, so no output distinguishes one message here from another.
       reject(new Error('probe timed out'));
     }, timeoutMs);
   });
