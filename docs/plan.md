@@ -88,8 +88,8 @@ flowchart TB
   end
 
   subgraph wave4["Wave 4 - last, non-blocking"]
-    W4A["W4-A Stryker core - 2h"]
-    W4B["W4-B Stryker agent-runtime - 2h"]
+    W4A["W4-A Stryker core"]
+    W4B["W4-B Stryker agent-runtime"]
   end
 
   W0 --> W1A & W1B & W1C & W1D & W1E & W1F & W1G & W1H & W1I
@@ -114,7 +114,7 @@ flowchart TB
 | W3-B | W2 (can start on W1 and rebase) | docs |
 | W4-A/B | W3-A | mutation on stable code |
 
-Estimated wall-clock with cap 5: **≈ 3 h (W0) + ≈ 7 h (W1 in two batches) + ≈ 4 h (W2) + ≈ 4 h (W3) + ≈ 2 h (W4) ≈ 20 h** of agent time, versus ≈ 45 h sequential. Human time is review/merge decisions only.
+Estimated wall-clock with cap 5: **≈ 3 h (W0) + ≈ 7 h (W1 in two batches) + ≈ 4 h (W2) + ≈ 4 h (W3) + ≈ 2 h (W4) ≈ 20 h** of agent time, versus ≈ 45 h sequential. Human time is review/merge decisions only. Wave 4's two hours were the estimate for two packages at a score of 80; what it took was a working day across five scopes at 100, most of it spent on the survivors themselves rather than on the sweeps (§9).
 
 ## 5. Wave 0 — Foundation & frozen contracts (single agent, critical path)
 

@@ -8,7 +8,7 @@ Phases are sized for autonomous agent execution (one PR each, ≤ ~1 day of agen
 | 1 | Walking skeleton | One chat, one container, one OpenAI round-trip, streamed to the browser |
 | 2 | Chats complete | Tools, git with PAT, archive/restore, idle GC, cancel |
 | 3 | Scheduled jobs | Cron → fresh workspace → run recorded, UI with runs |
-| 4 | Settings & secrets hardening | Mask, redact, scrub, rotate; mutation gate on secrets |
+| 4 | Settings & secrets hardening | Mask, redact, scrub, rotate (the mutation gate moved to its own wave — plan §9) |
 | 5 | Conductor | Two parallel checkouts run side by side |
 | 6 | Polish & release | UI per design doc, full E2E, README, deployment appendix |
 
@@ -56,13 +56,13 @@ Phases are sized for autonomous agent execution (one PR each, ≤ ~1 day of agen
 
 ## Phase 4 — Settings & secrets hardening
 
-**Scope.** Master key management (0600 check, `keyVersion`, `pnpm secrets:rotate` re-encrypts rows); `Redactor` with exact values + shape patterns wired into pino, repositories, worker event path, and runtime; env scrubbing audit for `run_shell`; Settings UX (password inputs, Replace/Remove, "last updated", model id display, link to doctor); `/api/settings` never returns plaintext; request logging disabled for settings routes; `gitleaks` in CI + canary test (a known fake secret value must not appear in logs, DB dumps, or `docker history` of the image); Stryker configured with `break: 80` on `secrets`, `redaction`, `scheduling`, `workspace`, `agent-protocol`, runtime `tools`.
+**Scope.** Master key management (0600 check, `keyVersion`, `pnpm secrets:rotate` re-encrypts rows); `Redactor` with exact values + shape patterns wired into pino, repositories, worker event path, and runtime; env scrubbing audit for `run_shell`; Settings UX (password inputs, Replace/Remove, "last updated", model id display, link to doctor); `/api/settings` never returns plaintext; request logging disabled for settings routes; `gitleaks` in CI + canary test (a known fake secret value must not appear in logs, DB dumps, or `docker history` of the image); Stryker configured with `break: 80` on `secrets`, `redaction`, `scheduling`, `workspace`, `agent-protocol`, runtime `tools`. **Superseded, 2026-08-23:** the mutation work ran as its own wave rather than inside this phase, over every mutable module of every package plus `infra/scripts/lib`, at `break: 100` — see [06 §5](06-testing.md) and plan §9.
 
 **Files touched.** `packages/core/src/{secrets/**,redaction/**,logging/**}`, `packages/agent-runtime/src/{tools/run-shell.ts,redact.ts}`, `apps/worker/src/logger.ts`, `apps/web/app/{(app)/settings/**,api/settings/**}`, `packages/core/stryker.config.mjs`, `packages/agent-runtime/stryker.config.mjs`, `.github/workflows/ci.yml`, `infra/scripts/rotate-key.sh`.
 
-**Tests that must pass.** Unit: full secrets + redaction suites (see [06 §2](06-testing.md)); mutation score ≥ 80 on gated modules. E2E: `settings-save-mask` (full, including redaction in logs after a turn). CI: gitleaks + canary job.
+**Tests that must pass.** Unit: full secrets + redaction suites (see [06 §2](06-testing.md)). E2E: `settings-save-mask` (full, including redaction in logs after a turn). CI: gitleaks + canary job. The mutation score moved out of this phase's gate and into its own wave, where it is 100 rather than 80.
 
-**DONE.** Mutation gate enforced in CI and passing; the canary value is provably absent from every sink; Settings page matches [10 §5.4](10-ui-design.md); README security section written.
+**DONE.** The canary value is provably absent from every sink; Settings page matches [10 §5.4](10-ui-design.md); README security section written. The mutation gate is **not** in CI and was never made so: it passes at 100 locally through `pnpm test:mutation`, and a full sweep is about two hours, which belongs in a nightly job rather than in front of every change.
 
 ## Phase 5 — Conductor
 
