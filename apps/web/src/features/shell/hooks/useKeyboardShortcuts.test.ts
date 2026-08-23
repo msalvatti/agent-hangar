@@ -48,9 +48,13 @@ describe('useKeyboardShortcuts', () => {
   it('runs the handlers it is currently given', () => {
     const first = vi.fn();
     const second = vi.fn();
+    // The other two are built once rather than per render: a fresh function on every render changes
+    // the effect's dependencies every time, which rebinds the listener continuously and measures
+    // the test's own churn instead of the hook's.
+    const others = { onNewChat: vi.fn(), onSettings: vi.fn() };
     const { rerender } = renderHook(
       ({ onSearch }: { onSearch: () => void }) => {
-        useKeyboardShortcuts({ onSearch, onNewChat: vi.fn(), onSettings: vi.fn() });
+        useKeyboardShortcuts({ onSearch, ...others });
       },
       { initialProps: { onSearch: first } },
     );

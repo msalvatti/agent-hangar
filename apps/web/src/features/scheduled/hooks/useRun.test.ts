@@ -5,10 +5,13 @@
  * Goal: loads the run detail when a runId is given, and stays idle (no request) when it is null.
  * Mocks: MSW node server serving `src/mocks/scheduled.ts`.
  */
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { resetScheduledStore } from '@/mocks/scheduled';
+import { invalidateQueries } from '@/shared/api/use-api-query';
+
+import { runKey } from '../lib/query-keys';
 
 import { buildRunLoader, useRun } from './useRun';
 
@@ -24,6 +27,32 @@ describe('useRun', () => {
       expect(result.current.status).toBe('success');
     });
     expect(result.current.data?.run.id).toBe('run-nightly-success');
+  });
+
+  /**
+   * Each run is registered under its own id. Two run drawers can be open across a navigation, and
+   * a shared key would serve one run's detail as the other's — and would make a stop on one refresh
+   * both.
+   */
+  it('registers each run under its own key', async () => {
+    const first = renderHook(() => useRun('run-nightly-success'));
+    const second = renderHook(() => useRun('run-nightly-running'));
+    await waitFor(() => {
+      expect(first.result.current.status).toBe('success');
+      expect(second.result.current.status).toBe('success');
+    });
+
+    act(() => {
+      invalidateQueries(runKey('run-nightly-success'));
+    });
+
+    await waitFor(() => {
+      expect(first.result.current.isRefetching).toBe(true);
+    });
+    expect(second.result.current.isRefetching).toBe(false);
+    await waitFor(() => {
+      expect(first.result.current.isRefetching).toBe(false);
+    });
   });
 
   /** Stays idle and issues no request when runId is null. */
