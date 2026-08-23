@@ -415,6 +415,60 @@ describe('writeStdin', () => {
   });
 
   /**
+   * A pull the abort abandoned can still fail afterwards — a source reading from a socket that
+   * drops a moment later does exactly that. The abort is seen before this pull is raced at all, so
+   * nothing else is watching the promise: its rejection has to be marked handled where it is
+   * dropped. An unhandled rejection in Node is a process-level event, and this one would surface
+   * long after the write it belonged to returned, inside whatever happened to be running then.
+   */
+  it('marks an abandoned pull handled when it fails after the abort', async () => {
+    const stream = new PassThrough();
+    const controller = new AbortController();
+    let failPull = (): void => {
+      throw new Error('the pull was failed before it was made');
+    };
+    let pulls = 0;
+    const source: AsyncIterable<Uint8Array> = {
+      [Symbol.asyncIterator]: () => ({
+        next: () => {
+          pulls += 1;
+          if (pulls === 1) {
+            return Promise.resolve({ done: false as const, value: new Uint8Array([1]) });
+          }
+          // Aborted as this pull is handed over, so the write drops it without racing it — the
+          // one path on which nothing else is left holding the promise.
+          controller.abort();
+          return new Promise<IteratorResult<Uint8Array>>((_resolve, reject) => {
+            failPull = () => {
+              reject(new Error('the source went away'));
+            };
+          });
+        },
+        return: () => Promise.resolve({ done: true as const, value: undefined }),
+      }),
+    };
+
+    const rejections: unknown[] = [];
+    const collect = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', collect);
+    try {
+      await expect(writeStdin(stream, source, controller.signal)).resolves.toBeUndefined();
+
+      failPull();
+      // Node reports an unhandled rejection once the microtask queue has drained, so the check
+      // has to happen a turn later than the rejection.
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('unhandledRejection', collect);
+    }
+
+    expect(rejections).toStrictEqual([]);
+    expect(stream.writableEnded).toBe(true);
+  });
+
+  /**
    * Closing the abandoned source is a courtesy to it, not a step the exec depends on. A source that
    * throws on `return()` must not turn a finished write into a failure, and stdin must still be
    * closed — the container-side process is waiting on that EOF.
