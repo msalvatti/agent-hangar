@@ -251,17 +251,30 @@ Deliberately last: the code is stable, so mutants are meaningful, and if time ha
 
 **Status: done on 2026-08-23.** It was taken up after being deferred on 2026-08-20, and it grew past the two lanes written here. The two lanes named `packages/core` and `packages/agent-runtime`; what shipped covers those plus `apps/worker`, `apps/web` and `infra/scripts/lib`, each at a score of **100.00** with `break: 100`. Choosing directories in advance decides where to look rather than what is true, and the widening is what found most of what was found.
 
-| Scope | Mutants | Score | Config |
-|---|---|---|---|
-| `packages/core` | 3,927 | **100.00** | `packages/core/stryker.config.mjs` + `vitest.stryker.config.ts` |
-| `packages/agent-runtime` | 944 | **100.00** | `packages/agent-runtime/stryker.config.mjs` |
-| `apps/worker` | — | **100.00** | `apps/worker/stryker.config.mjs` + `vitest.stryker.config.ts` |
-| `apps/web` | 3,723 | **100.00** | `apps/web/stryker.config.mjs` + `vitest.stryker.config.ts` |
-| `infra/scripts/lib` | 836 | **100.00** | root `stryker.config.mjs` + `vitest.stryker.config.ts` |
+Measured in one `pnpm test:mutation` sweep on 2026-08-23, every scope reporting zero survivors and
+zero mutants the runner could not classify:
+
+| Scope | Mutants | Killed | Timeout | Survived | Score | Config |
+|---|---|---|---|---|---|---|
+| `packages/core` | 3,927 | 3,909 | 18 | 0 | **100.00** | `packages/core/stryker.config.mjs` + `vitest.stryker.config.ts` |
+| `apps/web` | 3,728 | 3,716 | 12 | 0 | **100.00** | `apps/web/stryker.config.mjs` + `vitest.stryker.config.ts` |
+| `apps/worker` | 1,574 | 1,573 | 1 | 0 | **100.00** | `apps/worker/stryker.config.mjs` + `vitest.stryker.config.ts` |
+| `packages/agent-runtime` | 1,423 | 1,376 | 47 | 0 | **100.00** | `packages/agent-runtime/stryker.config.mjs` |
+| `infra/scripts/lib` | 836 | 819 | 17 | 0 | **100.00** | root `stryker.config.mjs` + `vitest.stryker.config.ts` |
+| **Total** | **11,488** | **11,393** | **95** | **0** | | |
+
+A `Timeout` counts as killed and is measured in wall-clock, so those 95 are the reason the sweep is
+serialised rather than a number to compare across machines.
 
 `pnpm test:mutation` runs all five through `scripts/run-mutation.sh`, which mirrors `run-tests.sh`: every scope runs whatever the ones before it did, sequentially, and the exit code is non-zero if any fell under its threshold. `infra/scripts/lib` needed the root configuration because it is not a pnpm workspace and the recursive script never reached it — twelve modules behind `doctor.sh`, `rotate-key.sh` and the smoke check that no mutation run had ever touched.
 
 Rules held throughout: kill survivors by **strengthening tests**, or by simplifying the code to the value that serves; a `// Stryker disable` only where no observer can tell the two answers apart, always with its reason in the source. The `mutation` CI job was **not** added: a full sweep is about two hours, which belongs in a nightly workflow or a deliberate local run rather than in front of every change.
+
+One thing the wave cost and gave back: making the doubles strict, and adding the exhaustiveness
+clauses the switches now do without, put branches into the tree that no suite exercised — coverage
+fell to 99.8 % across three packages before it was noticed. Every double now has a test for its own
+contract, which is worth having on its own terms: a double whose behaviour nothing pins is exactly
+what produced several of the survivors below.
 
 ### What a 100 % covered suite still could not see
 
