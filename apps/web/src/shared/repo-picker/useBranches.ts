@@ -23,7 +23,11 @@ function listBranchesCall(repo: string, signal: AbortSignal) {
 export function useBranches(
   repo: string | null,
 ): UseApiQueryResult<Awaited<ReturnType<typeof listBranchesCall>>> {
+  // The empty string stands in for a repository that has not been chosen, and the query is
+  // disabled until one is — so it names a key nothing fetches under and reaches no request.
+  // Stryker disable StringLiteral
   return useApiQuery(['branches', repo ?? ''], (signal) => listBranchesCall(repo ?? '', signal), {
     enabled: repo !== null,
   });
+  // Stryker restore StringLiteral
 }

@@ -15,6 +15,9 @@ function readLocalStorage(): Storage | undefined {
 }
 
 function parseRecentRepos(raw: string | null): string[] {
+  // The null test narrows the type for `JSON.parse` below, which reads a missing value as the four
+  // letters of `null` and answers with a value the array check refuses anyway.
+  // Stryker disable next-line ConditionalExpression,BlockStatement
   if (raw === null) {
     return [];
   }

@@ -8,7 +8,12 @@ import { describe, expect, it } from 'vitest';
 
 import { AGENT_EVENT_TYPES, compareStreamIds, isTerminalPhase, transcriptReducer } from './reducer';
 import type { ToolTranscriptItem, TranscriptState } from './types';
-import { PREPARE_NOTICE_ID, TOOL_OUTPUT_DISPLAY_LIMIT_BYTES, createInitialState } from './types';
+import {
+  PREPARE_NOTICE_ID,
+  prepareNoticeId,
+  TOOL_OUTPUT_DISPLAY_LIMIT_BYTES,
+  createInitialState,
+} from './types';
 
 function dispatchEvent(
   state: TranscriptState,
@@ -22,6 +27,41 @@ function dispatchEvent(
     now: options.now ?? 0,
   });
 }
+
+describe('createInitialState', () => {
+  /**
+   * A fresh transcript has nothing in it and is doing nothing: `idle` is what the page reads as
+   * "no turn is running", and it is a different claim from `queued` or `preparing`, both of which
+   * put a spinner on screen for a chat that has not been asked anything.
+   */
+  it('starts idle, with no items and no connection', () => {
+    expect(createInitialState()).toStrictEqual({
+      items: [],
+      phase: 'idle',
+      startedAt: null,
+      finishedAt: null,
+      step: 0,
+      usage: null,
+      stoppedBy: null,
+      error: null,
+      connection: 'idle',
+      lastEventId: null,
+      lastActivityAt: null,
+      turnId: null,
+    });
+  });
+
+  /**
+   * The preparation notice is keyed by the turn it belongs to, and by a fixed name when the turn
+   * is not known. Both spellings are written out here: the live stream and a reload both write
+   * this row, and a name they disagree on shows the line twice.
+   */
+  it('names the preparation notice per turn, and without one', () => {
+    expect(PREPARE_NOTICE_ID).toBe('prepare');
+    expect(prepareNoticeId(null)).toBe('prepare');
+    expect(prepareNoticeId('turn-1')).toBe('prepare-turn-1');
+  });
+});
 
 describe('AGENT_EVENT_TYPES', () => {
   // Every variant the reducer switches on must be exercised without throwing, proving the switch

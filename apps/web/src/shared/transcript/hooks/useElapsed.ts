@@ -35,11 +35,15 @@ export function useElapsed(
   running: boolean,
   now: () => number = Date.now,
 ): string {
+  // The reset below runs on the very first render too — the snapshot it seeds is compared against
+  // the props it was seeded from — so what this initialiser holds is never what the hook returns.
+  // Stryker disable ObjectLiteral
   const [snapshot, setSnapshot] = useState<ElapsedSnapshot>(() => ({
     startedAt,
     running,
     elapsedMs: computeElapsedMs(startedAt, now),
   }));
+  // Stryker restore ObjectLiteral
 
   // Resets synchronously during render when startedAt/running change, rather than in an effect:
   // React's documented pattern for state that must track a prop, without an extra render pass.
@@ -51,9 +55,13 @@ export function useElapsed(
     if (!running) {
       return;
     }
+    // A tick that lost the rest of the snapshot is repaired by the reset above on the render it
+    // causes, which recomputes from the same clock — so what the label shows is the same either way.
+    // Stryker disable ObjectLiteral
     const interval = setInterval(() => {
       setSnapshot((previous) => ({ ...previous, elapsedMs: computeElapsedMs(startedAt, now) }));
     }, TICK_MS);
+    // Stryker restore ObjectLiteral
     return () => {
       clearInterval(interval);
     };

@@ -2,11 +2,12 @@
  * Tests for the debounced repository search hook.
  */
 import { routes } from '@agent-hangar/core';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { describe, expect, it } from 'vitest';
 
 import { server } from '@/mocks/server';
+import { invalidateQueries } from '@/shared/api/use-api-query';
 
 import { useRepos } from './useRepos';
 
@@ -32,6 +33,29 @@ describe('useRepos', () => {
   // polls with a real `setInterval` regardless of `vi.useFakeTimers()`; switching timer modes
   // mid-test left React's scheduler bound to a clock that had stopped advancing, hanging the test
   // until Vitest's own per-test timeout.
+  /**
+   * The listing is registered under a key the rest of the tree invalidates by name — the settings
+   * page does it after a token changes. Registered under anything else, the picker would go on
+   * showing the repositories the previous token could reach.
+   */
+  it('refetches when the repos key is invalidated', async () => {
+    const { result } = renderHook(() => useRepos(''));
+    await waitFor(() => {
+      expect(result.current.status).toBe('success');
+    });
+
+    act(() => {
+      invalidateQueries(['repos']);
+    });
+
+    await waitFor(() => {
+      expect(result.current.isRefetching).toBe(true);
+    });
+    await waitFor(() => {
+      expect(result.current.isRefetching).toBe(false);
+    });
+  });
+
   it('debounces rapid query changes into a single search', async () => {
     const seenQueries: string[] = [];
     server.use(

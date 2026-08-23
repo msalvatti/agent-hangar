@@ -18,6 +18,9 @@ function truncate(text: string): string {
 }
 
 function stringField(args: unknown, field: string): string | null {
+  // The object test narrows the type for the read below; a value of another kind has no field to
+  // read, and the `typeof` check on what comes back would refuse it either way.
+  // Stryker disable next-line ConditionalExpression
   if (typeof args !== 'object' || args === null) {
     return null;
   }
