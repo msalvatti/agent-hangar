@@ -13,7 +13,7 @@ import { getEventListeners } from 'node:events';
 import { createLogger, createRedactor } from '@agent-hangar/core';
 import type { AgentEvent } from '@agent-hangar/core';
 import type { Logger } from 'pino';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import type { RedisCommands, StreamRead } from './redis';
 import {
@@ -529,6 +529,51 @@ describe('createSseResponse', () => {
     expect(harness.redis.duplicates[0]?.closed).toBe(true);
     // Releasing twice must not fail: an abort may still arrive after the consumer has gone.
     harness.controller.abort();
+  });
+
+  /**
+   * A released stream leaves nothing of itself behind, and leaves it behind once.
+   *
+   * Both halves are what a long-lived server actually depends on. The heartbeat is an interval: a
+   * stream that closed without clearing it holds a timer, the closure it runs and the response
+   * controller that closure captures, for the life of the process — one per connection the client
+   * ever opened. And the duplicated connection is released exactly once, however many ways the
+   * stream ends at the same moment: an abort can arrive after the reader has already cancelled, and
+   * a second release is a second `disconnect` against a connection the pool has handed on.
+   *
+   * Fake timers throughout, because the leak this measures is a timer. A leaked interval on the
+   * real clock fires straight into a closed controller and throws from outside every test, which
+   * takes the runner with it and reports nothing about the stream.
+   */
+  it('releases its timer and its connection exactly once', async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = open();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+      await harness.reader.cancel();
+      // The other way out of the same stream, arriving after the first. Its listener runs outside
+      // any promise, so what it throws reaches nothing but the process — which is why the test
+      // collects that rather than trusting the absence of a rejection.
+      const raised: unknown[] = [];
+      const collect = (error: unknown): void => {
+        raised.push(error);
+      };
+      process.on('uncaughtException', collect);
+      try {
+        harness.controller.abort();
+        await vi.advanceTimersByTimeAsync(0);
+      } finally {
+        process.off('uncaughtException', collect);
+      }
+
+      expect(raised).toStrictEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(harness.redis.duplicates[0]?.disconnects).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   /**

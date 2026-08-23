@@ -46,6 +46,14 @@ export class FakeRedis implements RedisCommands {
   /** Whether {@link FakeRedis.disconnect} has been called on this connection. */
   closed = false;
 
+  /**
+   * How many times {@link FakeRedis.disconnect} has been called on this connection.
+   *
+   * Counted rather than flagged because releasing twice is a defect a flag cannot see: ioredis
+   * tolerates the second call, so the only trace it leaves is the count.
+   */
+  disconnects = 0;
+
   /** Connections handed out by {@link FakeRedis.duplicate}, in creation order. */
   readonly duplicates: FakeRedis[] = [];
 
@@ -218,6 +226,7 @@ export class FakeRedis implements RedisCommands {
   /** Closes this connection; a pending tail read rejects and every later command does too. */
   disconnect(): void {
     this.closed = true;
+    this.disconnects += 1;
     for (const wake of this.waiting.splice(0)) {
       wake();
     }
