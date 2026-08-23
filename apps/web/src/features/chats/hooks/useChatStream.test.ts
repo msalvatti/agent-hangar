@@ -202,6 +202,41 @@ describe('useChatStream', () => {
   });
 
   /**
+   * Once the followed turn is gone the reconciliation is over. A refetched record of a finished
+   * chat reports no live turn and a terminal phase — the same two facts the terminal event carried
+   * — so a hook that reads them as a second ending refreshes both sidebar lists again for a turn
+   * whose ending they have already been told about.
+   */
+  it('does not refresh the lists again once the turn is gone', async () => {
+    const loader = vi.fn(() => Promise.resolve(null));
+    const { factory, instances } = createFakeEventSourceFactory();
+    const refetch = vi.fn().mockResolvedValue(undefined);
+    const { rerender } = renderHook(
+      ({ mapped }: { mapped: MappedChat }) => {
+        useApiQuery(['chats', 'ACTIVE'], loader);
+        return useChatStream('chat-1', mapped, refetch, factory);
+      },
+      { initialProps: { mapped: RUNNING } },
+    );
+    await waitFor(() => {
+      expect(loader).toHaveBeenCalledTimes(1);
+    });
+
+    act(() => {
+      sourceAt(instances, 0).open();
+      sourceAt(instances, 0).emit('turn.cancelled', { type: 'turn.cancelled' }, '1-0');
+    });
+    await waitFor(() => {
+      expect(loader).toHaveBeenCalledTimes(2);
+    });
+
+    rerender({ mapped: FINISHED });
+    await settle();
+
+    expect(loader).toHaveBeenCalledTimes(2);
+  });
+
+  /**
    * A chat opened after its turn had already finished has nothing to reconcile: the persisted
    * record it was rendered from is the same record the lists read, so refreshing them on mount
    * would refetch both lists for every finished chat the operator opens.

@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { ApiClientError } from '@/shared/api/client';
 import { invalidateQueries } from '@/shared/api/use-api-query';
 
+import { runKey, runsKey } from '../lib/query-keys';
 import { cancelRun, runJob } from '../services/scheduled-api';
 
 /** Result of {@link useRunActions}. */
@@ -30,11 +31,14 @@ export interface UseRunActionsResult {
  * @returns The action callbacks.
  */
 export function useRunActions(): UseRunActionsResult {
+  // Nothing these callbacks read changes between renders, so their dependency lists are empty —
+  // and anything constant added to one would never change either.
+  // Stryker disable ArrayDeclaration
   const runNow = useCallback(async (job: JobSummary) => {
     try {
       await runJob(job.id);
       toast.success('Run started');
-      invalidateQueries(['runs', job.id]);
+      invalidateQueries(runsKey(job.id));
     } catch (error) {
       if (error instanceof ApiClientError && error.status === 409) {
         toast.error('Skipped: previous run still running');
@@ -48,7 +52,7 @@ export function useRunActions(): UseRunActionsResult {
     try {
       await cancelRun(runId);
       toast.success('Stop requested');
-      invalidateQueries(['run', runId]);
+      invalidateQueries(runKey(runId));
     } catch {
       toast.error('Could not stop run');
     }
@@ -62,6 +66,8 @@ export function useRunActions(): UseRunActionsResult {
       toast.error('Could not copy run id');
     }
   }, []);
+
+  // Stryker restore ArrayDeclaration
 
   return { runNow, stop, copyId };
 }

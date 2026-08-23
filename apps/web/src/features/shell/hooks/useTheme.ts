@@ -94,7 +94,11 @@ export function useTheme(): UseThemeResult {
   const setTheme = useCallback((next: ThemePreference) => {
     applyTheme(next);
     writePersisted(THEME_STORAGE_KEY, next);
+    // Nothing this callback reads changes between renders, so its dependency list is empty — and
+    // anything constant added to it would never change either.
+    // Stryker disable ArrayDeclaration
   }, []);
+  // Stryker restore ArrayDeclaration
 
   const cycle = useCallback(() => {
     setTheme(NEXT_THEME[theme]);

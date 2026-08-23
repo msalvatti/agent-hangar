@@ -93,15 +93,13 @@ describe('useJobMutations', () => {
    * can never be saved again; never on, a second click sends a second create.
    */
   it('reports itself busy only while the request is in flight', async () => {
-    let release = (): void => {
-      throw new Error('The request was released before it was made');
-    };
+    const held: (() => void)[] = [];
     server.use(
-      http.post('/api/jobs', async ({ request }) => {
-        await new Promise<void>((resolve) => {
-          release = resolve;
-        });
-        return HttpResponse.json(await request.json(), { status: 201 });
+      http.post('/api/jobs', async () => {
+        await new Promise<void>((resolve) => held.push(resolve));
+        // Falls through to the real mock handler, so the save that finishes is the one the app
+        // performs — a hand-written body would take the failing path instead.
+        return undefined;
       }),
     );
     const { result } = renderHook(() => useJobMutations());
@@ -116,10 +114,14 @@ describe('useJobMutations', () => {
     });
 
     await act(async () => {
-      release();
+      for (const release of held) {
+        release();
+      }
       await pending;
     });
     expect(result.current.busy).toBe(false);
+    // And the save succeeded, so it is the success path that cleared the flag.
+    expect(await pending).toMatchObject({ name: 'Weekly report' });
   });
 
   /**

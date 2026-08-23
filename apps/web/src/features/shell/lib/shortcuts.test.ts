@@ -101,9 +101,19 @@ describe('shortcutLabel', () => {
     vi.restoreAllMocks();
   });
 
-  // On macOS the label is the glyph form the spec shows in tooltips.
-  it('uses the command glyph on macOS', () => {
-    expect(shortcutLabel('search', 'mac')).toBe(SHORTCUTS.search.label);
+  /**
+   * On macOS the label is the glyph form the spec shows in tooltips — written out, one per
+   * shortcut, rather than compared against the table it is read from: a label compared with itself
+   * agrees however it is spelled, including when it is spelled as nothing, and an empty tooltip is
+   * a shortcut the operator has no way to discover.
+   */
+  it.each([
+    ['search', '⌘K'],
+    ['newChat', '⌘N'],
+    ['settings', '⌘,'],
+  ] as const)('spells the %s shortcut with the command glyph on macOS', (name, label) => {
+    expect(shortcutLabel(name, 'mac')).toBe(label);
+    expect(SHORTCUTS[name].label).toBe(label);
   });
 
   // Elsewhere the same binding is spelled out with Ctrl.

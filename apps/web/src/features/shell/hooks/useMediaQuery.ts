@@ -27,6 +27,8 @@ export function useMediaQuery(query: string, serverValue: boolean): boolean {
     [query],
   );
   const getSnapshot = useCallback(() => globalThis.matchMedia(query).matches, [query]);
-  const getServerSnapshot = useCallback(() => serverValue, [serverValue]);
-  return useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+  // Read straight from the argument rather than through a memo: React asks for the server snapshot
+  // only while rendering on the server and while hydrating, never twice in a way a stable identity
+  // would matter for, so memoizing it would only be a dependency list to keep correct.
+  return useSyncExternalStore(subscribe, getSnapshot, () => serverValue);
 }

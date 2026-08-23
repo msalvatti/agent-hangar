@@ -40,6 +40,28 @@ describe('useKeyboardShortcuts', () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  /**
+   * The bindings follow the handlers they are currently given. A view re-renders with new closures
+   * whenever what a shortcut should do changes — which chat is open, which dialog is on screen —
+   * and a listener bound once goes on calling the version of the handler that existed at mount.
+   */
+  it('runs the handlers it is currently given', () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    const { rerender } = renderHook(
+      ({ onSearch }: { onSearch: () => void }) => {
+        useKeyboardShortcuts({ onSearch, onNewChat: vi.fn(), onSettings: vi.fn() });
+      },
+      { initialProps: { onSearch: first } },
+    );
+
+    rerender({ onSearch: second });
+    press({ key: 'k', metaKey: true });
+
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(first).not.toHaveBeenCalled();
+  });
+
   // A key without the command modifier keeps its normal meaning.
   it('ignores an unmodified key', () => {
     const { handlers } = renderShortcuts();

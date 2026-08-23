@@ -135,6 +135,27 @@ describe('stop', () => {
   });
 
   /** A failed cancel is toasted without throwing. */
+  /**
+   * What reloads is the run that was stopped. An invalidation broad enough to match every key
+   * reloads every list on screen — the jobs table, the other job's history — for one stop.
+   */
+  it('leaves unrelated views alone', async () => {
+    const jobs = vi.fn(() => Promise.resolve('jobs'));
+    const { result } = renderHook(() => {
+      useApiQuery(['jobs'], jobs);
+      return useRunActions();
+    });
+    await waitFor(() => {
+      expect(jobs).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      await result.current.stop('run-nightly-running');
+    });
+
+    expect(jobs).toHaveBeenCalledTimes(1);
+  });
+
   it('toasts an error without throwing', async () => {
     const error = vi.spyOn(toast, 'error').mockImplementation(() => '');
     server.use(

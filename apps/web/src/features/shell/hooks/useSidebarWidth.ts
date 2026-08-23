@@ -74,6 +74,10 @@ export function useSidebarWidth(): UseSidebarWidthResult {
   const width = useSyncExternalStore(subscribePersisted, readStoredWidth, automatic);
   const setWidth = useCallback((next: SidebarWidthChoice) => {
     writePersisted(SIDEBAR_WIDTH_STORAGE_KEY, next);
+    // Nothing this callback reads changes between renders, so its dependency list is empty — and
+    // anything constant added to it would never change either.
+    // Stryker disable ArrayDeclaration
   }, []);
+  // Stryker restore ArrayDeclaration
   return { width, setWidth };
 }

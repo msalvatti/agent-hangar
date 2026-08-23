@@ -112,6 +112,28 @@ describe('save', () => {
     expect(result.current.errors.GITHUB_PAT).toBe('too short');
   });
 
+  /**
+   * What reloads is the settings status. An invalidation broad enough to match every key reloads
+   * the chat lists, the health poll and everything else the page holds, because one field was
+   * saved.
+   */
+  it('leaves unrelated queries alone', async () => {
+    const chats = vi.fn(() => Promise.resolve('chats'));
+    const { result } = renderHook(() => {
+      useApiQuery(['chats', 'ACTIVE'], chats);
+      return useSecretMutations();
+    });
+    await waitFor(() => {
+      expect(chats).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      await result.current.save('GITHUB_PAT', GITHUB_CANARY);
+    });
+
+    expect(chats).toHaveBeenCalledTimes(1);
+  });
+
   /** A non-`ApiClientError` failure falls back to a generic message. */
   it('falls back to a generic message for a non-ApiClientError failure', async () => {
     server.use(http.put('/api/settings/:key', () => HttpResponse.error()));

@@ -10,6 +10,7 @@ import type { JobSummary } from '@agent-hangar/core';
 import { useApiQuery } from '@/shared/api/use-api-query';
 import type { UseApiQueryResult } from '@/shared/api/use-api-query';
 
+import { JOBS_KEY } from '../lib/query-keys';
 import { listJobs } from '../services/scheduled-api';
 
 /**
@@ -18,5 +19,5 @@ import { listJobs } from '../services/scheduled-api';
  * @returns The jobs query state.
  */
 export function useJobs(): UseApiQueryResult<JobSummary[]> {
-  return useApiQuery(['jobs'], (signal) => listJobs(signal));
+  return useApiQuery(JOBS_KEY, (signal) => listJobs(signal));
 }

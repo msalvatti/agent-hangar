@@ -752,6 +752,17 @@ describe('mapChatDetail', () => {
   });
 
   /**
+   * A turn that is queued but has not started has no start instant, and saying so is the point: the
+   * header pill counts up from this value, and a turn whose start cannot be read would otherwise
+   * hand it a number that is not one and show an elapsed time of `NaN`.
+   */
+  it('reports no start time for a turn that has not started', () => {
+    const mapped = mapChatDetail(detailWith({ turns: [turn('QUEUED')] }));
+
+    expect(mapped.startedAt).toBeNull();
+  });
+
+  /**
    * Everything else in a turn survives a reload; the preparation used to be the one thing that did
    * not, because it is an event and events are not kept. It is now recorded on the turn, and the
    * notice is spelled by the same builder the live stream uses so the two cannot say it

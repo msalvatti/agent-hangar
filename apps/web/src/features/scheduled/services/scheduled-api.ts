@@ -22,8 +22,8 @@ import { apiFetch } from '@/shared/api/client';
  * @param signal - Aborts the request.
  * @returns The jobs, as returned by the server (unsorted).
  */
-export async function listJobs(signal?: AbortSignal): Promise<JobSummary[]> {
-  const result = await apiFetch('listJobs', signal === undefined ? {} : { signal });
+export async function listJobs(signal: AbortSignal): Promise<JobSummary[]> {
+  const result = await apiFetch('listJobs', { signal });
   return result.jobs;
 }
 
@@ -75,11 +75,8 @@ export async function runJob(id: string): Promise<string> {
  * @param signal - Aborts the request.
  * @returns The job's runs.
  */
-export async function listRuns(jobId: string, signal?: AbortSignal): Promise<RunSummary[]> {
-  const result = await apiFetch(
-    'listRuns',
-    signal === undefined ? { params: { id: jobId } } : { params: { id: jobId }, signal },
-  );
+export async function listRuns(jobId: string, signal: AbortSignal): Promise<RunSummary[]> {
+  const result = await apiFetch('listRuns', { params: { id: jobId }, signal });
   return result.runs;
 }
 
@@ -90,8 +87,8 @@ export async function listRuns(jobId: string, signal?: AbortSignal): Promise<Run
  * @param signal - Aborts the request.
  * @returns The run detail.
  */
-export async function getRun(id: string, signal?: AbortSignal): Promise<RunDetail> {
-  return apiFetch('getRun', signal === undefined ? { params: { id } } : { params: { id }, signal });
+export async function getRun(id: string, signal: AbortSignal): Promise<RunDetail> {
+  return apiFetch('getRun', { params: { id }, signal });
 }
 
 /**

@@ -38,6 +38,10 @@ export function useJobForm(initial?: JobSummary): UseJobFormResult {
   const [values, setValues] = useState<JobFormValues>(() => buildValues(initial));
   const [touched, setTouched] = useState<Partial<Record<keyof JobFormValues, boolean>>>({});
 
+  // Nothing these two callbacks read changes between renders, so their dependency lists are empty
+  // — and anything constant added to one would never change either. `reset` below closes over the
+  // job being edited and lists it.
+  // Stryker disable ArrayDeclaration
   const setField = useCallback(
     <K extends keyof JobFormValues>(field: K, value: JobFormValues[K]) => {
       setValues((previous) => ({ ...previous, [field]: value }));
@@ -48,6 +52,8 @@ export function useJobForm(initial?: JobSummary): UseJobFormResult {
   const touch = useCallback((field: keyof JobFormValues) => {
     setTouched((previous) => ({ ...previous, [field]: true }));
   }, []);
+
+  // Stryker restore ArrayDeclaration
 
   const reset = useCallback(() => {
     setValues(buildValues(initial));

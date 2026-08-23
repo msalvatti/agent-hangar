@@ -17,8 +17,8 @@ import { apiFetch } from '@/shared/api/client';
  * @param signal - Aborts the request.
  * @returns The settings status.
  */
-export async function getSettings(signal?: AbortSignal): Promise<SettingsStatus> {
-  return apiFetch('getSettings', signal === undefined ? {} : { signal });
+export async function getSettings(signal: AbortSignal): Promise<SettingsStatus> {
+  return apiFetch('getSettings', { signal });
 }
 
 /**

@@ -52,34 +52,36 @@ describe('useChats', () => {
    * reporting success while the second list is still in flight shows an archived section that is
    * empty because nothing has arrived, which reads exactly like an archive with nothing in it.
    */
-  it('keeps reporting loading while one list is still in flight', async () => {
-    let release = (): void => {
-      throw new Error('The request was released before it was made');
-    };
-    server.use(
-      http.get('/api/chats', async ({ request }) => {
-        if (new URL(request.url).searchParams.get('status') === 'ARCHIVED') {
-          await new Promise<void>((resolve) => {
-            release = resolve;
-          });
+  it.each(['ARCHIVED', 'ACTIVE'])(
+    'keeps reporting loading while the %s list is still in flight',
+    async (slow) => {
+      const held: (() => void)[] = [];
+      server.use(
+        http.get('/api/chats', async ({ request }) => {
+          if (new URL(request.url).searchParams.get('status') === slow) {
+            await new Promise<void>((resolve) => held.push(resolve));
+          }
+          return undefined;
+        }),
+      );
+      const seen = countListings();
+
+      const { result } = renderHook(() => useChats());
+      await waitFor(() => {
+        expect(slow === 'ARCHIVED' ? seen.active() : seen.archived()).toBe(1);
+      });
+      expect(result.current.status).toBe('loading');
+
+      act(() => {
+        for (const release of held) {
+          release();
         }
-        return undefined;
-      }),
-    );
-
-    const { result } = renderHook(() => useChats());
-    await waitFor(() => {
-      expect(result.current.active.length).toBeGreaterThan(0);
-    });
-    expect(result.current.status).toBe('loading');
-
-    act(() => {
-      release();
-    });
-    await waitFor(() => {
-      expect(result.current.status).toBe('success');
-    });
-  });
+      });
+      await waitFor(() => {
+        expect(result.current.status).toBe('success');
+      });
+    },
+  );
 
   /**
    * Both lists sit under one prefix, so anything that changes a chat — archiving it, deleting it,

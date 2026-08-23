@@ -11,9 +11,13 @@ describe('SUGGESTIONS', () => {
     expect(SUGGESTIONS).toHaveLength(4);
   });
 
-  // Ids key the React list and must therefore be unique.
-  it('gives every entry a unique id', () => {
-    expect(new Set(SUGGESTIONS.map((entry) => entry.id)).size).toBe(SUGGESTIONS.length);
+  /**
+   * Ids key the React list, so they are written out rather than only counted as distinct: an id
+   * that changed — or emptied — makes React tear down and rebuild the card it belonged to, and two
+   * cards sharing one collapse into a single rendered node.
+   */
+  it('names every entry, in display order', () => {
+    expect(SUGGESTIONS.map((entry) => entry.id)).toEqual(['explore', 'build', 'review', 'fix']);
   });
 
   // Every card must carry a title, an icon, one of the four tones and a usable starter prompt.

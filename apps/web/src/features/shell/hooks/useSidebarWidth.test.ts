@@ -48,6 +48,20 @@ describe('useSidebarWidth', () => {
     expect(localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY)).toBe('rail');
     expect(result.current.width).toBe('rail');
   });
+
+  /**
+   * The key is written out. It is a name this app shares with everything else on the origin and
+   * with its own earlier releases, so it has to be a name of its own: an empty one is not a key
+   * anybody owns, and the shape would be read from — and written over — whatever else used it.
+   */
+  it('remembers the shape under its own storage key', () => {
+    const { result } = renderHook(() => useSidebarWidth());
+    act(() => {
+      result.current.setWidth('column');
+    });
+
+    expect(localStorage.getItem('ah-sidebar-width')).toBe('column');
+  });
 });
 
 describe('railShape', () => {

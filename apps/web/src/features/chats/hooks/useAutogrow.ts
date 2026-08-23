@@ -40,7 +40,11 @@ export function useAutogrow(
     const parsed = Number.parseFloat(globalThis.getComputedStyle(element).lineHeight);
     const lineHeight = Number.isFinite(parsed) && parsed > 0 ? parsed : FALLBACK_LINE_HEIGHT_PX;
     // Collapsing first is what makes shrinking possible: `scrollHeight` never reports less than
-    // the height already set on the element.
+    // the height already set on the element. `auto` rather than clearing the property, so a height
+    // declared in a stylesheet is overridden too and not merely reverted to.
+    //
+    // Stryker disable next-line StringLiteral: telling the two apart takes a stylesheet and a
+    // layout engine; the box this produces is measured in `apps/web/e2e`, which has both.
     element.style.height = 'auto';
     const maxHeight = maxRows * lineHeight;
     const minHeight = minRows * lineHeight;

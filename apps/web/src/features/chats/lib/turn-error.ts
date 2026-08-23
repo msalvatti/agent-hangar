@@ -14,8 +14,9 @@ export const README_IMAGE_ANCHOR = '#workspace-image';
 /**
  * Link the `readme` action points at.
  *
- * The published location of the setup guide is decided when the docs ship (W3-A); until then the
- * link is the anchor on the site root, which keeps it same-origin and never dangling off-site.
+ * The anchor is resolved against the site root rather than an external documentation host: the app
+ * runs locally and the guide travels with the checkout, so a same-origin link cannot dangle off a
+ * site this instance may not be able to reach.
  */
 export const README_IMAGE_HREF = `/${README_IMAGE_ANCHOR}`;
 

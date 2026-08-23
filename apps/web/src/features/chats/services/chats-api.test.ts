@@ -87,6 +87,18 @@ describe('chats-api', () => {
     expect(result.model).not.toHaveLength(0);
   });
 
+  /**
+   * The caller's signal reaches the request. The home screen asks for this status on every mount
+   * and the query aborts what is in flight when the view goes away; a request that ignores the
+   * signal resolves into a component that no longer exists.
+   */
+  it('carries the abort signal into the request', async () => {
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(getSettingsStatus(controller.signal)).rejects.toThrow();
+  });
+
   // An unknown id is a 404 from the API and an `ApiClientError` to the caller.
   it('throws ApiClientError for an unknown turn', async () => {
     await expect(cancelTurn('turn-missing')).rejects.toBeInstanceOf(ApiClientError);

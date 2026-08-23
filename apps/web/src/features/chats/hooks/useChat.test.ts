@@ -21,6 +21,44 @@ describe('useChat', () => {
     expect(result.current.notFound).toBe(false);
   });
 
+  /**
+   * A chat that has been created but has not yet run a turn has no last turn. Reading one out of an
+   * empty list throws while rendering, which takes the whole chat view down — and this is the state
+   * every chat is in for the moment between its creation and its first turn being queued.
+   */
+  it('reports no last turn for a chat that has not run one', async () => {
+    server.use(
+      http.get('/api/chats/:id', () =>
+        HttpResponse.json({
+          chat: {
+            id: 'chat-new',
+            title: 'Just created',
+            status: 'ACTIVE',
+            repoUrl: 'https://github.com/acme/api',
+            baseBranch: 'main',
+            workBranch: null,
+            lastPushedSha: null,
+            createdAt: '2026-08-19T10:00:00.000Z',
+            updatedAt: '2026-08-19T10:00:00.000Z',
+            archivedAt: null,
+            lastTurnStatus: null,
+          },
+          messages: [],
+          turns: [],
+          toolCalls: [],
+          workspace: null,
+        }),
+      ),
+    );
+    const { result } = renderHook(() => useChat('chat-new'));
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('success');
+    });
+    expect(result.current.lastTurnId).toBeNull();
+    expect(result.current.mapped?.phase).toBe('idle');
+  });
+
   // Before the response arrives there is nothing to map.
   it('has nothing mapped while loading', () => {
     const { result } = renderHook(() => useChat('chat-finished'));

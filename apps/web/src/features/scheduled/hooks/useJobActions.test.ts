@@ -116,6 +116,71 @@ describe('toggleEnabled', () => {
   });
 
   /**
+   * What reloads is the table and the row. An invalidation broad enough to match every key reloads
+   * every screen the app has open because one switch was flicked.
+   */
+  it('leaves unrelated queries alone', async () => {
+    const settings = vi.fn(() => Promise.resolve('settings'));
+    const { result } = renderHook(() => {
+      useApiQuery(['settings'], settings);
+      return useJobActions();
+    });
+    await waitFor(() => {
+      expect(settings).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      await result.current.toggleEnabled(depAudit, true);
+    });
+
+    expect(settings).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Clearing a row's pending mark clears that row's and no other. Two rows can be in flight at once
+   * — the operator flicks one switch and presses Run on another — and a clear that emptied the map
+   * would unlock a control whose request is still going.
+   */
+  it('clears the pending mark of the row that finished, and only that row', async () => {
+    const held: (() => void)[] = [];
+    server.use(
+      http.patch('/api/jobs/:id', async ({ params }) => {
+        if (params.id === nightlyTests.id) {
+          await new Promise<void>((resolve) => held.push(resolve));
+        }
+        return HttpResponse.json({ ...depAudit, enabled: true });
+      }),
+    );
+    const { result } = renderHook(() => useJobActions());
+
+    let slow!: Promise<void>;
+    let quick!: Promise<void>;
+    act(() => {
+      slow = result.current.toggleEnabled(nightlyTests, true);
+      quick = result.current.toggleEnabled(depAudit, true);
+    });
+    await waitFor(() => {
+      expect(result.current.pending).toStrictEqual({
+        [nightlyTests.id]: true,
+        [depAudit.id]: true,
+      });
+    });
+
+    await act(async () => {
+      await quick;
+    });
+    expect(result.current.pending).toStrictEqual({ [nightlyTests.id]: true });
+
+    await act(async () => {
+      for (const release of held) {
+        release();
+      }
+      await slow;
+    });
+    expect(result.current.pending).toStrictEqual({});
+  });
+
+  /**
    * A successful toggle refreshes both the table and the row's own detail: the switch is
    * optimistic, and the next revision has to come from the server rather than from the guess.
    */
@@ -193,6 +258,37 @@ describe('runNow', () => {
   });
 
   /** A job with a RUNNING run already answers 409, toasted as an overlap skip. */
+  /**
+   * The row is marked while its run is being started, so the button cannot be pressed twice — a
+   * second press is a second run of a job whose whole point is that it runs once per schedule.
+   */
+  it('marks the row pending while the run is being started', async () => {
+    const held: (() => void)[] = [];
+    server.use(
+      http.post('/api/jobs/:id/run', async () => {
+        await new Promise<void>((resolve) => held.push(resolve));
+        return HttpResponse.json({ runId: 'run-1' }, { status: 202 });
+      }),
+    );
+    const { result } = renderHook(() => useJobActions());
+
+    let pending!: Promise<void>;
+    act(() => {
+      pending = result.current.runNow(depAudit);
+    });
+    await waitFor(() => {
+      expect(result.current.pending).toStrictEqual({ [depAudit.id]: true });
+    });
+
+    await act(async () => {
+      for (const release of held) {
+        release();
+      }
+      await pending;
+    });
+    expect(result.current.pending).toStrictEqual({});
+  });
+
   it('toasts the overlap message on 409', async () => {
     const error = vi.spyOn(toast, 'error').mockImplementation(() => '');
     const { result } = renderHook(() => useJobActions());
@@ -252,6 +348,37 @@ describe('remove', () => {
   });
 
   /** A failed delete is toasted without throwing. */
+  /**
+   * And while it is being deleted, for the same reason: the row is still on screen until the table
+   * reloads, and a second press deletes a job that is already gone.
+   */
+  it('marks the row pending while the delete is in flight', async () => {
+    const held: (() => void)[] = [];
+    server.use(
+      http.delete('/api/jobs/:id', async () => {
+        await new Promise<void>((resolve) => held.push(resolve));
+        return new HttpResponse(null, { status: 204 });
+      }),
+    );
+    const { result } = renderHook(() => useJobActions());
+
+    let pending!: Promise<boolean>;
+    act(() => {
+      pending = result.current.remove(depAudit);
+    });
+    await waitFor(() => {
+      expect(result.current.pending).toStrictEqual({ [depAudit.id]: true });
+    });
+
+    await act(async () => {
+      for (const release of held) {
+        release();
+      }
+      await pending;
+    });
+    expect(result.current.pending).toStrictEqual({});
+  });
+
   it('toasts an error without throwing', async () => {
     const error = vi.spyOn(toast, 'error').mockImplementation(() => '');
     server.use(

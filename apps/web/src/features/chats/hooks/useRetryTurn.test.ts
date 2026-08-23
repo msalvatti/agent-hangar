@@ -60,6 +60,25 @@ describe('useRetryTurn', () => {
     expect(result.current.busy).toBe(false);
   });
 
+  /**
+   * A second attempt starts from a clean state. The card renders whatever `error` holds, so a
+   * refusal left over from the previous press sits under a retry that has just been accepted and
+   * reads as a fresh rejection of it.
+   */
+  it('clears a previous refusal when the retry is pressed again', async () => {
+    const { result } = renderHook(() => useRetryTurn());
+    await act(async () => {
+      await result.current.retry('turn-finished-1');
+    });
+    expect(result.current.error).toBeDefined();
+
+    await act(async () => {
+      await result.current.retry('turn-failed-1');
+    });
+
+    expect(result.current.error).toBeUndefined();
+  });
+
   /** A rejection that is not an `Error` still yields a message the screen can render. */
   it('reports a non-Error rejection', async () => {
     const original = globalThis.fetch;
