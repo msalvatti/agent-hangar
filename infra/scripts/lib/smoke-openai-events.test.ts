@@ -89,6 +89,50 @@ describe('createFrameDecoder', () => {
   });
 
   /**
+   * A block that names no event is nothing this reader can act on. Treated as one, its data would
+   * be parsed under a name the decoder invented, and the report would carry a frame the server
+   * never sent.
+   */
+  it('ignores a block that names no event', () => {
+    expect(
+      createFrameDecoder().push('id: 1-0\ndata: {"type":"step.started","step":1}\n\n'),
+    ).toEqual([]);
+  });
+
+  /**
+   * A frame that names an event and carries no payload is unreadable, not empty: every event this
+   * protocol defines has fields, so there is nothing to fall back on — and a decoder holding a
+   * default payload would report whatever that default happened to parse as.
+   */
+  it('reports a frame with no data as undecodable', () => {
+    expect(createFrameDecoder().push('id: 1-0\nevent: step.started\n\n')).toEqual([
+      { kind: 'undecodable', name: 'step.started' },
+    ]);
+  });
+
+  /**
+   * The decoder starts empty, so the very first frame is read exactly as it arrived — including
+   * when it opens with the `event:` line, which is the line whose prefix decides the frame's name.
+   */
+  it('decodes a first frame that opens with its event line', () => {
+    expect(
+      createFrameDecoder().push('event: step.started\ndata: {"type":"step.started","step":1}\n\n'),
+    ).toEqual([{ kind: 'event', event: { type: 'step.started', step: 1 } }]);
+  });
+
+  /**
+   * A frame carries fields this reader does not use, and only the two it does may be read as those
+   * two: a `retry:` line taken for the payload replaces the event with a number.
+   */
+  it('reads only the event and data fields', () => {
+    expect(
+      createFrameDecoder().push(
+        'id: 1-0\nevent: step.started\ndata: {"type":"step.started","step":1}\nretry: 1000\n\n',
+      ),
+    ).toEqual([{ kind: 'event', event: { type: 'step.started', step: 1 } }]);
+  });
+
+  /**
    * `expired` tells the client the replay cache is gone. It is not an agent event, and the check
    * has to treat it as a reason it cannot verify the transcript rather than as noise.
    */
@@ -139,6 +183,26 @@ describe('createEventRecorder lines', () => {
   it('truncates a long preparation message', () => {
     const { lines } = recordAll([{ type: 'prepare.progress', message: 'x'.repeat(200) }]);
     expect(lines[0]).toBe(`prepare ${'x'.repeat(120)}…`);
+  });
+
+  /**
+   * A message that fits is printed whole, ellipsis and all: the mark says text was cut, so putting
+   * one after the last character of a complete message tells the reader something was withheld
+   * when nothing was. The limit itself fits.
+   */
+  it('leaves a message that fits exactly as it is', () => {
+    const { lines } = recordAll([{ type: 'prepare.progress', message: 'x'.repeat(120) }]);
+    expect(lines[0]).toBe(`prepare ${'x'.repeat(120)}`);
+  });
+
+  /**
+   * And the surrounding whitespace goes: git writes progress with leading indentation and trailing
+   * newlines, and a report is one line per event — a message kept as it arrived would break the
+   * line it was printed on, and would spend its own budget on spaces.
+   */
+  it('strips the whitespace around a message before printing it', () => {
+    const { lines } = recordAll([{ type: 'prepare.progress', message: '  \n cloning  now \n  ' }]);
+    expect(lines[0]).toBe('prepare cloning now');
   });
 
   /**
@@ -326,11 +390,44 @@ describe('createEventRecorder outcomes', () => {
    * enough to act on and a message without a code is not searchable.
    */
   it('records a failed turn', () => {
-    const { recorder } = recordAll([
+    const { lines, recorder } = recordAll([
       { type: 'turn.failed', error: { code: 'PREPARE_FAILED', message: 'git clone failed' } },
     ]);
     expect(recorder.observation.terminal).toBe('failed');
     expect(recorder.observation.failure).toBe('PREPARE_FAILED: git clone failed');
+    // And says so on the line as well as in the observation: the report is what an operator reads,
+    // and a failure printed as a bare `turn.failed` names nothing they can act on.
+    expect(lines[0]).toBe('turn.failed PREPARE_FAILED: git clone failed');
+  });
+
+  /**
+   * A cancelled turn is recorded as cancelled rather than merely as "not completed": the check
+   * skips the workspace teardown request for a turn it knows ended, and the drawer's own wording
+   * differs. Its ending is a fact about the turn, not the absence of one.
+   */
+  it('records a cancelled turn', () => {
+    const { lines, recorder } = recordAll([{ type: 'turn.cancelled' }]);
+
+    expect(lines[0]).toBe('turn.cancelled');
+    expect(recorder.observation.terminal).toBe('cancelled');
+  });
+
+  /**
+   * What a recorder holds before a single event reaches it. Every field is the value the report
+   * formats when the stream produced nothing — a summary reads `toolCalls=none`, `tokens=n/a` and
+   * no final line — so a different starting value is a report about a turn that never ran.
+   */
+  it('starts from an empty observation', () => {
+    expect(createEventRecorder().observation).toStrictEqual({
+      steps: 0,
+      assistantChars: 0,
+      toolCalls: [],
+      usage: null,
+      finalMessage: '',
+      pushed: null,
+      terminal: null,
+      failure: '',
+    });
   });
 });
 
