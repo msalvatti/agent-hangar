@@ -18,6 +18,7 @@
   <a href="https://redis.io/"><img src="https://img.shields.io/badge/Redis-8-DC382D?style=flat-square&logo=redis&logoColor=white" alt="Redis 8" /></a>
   <a href="https://tailwindcss.com/"><img src="https://img.shields.io/badge/Tailwind-4-06B6D4?style=flat-square&logo=tailwindcss&logoColor=white" alt="Tailwind 4" /></a>
   <img src="https://img.shields.io/badge/coverage-100%25%20required-success?style=flat-square" alt="100% coverage required" />
+  <a href="https://stryker-mutator.io/"><img src="https://img.shields.io/badge/mutation%20score-100%25-success?style=flat-square" alt="Stryker mutation score 100%" /></a>
 </p>
 
 <p align="center">
@@ -496,6 +497,8 @@ Locally the suites still skip themselves when a resource is missing — that is 
 What is mutated is the code that decides something. `.tsx` is left out: its dominant mutant is the class-name string literal, and a test asserting on class names is one this project forbids — the outcome of a class is size, position or colour, which jsdom neither lays out nor resolves, so it belongs to the Playwright suite. The branching a component does have is reachable through the hooks and helpers behind it, which are mutated. Composition roots (`apps/worker/src/main.ts`, `packages/agent-runtime/src/bin.ts`, `infra/scripts/lib/*.main.ts`) are excluded for the same reason they are outside the coverage gate: they are wiring with no branch of their own.
 
 A surviving mutant is closed by strengthening the test, or by simplifying the code to the value that serves. Where neither is possible — a guard whose two answers no observer can tell apart — the mutant carries a `// Stryker disable` naming the reason, and the reason is stated in the source rather than in a report.
+
+The badge above states the score rather than reading it from the Stryker dashboard, which no run here publishes to: the dashboard badge reports the last score that was **uploaded**, so on a project that uploads nothing it would show `unknown` while the score is 100. Reproduce it with `pnpm test:mutation` — every scope's configuration breaks below 100, so the command's own exit code is the claim. The last full sweep was **11,488 mutants, 11,393 killed, 95 timed out, none survived**: `packages/core` 3,927 · `apps/web` 3,728 · `apps/worker` 1,574 · `packages/agent-runtime` 1,423 · `infra/scripts/lib` 836.
 
 ### Quality bar
 

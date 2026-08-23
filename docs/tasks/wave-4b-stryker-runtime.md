@@ -8,7 +8,7 @@
 | **Branch** | `agent/work` (local only — the operator asked for no push; the `feat/w4b-stryker-runtime` branch this file named was never created) |
 | **Owned paths** | `packages/agent-runtime/stryker.config.mjs`, `packages/agent-runtime/package.json` (scripts block only), tests and test-only helpers under `packages/agent-runtime/**`; source files under `packages/agent-runtime/src/**` **only** to remove an equivalent mutant by simplifying to the value that serves (no behaviour change); `packages/agent-runtime/vitest.stryker.config.ts`. `.gitignore` already lists `.stryker-tmp/` and `reports/` on `main`, so neither lane touches it and the two share no file at all |
 | **Depends on** | W3-A merged (code stable; mutants are meaningful only on stable code). W3-A being unmerged is **not** why this lane is idle — the deferral above is |
-| **Unblocks** | W4-C follow-up (orchestrator-owned `mutation` CI job + README badge — opened only when **both** W4-A and W4-B pass) |
+| **Unblocks** | W4-C follow-up — the README badge and section landed with this work (2026-08-23); what remains of W4-C is the `mutation` CI job |
 | **Source** | [docs/plan.md §9](../plan.md) (table row W4-B, rules) · spec [06 §5](../spec/06-testing.md) · [01 §5 S7](../spec/01-overview.md) |
 | **Notes** | may slip — documented in README "Known gaps" (plan §9: the product is complete without it) |
 | **Last updated** | 2026-08-23 |

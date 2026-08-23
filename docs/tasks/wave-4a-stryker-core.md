@@ -8,7 +8,7 @@
 | **Branch** | `agent/work` (local only — the operator asked for no push; the `feat/w4a-stryker-core` branch this file named was never created) |
 | **Owned paths** | `packages/core/stryker.config.mjs`, `packages/core/package.json` (scripts block only), tests and test-only helpers under `packages/core/**`; source files under `packages/core/src/**` **only** to remove an equivalent mutant by simplifying to the value that serves (no behaviour change); `packages/core/vitest.stryker.config.ts`. `.gitignore` already lists `.stryker-tmp/` and `reports/` on `main`, so neither lane touches it and the two share no file at all |
 | **Depends on** | W3-A merged (code stable; mutants are meaningful only on stable code). W3-A being unmerged is **not** why this lane is idle — the deferral above is |
-| **Unblocks** | W4-C follow-up (orchestrator-owned `mutation` CI job + README badge — opened only when **both** W4-A and W4-B pass) |
+| **Unblocks** | W4-C follow-up — the README badge and section landed with this work (2026-08-23); what remains of W4-C is the `mutation` CI job |
 | **Source** | [docs/plan.md §9](../plan.md) (table row W4-A, rules) · spec [06 §5](../spec/06-testing.md) · [01 §5 S7](../spec/01-overview.md) |
 | **Notes** | may slip — documented in README "Known gaps" (plan §9: the product is complete without it; this lane turns S7 from "pending" into "verified") |
 | **Last updated** | 2026-08-23 |
@@ -333,7 +333,17 @@ Completion Protocol: update status/AC/progress in docs/tasks/wave-4a-stryker-cor
 
 ## Follow-up owned by the orchestrator — W4-C (not a task of this lane)
 
-Opened **only when both W4-A and W4-B have passed** (`break: 80` on a full run, PRs merged): a third, tiny PR that adds the `mutation` CI job to `.github/workflows/ci.yml` — PR-scoped incremental (`stryker run --incremental` with `incrementalFile` restored/saved via the Actions cache keyed by package + branch; the incremental file is invalidated when the base branch changes) and a nightly **full** run on `schedule` with `incremental: false` and `reports/mutation/` uploaded as an artifact; plus the README mutation badge/section and the removal of the W4 rows from README "Known gaps". Until W4-C merges, `pnpm test:mutation` is a local-only gate and README "Known gaps" says so.
+**Partly done, 2026-08-23.** The README half landed with the mutation work: the badge, the testing
+section and the "Known gaps" row all state the score and say plainly that the sweep is not a
+per-change gate. The badge is a static one rather than the Stryker dashboard's, because the
+dashboard reports the last score *uploaded* to it and nothing here uploads — on a project that
+publishes nothing it would read `unknown` beside a score of 100.
+
+**Still open:** the `mutation` CI job in `.github/workflows/ci.yml`. The shape this section
+describes — PR-scoped incremental with a cached `incrementalFile`, plus a nightly full run — is
+still the right one, with one correction from measurement: a full sweep is about two hours, so the
+nightly leg is the one that matters and a per-pull-request leg is worth having only if the
+incremental cache genuinely holds.
 
 ---
 
