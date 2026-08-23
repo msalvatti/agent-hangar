@@ -154,6 +154,43 @@ describe('createRunTurnProcessor, ensuring a workspace', () => {
    * A second message reuses the container that is still running, so nothing is cloned and no new
    * workspace row appears.
    */
+  /**
+   * The turn is marked as running the moment the runtime says it started, and not before: the row
+   * is what the chat view and the reconciler both read, and a turn left as `QUEUED` while its
+   * container works reads as one the worker never picked up — which is the state the stalled
+   * recovery goes looking for. Observed mid-flight, since the turn is `SUCCEEDED` by the time the
+   * processor returns.
+   */
+  it('marks the turn running when the runtime reports it started', async () => {
+    const container = setupProcessorContainer({
+      script: scriptedRuntime(
+        [
+          { type: 'turn.started', turnId: 'x', at: '2026-01-01T00:00:00.000Z' },
+          { type: 'prepare.progress', message: 'Cloning…' },
+        ],
+        { holdUntilSignal: { afterEvent: 2 } },
+      ),
+    });
+    const { turn } = await seedChatWithTurn(container);
+    const statuses: (string | undefined)[] = [];
+    const publish = container.publisher.publish.bind(container.publisher);
+    vi.spyOn(container.publisher, 'publish').mockImplementation(async (turnId, event) => {
+      const id = await publish(turnId, event);
+      if (event.type === 'prepare.progress') {
+        // The sink writes before the event is published, so by the line after `turn.started` the
+        // row already carries whatever that event was supposed to record.
+        statuses.push((await container.repos.turns.get(turn.id))?.status);
+        container.commands.emitCancel(turnId);
+      }
+      return id;
+    });
+
+    await runTurnOn(container, turn.id);
+
+    expect(statuses).toStrictEqual(['RUNNING']);
+    vi.restoreAllMocks();
+  });
+
   it('reuses a live workspace and does not clone again', async () => {
     const container = setupProcessorContainer({ script: scriptedRuntime(happyTurnScript()) });
     const { chat, turn } = await seedChatWithTurn(container);

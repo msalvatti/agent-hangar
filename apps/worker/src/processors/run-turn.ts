@@ -340,6 +340,11 @@ function makeTurnSink(
             headSha: event.headSha,
           });
           break;
+        // Written out for a reader, not to decide anything: this group is the sink saying it keeps
+        // nothing for these events, and an event whose label did not match would leave the switch
+        // having kept nothing either. The two answers are the same, which is why the labels carry a
+        // directive — there is no outcome a test could hold them to.
+        // Stryker disable StringLiteral,ConditionalExpression
         case 'prepare.progress':
         case 'assistant.delta':
         case 'assistant.message':
@@ -351,6 +356,7 @@ function makeTurnSink(
           // answer. Keeping them would also cost the model a line of history per turn, since a
           // stored SYSTEM message is part of the window a later turn carries.
           break;
+        // Stryker restore StringLiteral,ConditionalExpression
         // No `default`. Every event of the protocol is named above, either because it is written
         // down or because it deliberately is not, and nothing can arrive that is not: the stream is
         // parsed against that same union, so a line outside it reaches here as a `protocol.error`.

@@ -179,6 +179,11 @@ function makeJobRunSink(deps: ProcessorDeps, runId: string, recorder: ToolCallRe
             lastPushedSha: event.sha,
           });
           break;
+        // Written out for a reader, not to decide anything: this group is the sink saying it keeps
+        // nothing for these events, and an event whose label did not match would leave the switch
+        // having kept nothing either. The two answers are the same, which is why the labels carry a
+        // directive — there is no outcome a test could hold them to.
+        // Stryker disable StringLiteral,ConditionalExpression
         case 'turn.started':
         case 'prepare.progress':
         case 'prepare.done':
@@ -189,6 +194,7 @@ function makeJobRunSink(deps: ProcessorDeps, runId: string, recorder: ToolCallRe
           // Published for the live view and kept nowhere: nothing they carry outlives the
           // container, and `output` already carries the answer the assistant streamed.
           break;
+        // Stryker restore StringLiteral,ConditionalExpression
         // No `default`. Every event of the protocol is named above, either because it is written
         // down or because it deliberately is not, and nothing can arrive that is not: the stream is
         // parsed against that same union, so a line outside it reaches here as a `protocol.error`.
