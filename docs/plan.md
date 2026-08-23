@@ -245,18 +245,34 @@ Each lane below is one subagent prompt. Common to all: read `CLAUDE.md`, the spe
 
 - README per spec 05 §7 (quick start, config table, scripts, Conductor, testing, security notes, troubleshooting, known gaps, decisions, deployment appendix = spec 08 condensed with a link); refresh `docs/spec/*` to match reality (versions, names); this plan's §9 updated.
 
-## 9. Wave 4 — Stryker 10 mutation testing (last, non-blocking, one lane at a time)
+## 9. Wave 4 — Stryker 10 mutation testing (done: every scope at 100)
 
-Deliberately last: the code is stable, so mutants are meaningful, and if time runs out the product is complete without it (README "Known gaps" then states the mutation status and the plan — which is this section).
+Deliberately last: the code is stable, so mutants are meaningful, and if time had run out the product would have been complete without it.
 
-**Status: deferred by the operator on 2026-08-20.** Both lanes stay in the plan and are expected to be taken up later; nothing about the design below changes. This is a scheduling decision, not a cancellation and not a blockage — the two are different, and a reader who finds these rows should not go looking for the missing dependency. What the product ships without is the mutation gate, and the README says so in plain terms.
+**Status: done on 2026-08-23.** It was taken up after being deferred on 2026-08-20, and it grew past the two lanes written here. The two lanes named `packages/core` and `packages/agent-runtime`; what shipped covers those plus `apps/worker`, `apps/web` and `infra/scripts/lib`, each at a score of **100.00** with `break: 100`. Choosing directories in advance decides where to look rather than what is true, and the widening is what found most of what was found.
 
-| Lane | Owned | Config | Gate |
+| Scope | Mutants | Score | Config |
 |---|---|---|---|
-| W4-A | 🟡 deferred | — | **Deferred by the operator on 2026-08-20, not blocked and not cancelled.** Mutation testing on `packages/core` stays in the plan and will be taken up later. It was never a gate: the section below already says the product is complete without it. Do not start it on the strength of its dependency graph — it needs the operator to say so |
-| W4-B | 🟡 deferred | — | **Deferred by the operator on 2026-08-20**, on the same terms as W4-A, for `packages/agent-runtime` |
+| `packages/core` | 3,927 | **100.00** | `packages/core/stryker.config.mjs` + `vitest.stryker.config.ts` |
+| `packages/agent-runtime` | 944 | **100.00** | `packages/agent-runtime/stryker.config.mjs` |
+| `apps/worker` | — | **100.00** | `apps/worker/stryker.config.mjs` + `vitest.stryker.config.ts` |
+| `apps/web` | 3,723 | **100.00** | `apps/web/stryker.config.mjs` + `vitest.stryker.config.ts` |
+| `infra/scripts/lib` | 836 | **100.00** | root `stryker.config.mjs` + `vitest.stryker.config.ts` |
 
-Rules: kill survivors by **strengthening tests** (or simplifying code to the value that serves); no `// Stryker disable` without a one-line reason; equivalent mutants documented in the PR. When both lanes pass, a third tiny PR adds the `mutation` CI job (PR-scoped incremental, nightly full) and the README badge/section.
+`pnpm test:mutation` runs all five through `scripts/run-mutation.sh`, which mirrors `run-tests.sh`: every scope runs whatever the ones before it did, sequentially, and the exit code is non-zero if any fell under its threshold. `infra/scripts/lib` needed the root configuration because it is not a pnpm workspace and the recursive script never reached it — twelve modules behind `doctor.sh`, `rotate-key.sh` and the smoke check that no mutation run had ever touched.
+
+Rules held throughout: kill survivors by **strengthening tests**, or by simplifying the code to the value that serves; a `// Stryker disable` only where no observer can tell the two answers apart, always with its reason in the source. The `mutation` CI job was **not** added: a full sweep is about two hours, which belongs in a nightly workflow or a deliberate local run rather than in front of every change.
+
+### What a 100 % covered suite still could not see
+
+Every scope was already at 100 % coverage on four metrics before this wave. The mutants that survived that were, in order of how often they appeared:
+
+1. **Doubles kinder than the thing they stood in for.** A `matchMedia` stub that called back whatever listener it was given regardless of event name; a Redis probe double that did the same, hiding whether the probe subscribed to the `error` ioredis actually emits; a `FakeRedis` recording `disconnect` as a boolean, so releasing a connection twice looked identical to releasing it once. Each was fixed in the double, which then failed the test that had been passing.
+2. **Assertions comparing a constant with itself.** `expect(shortcutLabel('search', 'mac')).toBe(SHORTCUTS.search.label)` agrees however the label is spelled, including as nothing. The same shape hid the storage keys, the doctor's status vocabulary, the smoke check's prompt and usage line, and every message an operator reads.
+3. **Resources nothing checked were given back.** A leaked heartbeat interval per SSE connection; the smoke check's deadline timer, which would have kept the process alive after it printed its verdict; the probes' three teardown deadlines. All are now asserted under fake timers, where a leaked timer is measurable rather than fatal.
+4. **Real behavioural gaps.** A rollback that would have missed a row an interrupted key rotation had already re-sealed, reporting a clean rollback over a split store while the operator deletes the only key that opens it. A smoke check that accepted a successful `read_file` as proof the agent could list a repository and write a file. A chunk decoder that would have corrupted any non-ASCII character landing on a chunk boundary.
+
+### Sizing and sequencing, measured rather than assumed
 
 ### Sizing and sequencing, measured rather than assumed
 
@@ -272,7 +288,7 @@ numbers moved the decision:
 | Projected full run | **3–10 min** | **20–40 min** — not the ten this plan assumed |
 | Peak RSS over idle baseline | +751 MB (~375 MB per runner) | +662 MB (~330 MB per runner) |
 
-**Memory is not the constraint, and the reason is specific.** For Vitest ≥ 4.1 the Stryker vitest
+**Memory was not the constraint, and the reason is specific.** For Vitest ≥ 4.1 the Stryker vitest
 runner builds its context with `pool: 'threads'`, `maxWorkers: 1`, `maxConcurrency: 1` and coverage
 disabled, so a package's own `maxWorkers: 3` never multiplies inside a runner: peak is
 `concurrency × one worker`. Two lanes at `concurrency: 2` would cost about 1.4 GB of 36 — nowhere
@@ -299,10 +315,17 @@ Four things the lane files got wrong, now corrected in them:
    were measured at.
 4. `ignorePatterns` was missing, so the 6.7 MB `dist/` tree was being copied into every sandbox.
 
-Two acceptance items are already satisfied on `main` and need no work: `.gitignore` lists
-`.stryker-tmp/` and `reports/`, and the root `test:mutation` already serialises workspaces
-(`pnpm --recursive --if-present --sequential`). Consequently **the two lanes share no file**, and the
-`.gitignore` rebase coordination they used to describe does not exist.
+`.gitignore` already listed `.stryker-tmp/` and `reports/`, so no work was needed there. The root
+`test:mutation` used to be a single recursive `pnpm` invocation; it is now `scripts/run-mutation.sh`,
+because a recursive run cannot reach `infra/scripts` (not a workspace) and because `&&` would have
+let one scope's failure hide every scope after it.
+
+**A directive binds by comment attachment, not by line.** A `// Stryker disable` placed above
+`}, []);` or above `} finally {` is a trailing comment of the statement before it and never binds,
+however plausible it looks; it has to lead the whole statement it applies to. Where that would have
+swallowed killable mutants inside the same statement, the fix was to split the function —
+`rotateSecrets` is now only the lifetime of the revealed plaintext and delegates the rotation
+itself, so the directive covers the wrapper and nothing else.
 
 ## 10. Risks
 
@@ -315,7 +338,7 @@ Two acceptance items are already satisfied on `main` and need no work: `.gitigno
 | MEDIUM | 100 % coverage on UI code slows W1-G/H | Components are small and state-driven; MSW + Testing Library; `coverage.include` scoped to owned paths during the wave, widened to the whole package afterwards |
 | MEDIUM | Subagent ends without PR (context exhaustion) | Orchestrator verifies via `git`; spawns a *finalize-agent* on the **same worktree path** to run gates, commit, push, open PR |
 | LOW | Responses API event names differ from spec | W1-C verifies against official docs and fixtures; provider is the only place that changes |
-| LOW | Stryker time budget | Last wave, one lane at a time (W4-B first), explicitly allowed to slip; measured at 20–40 min for `agent-runtime` and 3–10 min for `core` per full run (§9); CI gate added only once green |
+| LOW | Stryker time budget | Realised and absorbed: the full sweep across all five scopes is about two hours, so it is a nightly or deliberate local run rather than a per-change gate (§9). One scope at a time, because a timeout verdict is wall-clock |
 
 ## 11. Orchestrator protocol (copy into the orchestrator session)
 
@@ -364,9 +387,9 @@ each worktree uses AH_INSTANCE=<lane> so local stacks never collide.
 | Default branch | `main`; check its latest run with `gh run list --branch main --limit 1` rather than trusting a status recorded here, which ages the moment anything merges |
 | Lanes merged | **15 of 17** — the foundation, all nine first-wave lanes, all three integration lanes (web API, worker, end-to-end) and the documentation lane. Their 14 pull requests are #4, #6, #7, #8, #10, #11, #12, #18, #19, #21, #22, #24, #32 and #37; every other merged pull request is an orchestrator fix, which is how the last row of this table is derived |
 | Lanes in review | **0**, and a reader can check it without asking GitHub: the lane set is closed at 17 and every one of them is a row of the table below, so a lane in review would say so there |
-| Lanes not merged | **2** — both mutation-testing lanes (🟡 deferred by decision on 2026-08-20: they stay in the plan and are scheduled later — §9). Deferred is not blocked and not cancelled |
-| Tasks merged | **86 of 94** — the eight that remain are the two mutation lanes' |
-| Tasks written but not yet merged | **0** — W3-A's six merged with PR #81 and `feat/w3a-integration` no longer exists on the remote. The eight tasks that remain unwritten are the two mutation lanes' |
+| Lanes not merged | **2** — both mutation-testing lanes, 🟩 done on 2026-08-23 but held on the local branch `agent/work` at the operator's instruction, so nothing about them is on the remote. Done and unmerged, which is not the same as unfinished — §9 carries the scores |
+| Tasks merged | **86 of 94** — the eight that remain are the two mutation lanes', done locally and unpushed |
+| Tasks written but not yet merged | **0** — W3-A's six merged with PR #81 and `feat/w3a-integration` no longer exists on the remote. The eight the mutation lanes describe were satisfied by the work on `agent/work` rather than written as task files, because the scope they name is narrower than what shipped |
 | Routed findings still open | **2** of the 63 rows in §14 below — R1 and R63, both documented residuals rather than unfinished repairs. Closed rows are marked, not deleted, so this is the count of rows whose **Owner column** does not begin with 🟩 or `superseded`. Read that column, not the whole line: a row can say "superseded" in its prose while still being open, and a check that greps the line miscounts it. It was 31 of 44 before this refresh: six rows (R12, R13, R28, R33, R34, R35) closed against PRs #60 and #61, which had landed without the board recording it, R10 went half-closed and stayed open, and three rows were added of which two are open. It was 26 before PR #83, which closed R32 and R44 and moved R46 and R49 half-way without closing either — a half-closed row stays open and keeps counting, which is why two moved rows changed the number by two rather than by four. **This number moves the day PR #56 merges**: as that branch stands it adds R39, R40 and R41 and closes R16, and it is being reworked, so what arrives may differ. Re-derive rather than trust: read the last column of every `| R…` row and count the ones that do not begin with 🟩 or `superseded` |
 | Orchestrator fixes | **No total is recorded here, deliberately.** They are *every merged pull request that is not one of the 14 lane pull requests named two rows up*; to get the number, run `gh pr list --state merged --limit 200 --json number` and subtract those 14. The table below the lane table names the fifty merged by 2026-08-20 — anything merged after that date is missing from it by construction, and the table is a record of what was fixed rather than a count of it. The previous version of this row said "41 merged, 0 open" when the true figure was 48: it double-counted a lane's own pull request as a fix and had no row for nine merged ones. That correction was then overtaken twice more before it could merge — #64 and #62 landed — and its open-side figure was wrong the moment it was typed, because the pull request carrying it was itself an open orchestrator fix and could not count itself. A line that cannot be right while it is being written is not worth keeping right |
 
@@ -412,10 +435,10 @@ lane table now carries the merge state and this paragraph carries only what foll
 | W2-A | 🟩 merged | PR #21 | web 100 · core 100 (all four metrics) | 19 routes and both SSE streams; found and fixed a path traversal in the forge slug pattern that would have sent the authorisation header to an unnamed path |
 | W2-B 🐳 | 🟩 merged | PR #22 | worker 100 (all four metrics) | three consumers, cancel channel, scheduler reconcile and graceful shutdown; Docker suite ran green six consecutive times with no leftover containers |
 | W2-C | 🟩 merged | PR #32 | web 100 (all four metrics) | Playwright harness, a local git server and the six critical-flow specs. Merged against **its own** Definition of Done — specs compile, selectors resolve, the harness boots and tears down — not against a real-mode pass, which §7 assigns to W3-A in as many words. It was the integration canary regardless: five defects blocking a real turn were found through it and fixed elsewhere (the client clone URL, the scheduled-run cancel route, the repository-origin policy, the scripted-provider script and the unwired model provider). The last recorded real-mode figure is **7 of 9**, measured before PR #61. Its two failures were R34 and R35 (R33 is the assertion that could not fail, not a failure) — an earlier version of this row named R33 and R34, which was wrong. PR #61 found and fixed the cause of both: the scripted double omitted arguments the tools require under strict function calling, so four calls were refused before they ran, and the archive check waited for the double's wording rather than the product's. **No real-mode run has been recorded since**, so 9 of 9 is expected and unmeasured — run it before repeating a number here |
-| W3-A 🐳 | 🟩 merged | PR #81 | core 100 · web 100 · worker 100 · agent-runtime 100 · scripts 100 (all four metrics) | **All six tasks are done.** Five shipped on their own branches (#74/#75, #77, #79, #76, #80), so `feat/w3a-integration` carries the close-out alone. Spec 01 §5 is answered in the pull request with the artefact for each criterion: **S2, S3, S4, S5, S6 and S8 met**, **S1 partial** — every README command was executed from a fresh clone of the remote (#67, fixed by #69 and #73) and the warm-machine walk from `git clone` to a healthy instance measured 21 s, but the criterion names a *clean* macOS and no clean-machine stopwatch exists, because a cold dependency install and a cold image build cannot be measured on a machine that has already done both. **S7 is not claimed**: mutation testing is deferred by decision (§9) and is not part of the gate. One evidence line of the task could not be followed as written and is satisfied by other means, recorded in the pull request: `/api/health` has no `workspaces.live` field — the third task in this lane to ask for one that was deliberately not built — so the same fact is read from the worker heartbeat's `containers` counter, which does exist and answered 0. **The routed §14 rows are not closed here.** Closing this lane closes its six tasks; §14 keeps its own count, and every open row in it stays routed to whoever takes it next |
+| W3-A 🐳 | 🟩 merged | PR #81 | core 100 · web 100 · worker 100 · agent-runtime 100 · scripts 100 (all four metrics) | **All six tasks are done.** Five shipped on their own branches (#74/#75, #77, #79, #76, #80), so `feat/w3a-integration` carries the close-out alone. Spec 01 §5 is answered in the pull request with the artefact for each criterion: **S2, S3, S4, S5, S6 and S8 met**, **S1 partial** — every README command was executed from a fresh clone of the remote (#67, fixed by #69 and #73) and the warm-machine walk from `git clone` to a healthy instance measured 21 s, but the criterion names a *clean* macOS and no clean-machine stopwatch exists, because a cold dependency install and a cold image build cannot be measured on a machine that has already done both. **S7 is not claimed here**: mutation testing was deferred when this lane closed. It has since been done — every scope at 100.00 on 2026-08-23 (§9) — on a local branch that was never pushed, so it changes nothing about what this pull request shipped. One evidence line of the task could not be followed as written and is satisfied by other means, recorded in the pull request: `/api/health` has no `workspaces.live` field — the third task in this lane to ask for one that was deliberately not built — so the same fact is read from the worker heartbeat's `containers` counter, which does exist and answered 0. **The routed §14 rows are not closed here.** Closing this lane closes its six tasks; §14 keeps its own count, and every open row in it stays routed to whoever takes it next |
 | W3-B | 🟩 merged | PR #37 | n/a (docs only) | README rewritten against the running system, every command executed from a fresh clone; three claims corrected because verification refuted them (`pnpm doctor` is shadowed by pnpm's own command, five scripts resolved the instance from the shell while `setup`/`run` read `.env.local`, and the `RequestContext` in 09 does not exist); R11 and R20 closed in `docs/AUTOPILOT.md`. The five-scripts finding describes behaviour that PR #39 has since replaced: every instance-acting script now reads the checkout's `.env.local` and refuses on disagreement, and the shadowed command has the working alias `pnpm infra:doctor` |
-| W4-A | 🟡 deferred | — | — | deferred by the operator on 2026-08-20; stays in the plan, taken up later — see §9 |
-| W4-B | 🟡 deferred | — | — | deferred by the operator on 2026-08-20; stays in the plan, taken up later — see §9 |
+| W4-A | 🟩 done | local only | core 100.00 · web 100.00 · worker 100.00 · agent-runtime 100.00 · scripts 100.00 (mutation score) | Done on 2026-08-23, on `agent/work`, **not pushed** — the operator asked for the work to stay local. It grew past `packages/core`: the scope is every package plus `infra/scripts/lib`, at `break: 100` — see §9 for what a fully covered suite still could not see |
+| W4-B | 🟩 done | local only | agent-runtime 100.00 (mutation score) | Closed with W4-A above: `packages/agent-runtime` mutates the whole of `src/**` rather than `src/tools/**`, and the two lanes turned out to share every configuration decision, so separating them would have been bookkeeping rather than isolation |
 
 **Orchestrator fixes alongside the lanes** (not lanes of the plan; each fixes a defect found while shepherding, and the Status column says whether that fix has landed):
 
@@ -498,6 +521,7 @@ number here is only as current as the last close-out that lane wrote.
 | W3-B | 5 | — | 5 |
 | W4-A | 0 | — | 4 |
 | W4-B | 0 | — | 4 |
+| _(the eight above were satisfied by the local mutation work of 2026-08-23 rather than as task files — §9)_ | | | |
 | **Total** | **86** | **0** | **94** |
 
 ## 13. Estimated complexity

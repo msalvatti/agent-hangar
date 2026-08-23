@@ -3,15 +3,15 @@
 | | |
 |---|---|
 | **Lane** | W4-A (single agent; last wave, non-blocking; no Docker needed). **Runs alone** — never beside W4-B: `Timeout` is wall-clock, so a shared machine changes the score (plan §9). W4-B goes first; this lane is the cheap one |
-| **Status** | 🟡 Deferred by decision (2026-08-20) — in the plan, scheduled later; **not blocked and not cancelled**. It needs the operator to say so, not a dependency to land. See [plan §9](../plan.md) and the lane table in [plan §12](../plan.md) and [README](README.md), which say the same thing |
-| **Progress** | 0/4 tasks |
-| **Branch** | `feat/w4a-stryker-core` |
+| **Status** | 🟩 Done (2026-08-23) — `packages/core` scores **100.00** and the configuration breaks below it. Held on a local branch at the operator's instruction; nothing was pushed. See the completion log at the foot of this file and [plan §9](../plan.md) |
+| **Progress** | 4/4 tasks |
+| **Branch** | `agent/work` (local only — the operator asked for no push; the `feat/w4a-stryker-core` branch this file named was never created) |
 | **Owned paths** | `packages/core/stryker.config.mjs`, `packages/core/package.json` (scripts block only), tests and test-only helpers under `packages/core/**`; source files under `packages/core/src/**` **only** to remove an equivalent mutant by simplifying to the value that serves (no behaviour change); `packages/core/vitest.stryker.config.ts`. `.gitignore` already lists `.stryker-tmp/` and `reports/` on `main`, so neither lane touches it and the two share no file at all |
 | **Depends on** | W3-A merged (code stable; mutants are meaningful only on stable code). W3-A being unmerged is **not** why this lane is idle — the deferral above is |
 | **Unblocks** | W4-C follow-up (orchestrator-owned `mutation` CI job + README badge — opened only when **both** W4-A and W4-B pass) |
 | **Source** | [docs/plan.md §9](../plan.md) (table row W4-A, rules) · spec [06 §5](../spec/06-testing.md) · [01 §5 S7](../spec/01-overview.md) |
 | **Notes** | may slip — documented in README "Known gaps" (plan §9: the product is complete without it; this lane turns S7 from "pending" into "verified") |
-| **Last updated** | 2026-08-20 |
+| **Last updated** | 2026-08-23 |
 
 ## Context
 
@@ -340,3 +340,8 @@ Opened **only when both W4-A and W4-B have passed** (`break: 80` on a full run, 
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 4A.1 ✅ 2026-08-23 — `stryker.config.mjs` and `vitest.stryker.config.ts` added; the `mutate` list is the whole of `src/**` rather than the six directories this file names, minus the generated Prisma client, the test doubles and the integration-suite gate helper. Baseline measured at 3,927 mutants.
+- 4A.2 ✅ 2026-08-23 — survivors triaged and killed by module. The recurring shapes were doubles kinder than the thing they stood in for, assertions comparing a constant with itself, and resources no test checked were given back (plan §9).
+- 4A.3 ✅ 2026-08-23 — **100.00**, not the 80 this file asked for: `break` is set to 100 in every scope, so a single survivor fails the run. Equivalent mutants carry a `// Stryker disable` naming the reason in the source rather than in a pull-request ledger, which is where a later reader will look.
+- 4A.4 ✅ 2026-08-23 — gates green (`lint`, `format:check`, `typecheck`, `test --coverage`); dashboards updated in plan §9 and §12. No pull request: the operator asked for the work to stay local, so there is nothing to review on the remote.

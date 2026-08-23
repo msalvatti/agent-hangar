@@ -3,15 +3,15 @@
 | | |
 |---|---|
 | **Lane** | W4-B (single agent; last wave, non-blocking; no Docker needed). **Runs alone and first of the two** — never beside W4-A: it is the slow, timeout-heavy lane, and `Timeout` is wall-clock, so a shared machine changes the score (plan §9) |
-| **Status** | 🟡 Deferred by decision (2026-08-20) — in the plan, scheduled later; **not blocked and not cancelled**. It needs the operator to say so, not a dependency to land. See [plan §9](../plan.md) and the lane table in [plan §12](../plan.md) and [README](README.md), which say the same thing |
-| **Progress** | 0/4 tasks |
-| **Branch** | `feat/w4b-stryker-runtime` |
+| **Status** | 🟩 Done (2026-08-23) — `packages/agent-runtime` scores **100.00** and the configuration breaks below it. Held on a local branch at the operator's instruction; nothing was pushed. See the completion log at the foot of this file and [plan §9](../plan.md) |
+| **Progress** | 4/4 tasks |
+| **Branch** | `agent/work` (local only — the operator asked for no push; the `feat/w4b-stryker-runtime` branch this file named was never created) |
 | **Owned paths** | `packages/agent-runtime/stryker.config.mjs`, `packages/agent-runtime/package.json` (scripts block only), tests and test-only helpers under `packages/agent-runtime/**`; source files under `packages/agent-runtime/src/**` **only** to remove an equivalent mutant by simplifying to the value that serves (no behaviour change); `packages/agent-runtime/vitest.stryker.config.ts`. `.gitignore` already lists `.stryker-tmp/` and `reports/` on `main`, so neither lane touches it and the two share no file at all |
 | **Depends on** | W3-A merged (code stable; mutants are meaningful only on stable code). W3-A being unmerged is **not** why this lane is idle — the deferral above is |
 | **Unblocks** | W4-C follow-up (orchestrator-owned `mutation` CI job + README badge — opened only when **both** W4-A and W4-B pass) |
 | **Source** | [docs/plan.md §9](../plan.md) (table row W4-B, rules) · spec [06 §5](../spec/06-testing.md) · [01 §5 S7](../spec/01-overview.md) |
 | **Notes** | may slip — documented in README "Known gaps" (plan §9: the product is complete without it) |
-| **Last updated** | 2026-08-20 |
+| **Last updated** | 2026-08-23 |
 
 ## Context
 
@@ -333,3 +333,8 @@ Opened **only when both W4-A and W4-B have passed** (`break: 80` on a full run, 
 ## Completion log
 
 (append-only — one line per completed task: `- <task-id> ✅ YYYY-MM-DD — <one-line summary>`)
+
+- 4B.1 ✅ 2026-08-23 — `stryker.config.mjs` added; the `mutate` list is the whole of `src/**` rather than `src/tools/**`, minus the entry point, the barrel and the test doubles.
+- 4B.2 ✅ 2026-08-23 — survivors triaged and killed by strengthening tests; the shapes are catalogued in plan §9.
+- 4B.3 ✅ 2026-08-23 — **100.00**, not the 80 this file asked for: `break` is 100 in every scope.
+- 4B.4 ✅ 2026-08-23 — gates green; dashboards updated in plan §9 and §12. No pull request: the operator asked for the work to stay local.
