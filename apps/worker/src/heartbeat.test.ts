@@ -65,6 +65,10 @@ describe('writeHeartbeat', () => {
     expect(redis.writes).toHaveLength(1);
     expect(redis.writes[0]).toMatchObject({
       key: workerHeartbeatKey('w2b-unit'),
+      // The expiry option, not just the number beside it: a `SET` that carries the seconds without
+      // naming the mode is refused by Redis, and one Redis accepted without it would leave a key
+      // that never expires — a worker that died would go on reporting itself healthy for good.
+      mode: 'EX',
       seconds: WORKER_HEARTBEAT_TTL_SEC,
     });
     expect(heartbeat).toEqual({
@@ -97,6 +101,27 @@ describe('writeHeartbeat', () => {
   });
 
   /**
+   * And only this instance's. Two checkouts share one Docker daemon by design, so a count taken
+   * without the instance label would show each of them the other's containers and an operator
+   * would go looking for workspaces this worker never created.
+   */
+  it('does not count the containers of another instance', async () => {
+    const { deps, redis } = setup();
+    await deps.runner.create({
+      workspaceId: 'ws-other',
+      kind: 'CHAT',
+      image: 'image',
+      env: {},
+      limits: { cpus: 1, memoryBytes: 1, pids: 1 },
+      labels: { 'ah.instance': 'some-other-checkout' },
+    });
+
+    await writeHeartbeat(deps);
+
+    expect(published(redis)).toMatchObject({ containers: 0 });
+  });
+
+  /**
    * A daemon that does not answer is the reading the health card exists to show; the worker keeps
    * running and publishes it, and the image cannot be claimed present when nothing was asked.
    */
@@ -113,7 +138,13 @@ describe('writeHeartbeat', () => {
       imagePresent: false,
       containers: 0,
     });
-    expect(test.logs.join('')).toContain('did not answer the health probe');
+    // The line says what went wrong, not only that something did: an operator reading "the runner
+    // did not answer" and nothing else has no way to tell a daemon that is down from one that
+    // refused this user.
+    expect(JSON.parse(test.logs[0] ?? '{}')).toMatchObject({
+      msg: 'the workspace runner did not answer the health probe',
+      failure: expect.stringContaining('ECONNREFUSED') as unknown,
+    });
   });
 
   /**
@@ -193,12 +224,37 @@ describe('startHeartbeat', () => {
   it('survives a write it could not make', async () => {
     vi.useFakeTimers();
     const { deps, redis, test } = setup();
-    vi.spyOn(redis, 'set').mockRejectedValue(new Error('connection is closed'));
+    vi.spyOn(redis, 'set').mockRejectedValue(
+      Object.assign(new Error('connection is closed'), { code: 'ECONNRESET' }),
+    );
 
     const running = await startHeartbeat(deps);
     await vi.advanceTimersByTimeAsync(WORKER_HEARTBEAT_INTERVAL_SEC * 1000);
     running.stop();
 
-    expect(test.logs.join('')).toContain('publishing the worker heartbeat failed');
+    // The line names the classification and never the driver's own words: an ioredis message
+    // carries the connection string, password included. Naming nothing at all would be no better
+    // for the operator, who would learn only that a write failed.
+    expect(JSON.parse(test.logs.at(-1) ?? '{}')).toMatchObject({
+      msg: 'publishing the worker heartbeat failed',
+      failure: 'ECONNRESET',
+    });
+    expect(test.logs.at(-1)).not.toContain('connection is closed');
+  });
+
+  /**
+   * The interval never holds the process open. A worker that has finished its jobs and been asked
+   * to stop must exit, and a referenced interval would keep the event loop alive indefinitely —
+   * the operator would see a process that ignores the shutdown it was given.
+   */
+  it('leaves the rewrite timer unreferenced', async () => {
+    const intervals = vi.spyOn(globalThis, 'setInterval');
+    const { deps } = setup();
+
+    const running = await startHeartbeat(deps);
+    const timer = intervals.mock.results[0]?.value as NodeJS.Timeout;
+    running.stop();
+
+    expect(timer.hasRef()).toBe(false);
   });
 });

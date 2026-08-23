@@ -234,3 +234,18 @@ describe('toolSummaryText', () => {
     ).toThrow(/unhandled case: "teleport"/);
   });
 });
+
+describe('what logged arguments are read from', () => {
+  /**
+   * Arguments are read off a record and nothing else. A value that is not one — a string, a list,
+   * a function carrying the field — has no fields this may take, and read anyway a summary would
+   * quote whatever a tool happened to log under that name.
+   */
+  it.each([
+    ['a string', 'ls'],
+    ['a number', 42],
+    ['a function carrying the field', Object.assign(() => undefined, { command: 'ls' })],
+  ])('reads no command from %s', (_case, args) => {
+    expect(toolSummaryText(shellCall({ args }))).not.toContain('ls');
+  });
+});

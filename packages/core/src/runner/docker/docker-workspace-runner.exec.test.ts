@@ -588,3 +588,113 @@ describe('DockerWorkspaceRunner.snapshot', () => {
     expect(summary.endsWith('\n[truncated]')).toBe(true);
   });
 });
+
+describe('what an exec asks the daemon for, and what it leaves behind', () => {
+  /**
+   * A caller's exec is the one place stdin matters — the agent writes the turn request into it —
+   * so the exec is created with it attached and started with it hijacked. Started without, the
+   * request never reaches the process and the turn waits for an answer to a question it never
+   * asked. The daemon's own behaviour cannot be reproduced by a double that hands back a finished
+   * stream, so this is read off the request.
+   */
+  it('creates and starts a caller exec with standard input attached', async () => {
+    const { runner, docker } = makeRunner({
+      execScripts: [{ match: (cmd) => cmd.includes('echo'), stdout: 'hi\n' }],
+    });
+    const handle = await createWorkspace(runner);
+
+    await drain(runner.exec(handle, { cmd: ['echo', 'hi'], timeoutMs: 1000 }));
+
+    // Located by the command, because the runner also execs on its own account either side of this
+    // one — a readiness probe before it and the pid-file cleanup after — and those are the execs
+    // that deliberately have no standard input.
+    const index = docker.execOptions.findIndex((options) => options.Cmd.join(' ').includes('echo'));
+    expect(docker.execOptions[index]?.AttachStdin).toBe(true);
+    expect(docker.execStartOptions[index]).toStrictEqual({ hijack: true, stdin: true });
+  });
+
+  /**
+   * A signal that cannot be delivered is reported with the exec it was meant for and the daemon's
+   * own reason; the caller has asked to stop a process and is entitled to know that it did not.
+   */
+  it('reports a signal it could not deliver, with the daemon failure as the cause', async () => {
+    const { runner, docker } = makeRunner();
+    const handle = await createWorkspace(runner);
+    const refusal = dockerError(500, 'daemon is unhappy');
+    docker.failures.containerExec = refusal;
+
+    const failure = await runner.signal(handle, EXEC_REF, 'TERM').catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(DockerRunnerError);
+    expect((failure as Error).message).toBe(`cannot signal exec ${EXEC_REF}`);
+    expect((failure as Error).cause).toBe(refusal);
+  });
+
+  /**
+   * A failure inside an exec is wrapped with the exec and the workspace it happened in, and the
+   * daemon's reason is kept as the cause. Without the wrapping a caller gets a bare daemon error
+   * with nothing saying which of its workspaces produced it.
+   */
+  it('reports a failure inside an exec against its workspace, with the cause', async () => {
+    const { runner, docker } = makeRunner({
+      execScripts: [{ match: (cmd) => cmd.includes('boom'), failStart: true }],
+    });
+    const handle = await createWorkspace(runner);
+
+    const failure = await drain(runner.exec(handle, { cmd: ['boom'], timeoutMs: 1000 })).catch(
+      (error: unknown) => error,
+    );
+
+    expect(failure).toBeInstanceOf(DockerRunnerError);
+    expect((failure as Error).message).toBe(
+      `exec ${EXEC_REF} failed in workspace ${handle.workspaceId}`,
+    );
+    expect((failure as Error).cause).toBeInstanceOf(Error);
+    void docker;
+  });
+});
+
+describe('what an exec stops carrying once it is over', () => {
+  /**
+   * A cancellation recorded against an exec belongs to that exec. Kept after it has ended, the
+   * record is both a leak and a trap: the next exec to be given the same reference — which is what
+   * happens when a reference is reused, and what this fixture makes deterministic — starts life
+   * already cancelled and stops before it has run.
+   */
+  it('forgets a finished exec, so a later one is not cancelled by its record', async () => {
+    const { runner } = makeRunner({
+      execScripts: [{ match: (cmd) => cmd.includes('echo'), stdout: 'second\n' }],
+    });
+    const handle = await createWorkspace(runner);
+
+    await drain(runner.exec(handle, { cmd: ['echo', 'first'], timeoutMs: 1000 }));
+    await runner.signal(handle, EXEC_REF, 'TERM');
+    const second = await drain(runner.exec(handle, { cmd: ['echo', 'second'], timeoutMs: 1000 }));
+
+    expect(second.exit).toMatchObject({ type: 'exit', code: 0 });
+  });
+
+  /**
+   * The writer is stopped on every way out, including the ordinary one. A source that never ends —
+   * a stream the caller keeps open — would otherwise leave the exec waiting for a writer that has
+   * nothing left to write to, and the turn never finishes.
+   */
+  it('stops a standard-input source that never ends when the exec is over', async () => {
+    const { runner } = makeRunner({
+      execScripts: [{ match: (cmd) => cmd.includes('echo'), stdout: 'done\n' }],
+    });
+    const handle = await createWorkspace(runner);
+    const endless = (async function* source(): AsyncIterable<Uint8Array> {
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        yield new TextEncoder().encode('more\n');
+      }
+    })();
+
+    const result = await drain(
+      runner.exec(handle, { cmd: ['echo', 'hi'], timeoutMs: 1000, stdin: endless }),
+    );
+
+    expect(result.exit).toMatchObject({ code: 0 });
+  });
+});

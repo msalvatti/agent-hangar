@@ -90,4 +90,15 @@ describe('loadOpenAIFixture', () => {
       expect(pattern.test(body)).toBe(false);
     }
   });
+
+  /**
+   * A recorded body ends with a newline and its frames are separated by blank lines, so the file
+   * carries lines that are whitespace and nothing else. Measured by length rather than by content,
+   * each of those is parsed as a frame and the fixture is refused for a line nobody wrote.
+   */
+  it('skips a line that is nothing but whitespace', () => {
+    const body = ['{"type":"error","message":"x"}', '   ', ''].join('\n');
+
+    expect(parseOpenAIFixture(body, 'spaced.txt')).toHaveLength(1);
+  });
 });

@@ -181,14 +181,24 @@ type ScriptedBehaviour = Omit<FakeExecScript, 'match'>;
 class FakeExec implements DockerExecApi {
   readonly #script: ScriptedBehaviour;
   readonly #stdinWrites: string[];
+  readonly #created: DockerExecCreateOptions;
+  readonly #startOptions: DockerExecStartOptions[];
 
   /**
    * @param script - Behaviour this exec replays; an empty object means "exit 0, no output".
    * @param stdinWrites - Collector the written stdin is decoded into.
+   * @param created - Options the exec was created with, which decide what the stream carries.
    */
-  constructor(script: ScriptedBehaviour, stdinWrites: string[]) {
+  constructor(
+    script: ScriptedBehaviour,
+    stdinWrites: string[],
+    created: DockerExecCreateOptions,
+    startOptions: DockerExecStartOptions[],
+  ) {
     this.#script = script;
     this.#stdinWrites = stdinWrites;
+    this.#created = created;
+    this.#startOptions = startOptions;
   }
 
   /**
@@ -198,15 +208,21 @@ class FakeExec implements DockerExecApi {
    * @returns The hijacked stream.
    */
   async start(opts: DockerExecStartOptions): Promise<DockerExecStream> {
+    this.#startOptions.push(opts);
     if (this.#script.failStart === true) {
       throw dockerError(SERVER_ERROR, `exec start refused (stdin=${String(opts.stdin)})`);
     }
     const stream = new FakeHijackedStream(this.#stdinWrites);
-    if (this.#script.stdout !== undefined) {
-      stream.push(frame(STDOUT_TYPE, this.#script.stdout));
+    // The daemon sends only the streams the exec asked for, and multiplexes them only when the
+    // exec has no TTY. Modelled here rather than assumed away: a caller that forgets to attach a
+    // stream, or asks for a TTY and then demultiplexes, gets the same nothing and the same
+    // nonsense it would get from the daemon.
+    const framed = this.#created.Tty ? (_type: number, text: string) => Buffer.from(text) : frame;
+    if (this.#script.stdout !== undefined && this.#created.AttachStdout) {
+      stream.push(framed(STDOUT_TYPE, this.#script.stdout));
     }
-    if (this.#script.stderr !== undefined) {
-      stream.push(frame(STDERR_TYPE, this.#script.stderr));
+    if (this.#script.stderr !== undefined && this.#created.AttachStderr) {
+      stream.push(framed(STDERR_TYPE, this.#script.stderr));
     }
     if (this.#script.hang !== true) {
       stream.push(null);
@@ -360,7 +376,9 @@ class FakeContainer implements DockerContainerApi {
     record.execCommands.push(opts.Cmd);
     this.#api.execOptions.push(opts);
     const script = this.#api.execScripts.find((candidate) => candidate.match(opts.Cmd));
-    return Promise.resolve(new FakeExec(script ?? {}, this.#api.stdinWrites));
+    return Promise.resolve(
+      new FakeExec(script ?? {}, this.#api.stdinWrites, opts, this.#api.execStartOptions),
+    );
   }
 
   /**
@@ -416,6 +434,8 @@ export class FakeDockerApi implements DockerApi {
 
   /** Per-operation failures; assign one to make the matching call reject. */
   readonly failures: FakeDockerFailures = {};
+  /** Options every `exec.start` was called with, in order. */
+  readonly execStartOptions: DockerExecStartOptions[] = [];
 
   #nextId = 1;
 
@@ -510,7 +530,10 @@ export class FakeDockerApi implements DockerApi {
         const key = selector.slice(0, separator);
         return labels[key] === selector.slice(separator + 1);
       });
-      if (matchesAll) {
+      // `all` is honoured rather than ignored: the daemon lists only running containers without
+      // it, and a reaper that asks for the running ones cannot see the stopped workspace it exists
+      // to clean up.
+      if (matchesAll && (opts.all || record.running)) {
         matches.push({ Id: id, Labels: labels });
       }
     }

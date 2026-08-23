@@ -678,3 +678,94 @@ describe('escapeRegExp', () => {
     expect(escapeRegExp('plain')).toBe('plain');
   });
 });
+
+describe('what the redactor remembers and forgets', () => {
+  /**
+   * The minimum is a floor, not a threshold to clear: a value of exactly that many characters is
+   * still the credential it was handed. Measured at the limit and one below it, because a check
+   * written one step off passes every test built from values far from the boundary.
+   */
+  it.each([
+    ['at the minimum length', 'abcd', true],
+    ['one character below it', 'abc', false],
+  ])('registers a value %s: %s', (_case, value, registered) => {
+    const redactor = createRedactor();
+    redactor.register([value]);
+
+    const output = redactor.redact(`before ${value} after`);
+
+    expect(output).toBe(registered ? `before ${REDACTED_TOKEN} after` : `before ${value} after`);
+  });
+
+  /**
+   * A credential is registered as it was given as well as in the two encodings it meets on the way
+   * out. Registering only the encoded forms leaves the plain one - which is the form it takes in
+   * every message a person actually reads - untouched.
+   */
+  it('replaces the value exactly as it was registered', () => {
+    const redactor = createRedactor();
+    // A value both other encodings change, so the plain form is covered by its own registration
+    // and not by one of them: quoting escapes it and percent-encoding rewrites it.
+    const value = 'plain "quoted" credential';
+    redactor.register([value]);
+
+    expect(redactor.redact(`token=${value}`)).toBe(`token=${REDACTED_TOKEN}`);
+  });
+
+  /**
+   * Clearing means forgetting: a redactor whose values were cleared and never re-registered has
+   * nothing to replace, and a rotation that cleared the old key would otherwise go on blanking it
+   * in text where it is no longer a secret.
+   */
+  it('forgets every registered value when cleared', () => {
+    const redactor = createRedactor();
+    redactor.register(['first-credential-value']);
+    redactor.clear();
+    // Registering again is what shows the values were forgotten rather than merely unlisted: the
+    // list is rebuilt from what is remembered, so anything still remembered comes back with it.
+    redactor.register(['second-credential-value']);
+
+    expect(redactor.redact('a first-credential-value b second-credential-value')).toBe(
+      `a first-credential-value b ${REDACTED_TOKEN}`,
+    );
+  });
+
+  /**
+   * Two references to the same object are not a cycle. The walk remembers what is on the path it
+   * is following and forgets it on the way back out; a record that only ever grows reports the
+   * second sibling as circular, and a reader is told a value recurred when it was merely repeated.
+   */
+  it.each([
+    ['side by side in a record', (shared: unknown) => ({ left: shared, right: shared })],
+    ['twice in a list', (shared: unknown) => [shared, shared]],
+  ])('renders the same object twice when it appears %s', (_case, build) => {
+    const redactor = createRedactor();
+    const shared = { id: 7 };
+
+    expect(redactor.redactJson(build(shared))).toStrictEqual(build({ id: 7 }));
+  });
+
+  /**
+   * The same on the list path, which keeps its own book of what it has entered: one list appearing
+   * twice is two readable lists, not one and a note that the second recurred.
+   */
+  it('renders the same list twice when it appears twice', () => {
+    const redactor = createRedactor();
+    const shared = [{ id: 7 }];
+
+    expect(redactor.redactJson({ left: shared, right: shared })).toStrictEqual({
+      left: [{ id: 7 }],
+      right: [{ id: 7 }],
+    });
+  });
+
+  /** A list that contains itself terminates, and says where it turned back on itself. */
+  it('marks a list that contains itself', () => {
+    const redactor = createRedactor();
+    const items: unknown[] = [{ id: 1 }];
+    items.push(items);
+
+    expect(redactor.redactJson(items)).toStrictEqual([{ id: 1 }, CIRCULAR_TOKEN]);
+    expect(CIRCULAR_TOKEN).toBe('[Circular]');
+  });
+});

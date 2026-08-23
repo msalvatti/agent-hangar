@@ -62,6 +62,10 @@ function requireSecretKey(key: string): SecretKey {
 function toStatusView(status: SecretStatus): z.input<typeof settingsStatus>['githubPat'] {
   return {
     set: status.set,
+    // Spread conditionally because this project may not hand an optional property an explicit
+    // `undefined` — and JSON drops such a key on the way out anyway, so no reader of this response
+    // can tell the two spellings apart.
+    // Stryker disable next-line ConditionalExpression
     ...(status.last4 === undefined ? {} : { last4: status.last4 }),
     ...(status.updatedAt === undefined ? {} : { updatedAt: status.updatedAt.toISOString() }),
   };

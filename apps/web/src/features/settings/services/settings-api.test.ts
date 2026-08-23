@@ -22,7 +22,7 @@ afterEach(() => {
 describe('getSettings', () => {
   /** The seeded instance already holds both credentials, masked down to their last four. */
   it('returns the masked status of both seeded secrets', async () => {
-    const settings = await getSettings();
+    const settings = await getSettings(new AbortController().signal);
     expect(settings.githubPat).toMatchObject({ set: true, last4: 'ab12' });
     expect(settings.openaiKey).toMatchObject({ set: true, last4: 'cd34' });
   });
@@ -30,7 +30,7 @@ describe('getSettings', () => {
   /** A fresh instance has neither credential, which is what the onboarding notice keys off. */
   it('reports both secrets unset on an instance with none', async () => {
     setScenario('missing-settings');
-    const settings = await getSettings();
+    const settings = await getSettings(new AbortController().signal);
     expect(settings.githubPat.set).toBe(false);
     expect(settings.openaiKey.set).toBe(false);
   });
@@ -56,7 +56,7 @@ describe('deleteSecret', () => {
   it('removes a saved secret', async () => {
     await putSecret('OPENAI_API_KEY', OPENAI_CANARY);
     await deleteSecret('OPENAI_API_KEY');
-    const settings = await getSettings();
+    const settings = await getSettings(new AbortController().signal);
     expect(settings.openaiKey.set).toBe(false);
   });
 });

@@ -12,7 +12,9 @@
     "typecheck": "tsc -p tsconfig.json",
     "test": "vitest run --project unit",
     "test:integration": "vitest run --project integration --coverage.enabled=false",
-    "test:e2e": "bash e2e/run.sh"
+    "test:e2e": "bash e2e/run.sh",
+    "test:mutation": "stryker run",
+    "test:mutation:scoped": "stryker run --incrementalFile .stryker-tmp/inc-scoped.json --mutate"
   },
   "dependencies": {
     "@agent-hangar/core": "workspace:*",

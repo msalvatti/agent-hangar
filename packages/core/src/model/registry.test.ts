@@ -110,3 +110,33 @@ describe('createModelProvider', () => {
     expect(failure).toContain('Unknown AGENT_MODEL_PROVIDER');
   });
 });
+
+describe('the fake provider the registry builds without one', () => {
+  /**
+   * A caller that selects the fake provider and supplies no script gets one with an empty script
+   * rather than none at all: an empty script answers with a classified error the loop reports,
+   * and no script at all fails inside the provider before it can produce one.
+   */
+  it('answers with a reportable error rather than failing', async () => {
+    const provider = createModelProvider('fake', {});
+    const events = [];
+
+    for await (const event of provider.stream({
+      model: 'fake-model',
+      instructions: 'be useful',
+      items: [{ role: 'user', content: 'anything' }],
+      tools: [],
+    })) {
+      events.push(event);
+    }
+
+    expect(events).toStrictEqual([
+      {
+        type: 'error',
+        code: 'unknown',
+        message: expect.stringContaining('no script') as string,
+        retryable: false,
+      },
+    ]);
+  });
+});

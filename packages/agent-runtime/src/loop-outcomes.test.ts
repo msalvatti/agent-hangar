@@ -41,7 +41,12 @@ describe('runTurnLoop and limits', () => {
         },
       ],
     };
-    await harness.run(harness.request('loop forever', { maxSteps: 1 }), scripted(script));
+    const outcome = await harness.run(
+      harness.request('loop forever', { maxSteps: 1 }),
+      scripted(script),
+    );
+    // The worker reads this to decide whether the turn ended or broke, and a limit is an ending.
+    expect(outcome).toStrictEqual({ kind: 'completed' });
     expect(harness.events.at(-1)).toMatchObject({
       type: 'turn.completed',
       steps: 1,
@@ -101,6 +106,31 @@ describe('runTurnLoop and limits', () => {
     });
     expect(harness.events.at(-1)).toMatchObject({ stoppedBy: 'limit' });
     expect(JSON.stringify(harness.events.at(-1))).toContain('1 min (limit reached)');
+  });
+
+  /**
+   * The limit is a budget that has been spent, not one that has been exceeded: a turn standing
+   * exactly on it has no time left to start another step with. Measured on the limit rather than
+   * past it, because the test above lands well beyond it and passes either way.
+   */
+  it('stops when the clock stands exactly on the wall-clock limit', async () => {
+    let first = true;
+    const now = (): number => {
+      if (first) {
+        first = false;
+        return 0;
+      }
+      return 60_000;
+    };
+
+    const outcome = await harness.run(
+      harness.request('be slow', { maxTurnMs: 60_000 }),
+      scripted({ default: simpleAnswer('never asked') }),
+      { now },
+    );
+
+    expect(outcome).toStrictEqual({ kind: 'completed' });
+    expect(harness.events.at(-1)).toMatchObject({ stoppedBy: 'limit', steps: 0 });
   });
 });
 
@@ -239,14 +269,20 @@ describe('runTurnLoop and provider failures', () => {
 
   /** Cancelling must not have to wait out the remaining retries. */
   it('ends the turn on a cancellation that arrives during a backoff', async () => {
-    const outcome = await harness.run(harness.request('hi'), scripted(errorScript('rate_limit')), {
+    const provider = scripted(errorScript('rate_limit'));
+
+    const outcome = await harness.run(harness.request('hi'), provider, {
       sleep: async () => {
         harness.cancel();
         await Promise.resolve();
       },
     });
+
     expect(outcome).toStrictEqual({ kind: 'cancelled' });
     expect(harness.events.at(-1)?.type).toBe('turn.cancelled');
+    // And the retry it was waiting to make never happened. A cancelled turn that still sends the
+    // next request pays for it, and waits for it, before noticing it had been told to stop.
+    expect(provider.calls).toHaveLength(1);
   });
 
   /** A bad API key will not fix itself, and the UI links the operator to Settings. */
@@ -322,6 +358,45 @@ describe('runTurnLoop and git pushes', () => {
       expect(harness.eventTypes().indexOf('git.pushed')).toBeGreaterThan(
         harness.eventTypes().indexOf('tool.result'),
       );
+    } finally {
+      await repo.cleanup();
+    }
+  });
+
+  /**
+   * Detection has two halves and this is the one the failing push above cannot exercise: that
+   * workspace holds no repository, so a command wrongly taken for a push finds no head to report
+   * and stays silent for the wrong reason. Here the repository is real and the command is
+   * ordinary, so anything reported would be reported about work that never happened.
+   */
+  it('reports nothing for a shell command that is not a push', async () => {
+    const repo = await createBareRepoWithSeed();
+    const git = createGitRunner();
+    await git.run(['clone', '--branch', 'main', '--', repo.url, '.'], {
+      cwd: harness.root,
+      env: harness.childEnv,
+    });
+    const script: ProviderScript = {
+      default: [
+        {
+          events: [
+            {
+              type: 'tool_call',
+              callId: 'c1',
+              name: 'run_shell',
+              arguments: JSON.stringify({ command: 'echo hello', cwd: null, timeoutMs: 15_000 }),
+            },
+            { type: 'response.done', responseId: 'r1', usage: FAKE_USAGE },
+          ],
+        },
+        ...simpleAnswer('Said hello.'),
+      ],
+    };
+
+    try {
+      await harness.run(harness.request('say hello'), scripted(script), { git });
+
+      expect(harness.eventTypes()).not.toContain('git.pushed');
     } finally {
       await repo.cleanup();
     }

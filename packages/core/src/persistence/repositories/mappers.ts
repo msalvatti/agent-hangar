@@ -302,6 +302,10 @@ export const RESULT_HEAD_MAX_BYTES = 8 * 1024;
  */
 export function truncateResultHead(text: string): string {
   const bytes = new TextEncoder().encode(text);
+  // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: a fast path
+  // over the walk below, which produces the same string for anything that already fits — the
+  // buffer is filled with whole code points and decoded back. What this saves is an eight-kilobyte
+  // allocation on every result head, which is most of them.
   if (bytes.length <= RESULT_HEAD_MAX_BYTES) {
     return text;
   }

@@ -12,31 +12,25 @@ import { describe, expect, it } from 'vitest';
 import { PHASE_BY_STATUS, isActivePhase, isRunActive, runStatusPresentation } from './status';
 
 describe('runStatusPresentation', () => {
-  /** Every status the contract defines has a presentation entry with a non-empty label. */
-  it('maps every status to a label and icon', () => {
-    const statuses: JobRunStatus[] = [
-      'QUEUED',
-      'PREPARING',
-      'RUNNING',
-      'SUCCEEDED',
-      'FAILED',
-      'CANCELLED',
-    ];
-    for (const status of statuses) {
-      const presentation = runStatusPresentation(status);
-      expect(presentation.label.length).toBeGreaterThan(0);
-      expect(presentation.icon).toBeDefined();
-    }
-  });
+  /**
+   * Every status the contract defines has its own row, written out. The label is the word on the
+   * badge and the tone is the colour behind it, and a tone read as nothing leaves a badge with no
+   * colour at all — which is how a queued run and a running one become the same badge. The colour
+   * never carries the meaning alone, which is why the word is pinned beside it.
+   */
+  it.each([
+    ['QUEUED', 'queued', 'muted'],
+    ['PREPARING', 'running', 'accent'],
+    ['RUNNING', 'running', 'accent'],
+    ['SUCCEEDED', 'ok', 'success'],
+    ['FAILED', 'fail', 'destructive'],
+    ['CANCELLED', 'cancelled', 'muted'],
+  ] as const)('presents %s as a %s badge in the %s tone', (status: JobRunStatus, label, tone) => {
+    const presentation = runStatusPresentation(status);
 
-  /** SUCCEEDED renders with the success tone. */
-  it('renders SUCCEEDED with the success tone', () => {
-    expect(runStatusPresentation('SUCCEEDED').tone).toBe('success');
-  });
-
-  /** FAILED renders with the destructive tone. */
-  it('renders FAILED with the destructive tone', () => {
-    expect(runStatusPresentation('FAILED').tone).toBe('destructive');
+    expect(presentation.label).toBe(label);
+    expect(presentation.tone).toBe(tone);
+    expect(presentation.icon).toBeDefined();
   });
 });
 

@@ -26,8 +26,8 @@ describe('scheduler keys', () => {
    * a silently accepted key.
    */
   it('rejects empty ids and keys', () => {
-    expect(() => toSchedulerKey('')).toThrow(RangeError);
-    expect(() => jobIdFromSchedulerKey('')).toThrow(RangeError);
+    expect(() => toSchedulerKey('')).toThrow('scheduled job id must not be empty');
+    expect(() => jobIdFromSchedulerKey('')).toThrow('scheduler key must not be empty');
   });
 
   /**

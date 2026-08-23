@@ -8,6 +8,8 @@
  * Mocks: the in-memory Redis double; real timers, because the pump's block duration is what paces
  * the loop.
  */
+import { getEventListeners } from 'node:events';
+
 import { createLogger, createRedactor } from '@agent-hangar/core';
 import type { AgentEvent } from '@agent-hangar/core';
 import type { Logger } from 'pino';
@@ -20,6 +22,7 @@ import {
   SSE_EXPIRED_EVENT,
   SSE_HEADERS,
   SSE_HEARTBEAT_FRAME,
+  SSE_STREAM_START,
   SSE_TERMINAL_EVENTS,
 } from './sse';
 import { FakeRedis } from './testing/fake-redis';
@@ -166,11 +169,60 @@ describe('createSseResponse', () => {
   it('answers with the event-stream headers', async () => {
     const harness = open();
     expect(harness.response.status).toBe(200);
-    for (const [name, value] of Object.entries(SSE_HEADERS)) {
-      expect(harness.response.headers.get(name)).toBe(value);
-    }
+    // Written out rather than read from the export and compared with itself: each of these four is
+    // an instruction to something outside this process — the browser's parser, a proxy's buffer,
+    // nginx's own — and emptied, every one of them would still equal the constant it came from.
+    expect(Object.fromEntries(harness.response.headers)).toMatchObject({
+      'content-type': 'text/event-stream; charset=utf-8',
+      'cache-control': 'no-cache, no-transform',
+      connection: 'keep-alive',
+      'x-accel-buffering': 'no',
+    });
+    expect(SSE_HEADERS).toStrictEqual({
+      'Content-Type': 'text/event-stream; charset=utf-8',
+      'Cache-Control': 'no-cache, no-transform',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    });
     harness.controller.abort();
     await harness.reader.read();
+  });
+
+  /**
+   * The heartbeat is a comment frame: it keeps an idle proxy from dropping the connection and the
+   * browser's parser ignores it. Emptied, it writes nothing at all — the proxy times the socket out
+   * — and any other text would reach the page as an event it has no handler for.
+   */
+  it('keeps the connection alive with a comment frame', () => {
+    expect(SSE_HEARTBEAT_FRAME).toBe(': ping\n\n');
+  });
+
+  /**
+   * The three endings after which nothing more will ever arrive. A stream that did not recognise
+   * one of them would hold a socket open for a turn that is over, and the page would go on
+   * showing it as running.
+   */
+  const TERMINAL: AgentEvent[] = [
+    {
+      type: 'turn.completed',
+      usage: { inputTokens: 1, outputTokens: 1 },
+      steps: 1,
+      finalMessage: 'done',
+    },
+    { type: 'turn.failed', error: { code: 'runtime_exit', message: 'gave up' } },
+    { type: 'turn.cancelled' },
+  ];
+
+  it.each(TERMINAL)('closes after $type', async (event) => {
+    const harness = open();
+
+    await append(harness.redis, event);
+    const text = await readToEnd(harness.reader);
+
+    expect(text).toContain(`event: ${event.type}`);
+    expect((await harness.reader.read()).done).toBe(true);
+    expect(harness.redis.duplicates[0]?.closed).toBe(true);
+    expect(SSE_TERMINAL_EVENTS).toStrictEqual(['turn.completed', 'turn.failed', 'turn.cancelled']);
   });
 
   /**
@@ -218,7 +270,10 @@ describe('createSseResponse', () => {
 
     const text = await readUntil(harness.reader, (read) => read.includes(SSE_EXPIRED_EVENT));
 
-    expect(text).toContain(`event: ${SSE_EXPIRED_EVENT}`);
+    // The whole frame, echoing the cursor the client asked to resume from and carrying a body it
+    // can parse. A frame with an empty `data` is one `JSON.parse` throws on, and the page would
+    // report a stream that broke rather than one it was told to refetch.
+    expect(text).toContain(`id: 0-1\nevent: ${SSE_EXPIRED_EVENT}\ndata: {}\n\n`);
     expect(text).not.toContain('survivor');
     expect((await harness.reader.read()).done).toBe(true);
   });
@@ -261,6 +316,51 @@ describe('createSseResponse', () => {
     await new Promise((resolve) => setTimeout(resolve, TICK_MS * 3));
     await append(harness.redis, { type: 'assistant.delta', text: 'finally' });
     expect(await pending).toContain('finally');
+    // Every one of those empty reads was ordinary. A pump that treated the answer to a read that
+    // found nothing as a reply to iterate would fail on the first quiet moment of every turn.
+    expect(harness.output()).toBe('');
+    harness.controller.abort();
+  });
+
+  /**
+   * A stream that is still being written to is not one that has ended, however long it stays
+   * quiet: the exit is for work that finished without a terminal event, and a pump that took
+   * either condition on its own would close a live transcript on its first empty read.
+   */
+  it('keeps a resumed stream open while the work is still running', async () => {
+    const redis = new FakeRedis();
+    const first = await append(redis, { type: 'assistant.delta', text: 'one' });
+    const harness = open({ fake: redis, lastEventId: first, finished: false });
+
+    const pending = readUntil(harness.reader, (read) => read.includes('two'));
+    await new Promise((resolve) => setTimeout(resolve, TICK_MS * 3));
+    await append(harness.redis, { type: 'assistant.delta', text: 'two' });
+
+    expect(await pending).toContain('two');
+    expect(harness.output()).toBe('');
+    harness.controller.abort();
+  });
+
+  /**
+   * And the replay hands the tail the cursor it reached. A tail resumed from nothing would either
+   * repeat everything the replay just delivered or refuse the read outright — Redis has no cursor
+   * meaning "wherever the last one got to".
+   */
+  it('tails from where the replay stopped', async () => {
+    const redis = new FakeRedis();
+    const first = await append(redis, { type: 'assistant.delta', text: 'one' });
+    await append(redis, { type: 'assistant.delta', text: 'two' });
+    const harness = open({ fake: redis, lastEventId: first, finished: false });
+
+    const replayed = await readUntil(harness.reader, (read) => read.includes('two'));
+    const pending = readUntil(harness.reader, (read) => read.includes('three'));
+    await append(harness.redis, { type: 'assistant.delta', text: 'three' });
+    const tailed = await pending;
+
+    expect(replayed).not.toContain('one');
+    expect(tailed).not.toContain('two');
+    expect(tailed).toContain('three');
+    expect(harness.output()).toBe('');
     harness.controller.abort();
   });
 
@@ -314,7 +414,10 @@ describe('createSseResponse', () => {
   it('reports an expired stream once and closes', async () => {
     const harness = open({ finished: true });
     const text = await readUntil(harness.reader, (read) => read.includes(SSE_EXPIRED_EVENT));
-    expect(text).toContain(`event: ${SSE_EXPIRED_EVENT}`);
+    // The whole frame, data included. The client reads `data` as JSON, and a frame carrying an
+    // empty body is one `JSON.parse` throws on — the page would treat a stream it was told to
+    // refetch from as a stream that broke.
+    expect(text).toContain(`id: ${SSE_STREAM_START}\nevent: ${SSE_EXPIRED_EVENT}\ndata: {}\n\n`);
     expect((await harness.reader.read()).done).toBe(true);
     expect(harness.redis.duplicates[0]?.closed).toBe(true);
   });
@@ -388,6 +491,10 @@ describe('createSseResponse', () => {
     expect((await harness.reader.read()).done).toBe(true);
     expect(harness.redis.duplicates[0]?.closed).toBe(true);
     expect(harness.output()).toBe('');
+    // The listener unregisters itself when it fires. A signal lives as long as its request, and a
+    // stream that left one attached would hold the closure — and everything it captured, including
+    // the response controller — for as long as the request object is reachable.
+    expect(getEventListeners(harness.controller.signal, 'abort')).toStrictEqual([]);
   });
 
   /**
@@ -425,6 +532,51 @@ describe('createSseResponse', () => {
   });
 
   /**
+   * A released stream leaves nothing of itself behind, and leaves it behind once.
+   *
+   * Both halves are what a long-lived server actually depends on. The heartbeat is an interval: a
+   * stream that closed without clearing it holds a timer, the closure it runs and the response
+   * controller that closure captures, for the life of the process — one per connection the client
+   * ever opened. And the duplicated connection is released exactly once, however many ways the
+   * stream ends at the same moment: an abort can arrive after the reader has already cancelled, and
+   * a second release is a second `disconnect` against a connection the pool has handed on.
+   *
+   * Fake timers throughout, because the leak this measures is a timer. A leaked interval on the
+   * real clock fires straight into a closed controller and throws from outside every test, which
+   * takes the runner with it and reports nothing about the stream.
+   */
+  it('releases its timer and its connection exactly once', async () => {
+    vi.useFakeTimers();
+    try {
+      const harness = open();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(vi.getTimerCount()).toBeGreaterThan(0);
+
+      await harness.reader.cancel();
+      // The other way out of the same stream, arriving after the first. Its listener runs outside
+      // any promise, so what it throws reaches nothing but the process — which is why the test
+      // collects that rather than trusting the absence of a rejection.
+      const raised: unknown[] = [];
+      const collect = (error: unknown): void => {
+        raised.push(error);
+      };
+      process.on('uncaughtException', collect);
+      try {
+        harness.controller.abort();
+        await vi.advanceTimersByTimeAsync(0);
+      } finally {
+        process.off('uncaughtException', collect);
+      }
+
+      expect(raised).toStrictEqual([]);
+      expect(vi.getTimerCount()).toBe(0);
+      expect(harness.redis.duplicates[0]?.disconnects).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
    * A read that fails while the stream is still open is a real fault, so it is logged — by the
    * error's class name, never by its message — and the stream is closed rather than left hanging.
    */
@@ -450,12 +602,45 @@ describe('createSseResponse', () => {
    * The same failure arriving after the client left is the ordinary end of the loop, not an
    * incident, so nothing is logged.
    */
+  it('stays silent about a read that failed after the client had gone', async () => {
+    let rejectRead: (reason: Error) => void = () => undefined;
+    const slow: RedisCommands = {
+      ping: () => Promise.resolve('PONG'),
+      get: () => Promise.resolve(null),
+      exists: () => Promise.resolve(1),
+      del: () => Promise.resolve(1),
+      publish: () => Promise.resolve(0),
+      xrange: () => Promise.resolve([]),
+      xread: (): Promise<StreamRead[] | null> =>
+        new Promise<StreamRead[] | null>((_resolve, reject) => {
+          rejectRead = reject;
+        }),
+      duplicate: () => slow,
+      disconnect: () => undefined,
+    };
+    const harness = open({ redis: slow });
+
+    // The read is in flight, the client leaves, and only then does the read fail — which is what a
+    // dropped connection looks like from inside the pump. Reported, every page the user navigates
+    // away from would leave a warning behind.
+    await new Promise((resolve) => setTimeout(resolve, TICK_MS));
+    harness.controller.abort();
+    rejectRead(new Error('Connection is closed.'));
+    await readToEnd(harness.reader);
+    await new Promise((resolve) => setTimeout(resolve, TICK_MS * 2));
+
+    expect(harness.output()).toBe('');
+  });
+
   it('stays silent when the failure follows the abort', async () => {
     const harness = open();
     harness.controller.abort();
     expect((await harness.reader.read()).done).toBe(true);
-    await vi.waitFor(() => {
-      expect(harness.output()).toBe('');
-    });
+    // Waited out rather than checked once: the pump is still inside a Redis command when the
+    // connection goes, and what it does with that rejection arrives afterwards. A closed stream
+    // that went on reading would report the ordinary end of its own loop as an incident, on every
+    // page the user navigates away from.
+    await new Promise((resolve) => setTimeout(resolve, TICK_MS * 4));
+    expect(harness.output()).toBe('');
   });
 });

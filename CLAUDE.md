@@ -22,23 +22,23 @@ in fresh workspaces, and Settings stores encrypted credentials (GitHub PAT, Open
 
 ## Commands (root scripts)
 
-| Script                                  | Purpose                                                                  |
-| --------------------------------------- | ------------------------------------------------------------------------ |
-| `pnpm setup`                            | First run: install, `.env.local`, master key, compose up, migrate, image |
-| `pnpm dev` / `pnpm start`               | Web + worker with `.env.local` loaded                                    |
-| `pnpm build`                            | Build every workspace                                                    |
-| `pnpm lint` / `pnpm lint:fix`           | ESLint over the monorepo                                                 |
-| `pnpm format` / `format:check`          | Prettier                                                                 |
-| `pnpm typecheck`                        | `tsc -b` over all project references (emits, so it also rewrites `dist`) |
-| `pnpm test`                             | Unit suites of every workspace (100 % coverage thresholds)               |
-| `pnpm test:integration`                 | `@db` / `@redis` / `@docker` suites against the compose instance         |
-| `pnpm test:e2e`                         | Playwright                                                               |
-| `pnpm test:mutation`                    | Stryker                                                                  |
-| `pnpm infra:up/down/reset`              | docker compose for the current instance                                  |
-| `pnpm infra:image`                      | Build the workspace image                                                |
-| `pnpm db:generate/migrate/studio/prune` | Prisma                                                                   |
-| `pnpm doctor`                           | Environment diagnostics                                                  |
-| `pnpm ws:list` / `ws:reap`              | Workspace containers of this instance                                    |
+| Script                                  | Purpose                                                                   |
+| --------------------------------------- | ------------------------------------------------------------------------- |
+| `pnpm setup`                            | First run: install, `.env.local`, master key, compose up, migrate, image  |
+| `pnpm dev` / `pnpm start`               | Web + worker with `.env.local` loaded                                     |
+| `pnpm build`                            | Build every workspace                                                     |
+| `pnpm lint` / `pnpm lint:fix`           | ESLint over the monorepo                                                  |
+| `pnpm format` / `format:check`          | Prettier                                                                  |
+| `pnpm typecheck`                        | `tsc -b` over all project references (emits, so it also rewrites `dist`)  |
+| `pnpm test`                             | Unit suites of every workspace (100 % coverage thresholds)                |
+| `pnpm test:integration`                 | `@db` / `@redis` / `@docker` suites against the compose instance          |
+| `pnpm test:e2e`                         | Playwright                                                                |
+| `pnpm test:mutation`                    | Stryker over every package and `infra/scripts/lib`, one at a time (100 %) |
+| `pnpm infra:up/down/reset`              | docker compose for the current instance                                   |
+| `pnpm infra:image`                      | Build the workspace image                                                 |
+| `pnpm db:generate/migrate/studio/prune` | Prisma                                                                    |
+| `pnpm doctor`                           | Environment diagnostics                                                   |
+| `pnpm ws:list` / `ws:reap`              | Workspace containers of this instance                                     |
 
 Every checkout is an _instance_: `AH_INSTANCE` (default `default`) and `AH_PORT_BASE` (default
 `3000`) derive ports, database name, compose project and container prefix. Conductor sets them

@@ -46,6 +46,14 @@ export class FakeRedis implements RedisCommands {
   /** Whether {@link FakeRedis.disconnect} has been called on this connection. */
   closed = false;
 
+  /**
+   * How many times {@link FakeRedis.disconnect} has been called on this connection.
+   *
+   * Counted rather than flagged because releasing twice is a defect a flag cannot see: ioredis
+   * tolerates the second call, so the only trace it leaves is the count.
+   */
+  disconnects = 0;
+
   /** Connections handed out by {@link FakeRedis.duplicate}, in creation order. */
   readonly duplicates: FakeRedis[] = [];
 
@@ -171,21 +179,31 @@ export class FakeRedis implements RedisCommands {
    * real server: it answers at once when entries already follow the cursor, otherwise it waits for
    * the block duration and answers `null`. Without the wait the pump would spin.
    *
-   * @param _blockToken - Ignored `BLOCK` literal.
+   * The two keyword arguments are checked rather than ignored, and typed as plain strings so the
+   * check can run: `XREAD` is a positional command, and a server sent anything but those words in
+   * those places answers with a syntax error rather than with a slice. A double that accepted them
+   * would let a tail read lose its block duration — turning the pump into a spin — and still look
+   * healthy.
+   *
+   * @param blockToken - Must be `BLOCK`.
    * @param milliseconds - How long to wait when nothing follows the cursor.
-   * @param _streamsToken - Ignored `STREAMS` literal.
+   * @param streamsToken - Must be `STREAMS`.
    * @param key - Stream key.
    * @param id - Exclusive lower bound.
    * @returns One stream slice, or `null` when nothing follows `id`.
+   * @throws Error When either keyword is not the word Redis expects there.
    */
   async xread(
-    _blockToken: 'BLOCK',
+    blockToken: string,
     milliseconds: number,
-    _streamsToken: 'STREAMS',
+    streamsToken: string,
     key: string,
     id: string,
   ): Promise<StreamRead[] | null> {
     this.assertOpen();
+    if (blockToken !== 'BLOCK' || streamsToken !== 'STREAMS') {
+      throw new Error(`ERR syntax error near '${blockToken}' '${streamsToken}'`);
+    }
     const immediate = this.entriesAfter(key, id);
     if (immediate.length > 0) {
       return [[key, immediate]];
@@ -208,6 +226,7 @@ export class FakeRedis implements RedisCommands {
   /** Closes this connection; a pending tail read rejects and every later command does too. */
   disconnect(): void {
     this.closed = true;
+    this.disconnects += 1;
     for (const wake of this.waiting.splice(0)) {
       wake();
     }
@@ -221,6 +240,13 @@ export class FakeRedis implements RedisCommands {
    * @returns The matching entries, oldest first.
    */
   private entriesAfter(key: string, id: string): StreamEntry[] {
+    // Redis refuses a cursor that is not an id, and so does this: a caller that lost track of
+    // where it was and sent nothing would otherwise be handed the whole stream, or none of it,
+    // depending on how the comparison happened to coerce. The shape is the whole test — a value
+    // that is not a string cannot match it either, so there is no separate type check to make.
+    if (!/^[-+]$|^\d+-\d+$/u.test(id)) {
+      throw new Error(`ERR Invalid stream ID specified as stream command argument: ${id}`);
+    }
     return (this.store.streams.get(key) ?? []).filter(([entryId]) => entryId > id);
   }
 

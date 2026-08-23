@@ -129,7 +129,12 @@ function labelsFor(
     [LABELS.instance]: deps.config.AH_INSTANCE,
     [LABELS.workspace]: workspaceId,
     [LABELS.kind]: input.kind,
+    // Spread conditionally because a workspace serves a chat or a run and never both, and a label
+    // set is `Record<string, string>`: a key carrying nothing is not a label the daemon can be
+    // asked about, so the absent one is left out rather than set to nothing.
+    // Stryker disable next-line ConditionalExpression
     ...(input.chatId === undefined ? {} : { [LABELS.chat]: input.chatId }),
+    // Stryker disable next-line ConditionalExpression
     ...(input.jobRunId === undefined ? {} : { [LABELS.jobRun]: input.jobRunId }),
   };
 }
@@ -166,6 +171,10 @@ async function failWorkspace(
 async function openWorkspaceRow(deps: ProcessorDeps, input: ProvisionInput): Promise<Workspace> {
   return deps.repos.workspaces.create({
     kind: input.kind,
+    // Spread conditionally because `chatId` is an optional property this project may not hand an
+    // explicit `undefined`; the repository writes the absent one as `null` either way, so no
+    // reader can tell the two spellings apart.
+    // Stryker disable next-line ConditionalExpression
     ...(input.chatId === undefined ? {} : { chatId: input.chatId }),
     runnerKind: deps.runner.kind,
     image: deps.config.WORKSPACE_IMAGE,

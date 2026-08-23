@@ -67,12 +67,14 @@ interface TurnOutcome {
   interruption: string | null;
 }
 
-/** What one chunk did to the read loop. */
-type ChunkOutcome =
-  /** Nothing terminal in it; keep reading. */
-  | { stop: false }
-  /** Stop, with the reason the transcript cannot be trusted, or `null` when the turn ended. */
-  | { stop: true; interruption: string | null };
+/**
+ * What one chunk did to the read loop: a reason to stop, or `null` to keep reading.
+ *
+ * The stopping case carries `interruption: null` when the turn simply ended, which is why the
+ * "keep reading" case is the outer `null` rather than another field — one absent value per level,
+ * each meaning something the other cannot.
+ */
+type ChunkOutcome = { interruption: string | null } | null;
 
 /**
  * Feeds one chunk of the stream to the recorder, printing what it produces.
@@ -81,7 +83,7 @@ type ChunkOutcome =
  * @param decoder - Frame decoder holding the remainder of the previous chunk.
  * @param recorder - Recorder for this turn.
  * @param deps - Injected collaborators.
- * @returns Whether the loop should stop, and why when the reason is not simply "the turn ended".
+ * @returns The reason to stop, or `null` to keep reading.
  */
 function consumeChunk(
   text: string,
@@ -91,10 +93,7 @@ function consumeChunk(
 ): ChunkOutcome {
   for (const frame of decoder.push(text)) {
     if (frame.kind === 'expired') {
-      return {
-        stop: true,
-        interruption: 'the replay cache expired, so the transcript cannot be verified',
-      };
+      return { interruption: 'the replay cache expired, so the transcript cannot be verified' };
     }
     if (frame.kind === 'undecodable') {
       deps.log(`unreadable frame event=${frame.name}`);
@@ -105,10 +104,10 @@ function consumeChunk(
       deps.log(line);
     }
     if (recorder.observation.terminal !== null) {
-      return { stop: true, interruption: null };
+      return { interruption: null };
     }
   }
-  return { stop: false };
+  return null;
 }
 
 /**
@@ -155,7 +154,7 @@ async function readStream(
         recorder,
         deps,
       );
-      if (outcome.stop) {
+      if (outcome !== null) {
         interruption = outcome.interruption;
         clean = true;
         break;
@@ -235,11 +234,15 @@ const LISTING_PROGRAMS: readonly string[] = ['ls', 'find', 'tree'];
 /**
  * Splits a shell command into bare words, dropping quoting, redirections and separators.
  *
+ * A command that starts or ends with a separator yields an empty word at that end. They are left
+ * in: an empty string is no listing program and is no half of the `git ls-files` pair, and every
+ * run of separators between two words collapses into one, so nothing that matters shifts.
+ *
  * @param command - The command the model asked to run.
  * @returns Its words, in order.
  */
 function commandWords(command: string): string[] {
-  return command.split(/[^A-Za-z0-9_.-]+/).filter((word) => word !== '');
+  return command.split(/[^A-Za-z0-9_.-]+/);
 }
 
 /**

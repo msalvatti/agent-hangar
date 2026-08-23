@@ -12,6 +12,7 @@ import type { JobSummary } from '@agent-hangar/core';
 
 import { useApiQuery } from '@/shared/api/use-api-query';
 
+import { jobKey } from '../lib/query-keys';
 import { listJobs } from '../services/scheduled-api';
 
 /** Result of {@link useJob}. */
@@ -31,7 +32,7 @@ export interface UseJobResult {
  * @returns The job (once loaded), a `notFound` flag, and the query's status/error/refetch.
  */
 export function useJob(id: string): UseJobResult {
-  const query = useApiQuery(['job', id], (signal) => listJobs(signal));
+  const query = useApiQuery(jobKey(id), (signal) => listJobs(signal));
   const job = query.data?.find((candidate) => candidate.id === id);
   return {
     status: query.status,

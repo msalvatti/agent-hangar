@@ -224,3 +224,29 @@ describe('last4', () => {
     expect(last4(plaintext)).toBe(expected);
   });
 });
+
+describe('what the envelope is checked for before it is opened', () => {
+  /**
+   * The shape is judged before the cipher is built, and each half of the pair is judged separately:
+   * an envelope whose vector is the wrong length and one whose tag is fail for the same reason, and
+   * the message says which kind of damage it is. Left to the cipher, the same rows come back as
+   * whatever the crypto library says about them, which is a different sentence for each row.
+   */
+  it.each([
+    [
+      'an initialisation vector of the wrong length',
+      (sealed: SealedSecret) => ({ ...sealed, iv: sealed.iv.subarray(0, 11) }),
+    ],
+    [
+      'an authentication tag of the wrong length',
+      (sealed: SealedSecret) => ({ ...sealed, authTag: sealed.authTag.subarray(0, 15) }),
+    ],
+  ])('refuses %s, saying so', (_case, damage) => {
+    const key = { key: Buffer.alloc(32, 7), version: 1 };
+    const sealed = encryptSecret('a credential', key, 'row-1');
+
+    expect(() => decryptSecret(damage(sealed), key, 'row-1')).toThrow(
+      'Stored secret envelope has an initialisation vector or authentication tag of the wrong length.',
+    );
+  });
+});

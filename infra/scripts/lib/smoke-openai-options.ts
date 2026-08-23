@@ -85,9 +85,6 @@ export interface SmokeOptions {
  */
 function flagValue(flags: Record<string, FlagValue>, name: string): string | undefined {
   const value = flags[name];
-  if (value === undefined) {
-    return undefined;
-  }
   if (value === true) {
     throw new Error(`--${name} needs a value`);
   }

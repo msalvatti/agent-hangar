@@ -413,6 +413,9 @@ function mapToolCallEvent(
   itemIdToCallId: Map<string, string>,
 ): ModelEvent[] | undefined {
   if (event.type === 'response.output_item.added') {
+    // Stryker disable next-line ConditionalExpression: an item of any other kind carries no call
+    // id, so remembering it would map its own id to nothing — and a delta that finds nothing falls
+    // back to the raw item id, which is what it does when nothing was remembered at all.
     if (event.item.type === 'function_call') {
       itemIdToCallId.set(event.item.id ?? event.item.call_id, event.item.call_id);
     }

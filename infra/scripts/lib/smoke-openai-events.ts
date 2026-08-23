@@ -154,13 +154,17 @@ function shortSha(sha: string): string {
  * @returns The parsed value, or `undefined` when the text is not JSON.
  */
 function parseJson(raw: string): unknown {
+  // A malformed frame is data, not a fault: `undefined` fails the schema check like any other
+  // invalid payload and is reported as one unreadable frame. Both branches are written out and
+  // both say the same thing when emptied — an empty body of either returns `undefined` too — so
+  // the directive covers the pair rather than inviting a test that cannot tell them apart.
+  // Stryker disable BlockStatement
   try {
     return JSON.parse(raw);
   } catch {
-    // A malformed frame is data, not a fault: `undefined` fails the schema check like any other
-    // invalid payload and is reported as one unreadable frame.
     return undefined;
   }
+  // Stryker restore BlockStatement
 }
 
 /**
@@ -171,6 +175,10 @@ function parseJson(raw: string): unknown {
  */
 function decodeFrame(block: string): DecodedFrame | null {
   let name = '';
+  // A frame that carried no `data:` line and one whose payload is unparseable are the same answer
+  // by design — both are reported as one unreadable frame — so no starting value that is not JSON
+  // behaves differently here. The name has no such default: an absent one means "not an event".
+  // Stryker disable next-line StringLiteral
   let data = '';
   for (const line of block.split('\n')) {
     if (line.startsWith(EVENT_PREFIX)) {
@@ -227,6 +235,9 @@ export function createFrameDecoder(): FrameDecoder {
  * @returns The value when it is a string, otherwise `undefined`.
  */
 function stringArgument(args: unknown, key: string): string | undefined {
+  // The type test states what the cast below assumes; it changes no answer on its own, because
+  // reading a named property off a string or a number yields `undefined` just as it does here.
+  // Stryker disable next-line ConditionalExpression
   if (typeof args !== 'object' || args === null) {
     return undefined;
   }

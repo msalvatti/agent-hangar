@@ -236,3 +236,87 @@ describe('the predicates', () => {
     expect(isAllowedRepoUrl('https://github.com/acme/widgets', ['git.example.test'])).toBe(false);
   });
 });
+
+describe('what the URL rules refuse, and what they say when they do', () => {
+  /**
+   * The scheme is narrowed by the schema itself and not only by the predicate behind it, and the
+   * two refusals read differently — which is the whole of what a person gets back. A pattern that
+   * has lost an anchor accepts a scheme that merely ends or begins with one of the two, and the
+   * refusal then comes from the predicate instead, about the shape rather than about the scheme.
+   */
+  it.each([
+    ['a scheme this product does not clone over', 'ftp://github.com/acme/widgets'],
+    ['a scheme that merely ends with one of them', 'xhttps://github.com/acme/widgets'],
+    ['a scheme that merely begins with one of them', 'httpx://github.com/acme/widgets'],
+  ])('refuses %s by the scheme rather than by the shape', (_name, value) => {
+    for (const schema of [repoUrl, credentialFreeUrl, repoUrlForHosts(['github.com'])]) {
+      const result = schema.safeParse(value);
+
+      expect(result.success).toBe(false);
+      expect(result.error?.issues[0]?.message).toBe('Invalid URL');
+    }
+  });
+
+  /**
+   * The messages are what a person reads in the form. Each schema says which rule it applied, so a
+   * message emptied leaves a refusal with nothing in it, and a message that belongs to another
+   * schema sends the reader to fix the wrong thing.
+   */
+  it.each([
+    [
+      'credentialFreeUrl',
+      credentialFreeUrl,
+      'https://github.com/acme/widgets?token=x',
+      'URL must carry no credentials, query string or fragment',
+    ],
+    [
+      'repoUrl',
+      repoUrl,
+      'https://github.com/acme/widgets/extra',
+      'Repository URL must be <scheme>://<host>/<owner>/<repository> with no credentials, query string or fragment',
+    ],
+    [
+      'repoUrlForHosts',
+      repoUrlForHosts(['github.com']),
+      'https://elsewhere.example/acme/widgets',
+      'Repository URL must be <owner>/<repository> on an origin listed in ALLOWED_REPO_HOSTS, with no credentials, query string or fragment',
+    ],
+  ])('%s says which rule it applied', (_name, schema, value, message) => {
+    const result = schema.safeParse(value);
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toBe(message);
+  });
+
+  /**
+   * The `.git` suffix is stripped from the end of the path, not looked for at its start, and what
+   * is left is what the segments are counted from. A repository literally named `.git` becomes an
+   * empty segment once the suffix is gone, which is not a repository name — kept whole, it reads
+   * as one.
+   */
+  it('refuses a path whose repository name is nothing but the git suffix', () => {
+    expect(isPlainRepoUrl('https://github.com/acme/.git')).toBe(false);
+  });
+
+  /**
+   * `URL` repairs `https:host/path` into a normal URL, so the schema would accept a string that
+   * `git` reads as an scp-style target over ssh. The check is for the literal prefix at the very
+   * start: found anywhere in the string instead, a URL on another scheme carrying one in its path
+   * would pass as hierarchical.
+   */
+  it.each([
+    ['a scheme written without the double slash', 'https:github.com/acme/widgets'],
+    ['another scheme carrying one in its path', 'ftp://host/https://github.com/acme/widgets'],
+  ])('refuses %s', (_name, value) => {
+    expect(isCredentialFreeUrl(value)).toBe(false);
+  });
+
+  /**
+   * A string `URL` cannot parse at all is refused before anything is read off it; asked for its
+   * user name first, the refusal would be a `TypeError` thrown out of a predicate that is
+   * documented to answer true or false.
+   */
+  it('refuses a hierarchical prefix with nothing behind it', () => {
+    expect(isCredentialFreeUrl('https://')).toBe(false);
+  });
+});

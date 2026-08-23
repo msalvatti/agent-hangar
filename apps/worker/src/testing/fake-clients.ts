@@ -55,7 +55,7 @@ export class FakeRedisClient implements WorkerRedisClient {
   readonly expiries: [string, number][] = [];
 
   /** Every `SET … EX` written, in order. */
-  readonly writes: { key: string; value: string; seconds: number }[] = [];
+  readonly writes: { key: string; value: string; mode: string; seconds: number }[] = [];
 
   /** Channels this connection subscribed to, in order. */
   readonly subscribed: string[] = [];
@@ -73,7 +73,7 @@ export class FakeRedisClient implements WorkerRedisClient {
   readonly role: string;
 
   private readonly options: FakeRedisOptions;
-  private listener: ((channel: string, payload: string) => void) | undefined;
+  private readonly listeners = new Map<string, ((channel: string, payload: string) => void)[]>();
 
   /**
    * @param options - Role, release callback, failure mode and scripted transaction replies.
@@ -114,32 +114,49 @@ export class FakeRedisClient implements WorkerRedisClient {
   /**
    * Records a write with a lifetime.
    *
+   * The mode is checked rather than ignored: Redis answers a `SET` whose option it does not
+   * recognise with a syntax error, so a double that accepted anything would let a key be written
+   * with no lifetime at all and still report success.
+   *
    * @param key - Key written.
    * @param value - Value stored.
-   * @param _mode - Always `EX`.
+   * @param mode - Must be `EX`; anything else is what Redis refuses. Typed wider than the client
+   *   interface declares, because what a caller actually sends is a string on the wire and this is
+   *   the side that has to answer for it.
    * @param seconds - Lifetime.
    * @returns `OK`, as Redis reports.
+   * @throws Error When the mode is not one Redis would accept.
    */
-  set(key: string, value: string, _mode: 'EX', seconds: number): Promise<unknown> {
-    this.writes.push({ key, value, seconds });
+  set(key: string, value: string, mode: string, seconds: number): Promise<unknown> {
+    if (mode !== 'EX') {
+      return Promise.reject(new Error(`ERR syntax error near '${mode}'`));
+    }
+    this.writes.push({ key, value, mode, seconds });
     return Promise.resolve('OK');
   }
 
   /**
-   * Installs the single message handler of a subscriber connection.
+   * Installs a handler, the way an event emitter does: every call adds one.
    *
-   * @param _event - Always `message`.
+   * Handlers are kept per event name and they accumulate, because that is what ioredis does — a
+   * connection given the same handler twice calls it twice, and one given a name nothing publishes
+   * under never calls it at all. A double that kept a single slot regardless of the name would
+   * report a healthy listener for a subscriber that is deaf.
+   *
+   * @param event - Event name; only `message` carries published payloads.
    * @param listener - Handler to install.
    * @returns This connection.
    */
-  on(_event: 'message', listener: (channel: string, payload: string) => void): unknown {
-    this.listener = listener;
+  on(event: string, listener: (channel: string, payload: string) => void): unknown {
+    const installed = this.listeners.get(event) ?? [];
+    installed.push(listener);
+    this.listeners.set(event, installed);
     return this;
   }
 
   /** How many message handlers were installed; a shared connection must only ever get one. */
   get listenerCount(): number {
-    return this.listener === undefined ? 0 : 1;
+    return (this.listeners.get('message') ?? []).length;
   }
 
   /**
@@ -200,6 +217,8 @@ export class FakeRedisClient implements WorkerRedisClient {
    * @param payload - Raw message body.
    */
   deliver(channel: string, payload: string): void {
-    this.listener?.(channel, payload);
+    for (const listener of this.listeners.get('message') ?? []) {
+      listener(channel, payload);
+    }
   }
 }

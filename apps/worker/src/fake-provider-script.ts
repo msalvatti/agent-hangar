@@ -136,7 +136,16 @@ export type FakeProviderScript = z.infer<typeof providerScript>;
  * @returns One indented line per problem.
  */
 function describeIssues(error: z.ZodError): string {
-  return error.issues.map((issue) => `  - ${issue.path.join('.')}: ${issue.message}`).join('\n');
+  return error.issues
+    .map(
+      (issue) =>
+        `  - ${issue.path.join(
+          // Stryker disable next-line StringLiteral: a path with no second segment has nothing for
+          // a separator to fall between, and every issue below the record's own keys has one.
+          '.',
+        )}: ${issue.message}`,
+    )
+    .join('\n');
 }
 
 /**
@@ -156,6 +165,9 @@ export function readFakeProviderScript(
 ): FakeProviderScript {
   let raw: string;
   try {
+    // Stryker disable next-line StringLiteral: an encoding Node does not recognise is ignored
+    // rather than refused, and the Buffer it hands back instead coerces through `toString()` —
+    // which is utf8 — so no file content can tell the two spellings apart.
     raw = fileSystem.readFileSync(path, 'utf8');
   } catch {
     // The reason is not repeated: it is a message about a path the operator supplied, and the
@@ -196,7 +208,7 @@ export function readFakeProviderScript(
  * @throws ConfigError naming the variable, the path, the size and the limit — never a value.
  */
 function assertScriptFitsEnvironment(path: string, value: string): void {
-  const bytes = Buffer.byteLength(`${FAKE_SCRIPT_ENV_KEY}=${value}`, 'utf8');
+  const bytes = Buffer.byteLength(`${FAKE_SCRIPT_ENV_KEY}=${value}`);
   if (bytes > MAX_FAKE_SCRIPT_ENV_BYTES) {
     throw new ConfigError(
       `FAKE_PROVIDER_SCRIPT_PATH: ${path} is too large to pass to a workspace container: ` +

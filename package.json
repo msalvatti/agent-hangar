@@ -22,7 +22,7 @@
     "test:integration": "bash scripts/run-integration.sh",
     "test:e2e": "pnpm --filter web test:e2e",
     "smoke:openai": "bash -c 'instance_env=\"$(bash infra/scripts/env.sh --print-checked)\" && eval \"$instance_env\" && export NODE_OPTIONS=\"${NODE_OPTIONS:-} --conditions=development\" && pnpm exec tsx infra/scripts/lib/smoke-openai.main.ts \"$@\"' --",
-    "test:mutation": "pnpm --recursive --if-present --sequential --no-bail --no-include-workspace-root run test:mutation",
+    "test:mutation": "bash scripts/run-mutation.sh",
     "setup": "bash infra/scripts/setup.sh",
     "doctor": "bash infra/scripts/doctor.sh",
     "infra:doctor": "pnpm run doctor",

@@ -9,6 +9,7 @@
  * Mocks: injected factories over in-memory doubles; no Redis, Postgres or Docker.
  */
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -18,6 +19,7 @@ import {
   createInMemoryRepositories,
   FakeClock,
   FakeWorkspaceRunner,
+  GITHUB_CANARY,
 } from '@agent-hangar/core/testing';
 import type { Logger } from 'pino';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -50,6 +52,8 @@ interface FactoryParts {
   queueQuitFails: boolean;
   released: string[];
   runnerCalls: { kind: string }[];
+  /** What each factory was asked for, so the wiring itself is assertable. */
+  asked: { prisma: unknown[]; queues: unknown[]; secrets: unknown[] };
 }
 
 /**
@@ -62,7 +66,10 @@ function buildFactories(
   parts: FactoryParts,
 ): ContainerFactories<FakeDatabaseClient, FakeRedisClient> {
   return {
-    createPrismaClient: () => parts.database,
+    createPrismaClient: (options) => {
+      parts.asked.prisma.push(options);
+      return parts.database;
+    },
     disconnectPrisma: (client) => {
       parts.released.push('prisma');
       return client.$disconnect();
@@ -74,10 +81,16 @@ function buildFactories(
     closeConnection: async (connection) => {
       await connection.quit();
     },
-    createQueues: () => parts.queues,
+    createQueues: (options) => {
+      parts.asked.queues.push(options);
+      return parts.queues;
+    },
     createRedactor: (): Redactor => createRedactor(),
     createLogger: parts.capture,
-    createSecrets: (): SecretsService => new FakeSecretsService(),
+    createSecrets: (repository, masterKeyPath): SecretsService => {
+      parts.asked.secrets.push({ repository, masterKeyPath });
+      return new FakeSecretsService();
+    },
     createWorkspaceRunner: (kind) => {
       parts.runnerCalls.push({ kind });
       return new FakeWorkspaceRunner();
@@ -96,6 +109,7 @@ interface Harness {
   logs: string[];
   runnerCalls: { kind: string }[];
   queues: ReturnType<typeof createFakeQueues>;
+  asked: { prisma: unknown[]; queues: unknown[]; secrets: unknown[] };
 }
 
 /**
@@ -113,6 +127,7 @@ function harness(options: { queueQuitFails?: boolean } = {}): Harness {
   const runnerCalls: { kind: string }[] = [];
   const clock: Clock = new FakeClock();
   const queues = createFakeQueues();
+  const asked = { prisma: [] as unknown[], queues: [] as unknown[], secrets: [] as unknown[] };
 
   const makeRedis = (role: string, quitFails = false): FakeRedisClient => {
     const redis = new FakeRedisClient({
@@ -145,9 +160,15 @@ function harness(options: { queueQuitFails?: boolean } = {}): Harness {
     queueQuitFails: options.queueQuitFails ?? false,
     released,
     runnerCalls,
+    asked,
   });
 
-  return { config, factories, released, connections, database, logs, runnerCalls, queues };
+  return { config, factories, released, connections, database, logs, runnerCalls, queues, asked };
+}
+
+/** A connection that will not close, of the kind whose message carries the connection string. */
+function refused(): Error {
+  return Object.assign(new Error('connect ECONNRESET 127.0.0.1:6379'), { code: 'ECONNRESET' });
 }
 
 /** A supplied script, in the shape a caller writes on disk. */
@@ -190,6 +211,25 @@ describe('createContainer', () => {
     expect(container.redis.queue.role).toBe('queue');
     expect(container.redis.worker.role).toBe('worker');
     expect(container.redis.subscriber).toBe(connections[0]?.duplicates[0]);
+  });
+
+  /**
+   * Every client is asked for with what it needs to reach: the pool with this instance's database
+   * URL, the queues over the producer connection, and the secrets service over this instance's
+   * key path. Asked for with nothing, each of them would fall back to whatever its own defaults
+   * are — a pool pointing at no database, queues on a connection nobody closes, and a key file
+   * beside the one that holds the credentials this instance already stored.
+   */
+  it('asks each factory for what it needs to reach', async () => {
+    const { config, factories, asked } = harness();
+
+    const container = await createContainer({ config, env: {}, factories });
+
+    expect(asked.prisma).toStrictEqual([{ connectionString: config.DATABASE_URL }]);
+    expect(asked.queues).toStrictEqual([{ connection: container.redis.queue }]);
+    expect(asked.secrets).toStrictEqual([
+      { repository: container.repos.secrets, masterKeyPath: config.MASTER_KEY_PATH },
+    ]);
   });
 
   /**
@@ -335,16 +375,90 @@ describe('createContainer', () => {
     expect(database.disconnects).toBe(1);
     expect(logs.join('')).toContain('releasing a worker resource failed');
   });
+
+  /**
+   * And it reports *which* one, by a name of its own. Five resources are released in a row and
+   * every one of them fails the same way from the outside — a connection that would not close —
+   * so the name on the line is the only thing that tells an operator whether the queues, one of
+   * the three Redis connections, or the Postgres pool was the one left open. The driver's own
+   * message is never repeated: Prisma and ioredis build theirs from the connection string, with
+   * the password in it.
+   */
+  it.each([
+    [
+      'queues',
+      (container: Awaited<ReturnType<typeof createContainer>>): void => {
+        vi.spyOn(container.queues.chatTurns, 'close').mockRejectedValue(refused());
+      },
+    ],
+    [
+      'redis.subscriber',
+      (container: Awaited<ReturnType<typeof createContainer>>): void => {
+        vi.spyOn(container.redis.subscriber, 'quit').mockRejectedValue(refused());
+      },
+    ],
+    [
+      'redis.worker',
+      (container: Awaited<ReturnType<typeof createContainer>>): void => {
+        vi.spyOn(container.redis.worker, 'quit').mockRejectedValue(refused());
+      },
+    ],
+    [
+      'redis.queue',
+      (container: Awaited<ReturnType<typeof createContainer>>): void => {
+        vi.spyOn(container.redis.queue, 'quit').mockRejectedValue(refused());
+      },
+    ],
+    [
+      'prisma',
+      (container: Awaited<ReturnType<typeof createContainer>>): void => {
+        vi.spyOn(container.prisma, '$disconnect').mockRejectedValue(refused());
+      },
+    ],
+  ])('names %s when that release is the one that failed', async (step, breakIt) => {
+    const { config, factories, logs } = harness();
+    const container = await createContainer({ config, env: {}, factories });
+    breakIt(container);
+
+    await container.close();
+
+    expect(logs.map((line) => JSON.parse(line) as Record<string, unknown>)).toContainEqual(
+      expect.objectContaining({
+        msg: 'releasing a worker resource failed',
+        step,
+        failure: 'ECONNRESET',
+      }),
+    );
+    vi.restoreAllMocks();
+  });
 });
 
 describe('createWorkspaceRunner', () => {
   /**
    * `fake` builds the in-memory runner, which is what `WORKSPACE_RUNNER=fake` exists for.
    */
-  it('builds the fake runner on request', () => {
+  it('builds the fake runner on request, over the clock it was given', async () => {
     const config = loadConfig(TEST_ENV);
+    const clock = new FakeClock();
 
-    expect(createWorkspaceRunner('fake', config, new FakeClock()).kind).toBe('fake');
+    const runner = createWorkspaceRunner('fake', config, clock);
+    const handle = await runner.create({
+      workspaceId: 'ws-1',
+      kind: 'CHAT',
+      image: 'image',
+      env: {},
+      limits: { cpus: 1, memoryBytes: 1, pids: 1 },
+      labels: {},
+    });
+
+    clock.advance(90_000);
+
+    expect(runner.kind).toBe('fake');
+    // The injected clock, not the wall clock. Every instant this runner stamps — when a workspace
+    // was created, how long it has been up — is what the collector reads to decide which
+    // containers are idle enough to reap, so a runner ticking on real time inside a suite that
+    // controls time makes those decisions arbitrary and this one unmeasurable.
+    expect(await runner.health(handle)).toStrictEqual({ status: 'healthy', uptimeMs: 90_000 });
   });
 
   /**
@@ -372,6 +486,24 @@ describe('createSecrets', () => {
       GITHUB_PAT: { set: false },
       OPENAI_API_KEY: { set: false },
     });
+  });
+
+  /**
+   * And the path it was given is the one it uses. The key file is what every stored credential is
+   * encrypted under, so a service built over some other path — or over none — would either fail to
+   * decrypt what this instance stored or quietly start a second key beside it.
+   */
+  it('reads and writes the key at the path it was given', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'ah-container-'));
+    const keyPath = join(directory, 'master.key');
+    const repos = createInMemoryRepositories(new FakeClock());
+
+    const secrets = createSecrets(repos.secrets, keyPath);
+    await secrets.set('GITHUB_PAT', GITHUB_CANARY);
+
+    await expect(stat(keyPath)).resolves.toMatchObject({ size: expect.any(Number) as number });
+    await expect(secrets.reveal('GITHUB_PAT')).resolves.toBe(GITHUB_CANARY);
+    await rm(directory, { recursive: true, force: true });
   });
 });
 

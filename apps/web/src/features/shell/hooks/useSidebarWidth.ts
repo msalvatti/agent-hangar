@@ -72,8 +72,12 @@ export function railShape(width: SidebarWidth, roomForColumn: boolean): boolean 
  */
 export function useSidebarWidth(): UseSidebarWidthResult {
   const width = useSyncExternalStore(subscribePersisted, readStoredWidth, automatic);
+  // Nothing this callback reads changes between renders, so its dependency list is empty — and
+  // anything constant added to it would never change either.
+  // Stryker disable ArrayDeclaration
   const setWidth = useCallback((next: SidebarWidthChoice) => {
     writePersisted(SIDEBAR_WIDTH_STORAGE_KEY, next);
   }, []);
+  // Stryker restore ArrayDeclaration
   return { width, setWidth };
 }

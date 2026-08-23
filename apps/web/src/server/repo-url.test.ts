@@ -148,7 +148,11 @@ describe('assertRepoUrlAllowed', () => {
       }
       throw new Error('expected a rejection');
     })();
-    expect(error.code).toBe(REPO_URL_NOT_ALLOWED);
+    // Both written out: the code is what the chat and job forms branch on to highlight the field,
+    // and the sentence is what tells the operator which variable to change.
+    expect(error.code).toBe('REPO_URL_NOT_ALLOWED');
+    expect(REPO_URL_NOT_ALLOWED).toBe('REPO_URL_NOT_ALLOWED');
+    expect(error.message).toBe('Repository host is not allowed; see ALLOWED_REPO_HOSTS');
     expect(error.status).toBe(400);
   });
 });

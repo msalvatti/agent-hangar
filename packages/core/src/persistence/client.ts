@@ -41,7 +41,12 @@ export const DEFAULT_REACHABILITY_TIMEOUT_MS = 5000;
 export function createPrismaClient(options: CreatePrismaClientOptions): PrismaClient {
   const adapter = new PrismaPg({
     connectionString: options.connectionString,
+    // Spread conditionally because these are optional properties and this project forbids handing
+    // one an explicit `undefined`; the adapter reads an absent option and an option set to nothing
+    // as the same instruction, so neither spelling can be told apart from outside.
+    // Stryker disable next-line ConditionalExpression
     ...(options.max === undefined ? {} : { max: options.max }),
+    // Stryker disable next-line ConditionalExpression
     ...(options.connectionTimeoutMillis === undefined
       ? {}
       : { connectionTimeoutMillis: options.connectionTimeoutMillis }),
@@ -60,7 +65,6 @@ export async function assertDatabaseReachable(
   client: Pick<DatabaseClient, '$queryRaw'>,
   timeoutMs: number = DEFAULT_REACHABILITY_TIMEOUT_MS,
 ): Promise<void> {
-  let timer: NodeJS.Timeout | undefined;
   // Held by identity so the catch can recognise this exact object. Testing `instanceof ConfigError`
   // instead would also wave through a ConfigError raised by the client — and `client` is an
   // injectable interface, so a wrapper rejecting `new ConfigError(connectionString, { cause })`
@@ -68,10 +72,13 @@ export async function assertDatabaseReachable(
   const timedOut = new ConfigError(
     `database unreachable: no answer to SELECT 1 within ${String(timeoutMs)} ms`,
   );
+  // The deadline is a signal rather than a timer of this function's own: the one `AbortSignal`
+  // schedules does not hold the event loop open and needs no clearing, so a probe that answers
+  // first leaves nothing behind to disarm.
   const timeout = new Promise<never>((_resolve, reject) => {
-    timer = setTimeout(() => {
+    AbortSignal.timeout(timeoutMs).addEventListener('abort', () => {
       reject(timedOut);
-    }, timeoutMs);
+    });
   });
   try {
     await Promise.race([client.$queryRaw`SELECT 1`, timeout]);
@@ -82,8 +89,6 @@ export async function assertDatabaseReachable(
     // Neither the driver's message nor the error itself may travel: both carry the connection
     // string, password included, and `cause` republishes it to anything walking the chain.
     throw new ConfigError(`database unreachable (${describeClientFailure(error)})`);
-  } finally {
-    clearTimeout(timer);
   }
 }
 

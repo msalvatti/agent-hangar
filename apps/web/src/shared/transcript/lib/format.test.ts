@@ -43,9 +43,14 @@ describe('formatDuration', () => {
     expect(formatDuration(2_100)).toBe('2.1 s');
   });
 
-  /** Durations at or past a minute fall back to the mm:ss clock. */
+  /**
+   * Durations at or past a minute fall back to the mm:ss clock — including exactly a minute, which
+   * reads as `01:00` rather than as `60.0 s`.
+   */
   it('formats minute-plus durations as a clock', () => {
     expect(formatDuration(72_000)).toBe('01:12');
+    expect(formatDuration(60_000)).toBe('01:00');
+    expect(formatDuration(59_999)).toBe('60.0 s');
   });
 
   /** Negative durations are clamped before formatting. */
@@ -60,14 +65,18 @@ describe('formatBytes', () => {
     expect(formatBytes(512)).toBe('512 B');
   });
 
-  /** Kilobyte-range values get one decimal. */
+  /** Kilobyte-range values get one decimal, starting at exactly one kilobyte. */
   it('formats kilobytes with one decimal', () => {
     expect(formatBytes(2_048)).toBe('2.0 KB');
+    expect(formatBytes(1_024)).toBe('1.0 KB');
+    expect(formatBytes(1_023)).toBe('1023 B');
   });
 
-  /** Megabyte-range values scale a second time. */
+  /** Megabyte-range values scale a second time, starting at exactly one megabyte. */
   it('formats megabytes with one decimal', () => {
     expect(formatBytes(5 * 1024 * 1024)).toBe('5.0 MB');
+    expect(formatBytes(1024 * 1024)).toBe('1.0 MB');
+    expect(formatBytes(1024 * 1024 - 1)).toBe('1024.0 KB');
   });
 
   /** Negative counts are clamped to zero. */
@@ -130,6 +139,23 @@ describe('relativeTime', () => {
   it('formats days in the past', () => {
     const iso = new Date(now - 3 * 86_400_000).toISOString();
     expect(relativeTime(iso, now)).toBe('3d ago');
+  });
+
+  /**
+   * The boundaries between the four scales, and the one between past and future. An instant
+   * exactly a minute, an hour or a day away belongs to the coarser unit — `60m ago` where `1h ago`
+   * is meant is a label nobody writes — and an instant that is exactly now is not in the future.
+   */
+  it.each([
+    [60_000, '1m ago'],
+    [59_999, 'just now'],
+    [3_600_000, '1h ago'],
+    [3_599_999, '59m ago'],
+    [86_400_000, '1d ago'],
+    [86_399_999, '23h ago'],
+    [0, 'just now'],
+  ])('reads a timestamp %i ms in the past as %s', (age, label) => {
+    expect(relativeTime(new Date(now - age).toISOString(), now)).toBe(label);
   });
 
   /** A future timestamp within a minute reads as an immediate future. */

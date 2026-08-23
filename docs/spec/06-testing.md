@@ -3,11 +3,11 @@
 | | |
 |---|---|
 | **Status** | ✅ Approved — 2026-08-19 |
-| **Revision** | 2026-08-22 — the `@docker` list records the network-isolation check. 2026-08-20 — corrected against `.github/workflows/ci.yml` and the Vitest configs: coverage policy raised from the tiered numbers originally written here to 100 % on four metrics everywhere, mutation scope expanded to `packages/agent-runtime`, and the CI job list matched to what actually runs |
+| **Revision** | 2026-08-23 — §5 rewritten against what runs: the mutation scope is every package plus `infra/scripts/lib` rather than six chosen directories, the break threshold is 100 rather than 80, and the runs are serialised because a timeout verdict is wall-clock. 2026-08-22 — the `@docker` list records the network-isolation check. 2026-08-20 — corrected against `.github/workflows/ci.yml` and the Vitest configs: coverage policy raised from the tiered numbers originally written here to 100 % on four metrics everywhere, mutation scope expanded to `packages/agent-runtime`, and the CI job list matched to what actually runs |
 | **Owner** | Maximiliano |
 | **Last updated** | 2026-08-19 |
 
-Principle: tests verify **behaviour**, not line coverage. The mutation gate on `packages/core` is the real quality signal; coverage is a floor, not the goal.
+Principle: tests verify **behaviour**, not line coverage. The mutation score is the real quality signal; coverage is a floor, not the goal.
 
 ## 1. Layers
 
@@ -16,7 +16,7 @@ Principle: tests verify **behaviour**, not line coverage. The mutation gate on `
 | Unit | Vitest 4 | pure functions, fakes | every package | < 30 s |
 | Integration | Vitest 4 | real local Docker, Postgres, Redis (compose test profile) | `packages/core`, `apps/worker`, `apps/web` | < 5 min |
 | E2E | Playwright 1.62 | full stack with `AGENT_MODEL_PROVIDER=fake` | `apps/web/e2e` | < 5 min |
-| Mutation | Stryker 10 + `@stryker-mutator/vitest-runner` | unit suites of the mutated packages | `packages/core`, `packages/agent-runtime` | < 10 min (CI incremental) |
+| Mutation | Stryker 10 + `@stryker-mutator/vitest-runner` | unit suites of the mutated packages | every package plus `infra/scripts/lib` | ≈ 2 h for the whole sweep |
 
 Coverage thresholds (Vitest `coverage.thresholds`): **100 % lines, branches, functions and statements** on every path a package lists in `coverage.include`, in all four workspaces and in the `scripts` project — the bar was raised from the tiered numbers originally written here and is enforced by the configuration, never lowered in a diff. Composition roots that only wire real clients together are excluded and their logic is tested through fakes instead (`apps/worker/src/main.ts`, `packages/agent-runtime/src/bin.ts`), as is the generated shadcn code under `apps/web/src/shared/ui/**`. Every `it()` carries a one-line comment stating the behaviour proved.
 
@@ -74,14 +74,23 @@ Playwright runs headless in CI on `ubuntu-latest` (Docker available); locally `p
 
 ## 5. Mutation testing (Stryker)
 
-Scope = the modules where a surviving mutant would mean a real defect:
+Scope = everything that decides something. The narrow, per-directory scope this section first described was widened once the suites existed: a mutant that survives outside the chosen directories is the same defect as one inside them, and choosing the directories in advance decides where to look rather than what is true.
 
-| Package | Mutated directories | Break threshold |
+| Scope | Mutated | Break threshold |
 |---|---|---|
-| `packages/core` | `src/secrets/**`, `src/redaction/**`, `src/scheduling/**`, `src/workspace/**` (lifecycle + restore context), `src/agent-protocol/**`, `src/model/openai/mapping.ts` | **80** (CI fails below); target 90 |
-| `packages/agent-runtime` | `src/tools/**` (path confinement, truncation, env scrubbing) | **80** |
+| `packages/core` | `src/**`, minus the generated Prisma client, the test doubles, and the helper that gates the integration suites | **100** |
+| `packages/agent-runtime` | `src/**`, minus the entry point, the barrel and the test doubles | **100** |
+| `apps/worker` | `src/**`, minus the composition root, the integration suites and the test doubles | **100** |
+| `apps/web` | `app/api/**/*.ts`, `src/server/**/*.ts`, `src/features/**/*.ts`, `src/shared/**/*.ts` | **100** |
+| `infra/scripts/lib` | `**/*.ts`, minus the `*.main.ts` process wiring | **100** |
 
-Config notes (from prior experience): vitest runner version pinned equal to core; `incremental: true` only on full-scope runs; `concurrency: 2`; no `// Stryker disable` without a one-line reason; equivalent mutants fixed by changing code to the value that serves, not by suppression. Reports uploaded as CI artifacts (`reports/mutation/`).
+`.tsx` is not mutated. Its dominant mutant is the class-name string literal, and this project forbids a test that asserts on class names: what a class produces is size, position or colour, which jsdom neither lays out nor resolves, so it belongs to the Playwright suite. Mutating those files would produce hundreds of mutants no permitted unit test can kill, and the only route to a green run would be writing the very checks that rule bans. The branching a component does have is reachable through the hooks and helpers it renders, which are mutated.
+
+Runs are **sequential**, one scope at a time, and `pnpm test:mutation` (`scripts/run-mutation.sh`) is what serialises them. Memory is not the reason: the Stryker vitest runner pins its own pool to one worker, so peak is `concurrency × one worker`. The reason is the verdict — `Timeout` counts as killed and is measured in wall-clock, so a loaded machine does not merely slow a run, it changes the score. The same lock covers a full gate run, whose `apps/web` suites are the real memory event.
+
+Config notes: `plugins: ['@stryker-mutator/vitest-runner']` is mandatory, because Stryker globs `node_modules/@stryker-mutator/*` relative to the working directory and pnpm keeps those packages only at the root. Each scope needs its own mutation-only Vitest configuration: the repository gates in `packages/core/src/config/**` climb out of the package and cannot survive the sandbox, the `@db`/`@redis`/`@docker` suites must never decide whether a mutant lives, and `infra/scripts`' shell suites spawn processes that never see the instrumentation. `disableTypeChecks: false` in `apps/web`, because the header Stryker would otherwise prepend changes the digests `vendored.test.ts` verifies and aborts the run in its dry phase.
+
+A surviving mutant is closed by strengthening the test, or by simplifying the code to the value that serves. A `// Stryker disable` is the last resort and always carries its reason in the source. Note that Stryker resolves a directive by **comment attachment**, not by line: one placed above `}, []);` or above `} finally {` is a trailing comment of the preceding statement and never binds — it has to lead the whole statement it applies to. Reports are written to `reports/mutation/`.
 
 ## 6. CI pipeline (`.github/workflows/ci.yml`)
 
@@ -95,7 +104,7 @@ Jobs on `ubuntu-latest`, Node 24, pnpm 11 via `pnpm/setup@v2` with store cache:
 6. **build** — `pnpm build` and `docker build` of the workspace image; smoke-start the image and run `node cli.js --version`.
 7. **secret-scan** — `gitleaks` through its container image: the working tree, the commits of the pull request, and the full history on `main`.
 
-The **mutation** job described in §5 is not part of the pipeline yet; it is added once both packages define `test:mutation` and pass their thresholds.
+The **mutation** job described in §5 is not part of the pipeline. Every scope defines `test:mutation` and passes at 100, but a full sweep is about two hours: it belongs in a nightly workflow or a deliberate local run, not in front of every change.
 
 No `continue-on-error` anywhere, and every job declares `timeout-minutes`. Branch protection on `main` currently requires no check: the repository is a single-maintainer, pull-request-only branch, and the gate that holds is the review before the merge rather than a server-side rule. Requiring the checks is a settings change, not a pipeline one — the names to require are `lint`, `typecheck`, `unit`, `integration`, `e2e (mock)`, `e2e (real)`, `build` and `secret-scan`.
 

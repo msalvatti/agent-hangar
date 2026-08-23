@@ -29,7 +29,10 @@ describe('isCancelPayload', () => {
    * Both spellings are accepted: the bare word an operator types and the JSON the API sends.
    */
   it('accepts the bare word and the JSON command', () => {
-    expect(isCancelPayload(CANCEL_PAYLOAD)).toBe(true);
+    // The bare word is written out: the web app publishes it and this worker reads it, so the two
+    // sides agree on a literal rather than on a constant either of them could change alone.
+    expect(isCancelPayload('cancel')).toBe(true);
+    expect(CANCEL_PAYLOAD).toBe('cancel');
     expect(isCancelPayload(JSON.stringify({ type: 'cancel' }))).toBe(true);
   });
 
@@ -92,7 +95,14 @@ describe('createCommandListener', () => {
     subscriber.deliver(turnCommandChannel('turn-1'), 'rm -rf /');
 
     expect(onCancel).not.toHaveBeenCalled();
-    expect(logs.join('')).toContain('ignored unknown command');
+    // The channel is on the line. One connection carries every running turn, so a warning that
+    // does not say which channel the stray payload arrived on names no turn at all — and the
+    // payload itself is never echoed, because a command channel is reachable by anything holding
+    // the Redis URL.
+    expect(JSON.parse(logs.at(-1) ?? '{}')).toMatchObject({
+      msg: 'ignored unknown command',
+      channel: turnCommandChannel('turn-1'),
+    });
     expect(logs.join('')).not.toContain('rm -rf');
   });
 
@@ -106,7 +116,29 @@ describe('createCommandListener', () => {
 
     subscriber.deliver(turnCommandChannel('turn-9'), CANCEL_PAYLOAD);
 
-    expect(logs.join('')).not.toContain('ignored unknown command');
+    // Nothing at all is written, and nothing is called. A dispatch that carried on past the
+    // missing route would reach for a handler that is not there on every stray message.
+    expect(logs).toHaveLength(0);
+  });
+
+  /**
+   * The handler is installed once, on the event that carries published payloads. This connection
+   * is shared by every running turn: a listener added per subscription would call each turn's
+   * cancel once per turn now subscribed, and a listener installed under a name Redis never emits
+   * would leave every cancellation unheard.
+   */
+  it('installs one handler, for published messages', async () => {
+    const { subscriber, listener } = setup();
+    const first = vi.fn();
+    const second = vi.fn();
+
+    await listener.subscribe('turn-1', { onCancel: first });
+    await listener.subscribe('turn-2', { onCancel: second });
+
+    expect(subscriber.listenerCount).toBe(1);
+
+    subscriber.deliver(turnCommandChannel('turn-2'), CANCEL_PAYLOAD);
+    expect(second).toHaveBeenCalledTimes(1);
   });
 
   /**
@@ -124,7 +156,13 @@ describe('createCommandListener', () => {
     expect(() => {
       subscriber.deliver(turnCommandChannel('turn-1'), CANCEL_PAYLOAD);
     }).not.toThrow();
-    expect(logs.join('')).toContain('cancel handler failed');
+    // Which turn, and what it threw: a line saying only that a handler failed leaves an operator
+    // with one connection, many turns and nothing to look at.
+    expect(JSON.parse(logs.at(-1) ?? '{}')).toMatchObject({
+      msg: 'cancel handler failed',
+      channel: turnCommandChannel('turn-1'),
+      err: expect.objectContaining({ message: 'boom' }) as unknown,
+    });
   });
 
   /**

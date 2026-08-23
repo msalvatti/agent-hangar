@@ -247,3 +247,58 @@ describe('buildHistoryWindow', () => {
     expect(buildHistoryWindow(messages)).toEqual(buildHistoryWindow(messages, ROOMY));
   });
 });
+
+describe('what the history window reserves and counts', () => {
+  /**
+   * The first user message is the task statement, and it is kept whatever the budget says — but a
+   * history that has none must not reserve a place for one it does not have, or the window keeps
+   * one message fewer than the budget allows for every chat that opens with anything else.
+   */
+  it('reserves nothing when the history opens with no user message', () => {
+    const messages = [
+      { seq: 1, role: 'ASSISTANT' as const, content: 'a' },
+      { seq: 2, role: 'ASSISTANT' as const, content: 'b' },
+    ];
+
+    const window = buildHistoryWindow(messages, { maxMessages: 2, maxChars: 100 });
+
+    expect(window.retained).toHaveLength(2);
+  });
+
+  /**
+   * The character budget is spent, not recovered: counted the wrong way round it grows with every
+   * message kept, and a window that should have stopped keeps the whole chat.
+   */
+  it('stops once the characters it has kept fill the budget', () => {
+    const messages = [
+      { seq: 1, role: 'USER' as const, content: 'u' },
+      { seq: 2, role: 'ASSISTANT' as const, content: 'x'.repeat(10) },
+      { seq: 3, role: 'ASSISTANT' as const, content: 'y'.repeat(10) },
+      { seq: 4, role: 'ASSISTANT' as const, content: 'z'.repeat(10) },
+    ];
+
+    const window = buildHistoryWindow(messages, { maxMessages: 10, maxChars: 25 });
+
+    expect(window.retained.map((message) => message.seq)).toStrictEqual([1, 3, 4]);
+  });
+
+  /**
+   * The anchor is the first message the person wrote, not simply the first message: an assistant
+   * greeting ahead of it is history, and anchoring on it would reserve the wrong message and drop
+   * the task statement when the budget got tight.
+   */
+  it('anchors on the first user message rather than the first message', () => {
+    const messages = [
+      { seq: 1, role: 'ASSISTANT' as const, content: 'greeting' },
+      { seq: 2, role: 'USER' as const, content: 'the task' },
+      { seq: 3, role: 'ASSISTANT' as const, content: 'z'.repeat(40) },
+    ];
+
+    const window = buildHistoryWindow(messages, { maxMessages: 2, maxChars: 60 });
+
+    expect(window.retained.map((message) => message.content)).toStrictEqual([
+      'the task',
+      'z'.repeat(40),
+    ]);
+  });
+});

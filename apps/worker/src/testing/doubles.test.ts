@@ -197,6 +197,24 @@ describe('FakeRedisClient', () => {
   });
 
   /**
+   * `SET key value EX seconds` is the one form this double accepts, because it is the one the
+   * worker writes its heartbeat with. Redis refuses any other keyword, and so does this: a double
+   * that accepted whatever it was handed would let a heartbeat written without an expiry pass here
+   * and outlive the worker in production, which is the entire point of the `EX`.
+   */
+  it('refuses a set the real Redis would refuse', async () => {
+    const redis = new FakeRedisClient();
+
+    await expect(redis.set('ah:heartbeat', '{}', 'EX', 30)).resolves.toBe('OK');
+    await expect(redis.set('ah:heartbeat', '{}', 'PX', 30_000)).rejects.toThrow(
+      "ERR syntax error near 'PX'",
+    );
+    expect(redis.writes).toStrictEqual([
+      { key: 'ah:heartbeat', value: '{}', mode: 'EX', seconds: 30 },
+    ]);
+  });
+
+  /**
    * A duplicate is a fresh connection that never inherits the original's failure mode; pub/sub
    * needs one that works even when the producer is on its way out.
    */

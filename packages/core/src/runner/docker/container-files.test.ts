@@ -21,6 +21,8 @@ interface Entry {
   mode: number | undefined;
   uid: number | undefined;
   gid: number | undefined;
+  uname: string | undefined;
+  gname: string | undefined;
   content: string;
 }
 
@@ -44,6 +46,11 @@ async function entriesOf(archive: Buffer): Promise<Entry[]> {
       mode: entry.header.mode,
       uid: entry.header.uid,
       gid: entry.header.gid,
+      // The names as well as the numbers: an archive that carries an owner id of zero and no owner
+      // name is extracted by some tar readers as owned by whoever is extracting it, which for a
+      // file the container's user must not be able to rewrite is the whole guarantee gone.
+      uname: entry.header.uname,
+      gname: entry.header.gname,
       content: Buffer.concat(chunks).toString('utf8'),
     });
   }
@@ -69,6 +76,8 @@ describe('buildContainerFileArchive', () => {
         mode: 0o644,
         uid: 0,
         gid: 0,
+        uname: 'root',
+        gname: 'root',
         content: 'https://github.com\n',
       },
     ]);
@@ -104,6 +113,23 @@ describe('buildContainerFileArchive', () => {
   ])('refuses %s', async (_name, path) => {
     await expect(buildContainerFileArchive({ path, content: 'x' })).rejects.toThrow(
       DockerRunnerError,
+    );
+  });
+
+  /**
+   * The path is judged segment by segment, and a refusal names the path it refused: an archive
+   * asked for somewhere the container's user could reach is refused here rather than extracted,
+   * and an operator reading the failure has to see which path was asked for.
+   */
+  it.each([
+    ['relative', 'opt/agent-runtime/file'],
+    ['a directory rather than a file', '/opt/agent-runtime/..'],
+    ['an empty segment', '/opt//file'],
+    ['a current-directory segment', '/opt/./file'],
+    ['a single segment', '/file'],
+  ])('refuses a container file path that is %s', async (_case, path) => {
+    await expect(buildContainerFileArchive({ path, content: 'x' })).rejects.toThrow(
+      `invalid workspace file path "${path}"`,
     );
   });
 });

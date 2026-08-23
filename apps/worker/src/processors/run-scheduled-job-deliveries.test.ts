@@ -32,6 +32,11 @@ import {
 } from './constants.js';
 import { IneligibleRunError } from './run-scheduled-job-deliveries.js';
 
+/** The records the container collected, parsed back from the lines pino wrote. */
+function records(logs: string[]): Record<string, unknown>[] {
+  return logs.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
 describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
   /**
    * A tick that fires while the previous run is still executing is recorded as a failure and does
@@ -57,6 +62,16 @@ describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
     expect(skipped?.error).toContain(OVERLAP_SKIP_REASON);
     expect(container.runner.calls).toHaveLength(0);
     expect((await container.repos.scheduledJobs.get(job.id))?.lastRunAt).toBeNull();
+    // The line names the tick that was dropped and the job it belonged to. An operator looking at
+    // a job that seems to run half as often as its schedule says reads these to find out why, and
+    // a wordless record with no ids on it answers neither question.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'scheduled run skipped',
+        jobId: job.id,
+        runId: skipped?.id,
+      }),
+    );
   });
 
   /**
@@ -249,11 +264,25 @@ describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
       scheduledFor: container.clock.now(),
     });
     await container.repos.jobRuns.setStatus(abandoned.id, 'PREPARING');
+    const lookups = vi.spyOn(container.repos.workspaces, 'get');
 
     await run(container, delivery(job.id, 'SCHEDULE', { stalledCounter: 1 }));
 
     expect((await container.repos.jobRuns.get(abandoned.id))?.status).toBe('FAILED');
-    expect(container.logs.join('')).toContain('recovering a run whose worker stopped');
+    // Named on both axes: a job's history is a column of runs, and a recovery line that identifies
+    // neither the job nor the run says only that something died.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'recovering a run whose worker stopped while it was executing',
+        jobId: job.id,
+        runId: abandoned.id,
+      }),
+    );
+    // A run that never recorded a workspace asks the database about none: the id would be `null`,
+    // and Prisma refuses a `null` where a row's identifier belongs rather than answering "no such
+    // row" — so a recovery that looked anyway would fail the delivery instead of closing the run.
+    expect(lookups.mock.calls.map(([id]) => id)).not.toContain(null);
+    lookups.mockRestore();
   });
 
   /**
@@ -286,6 +315,12 @@ describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
       status: 'DESTROYED',
       runnerRef: null,
     });
+    // Empty rather than invented: there is no reference to give, and any value put here would send
+    // the daemon looking for a container this row never created.
+    expect(container.runner.calls).toContainEqual({
+      method: 'destroy',
+      args: [{ workspaceId: creating.id, runnerRef: '' }],
+    });
   });
 
   /**
@@ -311,16 +346,94 @@ describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
     });
     await container.repos.workspaces.setStatus(workspace.id, 'READY', { runnerRef: 'ref-stuck' });
     await container.repos.jobRuns.setStatus(abandoned.id, 'RUNNING', { workspaceId: workspace.id });
-    vi.spyOn(container.runner, 'destroy').mockRejectedValueOnce(new Error('daemon busy'));
+    const destroy = vi
+      .spyOn(container.runner, 'destroy')
+      .mockRejectedValueOnce(new Error('daemon busy'));
 
     await run(container, delivery(job.id, 'SCHEDULE', { stalledCounter: 1 }));
 
     expect((await container.repos.jobRuns.get(abandoned.id))?.status).toBe('FAILED');
     expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('DESTROYED');
-    expect(container.logs.join('')).toContain(
-      'destroying the workspace of an abandoned run failed',
+    // The reference the row recorded is what the daemon was asked about, and the line that reports
+    // the refusal names the workspace still on the host and what the daemon said about it.
+    expect(destroy.mock.calls[0]).toStrictEqual([
+      { workspaceId: workspace.id, runnerRef: 'ref-stuck' },
+    ]);
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'destroying the workspace of an abandoned run failed',
+        workspaceId: workspace.id,
+        err: expect.objectContaining({ message: 'daemon busy' }) as unknown,
+      }),
     );
     vi.restoreAllMocks();
+  });
+
+  /**
+   * A run whose workspace row has since been deleted is still closed out. The row is the only
+   * handle the recovery has, and a pass that reached for the status of a row that is not there
+   * would fail the whole delivery over a container nobody can find anyway.
+   */
+  it('recovers an abandoned run whose workspace row is gone', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const abandoned = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'SCHEDULE',
+      model: 'test-model',
+      scheduledFor: container.clock.now(),
+    });
+    const workspace = await container.repos.workspaces.create({
+      kind: 'JOB',
+      runnerKind: 'fake',
+      image: 'image',
+      repoUrl: FIXTURE_REPO_URL,
+      branch: 'master',
+    });
+    await container.repos.jobRuns.setStatus(abandoned.id, 'RUNNING', { workspaceId: workspace.id });
+    container.repos.store.workspaces.delete(workspace.id);
+
+    await expect(
+      run(container, delivery(job.id, 'SCHEDULE', { stalledCounter: 1 })),
+    ).resolves.toBeUndefined();
+
+    expect((await container.repos.jobRuns.get(abandoned.id))?.status).toBe('FAILED');
+    expect(container.runner.calls).not.toContainEqual(
+      expect.objectContaining({ method: 'destroy', args: [{ workspaceId: workspace.id }] }),
+    );
+  });
+
+  /**
+   * A stalled delivery for a job with nothing running is an ordinary delivery. The recovery is for
+   * a run that is *there* and unattended; reached with nothing to recover, it would be handed no
+   * run at all.
+   */
+  it('runs normally when a stalled delivery finds no run to recover', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+
+    await expect(
+      run(container, delivery(job.id, 'SCHEDULE', { stalledCounter: 1 })),
+    ).resolves.toBeUndefined();
+
+    const runs = await container.repos.jobRuns.listByJob(job.id);
+    expect(runs).toHaveLength(1);
+    expect(runs[0]?.status).toBe('SUCCEEDED');
+    expect(container.logs.join('')).not.toContain('recovering a run whose worker stopped');
+  });
+
+  /**
+   * An ordinary tick names no run to adopt, so nothing is looked up and nothing is reported as
+   * missing. A delivery that went looking anyway would report every scheduled tick this worker has
+   * ever run as a manual run whose row had vanished.
+   */
+  it('says nothing about adoption for a tick that names no run', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+
+    await run(container, delivery(job.id));
+
+    expect(container.logs.join('')).not.toContain('run to adopt is gone');
   });
 
   /**
@@ -392,14 +505,29 @@ describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
       scheduledFor: container.clock.now(),
     });
 
-    await expect(run(container, delivery(job.id, 'MANUAL', { runId: foreign.id }))).rejects.toThrow(
-      IneligibleRunError,
-    );
+    const failure: unknown = await run(
+      container,
+      delivery(job.id, 'MANUAL', { runId: foreign.id }),
+    ).catch((error: unknown) => error);
 
+    // The refusal says which run and which job, and identifies itself by name: this is the one
+    // rejection a delivery answers with, it reaches an operator through BullMQ's failed set, and
+    // the two ids are what turn it into something anyone can look up.
+    expect(failure).toBeInstanceOf(IneligibleRunError);
+    expect(failure).toMatchObject({
+      name: 'IneligibleRunError',
+      message: `run ${foreign.id} is not an open manual run of job ${job.id}`,
+    });
     expect((await container.repos.jobRuns.get(foreign.id))?.status).toBe('QUEUED');
     expect(await container.repos.jobRuns.listByJob(job.id)).toHaveLength(0);
     expect(container.runner.calls).toHaveLength(0);
-    expect(container.logs.join('')).toContain('delivery names a run it may not adopt');
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'delivery names a run it may not adopt',
+        jobId: job.id,
+        runId: foreign.id,
+      }),
+    );
   });
 
   /**
@@ -460,7 +588,15 @@ describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
     await run(container, delivery(job.id, 'MANUAL', { runId: 'no-such-run' }));
 
     expect(await container.repos.jobRuns.listByJob(job.id)).toHaveLength(1);
-    expect(container.logs.join('')).toContain('run to adopt is gone');
+    // The line names the row that vanished. Somebody's browser is subscribed to that run's stream
+    // and will never see it end, and the id is the only way to connect the two.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'run to adopt is gone',
+        jobId: job.id,
+        runId: 'no-such-run',
+      }),
+    );
   });
 
   /**
@@ -476,7 +612,14 @@ describe('createRunScheduledJobProcessor, which run a delivery drives', () => {
 
     expect(await container.repos.jobRuns.listByJob(disabled.id)).toHaveLength(0);
     expect(container.runner.calls).toHaveLength(0);
-    expect(container.logs.join('')).toContain('scheduled job is disabled');
+    // Each line names the job it was about. A scheduler holds many, and a tick that reports only
+    // that "a job is disabled" tells an operator nothing about which schedule stopped firing.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({ msg: 'scheduled job is gone', jobId: 'no-such-job' }),
+    );
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({ msg: 'scheduled job is disabled', jobId: disabled.id }),
+    );
   });
 
   /**

@@ -13,7 +13,7 @@
 import { createServer } from 'node:net';
 import type { Server, Socket } from 'node:net';
 
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { loadConfig } from '../../../packages/core/src/config/schema.js';
 import {
@@ -84,22 +84,31 @@ async function silentListener(): Promise<number> {
 interface FakeRedis extends ProbeRedisClient {
   /** Whether {@link ProbeRedisClient.disconnect} was called. */
   disconnected: () => boolean;
-  /** Invokes the registered error listener, as ioredis does while retrying. */
-  emitError: () => void;
+  /**
+   * Delivers an `error` event, as ioredis does while retrying.
+   *
+   * @returns `true` when something was listening for it.
+   */
+  emitError: () => boolean;
 }
 
 /**
  * Builds a Redis stand-in around one canned `ping` outcome.
+ *
+ * Listeners are kept per event name, as a real emitter keeps them: a double that called back
+ * whatever name it was given would report the probe as absorbing `error` events while it had in
+ * fact subscribed to an event ioredis never emits — which is the case where the unlistened `error`
+ * takes the whole diagnostic down.
  *
  * @param ping - What `ping()` returns or rejects with.
  * @returns The client plus the observations a test asserts on.
  */
 function fakeRedis(ping: () => Promise<string>): FakeRedis {
   let closed = false;
-  let listener: (() => void) | undefined;
+  const listeners = new Map<string, () => void>();
   return {
-    on: (_event, registered) => {
-      listener = registered;
+    on: (event, registered) => {
+      listeners.set(event, registered);
       return undefined;
     },
     ping,
@@ -108,7 +117,9 @@ function fakeRedis(ping: () => Promise<string>): FakeRedis {
     },
     disconnected: () => closed,
     emitError: () => {
+      const listener = listeners.get('error');
       listener?.();
+      return listener !== undefined;
     },
   };
 }
@@ -196,10 +207,82 @@ describe('probeServices', () => {
   it('absorbs the error events the client emits while retrying', async () => {
     const client = fakeRedis(() => Promise.resolve(REDIS_PONG));
     const promise = probeServices(baseDeps({ createRedisClient: () => client }));
-    expect(() => {
-      client.emitError();
-    }).not.toThrow();
+
+    // Something was listening for `error` in particular. A sink registered under any other name
+    // absorbs nothing: ioredis emits `error`, and an emitter with no listener for it throws out of
+    // the process, which ends the diagnostic instead of failing one row of it.
+    expect(client.emitError()).toBe(true);
+
     await expect(promise).resolves.toEqual([`POSTGRES=${PROBE_OK}`, `REDIS=${PROBE_OK}`]);
+  });
+
+  /**
+   * The words each verdict is reported in, written out. `doctor.sh` prints them into its table and
+   * an operator reads them; `PONG` is the cache's own reply, so a probe comparing against anything
+   * else calls a healthy cache unhealthy.
+   */
+  it('reports each verdict in the words the table prints', async () => {
+    const healthy = await probeServices(
+      baseDeps({ createRedisClient: () => fakeRedis(() => Promise.resolve('PONG')) }),
+    );
+    expect(healthy).toEqual(['POSTGRES=ok', 'REDIS=ok']);
+
+    const unhealthy = await probeServices(
+      baseDeps({
+        assertDatabaseReachable: () => Promise.reject(new Error('unreachable')),
+        createRedisClient: () => fakeRedis(() => Promise.resolve('nope')),
+      }),
+    );
+    expect(unhealthy).toEqual(['POSTGRES=no-select-1', 'REDIS=no-pong']);
+  });
+
+  /**
+   * The database client is given back whatever the verdict was. A probe that left a pool open would
+   * keep the diagnostic process alive after its table was printed — the same defect the cache side
+   * closes by disconnecting, on a service that has no `disconnect` of its own to fall back on.
+   */
+  it('closes the database client on both verdicts', async () => {
+    const closed: string[] = [];
+    const healthy = await probeServices(
+      baseDeps({
+        disconnectDatabase: () => {
+          closed.push('healthy');
+          return Promise.resolve();
+        },
+      }),
+    );
+    expect(healthy[0]).toBe(`POSTGRES=${PROBE_OK}`);
+
+    await probeServices(
+      baseDeps({
+        assertDatabaseReachable: () => Promise.reject(new Error('unreachable')),
+        disconnectDatabase: () => {
+          closed.push('unhealthy');
+          return Promise.resolve();
+        },
+      }),
+    );
+
+    expect(closed).toEqual(['healthy', 'unhealthy']);
+  });
+
+  /**
+   * Every deadline is cancelled on the way out — the two teardown races and the ping's own. Each is
+   * a `setTimeout` holding a rejection callback, and Node will not exit while one is armed, so a
+   * diagnostic that printed its table would then sit there for the length of the longest wait.
+   */
+  it('leaves no deadline armed behind it', async () => {
+    vi.useFakeTimers();
+    try {
+      await expect(probeServices(baseDeps())).resolves.toEqual([
+        `POSTGRES=${PROBE_OK}`,
+        `REDIS=${PROBE_OK}`,
+      ]);
+
+      expect(vi.getTimerCount()).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   /**

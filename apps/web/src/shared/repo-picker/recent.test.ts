@@ -49,6 +49,31 @@ describe('recent repos', () => {
     expect(getRecentRepos()).toEqual([]);
   });
 
+  /**
+   * An array with entries of other kinds keeps the names and drops the rest, rather than handing
+   * the picker a `null` to render or refusing a list that is mostly good. Another tab, an older
+   * build or a hand-edited value can all leave one behind.
+   */
+  it('keeps the names out of a list with entries of other kinds', () => {
+    localStorage.setItem(
+      'ah-recent-repos',
+      JSON.stringify(['acme/api', null, 42, { full_name: 'acme/web' }, 'acme/web']),
+    );
+
+    expect(getRecentRepos()).toEqual(['acme/api', 'acme/web']);
+  });
+
+  /**
+   * The key is what the value is stored under, so it is written out here: a list written under one
+   * name and read under another is a picker that never remembers anything, and nothing about that
+   * looks broken from inside the app.
+   */
+  it('remembers the list under the documented key', () => {
+    pushRecentRepo('acme/api');
+
+    expect(localStorage.getItem('ah-recent-repos')).toBe(JSON.stringify(['acme/api']));
+  });
+
   // Outside the browser (no localStorage), both functions are safe no-ops.
   it('is a safe no-op without localStorage (SSR guard)', () => {
     const original = globalThis.localStorage;

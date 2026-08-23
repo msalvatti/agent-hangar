@@ -28,6 +28,9 @@
  * specifier. A bare package specifier (no leading `./` or `../`) never matches this pattern at
  * all, so re-exports of npm dependencies pass through untouched regardless.
  */
+// Stryker disable next-line Regex: the run of whitespace before `import`'s parenthesis is written
+// for the shape rather than reached by it — the emitter writes `import(` with nothing between the
+// two, so a pattern demanding one non-space character there matches the same text by matching none.
 const RELATIVE_TS_SPECIFIER_PATTERN = /\b(from\s*|import\s*\()(['"])(\.\.?\/[^'"]+)\.ts\2/g;
 
 /**
@@ -50,6 +53,9 @@ const RELATIVE_TS_SPECIFIER_PATTERN = /\b(from\s*|import\s*\()(['"])(\.\.?\/[^'"
  * @returns `true` when the text preceding the match is consistent with a real specifier position.
  */
 function isGenuineSpecifierPosition(source: string, matchIndex: number): boolean {
+  // Stryker disable next-line ArithmeticOperator: the match starts on a keyword, so neither the
+  // character at the index nor the one after it can be the line break this searches back for —
+  // both spellings find the same one.
   const lineStart = source.lastIndexOf('\n', matchIndex - 1) + 1;
   const linePrefix = source.slice(lineStart, matchIndex);
   if (/^[ \t]*(?:\/\/|\/\*|\*)/.test(linePrefix)) {

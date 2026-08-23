@@ -77,7 +77,14 @@ export function useChatStream(
     reconnect({ fromStart: true });
   }, [activeTurnId, reconnect]);
 
+  // A new `mapped` identity is a new persisted snapshot — the value is memoized on the record it
+  // was built from — so the reducer is reseeded from it and the followed turn taken from it.
   useEffect(() => {
+    // The pass at mount would reseed with the very snapshot the reducer was created from, so it is
+    // skipped: it is a render that produces the state already on screen. Nothing observable tells
+    // the two apart, which is why the check carries a directive rather than a test.
+    //
+    // Stryker disable next-line ConditionalExpression,BlockStatement
     if (seededFrom.current === mapped) {
       return;
     }
@@ -120,8 +127,8 @@ export function useChatStream(
 
   // Reconciles the screen with the record the refusal-triggered refetch above just reloaded. Fires
   // once that refetch actually lands — `mapped` changing identity is how a memoized value signals a
-  // new persisted snapshot — and only while `recoveringFromExpiry` marks that the change is the one
-  // this recovery is waiting for rather than some unrelated refetch.
+  // new persisted snapshot — and only while `recoveringFromExpiry` marks a recovery as outstanding,
+  // so an unrelated refetch does not reopen the stream.
   //
   // The reseed the effect above performs is necessary but not sufficient: the url is built from the
   // chat id, which has not changed, so it stays the same string and the connection effect never
@@ -129,7 +136,7 @@ export function useChatStream(
   // start: the only position the reducer holds is the one the server just refused. A chat whose
   // refetched record shows no live turn is left alone — a finished turn has nothing left to stream.
   useEffect(() => {
-    if (!recoveringFromExpiry.current || seededFrom.current !== mapped) {
+    if (!recoveringFromExpiry.current) {
       return;
     }
     recoveringFromExpiry.current = false;
@@ -138,10 +145,14 @@ export function useChatStream(
     }
   }, [mapped, reconnect]);
 
+  // Nothing this callback reads changes between renders, so its dependency list is empty — and
+  // anything constant added to it would never change either.
+  // Stryker disable ArrayDeclaration
   const followTurn = useCallback((turnId: string) => {
     expiredRef.current = false;
     setActiveTurnId(turnId);
   }, []);
+  // Stryker restore ArrayDeclaration
 
   return { ...events, activeTurnId, followTurn };
 }

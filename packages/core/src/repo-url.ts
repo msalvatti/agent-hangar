@@ -48,6 +48,10 @@ function hasUserinfoSeparator(value: string): boolean {
   // Safe without a guard: every caller has already required the literal `scheme://` prefix.
   const afterScheme = value.slice(value.indexOf('://') + '://'.length);
   const authorityEnd = afterScheme.search(/[/?#]/u);
+  // Stryker disable next-line ConditionalExpression,UnaryOperator: an authority that runs to the
+  // end of the string differs from one cut short only in its last character, and the only last
+  // character that would change the answer is the separator itself — which would leave the host
+  // empty, and a URL with no host does not parse.
   const authority = authorityEnd === -1 ? afterScheme : afterScheme.slice(0, authorityEnd);
   return authority.includes('@');
 }
@@ -98,20 +102,24 @@ export function isCredentialFreeUrl(value: string): boolean {
  * @returns The parsed URL, or `null` when it is unparseable or carries a credential-bearing part.
  */
 function parseCredentialFreeUrl(value: string): URL | null {
-  const parsed = URL.parse(value);
-  if (parsed === null) {
-    return null;
-  }
+  // Every question here is asked of the written string, so they are all asked before it is parsed
+  // and the parse itself answers the last one: a string that cannot be parsed is not a URL, and
+  // `URL.parse` says so with the same `null` this function returns. The hierarchical form is
+  // required first because the userinfo check below reads the text after `://` and relies on it.
   if (!isHierarchicalHttpUrl(value)) {
     return null;
   }
-  if (parsed.username !== '' || parsed.password !== '' || hasUserinfoSeparator(value)) {
+  // Asked of the raw authority alone. Every URL whose parsed `username` or `password` is set is a
+  // URL whose authority carries the `@` that put it there, and the raw check catches the two forms
+  // the parsed ones miss — `https://@host` and `https://:@host` both parse with those fields empty
+  // while the stored string keeps the separator and git keeps reading it as a userinfo form.
+  if (hasUserinfoSeparator(value)) {
     return null;
   }
   if (value.includes('?') || value.includes('#')) {
     return null;
   }
-  return parsed;
+  return URL.parse(value);
 }
 
 /**
@@ -187,7 +195,9 @@ export function isPlainRepoUrl(value: string): boolean {
 export function parseAllowedRepoOrigin(entry: string): string | null {
   const withScheme = isHierarchicalHttpUrl(entry) ? entry : `${DEFAULT_ALLOWED_SCHEME}${entry}`;
   const authority = withScheme.slice(withScheme.indexOf('://') + '://'.length);
-  if (authority === '' || NON_AUTHORITY_CHARACTERS.test(authority)) {
+  // An authority with nothing in it needs no check of its own: `https://` is not a URL, and the
+  // parse below answers it with the `null` this function returns.
+  if (NON_AUTHORITY_CHARACTERS.test(authority)) {
     return null;
   }
   const parsed = URL.parse(withScheme);

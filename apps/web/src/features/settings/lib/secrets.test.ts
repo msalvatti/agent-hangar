@@ -13,13 +13,32 @@ import { describe, expect, it } from 'vitest';
 import { SECRET_FIELDS, maskSecret, validateSecretInput } from './secrets';
 
 describe('SECRET_FIELDS', () => {
-  /** Both secret keys are present, each with the `statusKey` matching its contract field. */
-  it('lists GitHub and OpenAI with their settingsStatus field names', () => {
-    expect(SECRET_FIELDS.map((field) => field.key)).toEqual(['GITHUB_PAT', 'OPENAI_API_KEY']);
-    expect(SECRET_FIELDS.find((field) => field.key === 'GITHUB_PAT')?.statusKey).toBe('githubPat');
-    expect(SECRET_FIELDS.find((field) => field.key === 'OPENAI_API_KEY')?.statusKey).toBe(
-      'openaiKey',
-    );
+  /**
+   * The table is the credentials card: every word of it is what the operator reads while deciding
+   * which token to paste and what it will be used for, so it is pinned in full rather than by the
+   * two keys. A blank label leaves an unnamed input; a blank helper drops the one line that says a
+   * GitHub token needs push access, which is the difference between a job that pushes and one that
+   * fails at the end of its work.
+   */
+  it('describes both credentials, in the words the card shows', () => {
+    expect(SECRET_FIELDS).toStrictEqual([
+      {
+        key: 'GITHUB_PAT',
+        label: 'GitHub Personal Access Token',
+        placeholder: 'ghp_…',
+        helper: 'Needs repo scope (read + push) for the repositories you want to use.',
+        toastName: 'GitHub token',
+        statusKey: 'githubPat',
+      },
+      {
+        key: 'OPENAI_API_KEY',
+        label: 'OpenAI API key',
+        placeholder: 'sk-…',
+        helper: 'Used by the agent inside workspaces to call OpenAI.',
+        toastName: 'OpenAI API key',
+        statusKey: 'openaiKey',
+      },
+    ]);
   });
 });
 

@@ -13,16 +13,35 @@ import { ConfigError, loadConfig } from '@agent-hangar/core';
 import type { AppConfig } from '@agent-hangar/core';
 import pino from 'pino';
 import type { Logger } from 'pino';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { boot, describeUrl, REDACTED_URL } from './boot.js';
 import type { BootDeps } from './boot.js';
 
 const config: AppConfig = loadConfig({ AH_INSTANCE: 'test', AH_PORT_BASE: '4100' });
 
+/** Collects the boot breadcrumbs, so the lines an operator reads are assertable. */
+const written: string[] = [];
+
 function fakeLogger(): Logger {
-  return pino({ level: 'silent' });
+  return pino(
+    { level: 'debug' },
+    {
+      write(line: string): void {
+        written.push(line);
+      },
+    },
+  );
 }
+
+/** What the logger was given, in order, as parsed records. */
+function records(): Record<string, unknown>[] {
+  return written.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+beforeEach(() => {
+  written.length = 0;
+});
 
 function makeDeps(overrides: Partial<BootDeps> = {}) {
   const order: string[] = [];
@@ -90,7 +109,10 @@ describe('describeUrl', () => {
     ['a non-URL', 'not a url SUPERSECRETPW'],
   ])('refuses to echo %s', (_name, url) => {
     const described = describeUrl(url);
-    expect(described).toBe(REDACTED_URL);
+    // The stand-in is written out rather than compared with the export it came from: emptied, the
+    // constant would let this assert that a URL is described as nothing at all.
+    expect(described).toBe('(redacted url)');
+    expect(REDACTED_URL).toBe('(redacted url)');
     expect(described).not.toContain('SUPERSECRETPW');
   });
 });
@@ -113,6 +135,25 @@ describe('boot', () => {
   });
 
   /**
+   * Boot leaves a trail, and the trail is the only thing an operator has when a worker comes up
+   * against the wrong instance or stops between the two reachability checks. Each line has to say
+   * which stage was reached — a breadcrumb with no words is a blank line in the terminal — and the
+   * first has to name the instance, because two checkouts write into the same terminal history and
+   * "booting worker" belonging to either of them tells nobody which one came up.
+   */
+  it('leaves a named trail through both reachability checks', async () => {
+    const { deps } = makeDeps();
+
+    await boot(deps);
+
+    expect(records()).toStrictEqual([
+      expect.objectContaining({ msg: 'booting worker', instance: 'test' }),
+      expect.objectContaining({ msg: 'postgres reachable' }),
+      expect.objectContaining({ msg: 'redis reachable' }),
+    ]);
+  });
+
+  /**
    * Shutdown ordering: Redis is closed before Postgres (no query can be issued by a late job
    * after the database is gone), and a second call is a no-op.
    */
@@ -124,6 +165,15 @@ describe('boot', () => {
     expect(order).toEqual(['redis.quit', 'prisma.disconnect']);
     expect(redis.quit).toHaveBeenCalledTimes(1);
     expect(prisma.$disconnect).toHaveBeenCalledTimes(1);
+    // Both ends of the shutdown are announced. A worker that logged only its intention leaves an
+    // operator unable to tell a clean stop from one that hung with the pools still open.
+    expect(records().map((record) => record.msg)).toStrictEqual([
+      'booting worker',
+      'postgres reachable',
+      'redis reachable',
+      'shutting down',
+      'shutdown complete',
+    ]);
   });
 
   /**

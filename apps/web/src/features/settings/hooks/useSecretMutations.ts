@@ -14,6 +14,9 @@ import { invalidateQueries } from '@/shared/api/use-api-query';
 
 import { deleteSecret, putSecret } from '../services/settings-api';
 
+/** Query key of the settings status every save and removal changes. */
+const SETTINGS_KEY = ['settings'];
+
 /** What a secret field is currently doing. */
 export type SecretMutationState = 'saving' | 'removing';
 
@@ -61,6 +64,9 @@ export function useSecretMutations(): UseSecretMutationsResult {
   const [pending, setPending] = useState<Partial<Record<SecretKey, SecretMutationState>>>({});
   const [errors, setErrors] = useState<Partial<Record<SecretKey, string>>>({});
 
+  // Nothing these callbacks read changes between renders, so their dependency lists are empty —
+  // and anything constant added to one would never change either.
+  // Stryker disable ArrayDeclaration
   const clearError = useCallback((key: SecretKey) => {
     setErrors((prev) => withoutKey(prev, key));
   }, []);
@@ -71,7 +77,7 @@ export function useSecretMutations(): UseSecretMutationsResult {
     try {
       await putSecret(key, value);
       toast.success(`${toastNameOf(key)} saved`);
-      invalidateQueries(['settings']);
+      invalidateQueries(SETTINGS_KEY);
       return true;
     } catch (error) {
       const message = error instanceof ApiClientError ? error.message : 'Could not save value';
@@ -87,7 +93,7 @@ export function useSecretMutations(): UseSecretMutationsResult {
     try {
       await deleteSecret(key);
       toast.success(`${toastNameOf(key)} removed`);
-      invalidateQueries(['settings']);
+      invalidateQueries(SETTINGS_KEY);
       return true;
     } catch {
       toast.error(`Could not remove ${toastNameOf(key)}`);
@@ -96,6 +102,7 @@ export function useSecretMutations(): UseSecretMutationsResult {
       setPending((prev) => withoutKey(prev, key));
     }
   }, []);
+  // Stryker restore ArrayDeclaration
 
   return { save, remove, pending, errors, clearError };
 }

@@ -51,8 +51,10 @@ describe('idleCutoff', () => {
    */
   it('refuses a non-positive TTL', () => {
     const now = new FakeClock().now();
-    expect(() => idleCutoff(now, 0)).toThrow(RangeError);
-    expect(() => idleCutoff(now, -1)).toThrow(RangeError);
+    // Naming the value, because the caller passed a configured number and has to see which one
+    // was refused rather than only that something was.
+    expect(() => idleCutoff(now, 0)).toThrow('idleTtlMin must be positive, got 0');
+    expect(() => idleCutoff(now, -1)).toThrow('idleTtlMin must be positive, got -1');
   });
 });
 

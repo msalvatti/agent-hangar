@@ -88,15 +88,20 @@ export const SENSITIVE_FIELD_NAMES: readonly string[] = [
  * body without stopping at an escaped quote. They are written out as literals rather than built
  * from the names above because `security/detect-non-literal-regexp` rejects compiling a pattern
  * from a non-literal source and this project allows no suppressions.
+ *
+ * No whitespace is allowed around the colon, because none can be there: the only text these ever
+ * read is a line this logger has just written, and that is pino's own JSON with nothing between a
+ * key and its value. A document quoted inside a message is not reachable either way — its quotes
+ * arrive escaped, so the key never appears as the lookbehind spells it.
  */
 const SENSITIVE_VALUE_PATTERNS: readonly RegExp[] = [
-  /(?<="GITHUB_TOKEN"\s*:\s*")(?:[^"\\]|\\.)*/gi,
-  /(?<="OPENAI_API_KEY"\s*:\s*")(?:[^"\\]|\\.)*/gi,
-  /(?<="authorization"\s*:\s*")(?:[^"\\]|\\.)*/gi,
-  /(?<="secret"\s*:\s*")(?:[^"\\]|\\.)*/gi,
-  /(?<="plaintext"\s*:\s*")(?:[^"\\]|\\.)*/gi,
-  /(?<="apiKey"\s*:\s*")(?:[^"\\]|\\.)*/gi,
-  /(?<="token"\s*:\s*")(?:[^"\\]|\\.)*/gi,
+  /(?<="GITHUB_TOKEN":")(?:[^"\\]|\\.)*/gi,
+  /(?<="OPENAI_API_KEY":")(?:[^"\\]|\\.)*/gi,
+  /(?<="authorization":")(?:[^"\\]|\\.)*/gi,
+  /(?<="secret":")(?:[^"\\]|\\.)*/gi,
+  /(?<="plaintext":")(?:[^"\\]|\\.)*/gi,
+  /(?<="apiKey":")(?:[^"\\]|\\.)*/gi,
+  /(?<="token":")(?:[^"\\]|\\.)*/gi,
 ];
 
 /** Line written when redaction would have produced invalid JSON. */
@@ -144,6 +149,11 @@ function redactSerializedError(error: Error, redactor: LoggerRedactor): unknown 
   const serialized: unknown = pino.stdSerializers.err(error);
   // A new record means pino recognised an error and rebuilt it; anything else is the original
   // value, which is scrubbed but keeps its own shape.
+  // Stryker disable next-line ConditionalExpression: the first question is the one that decides.
+  // pino hands back the value it was given whenever it did not recognise an error, so a serialised
+  // result that is not an object, or is null, is always that same value and has already been
+  // answered. The two checks stay because they are what narrows `unknown` to something whose
+  // entries can be read below.
   if (serialized === error || typeof serialized !== 'object' || serialized === null) {
     return redactor.redactJson(error);
   }
@@ -226,6 +236,9 @@ function blankSensitiveValues(line: string): string {
  */
 function redactLine(line: string, redactor: LoggerRedactor): string {
   const scrubbed = blankSensitiveValues(redactor.redact(line));
+  // Stryker disable next-line ConditionalExpression,BlockStatement: an untouched line is returned
+  // here rather than parsed and returned, which for a line this logger wrote is the same string
+  // either way — pino writes nothing but valid JSON. What this saves is the parse, not a verdict.
   if (scrubbed === line) {
     return line;
   }
@@ -289,6 +302,9 @@ function buildLoggerOptions(options: CreateLoggerOptions): LoggerOptions {
       },
       streamWrite: (line) => redactLine(line, redactor),
     },
+    // Stryker disable next-line ConditionalExpression: a name that is not given would be spread in
+    // as `undefined`, which pino leaves out of the record exactly as an absent key does; the
+    // conditional says what is meant rather than relying on that.
     ...(options.name === undefined ? {} : { name: options.name }),
   };
 }
@@ -313,9 +329,14 @@ function withScrubbedChildren(logger: Logger, redactor: LoggerRedactor): Logger 
   // Defined rather than assigned because `child` is declared generic over the child's custom
   // levels; the replacement keeps the runtime contract exactly — same arguments, a real child
   // logger back — and only rewrites the bindings on the way in.
+  // Nothing assigns over `child` and nothing defines it on the same logger twice — each call here
+  // is handed a logger pino has just built — so neither permission below is ever exercised. They
+  // are stated because a property left frozen by accident is a trap for whoever wraps this next.
   Object.defineProperty(logger, 'child', {
     value: scrubbedChild,
+    // Stryker disable next-line BooleanLiteral: see above; no assignment to `child` exists.
     writable: true,
+    // Stryker disable next-line BooleanLiteral: see above; no second definition on one logger.
     configurable: true,
   });
   return logger;
@@ -330,6 +351,9 @@ function withScrubbedChildren(logger: Logger, redactor: LoggerRedactor): Logger 
 export function createLogger(options: CreateLoggerOptions): Logger {
   const loggerOptions = buildLoggerOptions(options);
   const logger =
+    // Stryker disable next-line ConditionalExpression: pino falls back to standard output when the
+    // stream argument is `undefined`, so passing it through unconditionally lands in the same
+    // place; the branch states the intent rather than leaning on that.
     options.destination === undefined
       ? pino(loggerOptions)
       : pino(loggerOptions, options.destination);

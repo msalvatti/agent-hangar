@@ -171,6 +171,11 @@ export function createWorkspaceRunner(
   if (kind === 'fake') {
     return new FakeWorkspaceRunner({ clock });
   }
+  // Stryker disable next-line ObjectLiteral: what this passes through is observable only against a
+  // daemon — the scope decides the label the runner writes and filters on, and constructing the
+  // runner opens no connection. The `@docker` suite is where a container is created and read back
+  // with its `ah.instance` label, and the end-to-end run in real mode is where the containers this
+  // very call produces are found by that label.
   return createDockerWorkspaceRunner({
     instance: config.AH_INSTANCE,
     namePrefix: config.WORKSPACE_NAME_PREFIX,

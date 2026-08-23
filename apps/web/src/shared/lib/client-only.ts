@@ -26,9 +26,13 @@ function unsubscribe(): void {
  *
  * @returns The no-op unsubscribe, stable so React never re-subscribes.
  */
+// The value cannot change, so this hands React a teardown that does nothing — and React treats a
+// subscription that returns nothing as one with no teardown, which is the same arrangement.
+// Stryker disable BlockStatement
 function subscribe(): () => void {
   return unsubscribe;
 }
+// Stryker restore BlockStatement
 
 /**
  * The value seen while server-rendering and hydrating: nothing is known yet.

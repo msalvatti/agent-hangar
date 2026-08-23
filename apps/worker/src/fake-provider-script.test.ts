@@ -159,7 +159,10 @@ describe('fakeProviderScriptEnv', () => {
 
     const block = fakeProviderScriptEnv('fake', path);
 
-    expect(Object.keys(block)).toEqual([FAKE_SCRIPT_ENV_KEY]);
+    // The variable name is written out: the provider that reads it runs inside the container, in
+    // another process built from another package, so this is an agreement rather than a detail.
+    expect(Object.keys(block)).toEqual(['AGENT_FAKE_SCRIPT_JSON']);
+    expect(FAKE_SCRIPT_ENV_KEY).toBe('AGENT_FAKE_SCRIPT_JSON');
     expect(JSON.parse(block[FAKE_SCRIPT_ENV_KEY] ?? '')).toEqual(SCRIPT);
   });
 
@@ -204,6 +207,17 @@ describe('fakeProviderScriptEnv', () => {
   });
 
   /**
+   * And the bound itself is a margin *below* the platform's, not above it. `MAX_ARG_STRLEN` is
+   * 131 072 bytes on a 4 KiB page, and a bound computed the other way round would be larger than
+   * the ceiling it exists to stay under — which is the same as having no bound at all, since every
+   * script it accepted up to that figure would still be refused by `execve`.
+   */
+  it('sits below the platform ceiling it is derived from', () => {
+    expect(MAX_FAKE_SCRIPT_ENV_BYTES).toBe(98_304);
+    expect(MAX_FAKE_SCRIPT_ENV_BYTES).toBeLessThan(131_072);
+  });
+
+  /**
    * One byte over and the script is refused at boot, where the file can still be named. Forwarded
    * instead, it would create a container whose process cannot start, on every turn accepted, and
    * the failure would be about `execve` rather than about a script. The message carries both the
@@ -216,7 +230,8 @@ describe('fakeProviderScriptEnv', () => {
     expect(() => fakeProviderScriptEnv('fake', path)).toThrow(ConfigError);
     expect(() => fakeProviderScriptEnv('fake', path)).toThrow(
       `${String(tooBig)} bytes as ${FAKE_SCRIPT_ENV_KEY}=…, over the ` +
-        `${String(MAX_FAKE_SCRIPT_ENV_BYTES)} bytes allowed here`,
+        `${String(MAX_FAKE_SCRIPT_ENV_BYTES)} bytes allowed here, which is the margin kept below ` +
+        `the platform's own cap on one environment string.`,
     );
     expect(() => fakeProviderScriptEnv('fake', path)).toThrow(path);
   });
@@ -326,6 +341,69 @@ describe('readFakeProviderScript', () => {
    */
   it('refuses a key with no steps', () => {
     const path = write('empty.json', JSON.stringify({ default: [] }));
+
+    expect(() => readFakeProviderScript(path)).toThrow(/is not a provider script/u);
+  });
+
+  /**
+   * Every problem gets a line of its own. A script can be wrong in several places at once, and a
+   * report run together on one line is one an operator reads once and gives up on.
+   */
+  it('reports one indented line per problem', () => {
+    const path = write(
+      'two-problems.json',
+      JSON.stringify({ default: [{ events: [{ type: 'nope' }, { type: 'also-nope' }] }] }),
+    );
+
+    const message = ((): string => {
+      try {
+        readFakeProviderScript(path);
+        return '';
+      } catch (error) {
+        return (error as Error).message;
+      }
+    })();
+
+    const problems = message.split('\n').slice(1);
+    expect(problems.length).toBeGreaterThan(1);
+    for (const problem of problems) {
+      expect(problem).toMatch(/^ {2}- default\.0\.events\.\d/u);
+    }
+  });
+
+  /**
+   * The error event is part of the union, and its five codes are the ones the runtime maps onto a
+   * failed turn. A script cannot rehearse a rate limit or an expired key unless the schema admits
+   * the word for it, and each of these is written out here because each is read on the other side
+   * of a process boundary.
+   */
+  it.each(['rate_limit', 'auth', 'context_length', 'network', 'unknown'])(
+    'accepts a scripted %s error',
+    (code) => {
+      const path = write(
+        `error-${code}.json`,
+        JSON.stringify({
+          default: [{ events: [{ type: 'error', code, message: 'refused', retryable: false }] }],
+        }),
+      );
+
+      expect(readFakeProviderScript(path)).toEqual({
+        default: [{ events: [{ type: 'error', code, message: 'refused', retryable: false }] }],
+      });
+    },
+  );
+
+  /**
+   * And a code outside those five is refused rather than replayed as something the runtime cannot
+   * classify.
+   */
+  it('refuses a scripted error code it does not know', () => {
+    const path = write(
+      'error-unknown-code.json',
+      JSON.stringify({
+        default: [{ events: [{ type: 'error', code: 'teapot', message: 'x', retryable: false }] }],
+      }),
+    );
 
     expect(() => readFakeProviderScript(path)).toThrow(/is not a provider script/u);
   });

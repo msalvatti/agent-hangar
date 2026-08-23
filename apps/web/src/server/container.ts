@@ -123,12 +123,32 @@ function buildPersistence(
   if (deps.prisma !== undefined && deps.repos !== undefined) {
     return { prisma: deps.prisma, repos: deps.repos };
   }
-  const client = createPrismaClient({
+  const client = createPrismaClient(poolOptions(config));
+  return { prisma: client, repos: createRepositories(client, redactor) };
+}
+
+/**
+ * The pool this process opens on Postgres.
+ *
+ * Named rather than inlined because each of the three numbers is a decision: a statement timeout
+ * every query inherits, so a hung one gives its connection back; a pool small enough that several
+ * checkouts of this app on one machine do not exhaust the server's connection slots; and a
+ * connect timeout, without which a request against a database that is not listening waits for the
+ * operating system rather than for this process.
+ *
+ * @param config - Loaded configuration.
+ * @returns The options `createPrismaClient` is given.
+ */
+export function poolOptions(config: AppConfig): {
+  connectionString: string;
+  max: number;
+  connectionTimeoutMillis: number;
+} {
+  return {
     connectionString: withStatementTimeout(config.DATABASE_URL, DATABASE_STATEMENT_TIMEOUT_MS),
     max: DATABASE_POOL_MAX,
     connectionTimeoutMillis: DATABASE_CONNECT_TIMEOUT_MS,
-  });
-  return { prisma: client, repos: createRepositories(client, redactor) };
+  };
 }
 
 /** Any `-c statement_timeout=…` already present in the connection string's `options`. */
@@ -151,8 +171,11 @@ const STATEMENT_TIMEOUT_SETTING = /(?:^|\s)-c\s+statement_timeout=\S*/g;
  */
 export function withStatementTimeout(connectionString: string, timeoutMs: number): string {
   const url = new URL(connectionString);
+  // Removed outright rather than replaced by a separator: the pattern takes the whitespace before
+  // the setting with it, so what is left already reads as one options string — and a separator put
+  // back where a setting used to be would double the space between the two either side of it.
   const configured = (url.searchParams.get('options') ?? '')
-    .replace(STATEMENT_TIMEOUT_SETTING, ' ')
+    .replace(STATEMENT_TIMEOUT_SETTING, '')
     .trim();
   const timeout = `-c statement_timeout=${String(timeoutMs)}`;
   url.searchParams.set('options', configured === '' ? timeout : `${configured} ${timeout}`);
@@ -188,6 +211,57 @@ function buildMessaging(
 }
 
 /**
+ * Where the secrets service reads its envelopes and its key from.
+ *
+ * Named rather than inlined because both halves are agreements outside this process: the envelope
+ * store is the repository the settings routes write through, and the key file is the one the
+ * worker decrypts with. A service built over a different repository would answer for secrets
+ * nobody stored, and one built over a different key file could not read what this instance has.
+ *
+ * @param config - Loaded configuration.
+ * @param repos - Repositories, for the secret envelope store.
+ * @returns The options `createSecretsService` is given.
+ */
+export function secretsOptions(
+  config: AppConfig,
+  repos: Repositories,
+): { repository: Repositories['secrets']; masterKey: MasterKeyFile } {
+  return {
+    repository: repos.secrets,
+    masterKey: new MasterKeyFile({ path: config.MASTER_KEY_PATH }),
+  };
+}
+
+/**
+ * What the GitHub client reaches the forge with.
+ *
+ * Named rather than inlined because every field is load-bearing: the token comes from the same
+ * secrets service the settings routes write through and from no second one; the redactor is what
+ * keeps that token out of anything logged; the base URL is what points a self-hosted instance at
+ * its own forge; and `fetch` is bound because an unbound one throws `Illegal invocation`.
+ *
+ * @param config - Loaded configuration.
+ * @param redactor - Redactor the client registers the revealed token with.
+ * @param logger - Logger the client reports failures to.
+ * @param secrets - The secrets service holding the token.
+ * @returns The options `createGithubClient` is given.
+ */
+export function githubOptions(
+  config: AppConfig,
+  redactor: Redactor,
+  logger: Logger,
+  secrets: SecretsService,
+): Parameters<typeof createGithubClient>[0] {
+  return {
+    secrets,
+    redactor,
+    logger,
+    baseUrl: config.GITHUB_API_BASE_URL,
+    fetch: globalThis.fetch.bind(globalThis),
+  };
+}
+
+/**
  * Resolves the secrets service and the GitHub client built over it.
  *
  * The GitHub client is the one web-side consumer of `reveal`, so it is constructed from the same
@@ -207,21 +281,9 @@ function buildCredentials(
   logger: Logger,
   repos: Repositories,
 ): { secrets: SecretsService; github: GithubClient } {
-  const secrets =
-    deps.secrets ??
-    createSecretsService({
-      repository: repos.secrets,
-      masterKey: new MasterKeyFile({ path: config.MASTER_KEY_PATH }),
-    });
+  const secrets = deps.secrets ?? createSecretsService(secretsOptions(config, repos));
   const github =
-    deps.github ??
-    createGithubClient({
-      secrets,
-      redactor,
-      logger,
-      baseUrl: config.GITHUB_API_BASE_URL,
-      fetch: globalThis.fetch.bind(globalThis),
-    });
+    deps.github ?? createGithubClient(githubOptions(config, redactor, logger, secrets));
   return { secrets, github };
 }
 

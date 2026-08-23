@@ -27,7 +27,14 @@ export type CronValidationResult = { ok: true } | { ok: false; reason: string };
  */
 const VALIDATION_TIMEZONE = 'UTC';
 
-/** Wrapper the error class puts around the parser's explanation, stripped before display. */
+/**
+ * Wrapper the error class puts around the parser's explanation, stripped before display.
+ *
+ * Anchored for intent rather than for effect: the lazy prefix already matches from the start of the
+ * string, so no input distinguishes the two forms — the anchor says the wrapper is expected at the
+ * front, where the error class puts it.
+ */
+// Stryker disable next-line Regex
 const REJECTION_PREFIX = /^.*?Invalid cron expression ".*?": /su;
 
 /**

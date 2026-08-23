@@ -106,12 +106,44 @@ describe('openaiCheck', () => {
   /**
    * A short list of available ids is not truncated with an ellipsis.
    */
-  it('does not append an ellipsis when five or fewer ids are available', async () => {
+  it.each([
+    [['a', 'b'], 'a, b'],
+    // Exactly the listed count: everything reachable is named, so there is nothing the ellipsis
+    // would stand for — printing one says there are models it did not show when there are none.
+    [['a', 'b', 'c', 'd', 'e'], 'a, b, c, d, e'],
+  ])('does not append an ellipsis for %s', async (available, expected) => {
     const deps = await depsWithStoredKey({
-      createProvider: () => lister(() => Promise.resolve(['a', 'b'])),
+      createProvider: () => lister(() => Promise.resolve(available)),
     });
     const result = await openaiCheck(deps);
-    expect(result.line).toBe('model-missing gpt-5.6-sol (available: a, b)');
+    expect(result.line).toBe(`model-missing gpt-5.6-sol (available: ${expected})`);
+  });
+
+  /**
+   * A stored key that is empty is no key. It cannot authenticate anything, and handing it to the
+   * provider turns a missing credential into an `auth` failure — which tells the operator their key
+   * was rejected rather than that they never entered one.
+   */
+  it('reports no-key for a stored key with nothing in it', async () => {
+    let providerBuilt = false;
+    const deps = await depsWithStoredKey({
+      createSecretsService: () =>
+        Promise.resolve({
+          set: () => Promise.reject(new Error('not used')),
+          remove: () => Promise.reject(new Error('not used')),
+          reveal: () => Promise.resolve(''),
+          status: () => Promise.reject(new Error('not used')),
+        }),
+      createProvider: () => {
+        providerBuilt = true;
+        return lister(() => Promise.resolve([]));
+      },
+    });
+
+    const result = await openaiCheck(deps);
+
+    expect(result).toEqual({ line: 'no-key', exitCode: EXIT_NO_KEY });
+    expect(providerBuilt).toBe(false);
   });
 
   /**

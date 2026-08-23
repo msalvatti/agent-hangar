@@ -61,7 +61,12 @@ export function encryptSecret(
 ): SealedSecret {
   const iv = randomBytes(IV_BYTES);
   const cipher = createCipheriv(ALGORITHM, masterKey.key, iv);
+  // The encodings below are stated for the reader: Node falls back to UTF-8 for a name it does not
+  // recognise rather than refusing, so the same bytes are produced either way and no observation of
+  // this module can tell one spelling from another.
+  // Stryker disable next-line StringLiteral
   cipher.setAAD(Buffer.from(context, 'utf8'));
+  // Stryker disable next-line StringLiteral
   const ciphertext = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
   return { ciphertext, iv, authTag: cipher.getAuthTag(), keyVersion: masterKey.version };
 }
@@ -90,6 +95,8 @@ export function decryptSecret(sealed: SealedSecret, masterKey: MasterKey, contex
   }
   try {
     const decipher = createDecipheriv(ALGORITHM, masterKey.key, sealed.iv);
+    // Stryker disable next-line StringLiteral: as above — an encoding Node does not recognise
+    // falls back to UTF-8, so the same bytes are authenticated either way.
     decipher.setAAD(Buffer.from(context, 'utf8'));
     decipher.setAuthTag(sealed.authTag);
     return Buffer.concat([decipher.update(sealed.ciphertext), decipher.final()]).toString('utf8');

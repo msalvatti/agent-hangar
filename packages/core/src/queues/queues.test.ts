@@ -314,7 +314,9 @@ describe('producers', () => {
    */
   it('fails when Redis returns no job id for a manual run', async () => {
     mocks.add.mockResolvedValue({ id: undefined });
-    await expect(enqueueManualJobRun(fakeQueue(), { jobId: 'job-1' })).rejects.toThrow(ConfigError);
+    await expect(enqueueManualJobRun(fakeQueue(), { jobId: 'job-1' })).rejects.toThrow(
+      'Redis accepted the manual run but returned no job id',
+    );
   });
 
   /**

@@ -19,18 +19,39 @@ import {
 import {
   apiError,
   apiOperations,
+  branchName,
+  branchSummary,
   buildPath,
   chatDetail,
+  chatStatus,
   chatSummary,
   createChatRequest,
+  createChatResponse,
+  healthCheck,
   healthResponse,
   jobPatchRequest,
+  jobRunTrigger,
   jobSummary,
   jobUpsertRequest,
+  listBranchesQuery,
+  listBranchesResponse,
+  listChatsQuery,
+  listChatsResponse,
+  listJobsResponse,
+  listReposQuery,
+  listReposResponse,
+  listRunsResponse,
+  messageRole,
+  messageView,
   noContentResponse,
+  okResponse,
+  postMessageRequest,
+  postMessageResponse,
   putSecretRequest,
   putSecretRequestFor,
+  putSecretResponse,
   renameChatRequest,
+  repoSummary,
   repoUrl,
   repoUrlForHosts,
   restoreChatQuery,
@@ -40,7 +61,14 @@ import {
   settingsKeyParam,
   settingsStatus,
   SSE_HEARTBEAT_MS,
+  toolCallStatus,
+  toolCallView,
+  triggerRunResponse,
+  turnStatus,
+  usageView,
   workerCheck,
+  workspaceStatus,
+  workspaceView,
 } from './contracts.ts';
 
 const now = '2026-08-19T10:00:00.000Z';
@@ -601,5 +629,169 @@ describe('routes and buildPath', () => {
     const paths = Object.values(apiOperations).map((operation) => operation.path);
     expect(paths).not.toContain(routes.chatEvents);
     expect(paths).not.toContain(routes.runEvents);
+  });
+});
+
+describe('what every schema of the contract admits', () => {
+  const at = '2026-08-19T10:00:00.000Z';
+  const url = 'https://github.com/acme/widgets';
+  const usage = { inputTokens: 11, outputTokens: 22, stepCount: 3 };
+  const repo = {
+    fullName: 'acme/widgets',
+    url: `${url}.git`,
+    defaultBranch: 'main',
+    private: false,
+    description: null,
+  };
+  const branch = { name: 'main', sha: 'abc1234def5678', protected: false };
+  const message = { id: 'm1', turnId: null, seq: 0, role: 'USER', content: 'hi', createdAt: at };
+  const workspace = {
+    id: 'w1',
+    status: 'READY',
+    image: 'agent-hangar/workspace:x',
+    createdAt: at,
+    lastActiveAt: at,
+  };
+  const job = {
+    id: 'j1',
+    name: 'nightly',
+    cron: '0 3 * * *',
+    timezone: 'UTC',
+    prompt: 'summarise the day',
+    repoUrl: url,
+    branch: 'main',
+    enabled: true,
+    lastRunAt: null,
+    nextRunAt: null,
+    createdAt: at,
+    updatedAt: at,
+    lastRunStatus: null,
+  };
+  const upsert = {
+    name: 'nightly',
+    cron: '0 3 * * *',
+    timezone: 'UTC',
+    prompt: 'summarise the day',
+    repoUrl: url,
+    branch: 'main',
+    enabled: true,
+  };
+  const toolCallRow = {
+    id: 'tc1',
+    turnId: null,
+    jobRunId: null,
+    callId: 'call_1',
+    seq: 0,
+    toolName: 'run_shell',
+    args: { command: 'ls' },
+    resultHead: null,
+    resultBytes: null,
+    exitCode: null,
+    status: 'RUNNING',
+    startedAt: at,
+    finishedAt: null,
+    durationMs: null,
+  };
+
+  /**
+   * Every one of these is a boundary between two processes, and the shape is the whole of what is
+   * checked at it. A schema that has stopped describing its document accepts one that is not the
+   * document — which is why each row carries a rejection as well as an example: a shape emptied of
+   * its fields still parses every valid body, and only a body it ought to refuse tells the two
+   * apart. The examples are spelt with realistic values for the same reason: a length rule turned
+   * inside out refuses a name of more than one character, and nothing but a real name notices.
+   */
+  it.each([
+    ['apiError', apiError, { error: { code: 'bad_request', message: 'no' } }, { error: {} }],
+    ['okResponse', okResponse, { ok: true }, {}],
+    ['listReposQuery', listReposQuery, { query: 'widgets' }, { query: 42 }],
+    ['repoSummary', repoSummary, repo, {}],
+    ['listReposResponse', listReposResponse, { repos: [repo] }, {}],
+    ['listBranchesQuery', listBranchesQuery, { repo: 'acme/widgets' }, {}],
+    ['branchSummary', branchSummary, branch, {}],
+    ['listBranchesResponse', listBranchesResponse, { branches: [branch] }, {}],
+    ['listChatsQuery', listChatsQuery, { status: 'ARCHIVED' }, { status: 'GONE' }],
+    ['listChatsResponse', listChatsResponse, { chats: [chat] }, {}],
+    ['createChatResponse', createChatResponse, { chatId: 'c1', turnId: 't1' }, {}],
+    ['messageView', messageView, message, {}],
+    ['usageView', usageView, usage, {}],
+    ['toolCallView', toolCallView, toolCallRow, {}],
+    ['workspaceView', workspaceView, workspace, {}],
+    ['postMessageRequest', postMessageRequest, { prompt: 'do the thing' }, { prompt: '' }],
+    ['postMessageResponse', postMessageResponse, { turnId: 't1' }, {}],
+    ['jobSummary', jobSummary, job, {}],
+    ['listJobsResponse', listJobsResponse, { jobs: [job] }, {}],
+    ['listRunsResponse', listRunsResponse, { runs: [] }, {}],
+    ['triggerRunResponse', triggerRunResponse, { runId: 'r1' }, {}],
+    ['putSecretResponse', putSecretResponse, { set: true, last4: '1234' }, {}],
+    ['healthCheck', healthCheck, { ok: true }, {}],
+  ])(
+    '%s accepts the document it describes and refuses one it does not',
+    (_name, schema, valid, invalid) => {
+      expect(schema.safeParse(valid)).toMatchObject({ success: true });
+      expect(schema.safeParse(invalid)).toMatchObject({ success: false });
+    },
+  );
+
+  /**
+   * These three are trimmed before they are measured, so a name of nothing but spaces is a name of
+   * nothing. Untrimmed the length rule passes on the whitespace, and the job list acquires a row
+   * with a blank name that nobody can find again.
+   */
+  it.each([
+    ['name', { ...upsert, name: '   ' }],
+    ['cron', { ...upsert, cron: '  ' }],
+    ['timezone', { ...upsert, timezone: ' ' }],
+  ])('refuses a job whose %s is nothing but whitespace', (_field, body) => {
+    expect(jobUpsertRequest.safeParse(body)).toMatchObject({ success: false });
+  });
+
+  /** The documented body, so a rule turned inside out is refused rather than merely unexercised. */
+  it('accepts the job body the settings form produces', () => {
+    expect(jobUpsertRequest.safeParse(upsert)).toMatchObject({ success: true });
+  });
+
+  /**
+   * The values on either side of each of these boundaries are agreed with the database, whose
+   * columns are enums of the same names, and with the UI, which switches on them. A member emptied
+   * here is a row the API can no longer describe, and the failure surfaces as a parse error on a
+   * document that was perfectly correct.
+   */
+  it.each([
+    ['chatStatus', chatStatus, ['ACTIVE', 'ARCHIVED']],
+    [
+      'turnStatus',
+      turnStatus,
+      ['QUEUED', 'PREPARING', 'RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELLED'],
+    ],
+    ['messageRole', messageRole, ['USER', 'ASSISTANT', 'SYSTEM', 'TOOL_SUMMARY']],
+    ['toolCallStatus', toolCallStatus, ['RUNNING', 'SUCCEEDED', 'FAILED', 'TIMED_OUT']],
+    [
+      'workspaceStatus',
+      workspaceStatus,
+      ['CREATING', 'READY', 'BUSY', 'STOPPING', 'DESTROYED', 'FAILED'],
+    ],
+    ['jobRunTrigger', jobRunTrigger, ['SCHEDULE', 'MANUAL']],
+    ['settingsKeyParam', settingsKeyParam, ['GITHUB_PAT', 'OPENAI_API_KEY']],
+  ])('%s admits exactly the values the rest of the system agrees on', (_name, schema, members) => {
+    expect(schema.options).toStrictEqual(members);
+    for (const member of members) {
+      expect(schema.safeParse(member)).toMatchObject({ success: true });
+    }
+    expect(schema.safeParse('SOMETHING_ELSE')).toMatchObject({ success: false });
+  });
+
+  /**
+   * The rule is imported from the workspace rather than restated, and the message is how a person
+   * finds out which rule they broke. Emptied, the form shows a refusal with nothing in it.
+   */
+  it('says what a branch name has to look like when it refuses one', () => {
+    const result = branchName.safeParse('--upload-pack=/bin/sh');
+
+    expect(result.success).toBe(false);
+    expect(result.error?.issues[0]?.message).toBe(
+      'Branch name must start with a letter or digit and contain only letters, digits, dot, ' +
+        'dash, underscore and slash',
+    );
   });
 });

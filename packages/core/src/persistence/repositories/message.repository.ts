@@ -85,6 +85,8 @@ export class PrismaMessageRepository implements MessageRepository {
    */
   private nextSeq(rows: NextSeqRow[]): number {
     const value = rows[0]?.next ?? 1;
+    // Stryker disable next-line ConditionalExpression: `Number` of a number is that number, so
+    // asking first only saves the call — what comes back is the same value either way.
     return typeof value === 'bigint' ? Number(value) : value;
   }
 }

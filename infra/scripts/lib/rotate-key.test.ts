@@ -220,6 +220,23 @@ describe('rotateSecrets', () => {
   });
 
   /**
+   * "Highest" over the whole store, not "whatever the last row said". A store can hold rows at
+   * different versions — that is what an interrupted rotation leaves — and re-sealing them at the
+   * lower one would stamp a version onto rows that are already past it.
+   */
+  it('takes the highest version even when a later row carries a lower one', async () => {
+    const repository = createInMemoryRepositories().secrets;
+    const oldKey = randomBytes(KEY_BYTES);
+    const newKey = randomBytes(KEY_BYTES);
+    await realService(repository, oldKey, 3).set('GITHUB_PAT', GITHUB_CANARY);
+    await realService(repository, oldKey, 2).set('OPENAI_API_KEY', OPENAI_CANARY);
+
+    const result = await rotateSecrets(baseDeps(repository, oldKey, newKey));
+
+    expect(result.keyVersion).toBe(3);
+  });
+
+  /**
    * Nothing stored: rotates zero, still reports the store's key version.
    */
   it('rotates zero secrets when the store is empty', async () => {
@@ -260,7 +277,10 @@ describe('rotateSecrets', () => {
       exitCode: EXIT_ABORTED,
       strandedKeys: [],
     });
-    expect(logs.some((line) => line.includes('abort') && line.includes('GITHUB_PAT'))).toBe(true);
+    // The whole line: strict mode blames the current key by name, because that is the key the
+    // operator is being asked to check, and "either master key" would send them looking at a
+    // replacement that has nothing to do with the failure.
+    expect(logs).toContain('abort: cannot decrypt GITHUB_PAT with the current master key');
     const after = await repository.get('GITHUB_PAT');
     expect(after?.keyVersion).toBe(1);
     expect((await repository.get('OPENAI_API_KEY'))?.keyVersion).toBe(1);
@@ -420,8 +440,12 @@ describe('rotateSecrets', () => {
       exitCode: EXIT_COMPENSATION_INCOMPLETE,
       strandedKeys: ['GITHUB_PAT', 'OPENAI_API_KEY'],
     });
-    expect(logs.some((line) => line.includes('rollback incomplete'))).toBe(true);
-    expect(logs.some((line) => line.includes('keep both key files'))).toBe(true);
+    // The whole line, both stranded keys named and separated so they can be read as two: this is
+    // the one message that tells the operator not to delete a key file, and which rows depend on it.
+    expect(logs).toContain(
+      'rollback incomplete: GITHUB_PAT, OPENAI_API_KEY may still be sealed under the NEW key — ' +
+        'keep both key files',
+    );
 
     // The stranded row really is unreadable with the old key and readable with the new one.
     const newService = realService(repository, newKey, 1);
@@ -482,6 +506,9 @@ describe('rotateSecrets in salvage mode', () => {
     );
 
     expect(result).toEqual({ rotated: 2, keyVersion: 1, exitCode: 0, strandedKeys: [] });
+    // What a successful run says it did, in full: the count is what an operator checks against the
+    // number of credentials they hold, and the version is what they compare with the key file.
+    expect(logs).toContain('rotated 2 secret(s) under keyVersion 1');
     const reader = realService(repository, newKey, 1);
     expect(await reader.reveal('GITHUB_PAT')).toBe(GITHUB_CANARY);
     expect(await reader.reveal('OPENAI_API_KEY')).toBe(OPENAI_CANARY);
@@ -531,6 +558,38 @@ describe('rotateSecrets in salvage mode', () => {
    * over a store that is still split, and the caller would then delete the new key file and with
    * it the only key that row opens under.
    */
+  it('rolls back a row an earlier run had re-sealed before this run reached it', async () => {
+    const repository = createInMemoryRepositories().secrets;
+    const oldKey = randomBytes(KEY_BYTES);
+    const newKey = randomBytes(KEY_BYTES);
+    // The already-rotated row is the *second* one the rotation would reach, and the first write
+    // fails — so the loop never records it, and the only thing that knows it is under the new key
+    // is the read that opened it there.
+    await realService(repository, oldKey, 1).set('GITHUB_PAT', GITHUB_CANARY);
+    await realService(repository, newKey, 1).set('OPENAI_API_KEY', OPENAI_CANARY);
+
+    const result = await rotateSecrets(
+      baseDeps(repository, oldKey, newKey, {
+        mode: 'salvage',
+        createService: (key, keyVersion) => {
+          const real = realService(repository, key, keyVersion);
+          return Buffer.compare(Buffer.from(key), newKey) === 0
+            ? { ...real, set: () => Promise.reject(new Error('simulated write failure')) }
+            : real;
+        },
+      }),
+    );
+
+    expect(result.exitCode).toBe(EXIT_ROLLED_BACK);
+    expect(result.strandedKeys).toEqual([]);
+    // Both rows open under the current key again, which is what makes deleting the new key file
+    // safe. Missing the row this run never wrote reports a clean rollback over a split store, and
+    // the operator then deletes the only key that row opens under.
+    const reader = realService(repository, oldKey, 1);
+    expect(await reader.reveal('GITHUB_PAT')).toBe(GITHUB_CANARY);
+    expect(await reader.reveal('OPENAI_API_KEY')).toBe(OPENAI_CANARY);
+  });
+
   it('rolls back a row an earlier run had re-sealed even when this run wrote nothing', async () => {
     const repository = createInMemoryRepositories().secrets;
     const oldKey = randomBytes(KEY_BYTES);

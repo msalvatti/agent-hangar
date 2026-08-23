@@ -394,3 +394,133 @@ describe('PrismaJobRunRepository', () => {
     expect(workspace.findUnique).not.toHaveBeenCalled();
   });
 });
+
+describe('what the job-run repository asks the database for', () => {
+  /**
+   * The workspace a run is attached to is read by id and for its kind alone. Without the filter
+   * the check passes on whatever row comes back first, and without the column list the whole row
+   * travels for a question about one field.
+   */
+  it('checks the workspace kind by id, and only that column', async () => {
+    const { client, workspace } = fakePrisma();
+    const repo = new PrismaJobRunRepository(client, fakeRedactor);
+
+    await repo.setStatus('run-1', 'RUNNING', { workspaceId: 'ws-1' });
+
+    expect(workspace.findUnique.mock.calls).toStrictEqual([
+      [{ where: { id: 'ws-1' }, select: { kind: true } }],
+    ]);
+  });
+
+  /** A run read by id is addressed by id, or a caller is shown another job's run. */
+  it('reads one run by its id', async () => {
+    const { client, jobRun } = fakePrisma();
+    const repo = new PrismaJobRunRepository(client, fakeRedactor);
+
+    await repo.get('run-1');
+
+    expect(jobRun.findUnique.mock.calls).toStrictEqual([[{ where: { id: 'run-1' } }]]);
+  });
+
+  /**
+   * A listing with no limit asks for no limit; one with a limit asks for exactly it. Sent a page
+   * size of nothing, the run history a person is shown is whatever the driver made of it.
+   */
+  it.each([
+    ['no limit', {}, undefined],
+    ['the limit it was given', { limit: 5 }, 5],
+  ])('asks for %s', async (_case, options, take) => {
+    const { client, jobRun } = fakePrisma();
+    const repo = new PrismaJobRunRepository(client, fakeRedactor);
+
+    await repo.listByJob('job-1', options);
+
+    expect((jobRun.findMany.mock.calls as unknown[][])[0]?.[0]).toStrictEqual({
+      where: { jobId: 'job-1' },
+      orderBy: { queuedAt: 'desc' },
+      ...(take === undefined ? {} : { take }),
+    });
+  });
+
+  /**
+   * A status write carries exactly the fields it was given: a workspace the caller did not mention
+   * must not appear in the write, and must not send the run through the workspace-kind check on
+   * its way.
+   */
+  it('writes only the fields the caller supplied with a status', async () => {
+    const { client, jobRun, workspace } = fakePrisma();
+    const repo = new PrismaJobRunRepository(client, fakeRedactor);
+
+    await repo.setStatus('run-1', 'RUNNING');
+
+    expect(jobRun.update.mock.calls).toStrictEqual([
+      [{ where: { id: 'run-1' }, data: { status: 'RUNNING' } }],
+    ]);
+    expect(workspace.findUnique).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A guarded finish that matched a row returns that row; answered `null` regardless, the worker
+   * reads its own terminal write as one somebody else had already made.
+   */
+  it('returns the row a guarded finish matched', async () => {
+    const { client } = fakePrisma();
+    const repo = new PrismaJobRunRepository(client, fakeRedactor);
+
+    await expect(
+      repo.finish('run-1', {
+        status: 'SUCCEEDED',
+        usage: { inputTokens: 1, outputTokens: 2, stepCount: 1 },
+      }),
+    ).resolves.toMatchObject({ id: 'run-1' });
+  });
+
+  /** Every write of this repository names the entity whose row was missing. */
+  it.each([
+    [
+      'recordPush',
+      async (repo: PrismaJobRunRepository) =>
+        repo.recordPush('run-1', { workBranch: 'agent/x', lastPushedSha: 'abc' }),
+    ],
+    ['setStatus', async (repo: PrismaJobRunRepository) => repo.setStatus('run-1', 'RUNNING')],
+  ])('names the entity of a row %s could not find', async (_case, call) => {
+    const missing = Object.assign(new Error('Record to update not found'), { code: 'P2025' });
+    const { client } = fakePrisma({ update: vi.fn(() => Promise.reject(missing)) });
+    const repo = new PrismaJobRunRepository(client, fakeRedactor);
+
+    const failure = await call(repo).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(NotFoundError);
+    expect((failure as NotFoundError).entity).toBe('JobRun');
+  });
+
+  /**
+   * A run pointed at a workspace that is not there reports the workspace as missing, not the run:
+   * the run exists and the caller's mistake is the id it supplied.
+   */
+  it('names the workspace when the workspace a run is attached to is gone', async () => {
+    const { client, workspace } = fakePrisma();
+    workspace.findUnique.mockResolvedValue(null);
+    const repo = new PrismaJobRunRepository(client, fakeRedactor);
+
+    const failure = await repo
+      .setStatus('run-1', 'RUNNING', { workspaceId: 'ws-gone' })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(NotFoundError);
+    expect((failure as NotFoundError).entity).toBe('Workspace');
+  });
+
+  /** A create that finds no row of its own reports the run rather than the job it belongs to. */
+  it('names the run when a create finds no row of its own', async () => {
+    const missing = Object.assign(new Error('Record not found'), { code: 'P2025' });
+    const { client } = fakePrisma({ create: vi.fn(() => Promise.reject(missing)) });
+    const repo = new PrismaJobRunRepository(client, fakeRedactor);
+
+    const failure = await repo
+      .create({ jobId: 'job-1', model: 'gpt', scheduledFor: new Date(), trigger: 'SCHEDULE' })
+      .catch((error: unknown) => error);
+
+    expect((failure as NotFoundError).entity).toBe('JobRun');
+  });
+});

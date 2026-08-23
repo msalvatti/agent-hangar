@@ -10,9 +10,11 @@ import type { RunSummary } from '@agent-hangar/core';
 import { useApiQuery } from '@/shared/api/use-api-query';
 import type { UseApiQueryResult } from '@/shared/api/use-api-query';
 
+import { runsKey } from '../lib/query-keys';
 import { listRuns } from '../services/scheduled-api';
 
-const LIVE_POLL_MS = 10_000;
+/** How often a live run list reloads itself while a run is in progress. */
+export const LIVE_POLL_MS = 10_000;
 
 /** Options of {@link useRuns}. */
 export interface UseRunsOptions {
@@ -31,5 +33,5 @@ export function useRuns(jobId: string, options: UseRunsOptions): UseApiQueryResu
   // The option is omitted rather than set to `undefined` when polling is off: under
   // `exactOptionalPropertyTypes` an optional property accepts a value or no property at all.
   const polling = options.live ? { refetchIntervalMs: LIVE_POLL_MS } : {};
-  return useApiQuery(['runs', jobId], (signal) => listRuns(jobId, signal), polling);
+  return useApiQuery(runsKey(jobId), (signal) => listRuns(jobId, signal), polling);
 }

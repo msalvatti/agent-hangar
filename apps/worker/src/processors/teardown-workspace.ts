@@ -86,16 +86,28 @@ export function countDirtyEntries(snapshot: WorkspaceSnapshot): number {
  * @returns The message text.
  */
 export function formatTeardownNote(options: TeardownOptions, discarded: number): string {
-  if (options.reason === 'archive') {
-    return archivedNotice({ uncommittedChanges: discarded });
-  }
-  const minutes = options.idleMinutes ?? 0;
-  const changes =
-    discarded === 0
-      ? 'no uncommitted changes'
-      : `${discarded} uncommitted ${discarded === 1 ? 'change' : 'changes'} discarded`;
-  return `Workspace reclaimed after ${minutes} min idle; ${changes}. It will be recreated from history on the next message.`;
+  return NOTICE[options.reason](options, discarded);
 }
+
+/**
+ * One notice per reason, looked up rather than fallen through to.
+ *
+ * A reason that is not one of these has no entry, so a caller that named something else fails here
+ * instead of being told, in the model's own transcript, that its workspace timed out when it was
+ * archived — the two are different events and the note is the only record the model gets of which
+ * one happened.
+ */
+const NOTICE: Record<TeardownReason, (options: TeardownOptions, discarded: number) => string> = {
+  archive: (_options, discarded) => archivedNotice({ uncommittedChanges: discarded }),
+  idle: (options, discarded) => {
+    const minutes = options.idleMinutes ?? 0;
+    const changes =
+      discarded === 0
+        ? 'no uncommitted changes'
+        : `${discarded} uncommitted ${discarded === 1 ? 'change' : 'changes'} discarded`;
+    return `Workspace reclaimed after ${minutes} min idle; ${changes}. It will be recreated from history on the next message.`;
+  },
+};
 
 /**
  * Reads the workspace's git state, tolerating a container that can no longer answer.
@@ -164,7 +176,10 @@ async function recordBeforeTeardown(
   options: TeardownOptions,
 ): Promise<boolean> {
   const snapshot = await snapshotOrNull(deps, workspace);
-  if (workspace.kind !== 'CHAT' || workspace.chatId === null) {
+  // Whether there is a chat to write for, which is not the same question as what kind of workspace
+  // this is: a scheduled run's workspace never had one, and a chat's workspace loses the reference
+  // when the chat is deleted. Either way there is nobody to hand a branch or a note to.
+  if (workspace.chatId === null) {
     return true;
   }
   try {

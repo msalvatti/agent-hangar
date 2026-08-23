@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | **Status** | ✅ Approved — 2026-08-19 |
-| **Revision** | 2026-08-20 — stack table verified against the installed dependency versions |
+| **Revision** | 2026-08-23 — S7 restated against what was measured: the mutation gate is 100 rather than 80, covers every package plus `infra/scripts/lib` rather than `packages/core` alone, and is a local sweep rather than a CI job. 2026-08-20 — stack table verified against the installed dependency versions |
 | **Owner** | Maximiliano |
 | **Last updated** | 2026-08-19 |
 | **Related** | [02 Data model](02-data-model.md) · [03 Interfaces](03-interfaces.md) · [04 Flows](04-flows.md) · [05 Local dev](05-local-dev.md) · [06 Testing](06-testing.md) · [07 Build plan](07-build-plan.md) · [08 Deployment](08-deployment-discussion.md) · [09 Non-goals](09-non-goals.md) · [10 UI design](10-ui-design.md) |
@@ -28,7 +28,7 @@ Cloud-agent products (OpenAI Codex, Devin, Cursor background agents) share the s
 - **Scheduled jobs.** Name, cron expression, timezone, repository/branch, prompt. On each trigger a **fresh** workspace is created, the prompt is executed, the run and its output are recorded, and the workspace is destroyed. Runs are listed per job; a run can be opened to see its output. Jobs can be enabled/disabled, edited, deleted, and triggered manually.
 - **Settings.** GitHub PAT and OpenAI API key. Encrypted at rest (AES-256-GCM, local master key outside the repo), masked in the UI (last 4 characters), redacted from logs, handed to a container as a file placed for one execution — never its environment — which the runtime reads and unlinks before the agent runs anything.
 - **Developer experience.** Clone → README → it runs. Single command to boot infrastructure, a doctor script that checks Docker, and a Conductor integration so several checkouts of this repo can run side by side without colliding on databases, ports, or container names.
-- **Quality.** Unit + integration tests (Vitest), E2E for the three critical flows (Playwright), mutation testing on the core domain (Stryker), CI on GitHub Actions.
+- **Quality.** Unit + integration tests (Vitest), E2E for the three critical flows (Playwright), mutation testing over every package and the infra helpers (Stryker), CI on GitHub Actions.
 
 ### Out of scope (v1)
 
@@ -59,7 +59,7 @@ See [09 Non-goals](09-non-goals.md): multi-user auth, cloud deployment, multiple
 | S4 | A scheduled job with a one-minute cron creates a new workspace per run, records output, and leaves no container behind | Playwright E2E `schedule-run` + integration test on runner |
 | S5 | Secrets: ciphertext only in Postgres; UI shows last 4; `grep` of logs and container image for the plaintext finds nothing | Unit tests on crypto + redaction; E2E `settings-mask`; CI secret-scan step |
 | S6 | Live streaming of agent output via SSE with reconnect/replay, and an honest refusal when the replay window no longer covers the client | Integration tests on the events endpoint against real Redis, including one that trims past the resume point |
-| S7 | Mutation score ≥ 80% on `packages/core` (secrets, scheduling, workspace lifecycle) enforced in CI | Stryker gate |
+| S7 | Mutation score of 100 on every mutable module of `packages/core`, `packages/agent-runtime`, `apps/worker`, `apps/web` and `infra/scripts/lib` | `pnpm test:mutation`, whose configurations break below 100 — met on 2026-08-23 (11,488 mutants, none survived). Not enforced in CI: a full sweep is about two hours, so it is a nightly or deliberate local run |
 | S8 | Two Conductor workspaces run concurrently with independent DB, Redis keyspace, ports, and container names | Manual verification + `pnpm infra:doctor` output |
 
 ## 6. Technical approach (one page)
@@ -107,7 +107,7 @@ flowchart LR
 |---|---|
 | `apps/web` | UI and HTTP API. Writes user intent to Postgres, enqueues work in BullMQ, and streams results to the browser over SSE by subscribing to Redis. Never talks to Docker. |
 | `apps/worker` | The only process that touches Docker and OpenAI (indirectly, through the container). Consumes `chat-turns` and `scheduled-jobs` queues, owns workspace lifecycle, persists every event and tool call, publishes progress to Redis. Registers BullMQ Job Schedulers from `ScheduledJob` rows. Runs workspace garbage collection. |
-| `packages/core` | Pure domain: `WorkspaceRunner` interface + `DockerWorkspaceRunner`; `AgentModelProvider` interface + `OpenAIModelProvider`; secrets (AES-256-GCM), redaction, cron validation, restore-context builder, agent protocol types, Prisma client + repositories. No framework imports. This is where the mutation gate lives. |
+| `packages/core` | Pure domain: `WorkspaceRunner` interface + `DockerWorkspaceRunner`; `AgentModelProvider` interface + `OpenAIModelProvider`; secrets (AES-256-GCM), redaction, cron validation, restore-context builder, agent protocol types, Prisma client + repositories. No framework imports. |
 | `packages/agent-runtime` | Bundled into the workspace image. Receives a turn request on stdin (NDJSON), runs the OpenAI tool loop, executes tools inside the container, emits events on stdout. Knows nothing about Postgres or Redis. |
 | `infra/` | `docker-compose.yml` (Postgres, Redis), workspace `Dockerfile`, Conductor `.conductor/settings.toml` + `scripts/`. |
 

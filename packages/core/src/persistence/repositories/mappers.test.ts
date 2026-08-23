@@ -469,3 +469,23 @@ describe('toInputJson', () => {
     expect(toInputJson({ a: 1, b: undefined })).toEqual({ a: 1 });
   });
 });
+
+describe('truncateResultHead at its boundary', () => {
+  /**
+   * The cap is the largest head that is stored whole, not the first size that is cut: measured one
+   * byte early, a result that fits exactly comes back truncated, and the row then disagrees with
+   * the byte count stored beside it.
+   */
+  it('stores a head of exactly the budget unchanged', () => {
+    const text = 'x'.repeat(8192);
+
+    expect(truncateResultHead(text)).toBe(text);
+  });
+
+  /** One byte more is cut, and cut to the budget rather than to something near it. */
+  it('cuts a head one byte past the budget to the budget', () => {
+    const truncated = truncateResultHead('x'.repeat(8193));
+
+    expect(new TextEncoder().encode(truncated)).toHaveLength(8192);
+  });
+});

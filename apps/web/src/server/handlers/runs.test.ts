@@ -13,6 +13,7 @@ import { listRunsResponse, runDetail, turnCommand, turnCommandChannel } from '@a
 import type { JobRun, ScheduledJob } from '@agent-hangar/core';
 import { describe, expect, it, vi } from 'vitest';
 
+import type { ServerContainer } from '../container';
 import { foreignRequest, readRequest, writeRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
@@ -136,6 +137,7 @@ describe('listRuns', () => {
       id: 'nope',
     });
     expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: { message: 'Scheduled job not found' } });
   });
 });
 
@@ -241,12 +243,39 @@ describe('getRun', () => {
   });
 
   /**
+   * The other half of the same pair: a branch recorded with no commit is as unusable as a commit
+   * with no branch. Both columns are written by one statement, so either alone is a row nothing
+   * produces — and rendered, it would show a branch at commit `undefined`.
+   */
+  it('reports no push for a row carrying only the branch', async () => {
+    const harness = createTestContainer({ now: NOW });
+    const { runs } = await seedRuns(harness, 1);
+    const run = runs[0]!;
+    await harness.doubles.repos.jobRuns.recordPush(run.id, {
+      workBranch: 'agent/job-2f7c11a0',
+      lastPushedSha: 'c0ffee1234567890',
+    });
+    const pushed = await harness.doubles.repos.jobRuns.get(run.id);
+    vi.spyOn(harness.doubles.repos.jobRuns, 'get').mockResolvedValue({
+      ...pushed!,
+      workBranch: null,
+    });
+
+    const response = await getRun(harness.container, readRequest(`/api/runs/${run.id}`), {
+      id: run.id,
+    });
+
+    expect(runDetail.parse(await response.json()).push).toBeNull();
+  });
+
+  /**
    * An unknown run is missing.
    */
   it('reports an unknown run as missing', async () => {
     const harness = createTestContainer({ now: NOW });
     const response = await getRun(harness.container, readRequest('/api/runs/nope'), { id: 'nope' });
     expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: { message: 'Run not found' } });
   });
 });
 
@@ -378,6 +407,9 @@ describe('cancelRun', () => {
     const response = await cancelRun(harness.container, cancelRequest(runId), { id: runId });
 
     expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'RUN_NOT_CANCELLABLE', message: 'This run has already finished' },
+    });
     expect(await harness.doubles.repos.jobRuns.get(runId)).toMatchObject({ status: 'FAILED' });
     expect(harness.doubles.queues.scheduledJobs.added).toHaveLength(1);
   });
@@ -397,7 +429,15 @@ describe('cancelRun', () => {
     const response = await cancelRun(harness.container, cancelRequest(runId), { id: runId });
 
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: { code: 'RUN_NOT_CANCELLABLE' } });
+    // The code the page branches on and the sentence it shows: a Stop pressed on a run that has
+    // already finished is not an error the user made, and the wording is what says so.
+    expect(await response.json()).toMatchObject({
+      error: { code: 'RUN_NOT_CANCELLABLE', message: 'This run has already finished' },
+    });
+    // And the worker is not told to stop something that has already stopped: the command channel
+    // is shared with a live run of the same id, and a cancel published for a finished one is a
+    // message a listener may still be there to act on.
+    expect(harness.doubles.redis.published).toEqual([]);
   });
 
   /**
@@ -438,7 +478,17 @@ describe('cancelRun', () => {
 
     expect(response.status).toBe(500);
     expect(harness.doubles.queues.scheduledJobs.jobs.has(runId)).toBe(false);
-    expect(harness.doubles.logOutput()).toContain('could not undo a partial run cancel');
+    // The run is named on the line, and what failed is classified rather than quoted: this row is
+    // now `QUEUED` with no delivery behind it, and its id is all anyone has to find it by.
+    expect(
+      harness.doubles
+        .logOutput()
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({ msg: 'could not undo a partial run cancel', runId }),
+    );
   });
 
   /**
@@ -449,6 +499,38 @@ describe('cancelRun', () => {
     const { container } = createTestContainer({ now: NOW });
     const response = await cancelRun(container, cancelRequest('nope'), { id: 'nope' });
     expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: { message: 'Run not found' } });
+  });
+
+  /**
+   * Every read of this file is refused when the request is addressed to a host this instance does
+   * not answer for. A run's transcript and a job's history are the pages an attacking page would
+   * read through a rebound name.
+   */
+  it.each([
+    [
+      'GET /api/jobs/:id/runs',
+      (container: ServerContainer, request: Request) =>
+        listRuns(container, request, { id: 'nope' }),
+    ],
+    [
+      'GET /api/runs/:id',
+      (container: ServerContainer, request: Request) => getRun(container, request, { id: 'nope' }),
+    ],
+    [
+      'POST /api/runs/:id/cancel',
+      (container: ServerContainer, request: Request) =>
+        cancelRun(container, request, { id: 'nope' }),
+    ],
+  ])('refuses %s addressed to a rebound host', async (_route, invoke) => {
+    const harness = createTestContainer({ now: NOW });
+
+    const response = await invoke(
+      harness.container,
+      new Request('http://attacker.test/api', { headers: { host: 'attacker.test' } }),
+    );
+
+    expect(response.status).toBe(403);
   });
 
   /**

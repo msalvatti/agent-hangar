@@ -7,7 +7,7 @@
  * shutdown that stops everything once, forcing it after the grace period.
  * Mocks: a recording consumer factory and the in-memory container.
  */
-import { QUEUE_NAMES } from '@agent-hangar/core';
+import { QUEUE_NAMES, WORKER_HEARTBEAT_INTERVAL_SEC } from '@agent-hangar/core';
 import { FakeWorkspaceRunner } from '@agent-hangar/core/testing';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -27,7 +27,11 @@ import type { FakeWorkerFactory, TestContainer } from './testing/index.js';
 type AppContainer = WorkerContainer<FakeDatabaseClient, FakeRedisClient>;
 
 /** Builds a container `startWorker` accepts, recording whether it was closed. */
-function appContainer(test: TestContainer): { container: AppContainer; closed: string[] } {
+function appContainer(test: TestContainer): {
+  container: AppContainer;
+  closed: string[];
+  queue: FakeRedisClient;
+} {
   const closed: string[] = [];
   const queue = new FakeRedisClient({ role: 'queue' });
   const container: AppContainer = {
@@ -55,7 +59,7 @@ function appContainer(test: TestContainer): { container: AppContainer; closed: s
       return Promise.resolve();
     },
   };
-  return { container, closed };
+  return { container, closed, queue };
 }
 
 /** Starts the application over the in-memory container. */
@@ -72,18 +76,19 @@ async function start(
   test: TestContainer;
   factory: FakeWorkerFactory;
   closed: string[];
+  queue: FakeRedisClient;
   app: Awaited<ReturnType<typeof startWorker>>;
 }> {
   const test = createTestContainer();
   await options.seed?.(test);
-  const { container, closed } = appContainer(test);
+  const { container, closed, queue } = appContainer(test);
   const factory = createFakeWorkerFactory({ blocking: options.blocking ?? false });
   const app = await startWorker(container, {
     createWorker: factory.createWorker.bind(factory),
     checkImage:
       options.checkImage ?? ((): Promise<boolean> => Promise.resolve(options.imagePresent ?? true)),
   });
-  return { test, factory, closed, app };
+  return { test, factory, closed, queue, app };
 }
 
 /** Seeds the two rows a dead incarnation leaves: a teardown's and a scheduled run's. */
@@ -115,6 +120,11 @@ async function seedAbandoned(test: TestContainer): Promise<{ stopping: string; b
   await test.repos.workspaces.claimStatus(jobWorkspace.id, 'READY', 'BUSY');
 
   return { stopping: chatWorkspace.id, busyJob: jobWorkspace.id };
+}
+
+/** The records the container collected, parsed back from the lines pino wrote. */
+function records(logs: string[]): Record<string, unknown>[] {
+  return logs.map((line) => JSON.parse(line) as Record<string, unknown>);
 }
 
 describe('startWorker', () => {
@@ -171,8 +181,15 @@ describe('startWorker', () => {
     turns?.emit('failed', { id: 'job-1' }, new Error('boom'));
     turns?.emit('error', new Error('connection lost'));
 
-    expect(test.logs.join('')).toContain('job failed');
-    expect(test.logs.join('')).toContain('worker error');
+    // Both lines name the run and the classification. A driver's own message is never repeated —
+    // Prisma and ioredis build theirs from the connection string, password included — so what is
+    // left has to say which job it was and what kind of failure it was, or the line is unusable.
+    expect(records(test.logs)).toContainEqual(
+      expect.objectContaining({ msg: 'job failed', jobId: 'job-1', failure: 'unknown' }),
+    );
+    expect(records(test.logs)).toContainEqual(
+      expect.objectContaining({ msg: 'worker error', failure: 'unknown' }),
+    );
   });
 
   /**
@@ -192,7 +209,7 @@ describe('startWorker', () => {
    */
   it('does not force a consumer that stopped in time', async () => {
     vi.useFakeTimers();
-    const { factory, app } = await start({ blocking: true });
+    const { factory, app, test } = await start({ blocking: true });
 
     const stopping = app.shutdown();
     await vi.advanceTimersByTimeAsync(0);
@@ -207,6 +224,10 @@ describe('startWorker', () => {
 
     expect(factory.workers.map((worker) => worker.closes)).toEqual([[false], [false], [false]]);
     expect(factory.workers.map((worker) => worker.pauses)).toEqual([1, 1, 1]);
+    // And nothing is warned about at all. The warning is what an operator reads as "work was
+    // thrown away"; printed after a drain that finished — even wordlessly — it would report a loss
+    // that did not happen on every clean stop.
+    expect(records(test.logs).filter((record) => record.level === 40)).toStrictEqual([]);
     vi.useRealTimers();
   });
 
@@ -218,7 +239,17 @@ describe('startWorker', () => {
     const { test } = await start();
 
     expect(test.queues.workspaceGc.scheduler('reap-idle')).toBeDefined();
-    expect(test.logs.join('')).toContain('worker ready');
+    // The readiness line carries what an operator needs to tell two checkouts apart on one
+    // machine: which instance came up, whether it will really build containers, and how many
+    // turns it will run at once.
+    expect(records(test.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'worker ready',
+        instance: test.config.AH_INSTANCE,
+        runner: test.runner.kind,
+        concurrency: test.config.WORKER_TURN_CONCURRENCY,
+      }),
+    );
   });
 
   /**
@@ -251,6 +282,9 @@ describe('startWorker', () => {
     });
 
     expect((await test.repos.workspaces.get(workspaceId))?.status).toBe('DESTROYED');
+    // How many were closed out, not merely that some were: one is a crash, twelve is a worker
+    // that has been dying repeatedly, and the count is the difference between the two.
+    expect(records(test.logs)).toContainEqual(expect.objectContaining({ recovered: 1 }));
     expect(test.logs.join('')).toContain(
       'closed out workspaces the last incarnation was still holding',
     );
@@ -295,6 +329,11 @@ describe('startWorker', () => {
   it('reports a missing image without refusing to start', async () => {
     const { test, factory } = await start({ imagePresent: false });
 
+    // Naming the tag is the point: the operator has to know which image is missing, and two
+    // checkouts on one machine are configured with different ones.
+    expect(records(test.logs)).toContainEqual(
+      expect.objectContaining({ image: test.config.WORKSPACE_IMAGE }),
+    );
     expect(test.logs.join('')).toContain('pnpm infra:image');
     expect(factory.workers).toHaveLength(3);
   });
@@ -306,12 +345,33 @@ describe('startWorker', () => {
     const { test } = await start();
 
     expect(test.logs.join('')).not.toContain('pnpm infra:image');
+    // And a boot that recovered nothing says nothing about recovery either. The warning is read as
+    // "a previous incarnation died"; printed on every clean start it would say that of all of them.
+    expect(test.logs.join('')).not.toContain('the last incarnation was still holding');
   });
 
   /**
    * Shutting down stops every consumer and only then releases the container: a consumer still
    * reading Redis after the connection closed would log errors on the way out.
    */
+  it('stops the heartbeat and says so before anything else', async () => {
+    vi.useFakeTimers();
+    const { app, queue, test } = await start();
+    const beatsWhileRunning = queue.writes.length;
+
+    await app.shutdown();
+    await vi.advanceTimersByTimeAsync(WORKER_HEARTBEAT_INTERVAL_SEC * 4 * 1000);
+
+    // Nothing more is published. A heartbeat left running writes a key that says this worker is
+    // healthy, with a fresh lifetime, for as long as the process lingers — and the health card
+    // would show a worker that has stopped taking jobs as ready to take them.
+    expect(queue.writes).toHaveLength(beatsWhileRunning);
+    // And the stop is announced: this is the first line of a shutdown, and an operator watching a
+    // process that will not exit needs to know it began.
+    expect(records(test.logs)).toContainEqual(expect.objectContaining({ msg: 'stopping workers' }));
+    vi.useRealTimers();
+  });
+
   it('stops every consumer, then releases the container', async () => {
     const { factory, closed, app } = await start();
 
@@ -349,7 +409,9 @@ describe('startWorker', () => {
     await stopping;
 
     expect(factory.workers.map((worker) => worker.closes)).toEqual([[true], [true], [true]]);
-    expect(test.logs.join('')).toContain('abandoning jobs still in flight');
+    // Which of the two abandonments this was: turns that were still running when the grace period
+    // ran out, not a drain that could not be asked for.
+    expect(test.logs.join('')).toContain('workers did not stop in time');
     expect(closed).toHaveLength(1);
     vi.useRealTimers();
   });
@@ -371,7 +433,9 @@ describe('startWorker', () => {
     await stopping;
 
     expect(factory.workers.map((worker) => worker.closes)).toEqual([[true], [true], [true]]);
-    expect(test.logs.join('')).toContain('abandoning jobs still in flight');
+    // And the other wording: nothing was waited out here, the drain itself could not be asked for.
+    // An operator chasing a worker that keeps abandoning jobs needs the two told apart.
+    expect(test.logs.join('')).toContain('the drain failed outright');
     expect(closed).toHaveLength(1);
     vi.useRealTimers();
   });

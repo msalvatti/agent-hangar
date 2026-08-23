@@ -24,8 +24,6 @@ export const TIMED_OUT = 'timeout';
 /** Outcome of one probe. */
 export interface ProbeResult {
   ok: boolean;
-  /** Latency in milliseconds when the probe answered. */
-  latencyMs?: number;
   /** Why it failed; always a value written in this repository, never a driver's own text. */
   detail?: string;
 }

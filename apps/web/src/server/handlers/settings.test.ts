@@ -12,6 +12,7 @@ import { putSecretResponse, settingsStatus } from '@agent-hangar/core';
 import { assertNoCanary, GITHUB_CANARY, OPENAI_CANARY } from '@agent-hangar/core/testing';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
+import type { ServerContainer } from '../container';
 import { foreignRequest, readRequest } from '../testing/requests';
 import { createTestContainer } from '../testing/test-container';
 import type { TestContainer } from '../testing/test-container';
@@ -90,6 +91,48 @@ describe('getSettings', () => {
     expect(body.githubPat).toMatchObject({ set: true, last4: GITHUB_CANARY.slice(-4) });
     expect(body.openaiKey).toMatchObject({ set: true, last4: OPENAI_CANARY.slice(-4) });
     expect(body.githubPat.updatedAt).toBeTypeOf('string');
+    // A credential that is not stored carries no mask at all, rather than a key with nothing under
+    // it: the settings page renders "•••• last4" from its presence.
+    const { container: empty } = harness({ secretsSet: false });
+    const unset = settingsStatus.parse(
+      await (await getSettings(empty, readRequest('/api/settings'))).json(),
+    );
+    expect(unset.githubPat).toStrictEqual({ set: false });
+  });
+});
+
+describe('what the settings routes refuse', () => {
+  /**
+   * Every export refuses a request addressed to a host this instance does not answer for — the
+   * read included. This response carries the masks and the timestamps of the user's credentials,
+   * and a rebound name is exactly the case in which the browser lets an attacking page read it.
+   */
+  it.each([
+    [
+      'GET /api/settings',
+      (container: ServerContainer, request: Request) => getSettings(container, request),
+    ],
+    [
+      'PUT /api/settings/:key',
+      (container: ServerContainer, request: Request) =>
+        putSetting(container, request, { key: 'GITHUB_PAT' }),
+    ],
+    [
+      'DELETE /api/settings/:key',
+      (container: ServerContainer, request: Request) =>
+        deleteSetting(container, request, { key: 'GITHUB_PAT' }),
+    ],
+  ])('refuses %s addressed to a rebound host', async (_route, invoke) => {
+    const { container, doubles } = harness();
+
+    const response = await invoke(
+      container,
+      new Request('http://attacker.test/api/settings', { headers: { host: 'attacker.test' } }),
+    );
+
+    expect(response.status).toBe(403);
+    assertNoCanary(await response.text());
+    expect((await doubles.secrets.status()).GITHUB_PAT).toMatchObject({ set: true });
   });
 });
 
@@ -129,8 +172,16 @@ describe('putSetting', () => {
     });
     const output = doubles.logOutput();
     assertNoCanary(output);
-    expect(output).toContain('secret updated');
-    expect(output).toContain('OPENAI_API_KEY');
+    // Which credential, and what was done to it: the two settings are written and removed through
+    // the same route, and an audit line naming neither says only that something changed.
+    expect(
+      output
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({ msg: 'secret updated', key: 'OPENAI_API_KEY', action: 'set' }),
+    );
     expect(output).not.toContain('"value"');
   });
 
@@ -144,6 +195,7 @@ describe('putSetting', () => {
       key: 'NOPE',
     });
     expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: { message: 'Unknown setting' } });
   });
 
   /**
@@ -209,8 +261,25 @@ describe('putSetting', () => {
     expect(response.status).toBe(500);
     const text = await response.text();
     assertNoCanary(text);
-    expect(JSON.parse(text)).toMatchObject({ error: { code: 'SECRET_WRITE_FAILED' } });
-    expect(doubles.logOutput()).toContain('"failure":"Error"');
+    expect(JSON.parse(text)).toMatchObject({
+      error: { code: 'SECRET_WRITE_FAILED', message: 'Could not store the credential' },
+    });
+    // The class name and nothing else: a storage failure routinely quotes the value it was handed,
+    // and this handler is the one place in the process where that value is plaintext.
+    expect(
+      doubles
+        .logOutput()
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({
+        msg: 'secret write failed',
+        key: 'GITHUB_PAT',
+        action: 'set',
+        failure: 'Error',
+      }),
+    );
   });
 
   /**
@@ -240,8 +309,16 @@ describe('deleteSetting', () => {
     });
     expect(response.status).toBe(204);
     expect(await response.text()).toBe('');
-    expect((await doubles.secrets.status()).GITHUB_PAT).toEqual({ set: false });
-    expect(doubles.logOutput()).toContain('secret removed');
+    expect((await doubles.secrets.status()).GITHUB_PAT).toStrictEqual({ set: false });
+    expect(
+      doubles
+        .logOutput()
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({ msg: 'secret removed', key: 'GITHUB_PAT', action: 'remove' }),
+    );
   });
 
   /**
@@ -252,6 +329,7 @@ describe('deleteSetting', () => {
     const { container } = harness();
     const unknown = await deleteSetting(container, write('NOPE', 'DELETE'), { key: 'NOPE' });
     expect(unknown.status).toBe(404);
+    expect(await unknown.json()).toMatchObject({ error: { message: 'Unknown setting' } });
 
     const foreign = foreignRequest('/api/settings/GITHUB_PAT', 'DELETE', {});
     expect((await deleteSetting(container, foreign, { key: 'GITHUB_PAT' })).status).toBe(403);

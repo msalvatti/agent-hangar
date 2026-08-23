@@ -10,8 +10,14 @@
  */
 import type { GitRunner } from './git.js';
 
-/** Shell operators that end one command and start another. */
-const COMMAND_SEPARATORS = /[;&|\n]+/;
+/**
+ * Shell operators that end one command and start another.
+ *
+ * One character rather than a run of them: consecutive operators only produce empty segments
+ * between the real ones, and an empty segment names no command, so collapsing them would change
+ * how many segments are looked at and never what the answer is.
+ */
+const COMMAND_SEPARATORS = /[;&|\n]/;
 
 /** Runs of whitespace between the words of one command. */
 const WHITESPACE = /\s+/;
@@ -67,7 +73,10 @@ const GIT_OPTIONS_WITH_VALUE = new Set([
  * @returns `true` when the segment's git subcommand is `push`.
  */
 function segmentPushes(segment: string): boolean {
-  const words = segment.trim().split(WHITESPACE);
+  // Not trimmed first: leading or trailing whitespace only adds empty words at the ends, and the
+  // subcommand is found by the position of `git` rather than by counting from the start, so those
+  // words shift every index by the same amount and are never read.
+  const words = segment.split(WHITESPACE);
   const git = words.indexOf('git');
   if (git === -1) {
     return false;

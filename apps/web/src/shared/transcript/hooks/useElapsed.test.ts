@@ -67,6 +67,35 @@ describe('useElapsed', () => {
     expect(result.current).toBe('1:01:01');
   });
 
+  // The elapsed time is measured from the start, not summed with it: a turn that began at a real
+  // epoch instant would otherwise read as fifty-odd years of running.
+  it('measures from the start rather than summing with it', () => {
+    const { result } = renderHook(() => useElapsed(1_000, false, () => 5_000));
+    expect(result.current).toBe('00:04');
+  });
+
+  // Resuming re-reads the clock at once rather than waiting for the next tick: the label is on
+  // screen the moment the turn continues, and a stale one would show a turn that has been running
+  // for a while as having just started.
+  it('re-reads the clock when it starts running again', () => {
+    let now = 0;
+    const { result, rerender } = renderHook(
+      ({ running }: { running: boolean }) => useElapsed(0, running, () => now),
+      { initialProps: { running: true } },
+    );
+    now = 5_000;
+    act(() => {
+      vi.advanceTimersByTime(5_000);
+    });
+    rerender({ running: false });
+    expect(result.current).toBe('00:05');
+
+    now = 9_000;
+    rerender({ running: true });
+
+    expect(result.current).toBe('00:09');
+  });
+
   // When startedAt transitions back to null (e.g. a new turn not started yet), the clock resets.
   it('resets to zero when startedAt becomes null again', () => {
     const initialProps: { startedAt: number | null } = { startedAt: 0 };

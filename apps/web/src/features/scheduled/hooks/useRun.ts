@@ -10,6 +10,7 @@ import type { RunDetail } from '@agent-hangar/core';
 import { useApiQuery } from '@/shared/api/use-api-query';
 import type { UseApiQueryResult } from '@/shared/api/use-api-query';
 
+import { runKey } from '../lib/query-keys';
 import { getRun } from '../services/scheduled-api';
 
 /**
@@ -30,11 +31,22 @@ export function buildRunLoader(runId: string | null): (signal: AbortSignal) => P
 }
 
 /**
+ * Stands in for the run id while no run is selected.
+ *
+ * The query is disabled in that state, so nothing is ever fetched under this key; it exists
+ * because a key is a string list and there is no run to name. Written out rather than empty so it
+ * cannot collide with a real run's key.
+ */
+// Stryker disable next-line StringLiteral: the query is disabled under this key, so nothing is
+// ever registered or fetched under it and no spelling that is not a run id behaves differently.
+const NO_RUN = 'none';
+
+/**
  * Loads one run's detail; disabled (no request) while `runId` is `null`.
  *
  * @param runId - Run id, or `null` when no run is selected.
  * @returns The run detail query state.
  */
 export function useRun(runId: string | null): UseApiQueryResult<RunDetail> {
-  return useApiQuery(['run', runId ?? 'none'], buildRunLoader(runId), { enabled: runId !== null });
+  return useApiQuery(runKey(runId ?? NO_RUN), buildRunLoader(runId), { enabled: runId !== null });
 }

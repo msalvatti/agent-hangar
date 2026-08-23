@@ -15,6 +15,7 @@ import {
   conversationItemSchema,
   PROTOCOL_VERSION,
   toolNameSchema,
+  toolResultStatusSchema,
   turnRequestSchema,
 } from './schemas.ts';
 import type { AgentEvent, ProtocolConversationItem, TurnRequest } from './types.ts';
@@ -238,6 +239,54 @@ describe('agentEventSchema', () => {
         name: 'list_dir',
         args: null,
         seq: 0,
+      }).success,
+    ).toBe(true);
+  });
+});
+
+describe('what the protocol schemas admit at their edges', () => {
+  /**
+   * The expected head is a git object name and nothing else. The pattern is anchored at both ends,
+   * and either anchor removed lets a value carrying a sha through — which is then handed to git as
+   * a ref to check out.
+   */
+  it.each([
+    ['a sha with something before it', `x${'a'.repeat(40)}`],
+    ['a sha with something after it', `${'a'.repeat(40)}x`],
+    ['a sha too short to be one', 'abc123'],
+    ['a sha with a character outside hex', `${'a'.repeat(39)}g`],
+  ])('refuses %s as an expected head', (_case, expectedHeadSha) => {
+    expect(
+      turnRequestSchema.safeParse({
+        ...validRequest,
+        repo: { ...validRequest.repo, expectedHeadSha },
+      }).success,
+    ).toBe(false);
+  });
+
+  /**
+   * Each of these values is agreed with the host, which stores them and switches on them. A member
+   * emptied here is a tool result the runtime can no longer report, and the turn fails on a
+   * protocol error instead of recording what the tool did.
+   */
+  it('admits exactly the three tool result statuses', () => {
+    expect(toolResultStatusSchema.options).toStrictEqual(['SUCCEEDED', 'FAILED', 'TIMED_OUT']);
+    for (const status of ['SUCCEEDED', 'FAILED', 'TIMED_OUT']) {
+      expect(toolResultStatusSchema.safeParse(status).success).toBe(true);
+    }
+  });
+
+  /**
+   * Output arrives on one of two streams and the transcript renders them differently; a stream the
+   * schema no longer admits turns every line a tool wrote to it into a protocol error.
+   */
+  it.each(['stdout', 'stderr'])('admits tool output on %s', (stream) => {
+    expect(
+      agentEventSchema.safeParse({
+        type: 'tool.output.delta',
+        callId: 'c1',
+        stream,
+        text: 'x',
       }).success,
     ).toBe(true);
   });

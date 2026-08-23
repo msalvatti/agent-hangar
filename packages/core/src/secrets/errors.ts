@@ -11,7 +11,7 @@ import { AgentHangarError } from '../errors.ts';
 
 /** A credential was rejected before it could be encrypted. */
 export class InvalidSecretError extends AgentHangarError {
-  override readonly code = 'SECRET_INVALID' as const;
+  declare readonly code: 'SECRET_INVALID';
 
   /**
    * @param message - What was wrong with the value; never the value itself.

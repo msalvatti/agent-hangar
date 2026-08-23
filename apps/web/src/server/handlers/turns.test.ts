@@ -44,6 +44,32 @@ describe('cancelTurn', () => {
    * says the turn is being stopped, and leaving the record to the worker is what let a turn the
    * API had already accepted a cancellation for come back as `FAILED`.
    */
+  /**
+   * Every state in which BullMQ has not handed the job to a worker is one this cancel can remove
+   * outright. A delivery that is delayed or prioritised has not started any more than a waiting
+   * one has, and a route that only recognised `waiting` would publish a command for work no
+   * worker is holding — and leave the delivery on the queue to run afterwards.
+   */
+  it.each(['waiting', 'delayed', 'prioritized'] as const)(
+    'removes a %s delivery instead of asking the worker',
+    async (state) => {
+      const harness = createTestContainer();
+      const turnId = await seedTurn(harness);
+      const job = harness.doubles.queues.chatTurns.jobs.get(turnId);
+      if (job === undefined) {
+        throw new Error('The seeded turn did not enqueue a job');
+      }
+      job.state = state;
+
+      const response = await cancelTurn(harness.container, cancelRequest(turnId), { id: turnId });
+
+      expect(response.status).toBe(200);
+      expect(harness.doubles.redis.published).toEqual([]);
+      expect(harness.doubles.queues.chatTurns.jobs.has(turnId)).toBe(false);
+      expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({ status: 'CANCELLED' });
+    },
+  );
+
   it('publishes a cancel command for a running turn and records the cancellation', async () => {
     const harness = createTestContainer();
     const turnId = await seedTurn(harness);
@@ -149,6 +175,9 @@ describe('cancelTurn', () => {
     const response = await cancelTurn(harness.container, cancelRequest(turnId), { id: turnId });
 
     expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      error: { code: 'TURN_NOT_CANCELLABLE', message: 'This turn has already finished' },
+    });
     expect(await harness.doubles.repos.turns.get(turnId)).toMatchObject({ status: 'FAILED' });
     expect(harness.doubles.queues.chatTurns.added).toHaveLength(1);
   });
@@ -199,7 +228,14 @@ describe('cancelTurn', () => {
     });
     const response = await cancelTurn(harness.container, cancelRequest(turnId), { id: turnId });
     expect(response.status).toBe(409);
-    expect(await response.json()).toMatchObject({ error: { code: 'TURN_NOT_CANCELLABLE' } });
+    // The code the page branches on and the sentence it shows.
+    expect(await response.json()).toMatchObject({
+      error: { code: 'TURN_NOT_CANCELLABLE', message: 'This turn has already finished' },
+    });
+    // And the worker is not told to stop something that has already stopped: the command channel
+    // is shared, and a cancel published for a finished turn reaches a listener that may still be
+    // there to act on it.
+    expect(harness.doubles.redis.published).toEqual([]);
   });
 
   /**
@@ -242,7 +278,17 @@ describe('cancelTurn', () => {
 
     expect(response.status).toBe(500);
     expect(harness.doubles.queues.chatTurns.jobs.has(turnId)).toBe(false);
-    expect(harness.doubles.logOutput()).toContain('could not undo a partial turn cancel');
+    // The turn is named on the line: this row is now `QUEUED` with no job behind it, and its id is
+    // all anyone has to find it by.
+    expect(
+      harness.doubles
+        .logOutput()
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({ msg: 'could not undo a partial turn cancel', turnId }),
+    );
   });
 
   /**
@@ -252,6 +298,7 @@ describe('cancelTurn', () => {
     const { container } = createTestContainer();
     const response = await cancelTurn(container, cancelRequest('nope'), { id: 'nope' });
     expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: { message: 'Turn not found' } });
   });
 
   /**

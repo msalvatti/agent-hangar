@@ -140,6 +140,86 @@ describe('useCreateChat', () => {
   });
 
   /**
+   * The composer locks while the request is in flight and unlocks afterwards, in both directions:
+   * never locking sends a second chat on a second click, and never unlocking leaves the operator
+   * with a composer they cannot use again.
+   */
+  it('locks the composer only while the request is in flight', async () => {
+    const held: (() => void)[] = [];
+    server.use(
+      http.post('/api/chats', async () => {
+        await new Promise<void>((resolve) => held.push(resolve));
+        return undefined;
+      }),
+    );
+    const { result } = renderHook(() => useCreateChat());
+    expect(result.current.busy).toBe(false);
+
+    let pending: Promise<void> = Promise.resolve();
+    act(() => {
+      pending = result.current.create({
+        repo: githubRepo,
+        branch: 'main',
+        prompt: 'Explain auth.',
+      });
+    });
+    await waitFor(() => {
+      expect(result.current.busy).toBe(true);
+    });
+
+    await act(async () => {
+      for (const release of held) {
+        release();
+      }
+      await pending;
+    });
+    expect(result.current.busy).toBe(false);
+  });
+
+  /**
+   * A retry starts clean. The message from the attempt before, left under a composer the operator
+   * has since corrected, reads as a fresh rejection of what they just wrote.
+   */
+  it('clears a previous failure when a create is retried', async () => {
+    const { result } = renderHook(() => useCreateChat());
+    await act(async () => {
+      await result.current.create({ repo: githubRepo, branch: 'main', prompt: '' });
+    });
+    expect(result.current.error).toBeDefined();
+
+    await act(async () => {
+      await result.current.create({ repo: githubRepo, branch: 'main', prompt: 'Explain auth.' });
+    });
+
+    expect(result.current.error).toBeUndefined();
+  });
+
+  /**
+   * What is refreshed is the chat lists and nothing else: an invalidation broad enough to match
+   * every key reloads every screen the app has open because one chat was created.
+   */
+  it('leaves unrelated queries alone', async () => {
+    const settings = vi.fn().mockResolvedValue(null);
+    const { result } = renderHook(() => ({
+      settings: useApiQuery(['settings'], settings),
+      create: useCreateChat(),
+    }));
+    await waitFor(() => {
+      expect(settings).toHaveBeenCalledTimes(1);
+    });
+
+    await act(async () => {
+      await result.current.create.create({
+        repo: githubRepo,
+        branch: 'main',
+        prompt: 'Explain auth.',
+      });
+    });
+
+    expect(settings).toHaveBeenCalledTimes(1);
+  });
+
+  /**
    * `reset` clears the message so a resubmission starts from a clean state.
    */
   it('clears the error on reset', async () => {

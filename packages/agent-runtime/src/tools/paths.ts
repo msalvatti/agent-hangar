@@ -64,19 +64,17 @@ function isInside(root: string, candidate: string): boolean {
  *   whose target is missing is judged on `/etc`, not on the directory holding the link.
  * - The path is simply absent: what decides the location is its parent, so the walk moves up.
  *
- * @param root - Workspace root as given, possibly through symbolic links.
- * @param realRoot - Already-resolved real path of `root`.
- * @param target - Absolute path under `root`, existing or not.
+ * The walk needs no special case for the root: the caller has already resolved it, which is only
+ * possible because it exists, so the last step up the tree resolves like any other.
+ *
+ * @param target - Absolute path under the workspace root, existing or not.
  * @returns The real path the operation would land on.
  * @throws PathEscapeError when the chain of links is longer than {@link MAX_SYMLINK_HOPS}.
  */
-async function realResolvedTarget(root: string, realRoot: string, target: string): Promise<string> {
+async function realResolvedTarget(target: string): Promise<string> {
   let candidate = target;
   let hops = 0;
   for (;;) {
-    if (candidate === root) {
-      return realRoot;
-    }
     const resolved = await realpath(candidate).catch(() => null);
     if (resolved !== null) {
       return resolved;
@@ -113,7 +111,7 @@ export async function resolveInsideWorkspace(root: string, userPath: string): Pr
     throw new PathEscapeError(`path escapes the workspace: ${userPath}`);
   }
   const realRoot = await realpath(root);
-  const realTarget = await realResolvedTarget(root, realRoot, absolute);
+  const realTarget = await realResolvedTarget(absolute);
   if (!isInside(realRoot, realTarget)) {
     throw new PathEscapeError(`path escapes the workspace through a symbolic link: ${userPath}`);
   }

@@ -138,3 +138,48 @@ describe('resolveInstance', () => {
     }
   });
 });
+
+describe('what a port base and an instance name may be', () => {
+  /**
+   * The variable arrives from a shell or a Conductor workspace, where a trailing newline or a
+   * padded value is ordinary. Read untrimmed it matches no digits and the whole checkout fails to
+   * start over whitespace.
+   */
+  it('accepts a port base with whitespace around it', () => {
+    expect(resolveInstance({ env: { AH_PORT_BASE: ' 4100 ' } }).portBase).toBe(4100);
+  });
+
+  /**
+   * The pattern is anchored at both ends: a value that merely contains digits is not a port, and
+   * either anchor removed lets one through to be read as a number that was never written.
+   */
+  it.each([
+    'x4100',
+    '4100x',
+    '41 00',
+    '4100.5',
+    // Spellings `Number` accepts and this does not: a sign, an exponent and a radix prefix all
+    // parse to a perfectly good integer, so a pattern that merely finds digits somewhere in the
+    // value would let each of them through as a port nobody wrote.
+    '+4100',
+    '4100e0',
+    '0x1004',
+  ])('refuses a port base of %s', (value) => {
+    expect(() => resolveInstance({ env: { AH_PORT_BASE: value } })).toThrow(ConfigError);
+  });
+
+  /**
+   * The range is inclusive at both ends: the two values named in the message have to be the two
+   * values that work, or an operator following it is refused for doing what it said.
+   */
+  it.each([1024, 65_000])('accepts a port base of %i', (value) => {
+    expect(resolveInstance({ env: { AH_PORT_BASE: String(value) } }).portBase).toBe(value);
+  });
+
+  /** And one step outside either end is refused, naming the range. */
+  it.each([1023, 65_001])('refuses a port base of %i', (value) => {
+    expect(() => resolveInstance({ env: { AH_PORT_BASE: String(value) } })).toThrow(
+      'AH_PORT_BASE must be an integer between 1024 and 65000',
+    );
+  });
+});

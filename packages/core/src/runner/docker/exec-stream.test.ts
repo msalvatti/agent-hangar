@@ -10,6 +10,7 @@
  * Mocks: in-memory `PassThrough` streams, injected timer functions and Vitest fake timers; no
  * Docker daemon is involved.
  */
+import { getEventListeners } from 'node:events';
 import { PassThrough, Writable } from 'node:stream';
 
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -23,6 +24,7 @@ import {
   EXEC_PID_DIR,
   execWrapperCommand,
   killCommand,
+  pidFileCleanupCommand,
   pumpExecStream,
   writeStdin,
 } from './exec-stream.ts';
@@ -256,6 +258,31 @@ describe('writeStdin', () => {
   });
 
   /**
+   * Every chunk of an async source is raced against the caller's signal, and each race attaches an
+   * abort listener. A race that does not detach its own listener therefore does not leak one
+   * listener but one per chunk, all held for as long as the caller holds the signal — so the count
+   * observed at the top of each pull is the guarantee, not just the count left at the end.
+   */
+  it('holds no more than one abort listener at a time while draining a source', async () => {
+    const stream = new PassThrough();
+    stream.resume();
+    const controller = new AbortController();
+    const attachedBeforeEachPull: number[] = [];
+
+    async function* source(): AsyncIterable<Uint8Array> {
+      for (const byte of [1, 2, 3, 4]) {
+        attachedBeforeEachPull.push(getEventListeners(controller.signal, 'abort').length);
+        yield await Promise.resolve(Buffer.from([byte]));
+      }
+    }
+
+    await writeStdin(stream, source(), controller.signal);
+
+    expect(attachedBeforeEachPull).toStrictEqual([0, 0, 0, 0]);
+    expect(getEventListeners(controller.signal, 'abort')).toStrictEqual([]);
+  });
+
+  /**
    * The no-stdin case is the one that matters most: a process blocked on `read()` never exits, so
    * stdin has to be closed even when there was nothing to write.
    */
@@ -385,6 +412,60 @@ describe('writeStdin', () => {
     await expect(written).resolves.toBeUndefined();
     expect(stream.writableEnded).toBe(true);
     expect(returned).toBe(true);
+  });
+
+  /**
+   * A pull the abort abandoned can still fail afterwards — a source reading from a socket that
+   * drops a moment later does exactly that. The abort is seen before this pull is raced at all, so
+   * nothing else is watching the promise: its rejection has to be marked handled where it is
+   * dropped. An unhandled rejection in Node is a process-level event, and this one would surface
+   * long after the write it belonged to returned, inside whatever happened to be running then.
+   */
+  it('marks an abandoned pull handled when it fails after the abort', async () => {
+    const stream = new PassThrough();
+    const controller = new AbortController();
+    let failPull = (): void => {
+      throw new Error('the pull was failed before it was made');
+    };
+    let pulls = 0;
+    const source: AsyncIterable<Uint8Array> = {
+      [Symbol.asyncIterator]: () => ({
+        next: () => {
+          pulls += 1;
+          if (pulls === 1) {
+            return Promise.resolve({ done: false as const, value: new Uint8Array([1]) });
+          }
+          // Aborted as this pull is handed over, so the write drops it without racing it — the
+          // one path on which nothing else is left holding the promise.
+          controller.abort();
+          return new Promise<IteratorResult<Uint8Array>>((_resolve, reject) => {
+            failPull = () => {
+              reject(new Error('the source went away'));
+            };
+          });
+        },
+        return: () => Promise.resolve({ done: true as const, value: undefined }),
+      }),
+    };
+
+    const rejections: unknown[] = [];
+    const collect = (reason: unknown): void => {
+      rejections.push(reason);
+    };
+    process.on('unhandledRejection', collect);
+    try {
+      await expect(writeStdin(stream, source, controller.signal)).resolves.toBeUndefined();
+
+      failPull();
+      // Node reports an unhandled rejection once the microtask queue has drained, so the check
+      // has to happen a turn later than the rejection.
+      await new Promise((resolve) => setImmediate(resolve));
+    } finally {
+      process.off('unhandledRejection', collect);
+    }
+
+    expect(rejections).toStrictEqual([]);
+    expect(stream.writableEnded).toBe(true);
   });
 
   /**
@@ -626,8 +707,178 @@ describe('execWrapperCommand and killCommand', () => {
     ['quote escape', `"; id; "`],
     ['too short', 'abc'],
     ['uppercase hex', '11111111-2222-3333-4444-55555555555A'],
+    // A reference that merely contains a well-formed one is not a well-formed one: the pattern is
+    // anchored at both ends, and either anchor removed lets everything before or after it through
+    // into the argument list.
+    ['a well-formed reference with something before it', `;id;${EXEC_REF}`],
+    ['a well-formed reference with something after it', `${EXEC_REF};id;`],
   ])('rejects an exec reference containing a %s', (_case, execRef) => {
-    expect(() => execWrapperCommand(execRef, ['true'])).toThrow(DockerRunnerError);
-    expect(() => killCommand(execRef, 'KILL')).toThrow(DockerRunnerError);
+    // All three builders, because each interpolates the reference into a shell argument list and a
+    // check is only a boundary where it is actually applied.
+    for (const build of [
+      () => execWrapperCommand(execRef, ['true']),
+      () => killCommand(execRef, 'KILL'),
+      () => pidFileCleanupCommand(execRef),
+    ]) {
+      expect(build).toThrow(DockerRunnerError);
+      expect(build).toThrow(`invalid exec reference "${execRef}"`);
+    }
+  });
+
+  /**
+   * The cleanup runs after the wrapper has been replaced by the real command, so it is the only
+   * thing that can remove the pid file. Built with anything but a shell and its command flag it
+   * removes nothing, and a late signal then lands on whatever process inherited that pid.
+   */
+  it('builds the command that removes a finished exec pid file', () => {
+    expect(pidFileCleanupCommand(EXEC_REF)).toStrictEqual([
+      'sh',
+      '-c',
+      `rm -f "${EXEC_PID_DIR}/$0.pid"`,
+      EXEC_REF,
+    ]);
+  });
+});
+
+describe('what the stream layer refuses and cleans up', () => {
+  /**
+   * A frame header is eight bytes and a frame of no payload is a whole frame: waiting for a ninth
+   * byte before reading it leaves an empty frame sitting in the buffer for as long as the process
+   * says nothing more, and the exit code behind it with it.
+   */
+  it('reads a frame whose header has just arrived and whose payload is empty', () => {
+    const demuxer = createDockerDemuxer();
+    const header = Buffer.alloc(8);
+    header.writeUInt8(1, 0);
+    header.writeUInt32BE(0, 4);
+
+    expect(demuxer.push(header)).toStrictEqual([]);
+    expect(demuxer.push(Buffer.from([1, 0, 0, 0, 0, 0, 0, 2, 0x68, 0x69]))).toStrictEqual([
+      { type: 'stdout', data: new Uint8Array([0x68, 0x69]) },
+    ]);
+  });
+
+  /**
+   * The protocol has three stream types and nothing else. A fourth is a stream this runner is not
+   * talking to, and the message names the type so the failure can be traced to the daemon that
+   * produced it rather than to the parser that refused it.
+   */
+  it('names the stream type it does not know', () => {
+    const demuxer = createDockerDemuxer();
+    const frame = Buffer.alloc(8);
+    frame.writeUInt8(7, 0);
+
+    expect(() => demuxer.push(frame)).toThrow('unexpected docker stream type 7');
+  });
+
+  /**
+   * An exec with no wall-clock limit runs until the process ends or the caller stops it. Scheduled
+   * anyway, with no delay to schedule, the timer fires on the next turn of the loop and every such
+   * exec is killed the moment it starts.
+   */
+  it('sets no timer for an exec that named no timeout', async () => {
+    const scheduled: (number | undefined)[] = [];
+    const { params, stream, kill } = pumpFixture({
+      scheduleTimeout: (run, ms) => {
+        scheduled.push(ms);
+        const timer = setTimeout(run, ms);
+        return () => {
+          clearTimeout(timer);
+        };
+      },
+    });
+    stream.write(frame(STDOUT_TYPE, 'out'));
+    setTimeout(() => {
+      stream.end();
+    }, 30);
+
+    const events = await collect(pumpExecStream(params));
+
+    expect(scheduled).toStrictEqual([]);
+    expect(kill).not.toHaveBeenCalled();
+    expect(events.at(-1)).toStrictEqual({ type: 'exit', code: 0 });
+  });
+
+  /**
+   * The listener the watch attaches belongs to the exec that attached it. Left in place, a turn
+   * cancelled after its exec has already finished reaches back into a finished run and asks the
+   * daemon to kill a process that is not there.
+   */
+  it('stops listening for cancellation once the exec is over', async () => {
+    const controller = new AbortController();
+    const { params, stream, kill } = pumpFixture({ signal: controller.signal });
+    stream.end();
+
+    await collect(pumpExecStream(params));
+    controller.abort();
+
+    expect(kill).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A stream that fails on its own is reported as this module's own error, naming what failed and
+   * keeping the reason: without the cause the caller is told an exec stream failed and nothing
+   * about why, which for a broken pipe and for a daemon restart reads exactly the same.
+   */
+  it('reports a stream failure with its reason attached', async () => {
+    const { params, stream } = pumpFixture();
+    const underlying = new Error('socket hang up');
+    const events = pumpExecStream(params);
+    queueMicrotask(() => {
+      stream.destroy(underlying);
+    });
+
+    const failure = await collect(events).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(DockerRunnerError);
+    expect((failure as Error).message).toBe('exec stream failed');
+    expect((failure as Error).cause).toBe(underlying);
+  });
+
+  /**
+   * When the abort wins the race, the value that was being waited for is dropped — and a value
+   * that turns out to be a rejection is dropped with it. Not marked as handled, that rejection
+   * reaches the process as an unhandled one, which Node ends the worker over: a cancelled write
+   * would take the runtime down with it.
+   */
+  it('drops a source failure that arrives after the cancellation', async () => {
+    const stream = new PassThrough();
+    const controller = new AbortController();
+    const source: AsyncIterable<Uint8Array> = {
+      [Symbol.asyncIterator]: () => ({
+        next: async () => {
+          controller.abort();
+          await Promise.resolve();
+          throw new Error('source broke after the abort');
+        },
+        return: async () => Promise.resolve({ value: undefined, done: true as const }),
+      }),
+    };
+
+    await expect(writeStdin(stream, source, controller.signal)).resolves.toBeUndefined();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  });
+
+  /**
+   * A source that has no way to be closed is still a source: `return` is optional on an async
+   * iterator, and calling it unconditionally turns abandoning a plain generator-like object into a
+   * type error thrown out of the writer's cleanup.
+   */
+  it('abandons a source that cannot be closed', async () => {
+    const stream = new PassThrough();
+    const controller = new AbortController();
+    const source: AsyncIterable<Uint8Array> = {
+      [Symbol.asyncIterator]: () => ({
+        next: async () => {
+          controller.abort();
+          return Promise.resolve({
+            value: new TextEncoder().encode('chunk'),
+            done: false as const,
+          });
+        },
+      }),
+    };
+
+    await expect(writeStdin(stream, source, controller.signal)).resolves.toBeUndefined();
   });
 });

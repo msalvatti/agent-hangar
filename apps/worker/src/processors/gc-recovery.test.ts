@@ -134,6 +134,68 @@ describe('recoverAbandonedWorkspaces', () => {
   });
 
   /** Nothing to recover on an ordinary boot: no STOPPING row, no write, no log line. */
+  it('gives the claim back, so the pass after can take the same row', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, { status: 'READY', idleMinutes: 0 });
+    await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'STOPPING');
+    const claimStatus = container.repos.workspaces.claimStatus.bind(container.repos.workspaces);
+    const attempt = vi.spyOn(container.repos.workspaces, 'claimStatus').mockResolvedValueOnce(null);
+
+    // A row that moved between the listing and the write is left for later, and the claim taken to
+    // write it has to come back — the next boot of this process reaches the very same row.
+    expect(await recoverAbandonedWorkspaces(container)).toBe(0);
+    attempt.mockImplementation(claimStatus);
+
+    expect(await recoverAbandonedWorkspaces(container)).toBe(1);
+    expect(container.logs.join('')).not.toContain('work is still in flight');
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * The line names the row it closed out and the reason it wrote there: an operator seeing several
+   * of these at one boot is seeing how much a crash left behind, and which containers to look for.
+   */
+  it('names the workspace it closed out and why', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, { status: 'READY', idleMinutes: 0 });
+    await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'STOPPING');
+
+    expect(await recoverAbandonedWorkspaces(container)).toBe(1);
+
+    expect(
+      container.logs.map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({
+        msg: 'workspace closed out: the work holding it never came back',
+        workspaceId: workspace.id,
+        failureReason: 'teardown abandoned',
+      }),
+    );
+  });
+
+  /**
+   * A row somebody in this process is already working on is left alone, and the line says which.
+   */
+  it('names the workspace it left to the work still holding it', async () => {
+    const container = createTestContainer();
+    const workspace = await seedWorkspace(container, { status: 'READY', idleMinutes: 0 });
+    await container.repos.workspaces.claimStatus(workspace.id, 'READY', 'STOPPING');
+    const held = await container.repos.workspaces.get(workspace.id);
+    container.claims.claim(workspaceClaimKey(held ?? workspace));
+
+    expect(await recoverAbandonedWorkspaces(container)).toBe(0);
+
+    expect(
+      container.logs.map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({
+        msg: 'work is still in flight; its workspace is left alone',
+        workspaceId: workspace.id,
+      }),
+    );
+  });
+
+  /** Nothing to recover on an ordinary boot: no STOPPING row, no write, no log line. */
   it('does nothing when no workspace was left half-torn-down', async () => {
     const container = createTestContainer();
     await seedWorkspace(container, { status: 'READY', idleMinutes: 0 });

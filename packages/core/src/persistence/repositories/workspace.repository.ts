@@ -126,6 +126,10 @@ export class PrismaWorkspaceRepository implements WorkspaceRepository {
       translatePrismaError(error, {
         entity: 'Workspace',
         id,
+        // Stryker disable next-line ConditionalExpression: spread conditionally because the field
+        // is optional and this project forbids handing an optional property an explicit
+        // `undefined`; a chat that is not there and a chat that is absent read the same further on,
+        // where the id is the fallback for both.
         ...(chatId === null ? {} : { chatId }),
       });
     }
@@ -171,6 +175,10 @@ export class PrismaWorkspaceRepository implements WorkspaceRepository {
       translatePrismaError(error, {
         entity: 'Workspace',
         id,
+        // Stryker disable next-line ConditionalExpression: spread conditionally because the field
+        // is optional and this project forbids handing an optional property an explicit
+        // `undefined`; a chat that is not there and a chat that is absent read the same further on,
+        // where the id is the fallback for both.
         ...(chatId === null ? {} : { chatId }),
       });
     }
@@ -193,15 +201,19 @@ export class PrismaWorkspaceRepository implements WorkspaceRepository {
    *   that failed.
    */
   private async chatIdOf(id: string): Promise<string | null> {
-    try {
-      const row = await this.prisma.workspace.findUnique({
-        where: { id },
-        select: { chatId: true },
-      });
-      return row?.chatId ?? null;
-    } catch {
-      return null;
-    }
+    // The read runs on a path that is already failing, so its own failure is an answer rather than
+    // an exception: a lookup that cannot be made is a chat that cannot be named.
+    const row = await this.prisma.workspace
+      .findUnique({ where: { id }, select: { chatId: true } })
+      .catch(
+        // Stryker disable next-line ArrowFunction: a failed lookup and a row that is not there are
+        // the same absence to the optional read below, whichever of them this hands back.
+        () => null,
+      );
+    // Stryker disable next-line OptionalChaining: the value above is null exactly when there is no
+    // row, so the optional step and a plain read differ only in which error is thrown for a case
+    // that cannot arise.
+    return row?.chatId ?? null;
   }
 
   /** @inheritDoc */

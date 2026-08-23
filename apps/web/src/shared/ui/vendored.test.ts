@@ -111,6 +111,34 @@ describe('vendored ui primitives', () => {
   });
 
   /**
+   * And it covers every generated primitive in the directory. The checks above are written over
+   * this list, so an empty or shortened one proves nothing about the files it stopped naming — and
+   * those files would leave the coverage exclusion while still reading as vendor code.
+   */
+  it('names every generated primitive in the directory', async () => {
+    const present = (await readdir(`${PACKAGE_ROOT}${VENDORED_UI_DIRECTORY}`)).filter(
+      (file) => file.endsWith('.tsx') && !file.endsWith('.test.tsx'),
+    );
+    // Everything in the directory is either vendor code behind the exclusion or a file this
+    // project owns and measures — the seven the header names as edited, plus the one component
+    // written here from the start. Nothing may be in neither list.
+    const measured = [
+      'button.tsx',
+      'button-link.tsx',
+      'sheet.tsx',
+      'sonner.tsx',
+      'command.tsx',
+      'dropdown-menu.tsx',
+      'switch.tsx',
+      'tabs.tsx',
+    ];
+
+    expect(
+      [...VENDORED_UI_PRIMITIVES.map(({ file }) => file), ...measured].toSorted(),
+    ).toStrictEqual(present.toSorted());
+  });
+
+  /**
    * `vitest.config.ts` spreads this list straight into `coverage.exclude`, so it is the list that
    * decides what is measured. Pinning its shape here keeps a stray entry — an absolute path, a
    * bare file name — from silently excluding nothing.

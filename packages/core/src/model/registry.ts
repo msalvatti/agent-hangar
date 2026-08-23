@@ -35,6 +35,9 @@ const EMPTY_SCRIPT: FakeAgentModelProviderOptions = { script: {} };
  * @returns `true` when the registry can build a provider for it.
  */
 export function isModelProviderName(value: unknown): value is ModelProviderName {
+  // Stryker disable next-line ConditionalExpression: a value that is not text is in no list of
+  // names, so the search below refuses it either way. Asked first because the question is what the
+  // value is, and the search is how the answer is confirmed.
   return typeof value === 'string' && (MODEL_PROVIDER_NAMES as readonly string[]).includes(value);
 }
 
@@ -69,6 +72,9 @@ function resolveOpenAIClient(openai: CreateModelProviderDeps['openai']): OpenAIR
   }
   return createOpenAIClient({
     apiKey: openai.apiKey,
+    // Stryker disable next-line ConditionalExpression: spread conditionally because the property is
+    // optional and this project forbids handing one an explicit `undefined`; the client reads an
+    // absent base URL and one set to nothing as the same instruction.
     ...(openai.baseURL === undefined ? {} : { baseURL: openai.baseURL }),
   });
 }

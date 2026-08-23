@@ -88,7 +88,17 @@ export interface UseTurnEventsResult {
   reconnect: (options?: ReconnectOptions) => void;
 }
 
-function parseFrame(raw: string): AgentEvent {
+/**
+ * Reads one frame off the wire, refusing to throw on anything it carries.
+ *
+ * Another process writes these frames and a proxy can truncate one, so neither the JSON nor the
+ * shape is trusted. The two ways a frame can be unusable are reported apart: a line that is not
+ * JSON at all is a transport or producer fault, and JSON of the wrong shape is a protocol one.
+ *
+ * @param raw - The frame's `data` field.
+ * @returns The event, or a `protocol.error` describing why it is not one.
+ */
+export function parseFrame(raw: string): AgentEvent {
   let json: unknown;
   try {
     json = JSON.parse(raw);
@@ -119,10 +129,14 @@ export function useTurnEvents(options: UseTurnEventsOptions): UseTurnEventsResul
   } = options;
 
   const [state, dispatch] = useReducer(transcriptReducer, undefined, () =>
+    // Spread conditionally because these are optional properties this project may not hand an
+    // explicit `undefined`, and the seeder reads an absent one and one set to nothing the same way.
+    // Stryker disable ConditionalExpression
     createInitialState({
       ...(initialItems !== undefined ? { items: initialItems } : {}),
       ...(initialPhase !== undefined ? { phase: initialPhase } : {}),
       ...(lastEventId !== null ? { lastEventId } : {}),
+      // Stryker restore ConditionalExpression
     }),
   );
 
@@ -219,6 +233,8 @@ export function useTurnEvents(options: UseTurnEventsOptions): UseTurnEventsResul
       }
       const lastActivity = Math.max(current.lastActivityAt ?? 0, lastOpenedAtRef.current);
       if (nowRef.current() - lastActivity > STALL_TIMEOUT_MS) {
+        // Stryker disable next-line OptionalChaining: the watchdog only runs for a connection this
+        // effect opened, and the reference is cleared only by the teardown that stops it.
         sourceRef.current?.close();
         dispatch({ type: 'connection', connection: 'reconnecting' });
         openConnection(current.lastEventId);
@@ -227,6 +243,8 @@ export function useTurnEvents(options: UseTurnEventsOptions): UseTurnEventsResul
 
     return () => {
       clearInterval(watchdog);
+      // Stryker disable next-line OptionalChaining: the effect opened a connection before it
+      // registered this teardown, so there is always one to close.
       sourceRef.current?.close();
       sourceRef.current = null;
     };

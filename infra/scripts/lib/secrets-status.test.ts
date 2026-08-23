@@ -101,7 +101,10 @@ describe('secretsStatus', () => {
         assertDatabaseReachable: () => Promise.reject(new Error('refused')),
       }),
     );
-    expect(result).toEqual({ lines: [DB_UNREACHABLE_MESSAGE], exitCode: EXIT_DB_UNREACHABLE });
+    // The line is written out as well as named: it goes to stderr of a helper `doctor.sh` runs,
+    // and it is what an operator reads when the row it fills in says only "–".
+    expect(result).toEqual({ lines: ['error db-unreachable'], exitCode: EXIT_DB_UNREACHABLE });
+    expect(DB_UNREACHABLE_MESSAGE).toBe('error db-unreachable');
   });
 
   /**
@@ -116,9 +119,10 @@ describe('secretsStatus', () => {
       }),
     );
     expect(result).toEqual({
-      lines: [MASTER_KEY_MISSING_MESSAGE],
+      lines: ['error master-key-missing'],
       exitCode: EXIT_MASTER_KEY_MISSING,
     });
+    expect(MASTER_KEY_MISSING_MESSAGE).toBe('error master-key-missing');
   });
 
   /**

@@ -360,6 +360,31 @@ describe('createEventMapper', () => {
     ).toEqual([{ type: 'tool_call.arguments.delta', callId: 'call_only', delta: '{}' }]);
   });
 
+  /**
+   * Only a function call carries a call id, and only a function call is remembered. A message item
+   * remembered as one would make the correlation table answer for an item that is not a tool call,
+   * and the argument deltas of a later call keyed by that same id would be reported against it.
+   */
+  it('remembers no correlation for an output item that is not a function call', () => {
+    const mapper = createEventMapper();
+    mapper.map({
+      type: 'response.output_item.added',
+      item: MESSAGE_ITEM,
+      output_index: 0,
+      sequence_number: 1,
+    });
+
+    expect(
+      mapper.map({
+        type: 'response.function_call_arguments.delta',
+        delta: '{}',
+        item_id: MESSAGE_ITEM.id,
+        output_index: 0,
+        sequence_number: 2,
+      }),
+    ).toEqual([{ type: 'tool_call.arguments.delta', callId: MESSAGE_ITEM.id, delta: '{}' }]);
+  });
+
   it('falls back to the raw item id for a delta that arrives before its item', () => {
     // Keeps deltas of different calls apart even when the correlation is not known yet.
     const mapper = createEventMapper();
@@ -596,10 +621,15 @@ describe('mapErrorToModelEvent', () => {
   });
 
   it('maps a 400 context overflow by code and by message', () => {
+    // Whole, because this is the one 4xx the loop treats differently: the code the runtime reads,
+    // the sentence the operator reads, and the answer to whether trying again could help.
+    expect(mapErrorToModelEvent(apiError(400, 'too long', 'context_length_exceeded'))).toEqual({
+      type: 'error',
+      code: 'context_length',
+      message: 'request exceeds the model context window (HTTP 400)',
+      retryable: false,
+    });
     // Older deployments send only prose, so both signals have to be recognised.
-    expect(mapErrorToModelEvent(apiError(400, 'too long', 'context_length_exceeded'))?.code).toBe(
-      'context_length',
-    );
     expect(
       mapErrorToModelEvent(apiError(400, 'This model supports a maximum context of 400k tokens'))
         ?.code,
@@ -615,6 +645,24 @@ describe('mapErrorToModelEvent', () => {
       retryable: false,
     });
     expect(mapErrorToModelEvent(apiError(404, 'No such model'))?.retryable).toBe(false);
+    // A context-length failure reported under any other status is still one of these: the overflow
+    // branch belongs to 400, and read without that condition every such error would be reported as
+    // a conversation that is too long.
+    expect(
+      mapErrorToModelEvent(apiError(422, 'This model supports a maximum context of 400k tokens'))
+        ?.code,
+    ).toBe('unknown');
+  });
+
+  it('maps a 500 exactly to a retryable unknown error', () => {
+    // The boundary of the server-side range: measured one above it, the plainest server fault
+    // there is would be reported as a request the provider rejected, and never retried.
+    expect(mapErrorToModelEvent(apiError(500, 'Internal error'))).toEqual({
+      type: 'error',
+      code: 'unknown',
+      message: 'the model provider failed (HTTP 500)',
+      retryable: true,
+    });
   });
 
   it('maps 5xx to a retryable unknown error', () => {

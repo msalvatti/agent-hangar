@@ -75,7 +75,18 @@ describe('createRunScheduledJobProcessor', () => {
     // if this process dies; what losing means is that it never took it, and the collector's
     // teardown — not this run — owns the container from here.
     expect(runs[0]?.workspaceId).not.toBeNull();
-    expect(container.logs.join('')).toContain('was reclaimed before it could be used');
+    // Both identifiers on the line: which run lost its container, and which container it lost. The
+    // collector is about to destroy that one, and this is the only place the two are named
+    // together.
+    expect(
+      container.logs.map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({
+        msg: 'the workspace this run provisioned was reclaimed before it could be used',
+        runId: runs[0]?.id,
+        workspaceId: runs[0]?.workspaceId,
+      }),
+    );
   });
 
   /**
@@ -156,6 +167,42 @@ describe('createRunScheduledJobProcessor', () => {
    * the whole product of a scheduled coding job, and the operator reads it long after both the
    * container and the stream are gone.
    */
+  it('keeps nothing from the live-view events, and counts the highest step it saw', async () => {
+    const container = setupProcessorContainer({
+      script: scriptedRuntime([
+        { type: 'turn.started', turnId: 'ignored', at: '2026-01-01T00:00:00.000Z' },
+        { type: 'prepare.progress', message: 'Cloning…' },
+        { type: 'prepare.done', headSha: 'abc1234', branch: 'master' },
+        { type: 'heartbeat', at: '2026-01-01T00:00:01.000Z' },
+        { type: 'assistant.delta', text: 'thinking' },
+        { type: 'assistant.message', text: 'done thinking' },
+        { type: 'protocol.error', reason: 'schema-violation', length: 42 },
+        { type: 'step.started', step: 3 },
+        { type: 'step.started', step: 2 },
+        { type: 'turn.failed', error: { code: 'runtime_exit', message: 'the runtime gave up' } },
+      ]),
+    });
+    const job = await seedJob(container);
+
+    await run(container, delivery(job.id));
+
+    // Every one of those events is named in the sink: the seven above are deliberately kept
+    // nowhere, and a delivery that reached the end without recognising one of them would have
+    // dropped something the runtime sent it.
+    const [record] = await container.repos.jobRuns.listByJob(job.id);
+    expect(record).toMatchObject({
+      status: 'FAILED',
+      error: 'runtime_exit: the runtime gave up',
+      // The highest step reached, not the last one reported. Steps can arrive out of order when a
+      // step ends after the next begins, and a count that took the latest would report a run that
+      // did three steps as having done two.
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 3,
+      output: null,
+    });
+  });
+
   it('records where the run pushed', async () => {
     const script = happyScript();
     script.splice(script.length - 1, 0, {
@@ -246,6 +293,59 @@ describe('createRunScheduledJobProcessor', () => {
   });
 
   /**
+   * A delivery that carries no timestamp is stamped with now. BullMQ supplies one for a scheduled
+   * tick; a delivery made by hand may not, and a run stamped from a timestamp that is not there is
+   * stamped `Invalid Date` — a row the UI cannot order and the schedule cannot be read from.
+   */
+  it('opens one subscription for a tick, on the run it just created', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+
+    await run(container, delivery(job.id));
+
+    // A tick has no run to listen for until it has opened one, so nothing is subscribed before
+    // that. A watch opened earlier would be listening on a channel named after no run at all —
+    // a Stop for the run this delivery goes on to create would land nowhere.
+    const runs = await container.repos.jobRuns.listByJob(job.id);
+    expect(container.commands.subscribed).toStrictEqual([runs[0]?.id]);
+    expect(container.commands.closed).toStrictEqual([runs[0]?.id]);
+    expect(container.commands.subscriptions).toBe(0);
+  });
+
+  /**
+   * A manual delivery listens from the moment it is parsed, because the run row already exists and
+   * a Stop may arrive before the job row has even been read. That one subscription is reused for
+   * the run and closed exactly once: closed twice, a shared connection is told to unsubscribe from
+   * a channel it is no longer on, once per delivery.
+   */
+  it('reuses the manual run’s early subscription and closes it once', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+    const manual = await container.repos.jobRuns.create({
+      jobId: job.id,
+      trigger: 'MANUAL',
+      model: container.config.OPENAI_MODEL,
+      scheduledFor: container.clock.now(),
+    });
+
+    await run(container, delivery(job.id, 'MANUAL', { runId: manual.id }));
+
+    expect(container.commands.subscribed).toStrictEqual([manual.id]);
+    expect(container.commands.closed).toStrictEqual([manual.id]);
+    expect(container.commands.subscriptions).toBe(0);
+  });
+
+  it('stamps a delivery with no timestamp of its own with the current time', async () => {
+    const container = setupProcessorContainer({ script: scriptedRuntime(happyScript()) });
+    const job = await seedJob(container);
+
+    await run(container, delivery(job.id));
+
+    const runs = await container.repos.jobRuns.listByJob(job.id);
+    expect(runs[0]?.scheduledFor).toStrictEqual(container.clock.now());
+  });
+
+  /**
    * The prompt and the request are two descriptions of one run, and the agent obeys both. A prompt
    * naming the job's branch as the place to push, next to a sentence forbidding a push there, is
    * an instruction the agent cannot follow.
@@ -300,7 +400,15 @@ describe('createRunScheduledJobProcessor', () => {
 
     await run(container, delivery(job.id));
 
-    expect((await container.repos.jobRuns.listByJob(job.id))[0]?.status).toBe('CANCELLED');
+    // The steps it got through are recorded even though the run was cut short: a cancelled run's
+    // cost is what it did before the Stop, and a row carrying no usage at all reads as a run that
+    // never started.
+    expect((await container.repos.jobRuns.listByJob(job.id))[0]).toMatchObject({
+      status: 'CANCELLED',
+      inputTokens: 0,
+      outputTokens: 0,
+      stepCount: 0,
+    });
     expect([...container.repos.store.workspaces.values()][0]?.status).toBe('DESTROYED');
   });
 
@@ -627,7 +735,18 @@ describe('createRunScheduledJobProcessor', () => {
 
     await run(container, delivery(job.id));
 
-    expect(container.logs.join('')).toContain('destroying a run workspace failed');
+    expect(
+      container.logs.map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({
+        msg: 'destroying a run workspace failed',
+        workspaceId: [...container.repos.store.workspaces.values()][0]?.id,
+        err: expect.objectContaining({ message: 'daemon busy' }) as unknown,
+      }),
+    );
+    // And the run keeps the outcome it reached. The teardown writes a failure only for a run that
+    // never reached one of its own; over a run that succeeded it would replace the answer the user
+    // is waiting for with "the worker stopped".
     expect((await container.repos.jobRuns.listByJob(job.id))[0]?.status).toBe('SUCCEEDED');
     expect([...container.repos.store.workspaces.values()][0]?.status).toBe('DESTROYED');
     vi.restoreAllMocks();

@@ -54,6 +54,40 @@ function context<T extends Record<string, string>>(params: T): { params: Promise
   return { params: Promise.resolve(params) };
 }
 
+describe('every route module', () => {
+  /**
+   * None of them may be prerendered. A route Next.js decides is static is answered at build time
+   * from a container that reached no database — the sidebar would show whatever the build saw, a
+   * settings page would show credentials as unset, and an event stream would be a transcript
+   * frozen at whatever the first reader got. The flag is the only thing that says so, and it is
+   * per module: one file missing it is one route serving a snapshot.
+   */
+  it.each([
+    ['chats/route', () => import('./chats/route')],
+    ['chats/[id]/route', () => import('./chats/[id]/route')],
+    ['chats/[id]/messages/route', () => import('./chats/[id]/messages/route')],
+    ['chats/[id]/archive/route', () => import('./chats/[id]/archive/route')],
+    ['chats/[id]/restore/route', () => import('./chats/[id]/restore/route')],
+    ['chats/[id]/events/route', () => import('./chats/[id]/events/route')],
+    ['jobs/route', () => import('./jobs/route')],
+    ['jobs/[id]/route', () => import('./jobs/[id]/route')],
+    ['jobs/[id]/run/route', () => import('./jobs/[id]/run/route')],
+    ['jobs/[id]/runs/route', () => import('./jobs/[id]/runs/route')],
+    ['runs/[id]/route', () => import('./runs/[id]/route')],
+    ['runs/[id]/cancel/route', () => import('./runs/[id]/cancel/route')],
+    ['runs/[id]/events/route', () => import('./runs/[id]/events/route')],
+    ['turns/[id]/cancel/route', () => import('./turns/[id]/cancel/route')],
+    ['turns/[id]/retry/route', () => import('./turns/[id]/retry/route')],
+    ['repos/route', () => import('./repos/route')],
+    ['repos/branches/route', () => import('./repos/branches/route')],
+    ['settings/route', () => import('./settings/route')],
+    ['settings/[key]/route', () => import('./settings/[key]/route')],
+    ['health/route', () => import('./health/route')],
+  ])('%s is answered per request', async (_name, load) => {
+    expect((await load()).dynamic).toBe('force-dynamic');
+  });
+});
+
 describe('chat routes', () => {
   /**
    * The collection route serves both the sidebar list and chat creation, and both are dynamic:

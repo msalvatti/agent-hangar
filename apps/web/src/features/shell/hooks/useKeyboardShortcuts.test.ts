@@ -40,11 +40,45 @@ describe('useKeyboardShortcuts', () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
-  // A key without the command modifier keeps its normal meaning.
+  /**
+   * The bindings follow the handlers they are currently given. A view re-renders with new closures
+   * whenever what a shortcut should do changes — which chat is open, which dialog is on screen —
+   * and a listener bound once goes on calling the version of the handler that existed at mount.
+   */
+  it('runs the handlers it is currently given', () => {
+    const first = vi.fn();
+    const second = vi.fn();
+    // The other two are built once rather than per render: a fresh function on every render changes
+    // the effect's dependencies every time, which rebinds the listener continuously and measures
+    // the test's own churn instead of the hook's.
+    const others = { onNewChat: vi.fn(), onSettings: vi.fn() };
+    const { rerender } = renderHook(
+      ({ onSearch }: { onSearch: () => void }) => {
+        useKeyboardShortcuts({ onSearch, ...others });
+      },
+      { initialProps: { onSearch: first } },
+    );
+
+    rerender({ onSearch: second });
+    press({ key: 'k', metaKey: true });
+
+    expect(second).toHaveBeenCalledTimes(1);
+    expect(first).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A key without the command modifier keeps its normal meaning — and the browser keeps it: the
+   * handler runs on every keystroke the page sees, so a press it does not claim has to leave the
+   * event alone as well as leave the handlers uncalled. Swallowing the default is how a plain `k`
+   * stops reaching whatever the user was typing into.
+   */
   it('ignores an unmodified key', () => {
     const { handlers } = renderShortcuts();
-    press({ key: 'k' });
+
+    const event = press({ key: 'k' });
+
     expect(handlers.onSearch).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
   });
 
   // The shortcut still works while a field has focus, because it carries a modifier.

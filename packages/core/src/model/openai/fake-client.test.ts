@@ -10,6 +10,7 @@
 import type { ResponseStreamEvent } from 'openai/resources/responses/responses';
 import { describe, expect, it } from 'vitest';
 
+import type { OpenAIModelSummary } from './client.ts';
 import { DEFAULT_FAKE_MODELS, createFakeOpenAIClient } from './fake-client.ts';
 import { toResponseParams } from './mapping.ts';
 
@@ -174,5 +175,52 @@ describe('createFakeOpenAIClient', () => {
     const client = createFakeOpenAIClient({ throwOnListModels: new Error('no access') });
     const iterator = client.models.list()[Symbol.asyncIterator]();
     await expect(iterator.next()).rejects.toThrow('no access');
+  });
+});
+
+describe('what the fake client answers with', () => {
+  /** The two ids every suite that does not configure its own is written against. */
+  it('lists the default models', async () => {
+    const listed: OpenAIModelSummary[] = [];
+    for await (const model of createFakeOpenAIClient().models.list()) {
+      listed.push(model);
+    }
+
+    expect(listed).toStrictEqual([{ id: 'gpt-5.6-sol' }, { id: 'gpt-5.6-mini' }]);
+    expect(DEFAULT_FAKE_MODELS).toStrictEqual(['gpt-5.6-sol', 'gpt-5.6-mini']);
+  });
+
+  /**
+   * Stream options without a signal are ordinary: a caller that passes a model and nothing else
+   * has no cancellation to offer, and reading through the missing signal would turn every such
+   * call into a type error.
+   */
+  it('streams for a caller that offered no cancellation', async () => {
+    const client = createFakeOpenAIClient({ events: EVENTS });
+
+    expect(await drain(client.responses.stream(PARAMS, {}))).toEqual(EVENTS);
+  });
+
+  /**
+   * A configured delay is waited out between events, and the wait is what a cancellation
+   * interrupts: a delay that never settles leaves the stream hanging, and one that is not waited
+   * for makes every timing test meaningless.
+   */
+  it('waits the configured delay between events and stops when cancelled', async () => {
+    const client = createFakeOpenAIClient({ events: [...EVENTS, ...EVENTS], delayMs: 40 });
+    const controller = new AbortController();
+    setTimeout(() => {
+      controller.abort();
+    }, 10);
+
+    const drain = async (): Promise<void> => {
+      for await (const _event of client.responses.stream(PARAMS, {
+        signal: controller.signal,
+      })) {
+        // Each event is awaited for its delay; the abort lands inside the first one.
+      }
+    };
+
+    await expect(drain()).rejects.toThrow();
   });
 });

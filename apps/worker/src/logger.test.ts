@@ -51,7 +51,11 @@ describe('createLogger', () => {
     createLogger({ level: 'info', redactor, destination: stream }).info('ready');
     expect(lines).toHaveLength(1);
     const record: unknown = JSON.parse(lines[0]!);
-    expect(record).toMatchObject({ name: WORKER_LOGGER_NAME, msg: 'ready' });
+    // The name is written out rather than compared against the export it came from: every other
+    // module's tests find the worker's records by this word, so a comparison of the constant with
+    // itself would let it change to anything and still pass.
+    expect(record).toMatchObject({ name: 'worker', msg: 'ready' });
+    expect(WORKER_LOGGER_NAME).toBe('worker');
   });
 
   /**

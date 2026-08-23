@@ -34,6 +34,9 @@ export function useRetryTurn(): UseRetryTurnResult {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
 
+  // Nothing this callback reads changes between renders, so its dependency list is empty — and
+  // anything constant added to it would never change either.
+  // Stryker disable ArrayDeclaration
   const retry = useCallback(async (turnId: string): Promise<boolean> => {
     setBusy(true);
     setError(undefined);
@@ -47,6 +50,7 @@ export function useRetryTurn(): UseRetryTurnResult {
       setBusy(false);
     }
   }, []);
+  // Stryker restore ArrayDeclaration
 
   return { retry, busy, error };
 }

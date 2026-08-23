@@ -17,6 +17,7 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 
+import { IllegalTransitionError } from '../../errors.ts';
 import type { Redactor } from '../../secrets/types.ts';
 import type { PrismaClient } from '../generated/client.ts';
 
@@ -444,5 +445,212 @@ describe('PrismaWorkspaceRepository', () => {
       where: { id: 'ws-1', status: 'READY' },
       data: { status: 'BUSY', runnerRef: null, failureReason: null },
     });
+  });
+});
+
+describe('what the workspace repository asks the database for', () => {
+  /**
+   * The entity name travels into every `NotFoundError` this repository raises, and it is what a
+   * caller reads to say which row is missing. Emptied, a chat that has lost its workspace and a
+   * turn that has lost its own row report the same thing.
+   */
+  it.each([
+    ['markActive', async (repo: PrismaWorkspaceRepository) => repo.markActive('ws-1')],
+    ['setStatus', async (repo: PrismaWorkspaceRepository) => repo.setStatus('ws-1', 'READY')],
+    [
+      'claimStatus',
+      async (repo: PrismaWorkspaceRepository) => repo.claimStatus('ws-1', 'CREATING', 'READY'),
+    ],
+  ])('names the entity of a row %s could not find', async (_case, call) => {
+    const failing = vi.fn(() => Promise.reject(p2025()));
+    const repo = new PrismaWorkspaceRepository(
+      fakePrisma({ update: failing, updateManyAndReturn: failing }).client,
+      fakeRedactor,
+    );
+
+    const failure = await call(repo).catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(NotFoundError);
+    expect((failure as NotFoundError).entity).toBe('Workspace');
+  });
+
+  /**
+   * The chat a failing workspace belongs to is read back on the error path, and it is read by id
+   * and for that column alone. Asked without a `where` the answer is whatever row the database
+   * returns first, and asked without a `select` the whole row travels — including the columns this
+   * repository redacts on the way in.
+   */
+  it('reads the owning chat by id, and only that column', async () => {
+    const { client, workspace } = fakePrisma({ update: vi.fn(() => Promise.reject(p2025())) });
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+
+    await repo.setStatus('ws-1', 'BUSY').catch(() => undefined);
+
+    expect(workspace.findUnique).toHaveBeenCalledWith({
+      where: { id: 'ws-1' },
+      select: { chatId: true },
+    });
+  });
+
+  /**
+   * A workspace read by id is read by id: without the filter the query answers with whichever row
+   * the database happens to return, so a caller asking about one workspace is told about another.
+   */
+  it('reads one workspace by its id', async () => {
+    const { client, workspace } = fakePrisma();
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+
+    await repo.get('ws-1');
+
+    expect(workspace.findUnique).toHaveBeenCalledWith({ where: { id: 'ws-1' } });
+  });
+
+  /**
+   * A create that collides reports the chat it collided on, and a job workspace has no chat — the
+   * fallback says so rather than leaving the field absent, which reads as "unknown" further up.
+   */
+  it('names the chat a colliding create belongs to, or says there is none', async () => {
+    const repo = new PrismaWorkspaceRepository(
+      fakePrisma({ create: vi.fn(() => Promise.reject(p2002LiveWorkspace())) }).client,
+      fakeRedactor,
+    );
+
+    const failure = await repo
+      .create({
+        kind: 'JOB',
+        runnerKind: 'docker',
+        image: 'img',
+        repoUrl: 'https://github.com/acme/widgets',
+        branch: 'main',
+      })
+      .catch((error: unknown) => error);
+
+    expect((failure as LiveWorkspaceExistsError).chatId).toBe('none');
+  });
+});
+
+describe('what the workspace repository writes and refuses', () => {
+  /**
+   * A status write carries exactly the columns it was given. An update that also names the columns
+   * it was not given hands Prisma `undefined` for them, which the client treats as "leave alone"
+   * today and which nothing here would notice changing.
+   */
+  it('writes only the columns the caller supplied', async () => {
+    const { client, workspace } = fakePrisma();
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+
+    await repo.setStatus('ws-1', 'BUSY');
+
+    // Read off the call rather than through the matcher, which treats a property that is present
+    // and undefined as one that is absent — and present-and-undefined is exactly what a write that
+    // names every column produces for the ones it was not given.
+    expect(workspace.update.mock.calls).toStrictEqual([
+      [{ where: { id: 'ws-1' }, data: { status: 'BUSY' } }],
+    ]);
+  });
+
+  /**
+   * The first-time stamp belongs to the move into READY. Written on every move, a workspace that
+   * went READY, BUSY and READY again would have its readiness re-dated on a transition that is not
+   * one — and the guarded write is what makes it first-time-only in the first place.
+   */
+  it('stamps readiness only on the move into READY', async () => {
+    const { client, workspace } = fakePrisma();
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+
+    await repo.claimStatus('ws-1', 'READY', 'BUSY');
+
+    expect(workspace.updateMany).not.toHaveBeenCalled();
+  });
+
+  /**
+   * The lifecycle is checked before the database is touched at all. Without that check a move the
+   * state machine forbids becomes a write that happens to match no row, which reads as "somebody
+   * else got there first" rather than as the caller's own mistake.
+   */
+  it('refuses a forbidden move before writing anything', async () => {
+    const { client, workspace } = fakePrisma();
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+
+    await expect(repo.claimStatus('ws-1', 'DESTROYED', 'READY')).rejects.toThrow(
+      IllegalTransitionError,
+    );
+    expect(workspace.updateManyAndReturn).not.toHaveBeenCalled();
+  });
+
+  /**
+   * A live-workspace collision raised by a status write reports the chat that already owns one,
+   * read back on the error path — and when there is no such chat, or the row has gone, it falls
+   * back to the workspace id rather than reporting a chat that does not exist.
+   */
+  it.each([
+    ['the row names a chat', 'chat-1', 'chat-1'],
+    ['the row has no chat', null, 'ws-1'],
+  ])('reports the owner of a collision when %s', async (_case, chatId, expected) => {
+    const { client, workspace } = fakePrisma({
+      update: vi.fn(() => Promise.reject(p2002LiveWorkspace())),
+    });
+    workspace.findUnique.mockResolvedValue(chatId === null ? null : { ...workspaceRow, chatId });
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+
+    const failure = await repo.setStatus('ws-1', 'READY').catch((error: unknown) => error);
+
+    expect((failure as LiveWorkspaceExistsError).chatId).toBe(expected);
+  });
+
+  /**
+   * The same on the claimed path, which is the one the worker takes: a claim that collides with a
+   * live workspace has to say which chat already owns one, or the operator is sent to the
+   * workspace that failed rather than to the chat holding the one in its way.
+   */
+  it('reports the owner of a collision raised by a claim', async () => {
+    const { client, workspace } = fakePrisma({
+      updateManyAndReturn: vi.fn(() => Promise.reject(p2002LiveWorkspace())),
+    });
+    workspace.findUnique.mockResolvedValue({ ...workspaceRow, chatId: 'chat-7' });
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+
+    const failure = await repo
+      .claimStatus('ws-1', 'CREATING', 'READY')
+      .catch((error: unknown) => error);
+
+    expect((failure as LiveWorkspaceExistsError).chatId).toBe('chat-7');
+  });
+
+  /**
+   * The owner lookup runs on a path that is already failing, so it must not fail again: a database
+   * that refuses the read leaves the original failure to be reported against the workspace id.
+   */
+  it('falls back to the workspace id when the owner lookup itself fails', async () => {
+    const { client, workspace } = fakePrisma({
+      update: vi.fn(() => Promise.reject(p2002LiveWorkspace())),
+    });
+    workspace.findUnique.mockRejectedValue(new Error('connection lost'));
+    const repo = new PrismaWorkspaceRepository(client, fakeRedactor);
+
+    const failure = await repo.setStatus('ws-1', 'READY').catch((error: unknown) => error);
+
+    expect((failure as LiveWorkspaceExistsError).chatId).toBe('ws-1');
+  });
+
+  /** A create that finds no row to attach to reports which entity was missing. */
+  it('names the entity of a create that could not find its row', async () => {
+    const repo = new PrismaWorkspaceRepository(
+      fakePrisma({ create: vi.fn(() => Promise.reject(p2025())) }).client,
+      fakeRedactor,
+    );
+
+    const failure = await repo
+      .create({
+        kind: 'CHAT',
+        chatId: 'chat-1',
+        runnerKind: 'docker',
+        image: 'img',
+        repoUrl: 'https://github.com/acme/widgets',
+        branch: 'main',
+      })
+      .catch((error: unknown) => error);
+
+    expect((failure as NotFoundError).entity).toBe('Workspace');
   });
 });

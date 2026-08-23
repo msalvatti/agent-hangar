@@ -86,6 +86,9 @@ function describeIssue(issue: ZodIssue): string {
   if (issue.code === 'unrecognized_keys') {
     return `${String(issue.keys.length)} unrecognized argument(s)`;
   }
+  // Stryker disable next-line StringLiteral: every tool takes a flat object of primitives, so an
+  // issue names one property and the path it is joined from is a single segment; the separator
+  // between segments is written for the shape, not reached by it.
   const where = issue.path.join('.');
   return where === '' ? issue.message : `${where}: ${issue.message}`;
 }

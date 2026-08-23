@@ -178,7 +178,10 @@ describe('createProvider with the openai provider', () => {
       credentials,
     );
     expect(provider).toBe(stubProvider);
-    expect(openai).toHaveBeenCalledWith({ apiKey: OPENAI_CANARY });
+    // Read off the call itself rather than through the matcher, which treats a property that is
+    // present and undefined as one that is absent. Handed `baseURL: undefined`, the SDK is being
+    // told the base URL was configured and is empty rather than never configured at all.
+    expect(openai.mock.calls).toStrictEqual([[{ apiKey: OPENAI_CANARY }]]);
   });
 
   /** Local proxies and compatible gateways are configured this way. */

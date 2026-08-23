@@ -4,6 +4,8 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
+import { invalidateQueries } from '@/shared/api/use-api-query';
+
 import { useBranches } from './useBranches';
 
 describe('useBranches', () => {
@@ -35,6 +37,39 @@ describe('useBranches', () => {
 
   // `refetch()` has no `enabled` guard of its own (unlike the query's automatic effects), so a
   // caller invoking it while `repo` is still null reaches the loader's `repo ?? ''` fallback.
+  /**
+   * The listing is keyed by the repository it is for, so switching repositories switches lists
+   * rather than showing the previous one's branches — and the key is the name the settings page
+   * invalidates by, so a token change refreshes it.
+   */
+  it('keys the listing by the repository it is for', async () => {
+    const { result, rerender } = renderHook(({ repo }: { repo: string }) => useBranches(repo), {
+      initialProps: { repo: 'acme/api' },
+    });
+    await waitFor(() => {
+      expect(result.current.status).toBe('success');
+    });
+
+    rerender({ repo: 'acme/web' });
+
+    // A key that did not carry the repository would leave the previous repository's branches on
+    // screen; the hook reports a fresh load instead.
+    expect(result.current.status).toBe('loading');
+    await waitFor(() => {
+      expect(result.current.status).toBe('success');
+    });
+
+    act(() => {
+      invalidateQueries(['branches']);
+    });
+    await waitFor(() => {
+      expect(result.current.isRefetching).toBe(true);
+    });
+    await waitFor(() => {
+      expect(result.current.isRefetching).toBe(false);
+    });
+  });
+
   it('does not throw when refetch is called before a repo is chosen', async () => {
     const { result } = renderHook(() => useBranches(null));
     await act(async () => {

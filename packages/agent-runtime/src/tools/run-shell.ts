@@ -75,6 +75,9 @@ interface RunState {
  * @param signal - Signal to deliver.
  */
 function killGroup(pid: number | undefined, signal: NodeJS.Signals): void {
+  // Stryker disable next-line ConditionalExpression,BlockStatement: without a pid the negation
+  // below is NaN, which `process.kill` refuses with an error the catch already swallows, so the
+  // group is left alone either way. Stated as a guard because that is the reason, not a rescue.
   if (pid === undefined) {
     return;
   }
@@ -105,6 +108,8 @@ function collectStream(
     return;
   }
   // Setting the encoding lets the stream carry a multi-byte character across a chunk boundary.
+  // Stryker disable next-line StringLiteral: an encoding the decoder does not recognise falls back
+  // to UTF-8 rather than being refused, so an empty name decodes the same bytes into the same text.
   source.setEncoding('utf8');
   source.on('data', (chunk: string) => {
     state.totalBytes += Buffer.byteLength(chunk);
@@ -203,6 +208,8 @@ function armTermination(
   ];
   const onAbort = (): void => {
     state.cancelled = true;
+    // Stryker disable next-line StringLiteral: `process.kill` sends SIGTERM when it is handed no
+    // signal name, which is this one, so the two spellings deliver the same signal.
     killGroup(child.pid, 'SIGTERM');
     timers.push(
       setTimeout(() => {
@@ -210,7 +217,10 @@ function armTermination(
       }, ABORT_GRACE_MS),
     );
   };
-  signal?.addEventListener('abort', onAbort, { once: true });
+  // No `once` option: an `AbortSignal` fires this event at most once, and the teardown below
+  // detaches the listener regardless, so asking for a listener that removes itself would describe
+  // a second call that cannot arrive.
+  signal?.addEventListener('abort', onAbort);
   // A listener added to an already-aborted signal is never called, so a cancellation that
   // arrived before the command started would otherwise let it run to completion.
   if (signal?.aborted === true) {

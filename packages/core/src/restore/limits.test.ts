@@ -81,4 +81,9 @@ describe('defaultWorkBranch', () => {
   it('refuses an empty id', () => {
     expect(() => defaultWorkBranch('')).toThrow(RangeError);
   });
+
+  /** The refusal names the rule, because the caller passed something it thought was an id. */
+  it('says why it refuses an empty id', () => {
+    expect(() => defaultWorkBranch('')).toThrow('chat or run id must not be empty');
+  });
 });

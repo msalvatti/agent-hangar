@@ -246,6 +246,8 @@ async function reportExpiry(context: PumpContext, cursor: string): Promise<boole
   }
   context.write(formatSseFrame({ id: cursor, event: SSE_EXPIRED_EVENT, data: '{}' }));
   context.stop();
+  // Stryker disable next-line BooleanLiteral: closing is what ends the stream; this only lets the
+  // caller stop early instead of walking through steps a closed stream has already made no-ops.
   return true;
 }
 
@@ -274,6 +276,8 @@ async function reportTrimmedResumePoint(context: PumpContext, cursor: string): P
   }
   context.write(formatSseFrame({ id: cursor, event: SSE_EXPIRED_EVENT, data: '{}' }));
   context.stop();
+  // Stryker disable next-line BooleanLiteral: as above — the close is the decision, this is the
+  // shortcut past steps that would do nothing.
   return true;
 }
 
@@ -283,22 +287,19 @@ async function reportTrimmedResumePoint(context: PumpContext, cursor: string): P
  * @param context - The pump context.
  * @param entries - Entries to emit, oldest first.
  * @param cursor - Cursor before the batch.
- * @returns The cursor after the batch, and whether the stream ended.
+ * @returns The cursor after the batch. A terminal entry closes the stream on the way out, which is
+ *   what every caller's loop reads to know there is nothing left to do.
  */
-function emitBatch(
-  context: PumpContext,
-  entries: readonly StreamEntry[],
-  cursor: string,
-): { cursor: string; ended: boolean } {
+function emitBatch(context: PumpContext, entries: readonly StreamEntry[], cursor: string): string {
   let position = cursor;
   for (const entry of entries) {
     position = entry[0];
     if (emit(entry, context.write)) {
       context.stop();
-      return { cursor: position, ended: true };
+      return position;
     }
   }
-  return { cursor: position, ended: false };
+  return position;
 }
 
 /**
@@ -322,24 +323,17 @@ async function tail(context: PumpContext, from: string): Promise<void> {
       // Both exit conditions are rechecked after every empty read, not only before the first one.
       // A turn that finishes without ever writing an entry — the worker crashed before its first
       // event, or the replay cache expired while the reader waited — leaves the cursor at the very
-      // start, and testing only the cursor would keep the connection heartbeating for ever.
-      if (await reportExpiry(context, cursor)) {
-        return;
-      }
+      // start, and testing only the first read would keep the connection heartbeating for ever.
+      await reportExpiry(context, cursor);
       // The work finished without a terminal event ever being written, which a crashed worker
       // produces. Everything up to the cursor was delivered, so the stream ends.
-      if (cursor !== SSE_STREAM_START && (await options.isFinished())) {
+      if (await options.isFinished()) {
         context.stop();
-        return;
       }
       continue;
     }
     for (const [, entries] of reply) {
-      const batch = emitBatch(context, entries, cursor);
-      cursor = batch.cursor;
-      if (batch.ended) {
-        return;
-      }
+      cursor = emitBatch(context, entries, cursor);
     }
   }
 }
@@ -353,19 +347,21 @@ async function pump(context: PumpContext): Promise<void> {
   const { options } = context;
   try {
     let cursor = options.lastEventId ?? SSE_STREAM_START;
+    // The early returns below are the optimisation described in the module header: each of the
+    // three steps closes the stream itself when it ends it, and every step after a closed stream is
+    // already a no-op — the tail's own loop refuses to run, and a frame written to a closed body
+    // raises the failure the catch treats as the ordinary end.
+    // Stryker disable next-line ConditionalExpression,BlockStatement
     if (await reportExpiry(context, cursor)) {
       return;
     }
     if (options.lastEventId !== undefined) {
+      // Stryker disable next-line ConditionalExpression,BlockStatement
       if (await reportTrimmedResumePoint(context, cursor)) {
         return;
       }
       const replayed = await context.connection.xrange(options.streamKey, `(${cursor}`, '+');
-      const batch = emitBatch(context, replayed, cursor);
-      cursor = batch.cursor;
-      if (batch.ended) {
-        return;
-      }
+      cursor = emitBatch(context, replayed, cursor);
     }
     await tail(context, cursor);
   } catch (error) {

@@ -27,7 +27,8 @@
   UI) · Postgres 18 + Prisma 7 (adapter-pg) · Redis 8 + BullMQ 6 ·
   dockerode 5 · openai SDK (Responses API) · Vitest 4 · Playwright ·
   Stryker 10. Defining constraint: **100 % coverage on all four metrics
-  per package, zero suppressions, secrets only as ciphertext in Postgres**.
+  per package, a mutation score of 100 on every scope, zero suppressions,
+  secrets only as ciphertext in Postgres**.
 - **Roadmap file**: docs/plan.md (§4 wave plan + dependency table, §12
   status dashboard)
 - **Tasks index**: docs/tasks/README.md
@@ -72,7 +73,7 @@ of W3-B and is quoted as it was written; do not normalise that one.
 | launch | `gh api repos/bymaxone/agent-hangar/rules/branches/main --jq 'map(.type) \| index("pull_request")'` prints a number | informational — confirms `main` is PR-only (org ruleset `protect-default-branch`): **no direct pushes to `main` after the seed**, dashboard updates go through PRs (see Dashboard policy) |
 | every lane spawn | `git ls-remote --heads origin <lane branch>` prints **nothing** | a leftover branch from a dead run — investigate (open PR? merged?) before re-spawning; never spawn onto an existing remote branch blindly |
 | W3-A, task 3A.4 (real OpenAI smoke) | operator has entered a real OpenAI key + GitHub PAT in the Settings page of the W3-A instance (`http://127.0.0.1:3400/settings`, `AH_INSTANCE=w3a`) | **not blocking** — the task file itself says: implement + unit-test the script, mark the real run "pending" in the completion log and the PR. The orchestrator fires a `PushNotification` when W3-A is spawned so the operator can enter the keys while the lane runs; if the real run stays pending, W3-A merges, §12 gets `partial: real OpenAI smoke pending — run pnpm smoke:openai`, and the chain continues (W4 depends on the merge, not on the smoke). |
-| W4-C (orchestrator follow-up) | both W4-A and W4-B merged with `break: 80` met on a full run (numbers in their PRs) | skip W4-C; README "Known gaps" keeps the mutation rows (W3-B wrote them). **Not reachable today:** W4-A and W4-B were deferred by decision on 2026-08-20 (plan §9), so this row waits on the operator and not on a check |
+| W4-C (orchestrator follow-up) | W4-A and W4-B done | **Done on 2026-08-23, and larger than this row described:** the mutation work covers every package plus `infra/scripts/lib` at `break: 100`, not two packages at 80, and it lives on a local branch that was never pushed (plan §9). The README badge, section and "Known gaps" row landed with it. What remains of W4-C is the `mutation` CI job alone |
 
 No lane depends on an npm publication or any other external event the repo
 cannot influence — nothing to poll.
@@ -187,10 +188,10 @@ orchestrator performs them; implementers only describe them in PR bodies.
    with commits but no PR and a dead implementer → spawn a finalize
    sub-agent on the **same worktree path** to run the remaining tasks,
    gates, review and PR.
-6. **W4-C** (after W4-A + W4-B merged): a tiny PR adding the `mutation` CI
-   job (PR-scoped incremental + nightly full, `reports/mutation/`
-   artifact) and the README mutation badge/section, removing the W4 rows
-   from README "Known gaps". Orchestrator-authored, merged under the gate.
+6. **W4-C** — the README half is done (2026-08-23, with the mutation work
+   itself). What is left is the `mutation` CI job: a nightly full run with
+   the `reports/mutation/` artifact. A per-pull-request incremental leg is
+   optional and probably not worth it — a full sweep is about two hours.
 7. **W3-A real-smoke notification** (see External preconditions).
 
 ### Dashboard policy (because `main` is PR-only)
@@ -291,7 +292,7 @@ All coverage thresholds are **100/100/100/100** on the package's
 | Lighthouse accessibility ≥ 95 on the lane's pages with MSW (`pnpm dlx lighthouse … --only-categories=accessibility`), screenshots in the PR | W1-G, W1-H, W3-A |
 | `pnpm test:e2e` in mock mode (specs compile, selectors resolve, harness boots/tears down) | W2-C |
 | Playwright suite green **3× consecutively** on the real stack with `--retries=0`; `pnpm smoke:openai` (or "pending"); `pnpm infra:doctor` exit 0 for two instances; CI all jobs green | W3-A |
-| `pnpm test:mutation` per package, full run with `incremental: false`, `break: 80` (target 90), equivalent-mutant ledger in the PR | W4-A (core), W4-B (agent-runtime) |
+| `pnpm test:mutation`, full run with `incremental: false`, `break: 100` on every scope, equivalent mutants documented in the source beside the directive that names them | W4-A, W4-B — done 2026-08-23, locally |
 | `/bymax-quality:code-review full` → zero findings; `/security-review` → zero findings (including Low) | every lane, before the PR |
 
 **CI checks (contractual job names from W0 T0.8 / spec 06 §6):** `lint`,

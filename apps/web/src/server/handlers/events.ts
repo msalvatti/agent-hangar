@@ -46,6 +46,9 @@ export interface EventsParams {
  */
 function resumePoint(request: Request, from: string | undefined): string | undefined {
   const header = request.headers.get('last-event-id');
+  // The null test narrows the type for the pattern beside it; a header that is not there is
+  // refused by that pattern too, which reads a missing one as the four letters of `null`.
+  // Stryker disable next-line ConditionalExpression
   if (header !== null && STREAM_ID_PATTERN.test(header)) {
     return header;
   }
@@ -132,5 +135,8 @@ export function runEvents(
  * @returns `{ lastEventId }` or `{}`.
  */
 function withResumePoint(lastEventId: string | undefined): { lastEventId?: string } {
+  // Stryker disable next-line ConditionalExpression: the property is left out rather than set to
+  // nothing, which this project requires of an optional one — and the stream factory reads an
+  // absent resume point and one set to `undefined` as the same instruction.
   return lastEventId === undefined ? {} : { lastEventId };
 }

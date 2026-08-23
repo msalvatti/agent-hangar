@@ -13,7 +13,7 @@ import type { ModelErrorCode } from '../types.ts';
 
 /** A model provider call that is not a stream failed. */
 export class ModelProviderError extends AgentHangarError {
-  override readonly code = 'MODEL_PROVIDER_ERROR' as const;
+  declare readonly code: 'MODEL_PROVIDER_ERROR';
   /** Same categories a streamed `error` event uses, so callers branch on one vocabulary. */
   readonly modelErrorCode: ModelErrorCode;
   /** Whether the caller may retry after a backoff. */

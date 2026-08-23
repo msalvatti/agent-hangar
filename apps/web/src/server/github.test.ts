@@ -169,6 +169,9 @@ describe('listRepos', () => {
   it('sends the documented headers', async () => {
     const { deps, fetchSpy } = harness(() => jsonResponse([]));
     await createGithubClient(deps).listRepos('');
+    // Most recently updated first, and every affiliation the token can reach: the picker shows one
+    // page and the sort is what decides which repositories a user finds in it.
+    expect(String(fetchSpy.mock.calls[0]?.[0])).toContain('sort=updated');
     const init = fetchSpy.mock.calls[0]?.[1] as RequestInit;
     expect(init.headers).toMatchObject({
       Authorization: `Bearer ${GITHUB_CANARY}`,
@@ -213,6 +216,9 @@ describe('listRepos', () => {
     await expect(createGithubClient(deps).listRepos('')).rejects.toMatchObject({
       status: 409,
       code: 'SECRETS_MISSING',
+      // The sentence sends the user to Settings; a conflict with no words is a dialog that says
+      // only that something is wrong.
+      message: 'GitHub token is not configured',
     });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
@@ -272,7 +278,45 @@ describe('pagination', () => {
     expect(fetchSpy).toHaveBeenCalledTimes(GITHUB_MAX_PAGES);
     expect(repos).toHaveLength(GITHUB_MAX_PAGES);
     expect(truncated).toBe(true);
-    expect(logOutput()).toContain('github listing stopped at the page limit');
+    // The endpoint and how far the walk got: the path carries no credential, and the pair is what
+    // tells an operator whether a picker's list is short because of this limit or because of the
+    // token's own reach.
+    expect(
+      logOutput()
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(
+      expect.objectContaining({
+        msg: 'github listing stopped at the page limit',
+        path: expect.stringContaining('/user/repos') as unknown,
+        pages: GITHUB_MAX_PAGES,
+      }),
+    );
+  });
+
+  /**
+   * A walk that ends because the last page offered no further one is complete. Reported as
+   * truncated, the picker would carry a warning on every ordinary listing; and a `Link` header
+   * whose `next` element is written with the spacing the RFC allows is still a next page.
+   */
+  it.each([
+    ['no spacing', `<${BASE_URL}/user/repos?page=2>;rel="next"`],
+    ['extra spacing', `<${BASE_URL}/user/repos?page=2>  ;   rel="next"`],
+  ])('follows a next link written with %s', async (_label, link) => {
+    let calls = 0;
+    const { deps, fetchSpy } = harness(() => {
+      calls += 1;
+      return calls === 1
+        ? jsonResponse([GITHUB_REPO], 200, { link })
+        : jsonResponse([GITHUB_REPO], 200);
+    });
+
+    const { repos, truncated } = await createGithubClient(deps).listRepos('');
+
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    expect(repos).toHaveLength(2);
+    expect(truncated).toBe(false);
   });
 
   /**
@@ -334,10 +378,28 @@ describe('listBranches', () => {
     const { deps, fetchSpy } = harness(() => jsonResponse([]));
     const client = createGithubClient(deps);
     for (const slug of ['acme', 'acme/widgets/extra', '../../user', 'acme/widgets?x=1', 'a b/c']) {
-      await expect(client.listBranches(slug)).rejects.toThrow(ValidationError);
+      await expect(client.listBranches(slug)).rejects.toThrow(
+        'Repository must be given as "owner/name"',
+      );
     }
     expect(fetchSpy).not.toHaveBeenCalled();
   });
+
+  /**
+   * Only a segment made *entirely* of dots is refused. A name that merely begins or ends with one
+   * is an ordinary repository — `.github` is the conventional one every organisation has — and a
+   * check that read part of the segment would refuse to list its branches.
+   */
+  it.each(['acme/.github', 'acme/widgets.', '.acme/widgets'])(
+    'accepts %s, which is a name rather than a path segment',
+    async (slug) => {
+      const { deps, fetchSpy } = harness(() => jsonResponse([]));
+
+      await createGithubClient(deps).listBranches(slug);
+
+      expect(String(fetchSpy.mock.calls[0]?.[0])).toContain(`/repos/${slug}/branches`);
+    },
+  );
 
   /**
    * Regression: a segment made only of dots passes any character-class check — `..` is as ordinary
@@ -364,7 +426,13 @@ describe('failures', () => {
     const { deps } = harness(() => jsonResponse({ message: 'Bad credentials' }, 401));
     const rejection = createGithubClient(deps).listRepos('');
     await expect(rejection).rejects.toBeInstanceOf(GithubApiError);
-    await expect(rejection).rejects.toMatchObject({ status: 401 });
+    // The status travels in the message as well as on the error: it is the only thing this client
+    // is willing to repeat about a failed call, and it is what tells an expired token from an
+    // outage.
+    await expect(rejection).rejects.toMatchObject({
+      status: 401,
+      message: 'GitHub answered 401',
+    });
   });
 
   /**
@@ -381,7 +449,14 @@ describe('failures', () => {
 
     expect(response.bodyUsed).toBe(false);
     assertNoCanary(logOutput());
-    expect(logOutput()).toContain('github request failed');
+    // The status is the one thing repeated about a failed call, and it is the thing that tells an
+    // expired token from an outage — a line without it reports only that something went wrong.
+    expect(
+      logOutput()
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as Record<string, unknown>),
+    ).toContainEqual(expect.objectContaining({ msg: 'github request failed', status: 403 }));
     expect(logOutput()).not.toContain('rejected');
   });
 
@@ -391,7 +466,9 @@ describe('failures', () => {
    */
   it('reports a successful response with an unreadable body', async () => {
     const { deps } = harness(() => new Response('<html>', { status: 200 }));
-    await expect(createGithubClient(deps).listRepos('')).rejects.toBeInstanceOf(GithubApiError);
+    await expect(createGithubClient(deps).listRepos('')).rejects.toMatchObject({
+      message: 'GitHub returned a body that is not JSON',
+    });
   });
 
   /**
@@ -416,9 +493,11 @@ describe('failures', () => {
    */
   it('rejects a branch listing of an unexpected shape', async () => {
     const { deps } = harness(() => jsonResponse([{ name: 'main', protected: true }]));
-    await expect(createGithubClient(deps).listBranches('acme/widgets')).rejects.toBeInstanceOf(
-      GithubApiError,
-    );
+    // Told apart from a body that was not JSON at all: one is a forge answering something else,
+    // the other is a contract that has moved, and only the sentence says which.
+    await expect(createGithubClient(deps).listBranches('acme/widgets')).rejects.toMatchObject({
+      message: 'GitHub returned a body of an unexpected shape',
+    });
   });
 
   /**
@@ -547,11 +626,15 @@ describe('truncation', () => {
    * picker's note depends on before it may claim the list is the token's whole reach.
    */
   it('reports a completed walk as not truncated', async () => {
-    const { deps } = harness(() => jsonResponse([GITHUB_REPO]));
+    const { deps, logOutput } = harness(() => jsonResponse([GITHUB_REPO]));
 
     const { truncated } = await createGithubClient(deps).listRepos('');
 
     expect(truncated).toBe(false);
+    // And says nothing about a limit it never reached. The warning is what an operator reads as
+    // "this account has more repositories than the picker shows"; written after every ordinary
+    // listing, it would say that of every account.
+    expect(logOutput()).not.toContain('github listing stopped at the page limit');
   });
 
   /**

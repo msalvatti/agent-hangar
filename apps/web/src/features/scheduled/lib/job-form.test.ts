@@ -39,6 +39,14 @@ const job: JobSummary = {
   lastRunStatus: null,
 };
 
+/**
+ * What the scheduler's parser says about `nope`, written out rather than read back from the
+ * adapter: the point of the check is that the parser's own explanation reaches the field, and
+ * comparing it against itself would pass however the message were mangled on the way.
+ */
+const CRON_REJECTION_REASON =
+  'expected 5 fields (minute hour day-of-month month day-of-week), got 1';
+
 function validForm(): JobFormValues {
   return {
     name: 'Nightly tests',
@@ -55,9 +63,17 @@ describe('emptyJobForm', () => {
   /** Starts enabled, blank fields, timezone defaulted to the system zone. */
   it('builds a blank, enabled form', () => {
     const form = emptyJobForm();
-    expect(form.enabled).toBe(true);
-    expect(form.name).toBe('');
-    expect(form.repoUrl).toBeNull();
+    // Every text field starts empty and every choice unmade: a dialog that opened with a leftover
+    // prompt or cron would save it the moment the user filled in the rest.
+    expect(form).toStrictEqual({
+      name: '',
+      repoUrl: null,
+      branch: null,
+      cron: '',
+      timezone: form.timezone,
+      prompt: '',
+      enabled: true,
+    });
     expect(form.timezone.length).toBeGreaterThan(0);
   });
 });
@@ -99,6 +115,18 @@ describe('formToRequest', () => {
     });
   });
 
+  /**
+   * The name and the expression are trimmed on the way out. A cron with a trailing space is a
+   * different string to the scheduler, and a name padded with spaces is stored padded.
+   */
+  it('trims the name and the cron expression', () => {
+    const request = formToRequest({ ...validForm(), name: '  Nightly  ', cron: '  0 2 * * *  ' });
+    expect(request.name).toBe('Nightly');
+    expect(request.cron).toBe('0 2 * * *');
+    // The prompt is not trimmed: leading indentation is part of what the operator wrote.
+    expect(formToRequest({ ...validForm(), prompt: '  keep  ' }).prompt).toBe('  keep  ');
+  });
+
   /** A null repository/branch maps to an empty string (the field checks catch it as invalid). */
   it('maps a null repository URL and branch to empty strings', () => {
     const request = formToRequest({ ...validForm(), repoUrl: null, branch: null });
@@ -115,17 +143,28 @@ describe('validateJobForm', () => {
 
   /** An empty name is rejected. */
   it('rejects an empty name', () => {
-    expect(validateJobForm({ ...validForm(), name: '   ' }).name).toBeDefined();
+    // Written out, and asserted as the whole result: a name of nothing but spaces has to be caught
+    // by the field check, in the form's own words. Left to the schema it still fails, but under
+    // zod's phrasing and only after every other field has been re-checked.
+    expect(validateJobForm({ ...validForm(), name: '   ' })).toStrictEqual({
+      name: 'Name is required.',
+    });
   });
 
   /** A name longer than the UI limit is rejected. */
   it('rejects a name that is too long', () => {
-    expect(validateJobForm({ ...validForm(), name: 'x'.repeat(81) }).name).toBeDefined();
+    expect(validateJobForm({ ...validForm(), name: 'x'.repeat(81) })).toStrictEqual({
+      name: 'Name must be 80 characters or fewer.',
+    });
+    // The limit itself is allowed: an off-by-one here refuses a name the user is entitled to.
+    expect(validateJobForm({ ...validForm(), name: 'x'.repeat(80) })).toStrictEqual({});
   });
 
   /** A missing repository is rejected. */
   it('rejects a missing repository', () => {
-    expect(validateJobForm({ ...validForm(), repoUrl: null }).repoUrl).toBeDefined();
+    expect(validateJobForm({ ...validForm(), repoUrl: null })).toStrictEqual({
+      repoUrl: 'Repository is required.',
+    });
   });
 
   /**
@@ -140,28 +179,49 @@ describe('validateJobForm', () => {
   });
 
   /** A missing branch is rejected. */
-  it('rejects a missing branch', () => {
-    expect(validateJobForm({ ...validForm(), branch: '' }).branch).toBeDefined();
+  it.each([
+    ['no branch chosen', null],
+    ['an empty branch', ''],
+    ['a branch of nothing but spaces', '   '],
+  ])('rejects %s', (_label, branch) => {
+    expect(validateJobForm({ ...validForm(), branch })).toStrictEqual({
+      branch: 'Branch is required.',
+    });
   });
 
   /** An invalid cron expression is rejected with the adapter's reason. */
   it('rejects an invalid cron expression', () => {
-    expect(validateJobForm({ ...validForm(), cron: 'nope' }).cron).toBeDefined();
+    const errors = validateJobForm({ ...validForm(), cron: 'nope' });
+    // The adapter's own explanation reaches the field — not a generic "invalid" this file made up,
+    // which would tell the user nothing about which of the five parts it could not read.
+    expect(errors).toStrictEqual({ cron: CRON_REJECTION_REASON });
   });
 
   /** An unknown timezone is rejected. */
   it('rejects an unknown timezone', () => {
-    expect(validateJobForm({ ...validForm(), timezone: 'Not/AZone' }).timezone).toBeDefined();
+    expect(validateJobForm({ ...validForm(), timezone: 'Not/AZone' })).toStrictEqual({
+      timezone: 'Unknown timezone.',
+    });
   });
 
   /** An empty prompt is rejected. */
-  it('rejects an empty prompt', () => {
-    expect(validateJobForm({ ...validForm(), prompt: '' }).prompt).toBeDefined();
+  it.each([
+    ['an empty prompt', ''],
+    ['a prompt of nothing but spaces', '   '],
+  ])('rejects %s', (_label, prompt) => {
+    expect(validateJobForm({ ...validForm(), prompt })).toStrictEqual({
+      prompt: 'Prompt is required.',
+    });
   });
 
   /** A prompt longer than the UI limit is rejected. */
   it('rejects a prompt that is too long', () => {
-    expect(validateJobForm({ ...validForm(), prompt: 'x'.repeat(4001) }).prompt).toBeDefined();
+    expect(validateJobForm({ ...validForm(), prompt: 'x'.repeat(4001) })).toStrictEqual({
+      prompt: 'Prompt must be 4000 characters or fewer.',
+    });
+    // And stops exactly there: the schema would accept far more, so this limit is the form's own
+    // and an off-by-one is the form refusing a prompt nothing else objects to.
+    expect(validateJobForm({ ...validForm(), prompt: 'x'.repeat(4000) })).toStrictEqual({});
   });
 
   /**
@@ -217,10 +277,12 @@ describe('repoDisplayName', () => {
 
 describe('formFieldForIssue', () => {
   /** A request field the form renders under a different name still points at its own input. */
-  it('maps a request field to the form field that renders it', () => {
-    expect(formFieldForIssue(['repoUrl'])).toBe('repoUrl');
-    expect(formFieldForIssue(['cron'])).toBe('cron');
-  });
+  it.each([['name'], ['cron'], ['timezone'], ['prompt'], ['repoUrl'], ['branch'], ['enabled']])(
+    'maps the %s request field to the form field that renders it',
+    (key) => {
+      expect(formFieldForIssue([key])).toBe(key);
+    },
+  );
 
   /**
    * A path naming nothing the form renders still has to surface somewhere: it lands on the

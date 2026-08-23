@@ -56,7 +56,18 @@ export class ApiClientError extends Error {
   }
 }
 
-function toQueryString(query: Record<string, unknown> | undefined): string {
+/**
+ * Renders the validated query object as a search string.
+ *
+ * Only scalars travel: a string, a number and a boolean each have one text a server can read back,
+ * and anything else — an object, an array, `undefined` — has no agreed spelling, so it is left out
+ * rather than sent as `[object Object]`. The operation's own schema has already decided what may
+ * appear here; this decides what a URL can carry.
+ *
+ * @param query - The parsed query object, or `undefined` when the operation takes none.
+ * @returns `?a=1&b=x`, or an empty string when nothing is left to send.
+ */
+export function toQueryString(query: Record<string, unknown> | undefined): string {
   if (query === undefined) {
     return '';
   }
@@ -157,6 +168,9 @@ export async function apiFetch<K extends ApiOperationName>(
   const url = `${buildPath(spec.path, options.params)}${toQueryString(query?.data)}`;
   const headers: Record<string, string> = { accept: 'application/json' };
   const init: RequestInit = { method: spec.method, headers, credentials: 'same-origin' };
+  // Stryker disable next-line ConditionalExpression: set only when there is one, because this
+  // project may not hand an optional property an explicit `undefined` — and `fetch` reads an
+  // absent signal and one set to nothing as the same instruction.
   if (options.signal !== undefined) {
     init.signal = options.signal;
   }

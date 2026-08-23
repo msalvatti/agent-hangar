@@ -23,14 +23,39 @@ describe('summarizeArgs', () => {
     expect(summarizeArgs('read_file', args)).toBe('tests/auth/login.test.ts:1-80');
   });
 
-  // read_file without line bounds shows the bare path.
-  it('shows the bare path for read_file without line bounds', () => {
-    expect(summarizeArgs('read_file', { path: 'README.md' })).toBe('README.md');
+  // read_file without line bounds shows the bare path — and a half-stated range is no range: a
+  // start with no end has nothing to render after the dash, and an end with no start has nothing
+  // before it.
+  it.each([
+    [{ path: 'README.md' }, 'README.md'],
+    [{ path: 'README.md', startLine: 3 }, 'README.md'],
+    [{ path: 'README.md', endLine: 9 }, 'README.md'],
+    [{ path: 'README.md', startLine: 3, endLine: 9 }, 'README.md:3-9'],
+  ])('shows %o as %s', (args, expected) => {
+    expect(summarizeArgs('read_file', args)).toBe(expected);
   });
 
-  // read_file without a path falls back to JSON.
-  it('falls back to JSON for read_file with an unexpected shape', () => {
-    expect(summarizeArgs('read_file', {})).toBe('{}');
+  // read_file without a path falls back to JSON — including when the arguments are not an object
+  // at all, which is what a runtime that sent a bare string or nothing produces.
+  it.each([
+    [{}, '{}'],
+    ['not an object', '"not an object"'],
+    [null, 'null'],
+  ])('falls back to JSON for read_file called with %o', (args, expected) => {
+    expect(summarizeArgs('read_file', args)).toBe(expected);
+  });
+
+  /**
+   * The fallback is one line and a bounded one: a dump of a large argument object would otherwise
+   * put the whole thing, newlines and all, into a single collapsed row of the transcript.
+   */
+  it('collapses and clamps the fallback dump', () => {
+    const summary = summarizeArgs('read_file', { nested: { text: `a\n${'b'.repeat(400)}` } });
+
+    expect(summary).not.toContain('\n');
+    // Clamped to the fallback's own, shorter limit rather than to the summary cap: a dump is not a
+    // summary, and eighty characters of JSON is as much of one as a collapsed row can use.
+    expect(summary).toHaveLength(80);
   });
 
   // write_file shows the path.

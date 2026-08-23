@@ -79,6 +79,9 @@ export function createChildEnv(
 export async function materializeGitToken(token: string, directory: string): Promise<string> {
   await mkdir(directory, { recursive: true, mode: PRIVATE_DIRECTORY_MODE });
   const file = path.join(directory, TOKEN_FILE_NAME);
+  // Stryker disable next-line ObjectLiteral: the mode given here is masked by the umask and then
+  // reapplied by the chmod two lines below, so the file ends at the same permissions either way;
+  // what this narrows is the window between the two, which no observation from outside can catch.
   await writeFile(file, token, { mode: PRIVATE_FILE_MODE });
   // The mode passed to `mkdir`/`writeFile` is masked by the process umask, so it is reapplied:
   // a group- or world-readable token file would defeat the point of moving it out of the

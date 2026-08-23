@@ -105,6 +105,9 @@ function classifyLine<T>(schema: ZodType<T>, raw: string): NdjsonItem<T> | undef
     // that exists to bound this work.
     return protocolError('line-too-long', raw.length);
   }
+  // Stryker disable next-line Regex: only a carriage return at the end of a line is one a `\r\n`
+  // producer put there. JSON treats a return anywhere else as whitespace between tokens, so a
+  // pattern that took the first one instead would parse the same document.
   const line = raw.replace(/\r$/, '');
   return line.trim().length > 0 ? parseLine(schema, line) : undefined;
 }

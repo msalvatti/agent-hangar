@@ -162,8 +162,8 @@ async function currentKeyVersion(repository: SecretRepository): Promise<number> 
   let max = MASTER_KEY_VERSION;
   for (const key of SECRET_KEYS) {
     const record = await repository.get(key);
-    if (record !== null && record.keyVersion > max) {
-      max = record.keyVersion;
+    if (record !== null) {
+      max = Math.max(max, record.keyVersion);
     }
   }
   return max;
@@ -247,7 +247,12 @@ async function revealAll(
   for (const key of SECRET_KEYS) {
     const opened = await openSecret(services, key, mode);
     if (opened === null) {
+      // Defence in depth, and unobservable from outside: the maps are local and about to be
+      // dropped, so nothing distinguishes clearing them from not. They are cleared anyway so a
+      // plaintext does not sit in a live heap for as long as the abort takes to report.
+      // Stryker disable next-line CallExpression
       plaintexts.clear();
+      // Stryker disable next-line CallExpression
       sealedUnderNewKey.clear();
       const keys = mode === 'strict' ? 'the current master key' : 'either master key';
       log(`abort: cannot decrypt ${key} with ${keys}`);
@@ -264,7 +269,59 @@ async function revealAll(
 }
 
 /**
+ * Writes every revealed secret back under the replacement key, rolling back if a write fails.
+ *
+ * @param deps - Injected collaborators.
+ * @param services - The services bound to the current and the replacement key.
+ * @param version - Key version every row is re-sealed at.
+ * @param revealed - The plaintexts to write, and what a previous run had already moved.
+ * @returns How many secrets moved, the outcome code, and any secret a failed rollback stranded.
+ */
+async function writeUnderNewKey(
+  deps: RotateSecretsDeps,
+  services: RotationServices,
+  version: number,
+  revealed: RevealedStore,
+): Promise<RotateSecretsResult> {
+  const { plaintexts, sealedUnderNewKey } = revealed;
+  try {
+    for (const [key, plaintext] of plaintexts) {
+      // Recorded BEFORE the write is awaited, never after. A `set` can commit in Postgres and
+      // still reject here — the connection can drop after the server applied it and before the
+      // acknowledgement arrives — and a row recorded only on success would then be skipped by
+      // compensation, reported as a clean rollback, and left sealed under a key the caller is
+      // about to delete. The asymmetry decides it: recording a write that never committed costs
+      // one redundant rewrite under the key that already opens the row, while omitting one that
+      // did commit costs the credential.
+      sealedUnderNewKey.set(key, plaintext);
+      await services.replacement.set(key, plaintext);
+    }
+  } catch {
+    const strandedKeys = await compensate(services.current, sealedUnderNewKey);
+    if (strandedKeys.length > 0) {
+      deps.log(
+        `rollback incomplete: ${strandedKeys.join(', ')} may still be sealed under the NEW key — keep both key files`,
+      );
+      return {
+        rotated: 0,
+        keyVersion: version,
+        exitCode: EXIT_COMPENSATION_INCOMPLETE,
+        strandedKeys,
+      };
+    }
+    deps.log(`restored ${sealedUnderNewKey.size} secret(s) to the current master key`);
+    return { rotated: 0, keyVersion: version, exitCode: EXIT_ROLLED_BACK, strandedKeys: [] };
+  }
+
+  deps.log(`rotated ${plaintexts.size} secret(s) under keyVersion ${version}`);
+  return { rotated: plaintexts.size, keyVersion: version, exitCode: 0, strandedKeys: [] };
+}
+
+/**
  * Re-encrypts every stored secret from the current master key to a new one.
+ *
+ * The work is delegated so this function is only the lifetime of the revealed plaintext: whatever
+ * the rotation does, the maps holding it are emptied on the way out.
  *
  * @param deps - Injected collaborators.
  * @returns How many secrets moved, the stored key version, the outcome code, and any secret left
@@ -281,42 +338,16 @@ export async function rotateSecrets(deps: RotateSecretsDeps): Promise<RotateSecr
   if (revealed === null) {
     return { rotated: 0, keyVersion: version, exitCode: EXIT_ABORTED, strandedKeys: [] };
   }
-  const { plaintexts, sealedUnderNewKey } = revealed;
 
+  // Emptying the maps is defence in depth and is not observable from outside — they are local and
+  // die with this call either way — so the wrapper that does it carries a directive rather than
+  // inviting a test that cannot exist. It wraps nothing else: the rotation itself is one call.
+  // Stryker disable BlockStatement,CallExpression
   try {
-    try {
-      for (const [key, plaintext] of plaintexts) {
-        // Recorded BEFORE the write is awaited, never after. A `set` can commit in Postgres and
-        // still reject here — the connection can drop after the server applied it and before the
-        // acknowledgement arrives — and a row recorded only on success would then be skipped by
-        // compensation, reported as a clean rollback, and left sealed under a key the caller is
-        // about to delete. The asymmetry decides it: recording a write that never committed costs
-        // one redundant rewrite under the key that already opens the row, while omitting one that
-        // did commit costs the credential.
-        sealedUnderNewKey.set(key, plaintext);
-        await services.replacement.set(key, plaintext);
-      }
-    } catch {
-      const strandedKeys = await compensate(services.current, sealedUnderNewKey);
-      if (strandedKeys.length > 0) {
-        deps.log(
-          `rollback incomplete: ${strandedKeys.join(', ')} may still be sealed under the NEW key — keep both key files`,
-        );
-        return {
-          rotated: 0,
-          keyVersion: version,
-          exitCode: EXIT_COMPENSATION_INCOMPLETE,
-          strandedKeys,
-        };
-      }
-      deps.log(`restored ${sealedUnderNewKey.size} secret(s) to the current master key`);
-      return { rotated: 0, keyVersion: version, exitCode: EXIT_ROLLED_BACK, strandedKeys: [] };
-    }
-
-    deps.log(`rotated ${plaintexts.size} secret(s) under keyVersion ${version}`);
-    return { rotated: plaintexts.size, keyVersion: version, exitCode: 0, strandedKeys: [] };
+    return await writeUnderNewKey(deps, services, version, revealed);
   } finally {
-    plaintexts.clear();
-    sealedUnderNewKey.clear();
+    revealed.plaintexts.clear();
+    revealed.sealedUnderNewKey.clear();
   }
+  // Stryker restore BlockStatement,CallExpression
 }

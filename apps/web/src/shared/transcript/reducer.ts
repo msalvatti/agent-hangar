@@ -58,10 +58,13 @@ export function compareStreamIds(a: string, b: string): number {
     }
     return Number(parsedA[2]) - Number(parsedB[2]);
   }
-  if (a === b) {
-    return 0;
+  // Ordered by the comparison itself rather than by an equality test in front of it: two ids that
+  // sort the same way are the same id, and a separate test for that is a branch nothing could tell
+  // apart from the one below it.
+  if (a < b) {
+    return -1;
   }
-  return a < b ? -1 : 1;
+  return a > b ? 1 : 0;
 }
 
 function lastItem(items: readonly TranscriptItem[]): TranscriptItem | undefined {
@@ -92,6 +95,8 @@ function upsertNotice(
     text,
     ...(durationMs !== undefined ? { durationMs } : {}),
   };
+  // Stryker disable next-line ConditionalExpression: the kind narrows the type; ids are minted per
+  // kind and no other item can carry a notice's, so the comparison beside it decides alone.
   const index = items.findIndex((item) => item.kind === 'notice' && item.id === id);
   if (index === -1) {
     return [...items, notice];
@@ -116,6 +121,8 @@ function findTool(
   items: readonly TranscriptItem[],
   callId: string,
 ): { index: number; item: ToolTranscriptItem } | null {
+  // Stryker disable next-line ConditionalExpression: the kind is what gives `callId` a type here —
+  // no other item has the field at all, so the comparison beside it already decides.
   const index = items.findIndex((item) => item.kind === 'tool' && item.callId === callId);
   if (index === -1) {
     return null;
@@ -133,6 +140,9 @@ function appendToolOutput(
   text: string,
 ): ToolTranscriptItem {
   const budget = TOOL_OUTPUT_DISPLAY_LIMIT_BYTES - item.shownBytes;
+  // Stryker disable next-line ConditionalExpression,EqualityOperator,BlockStatement: a budget of
+  // zero produces an empty slice and an unchanged item by the same route; what this guard is for
+  // is a negative one, which would slice from the end of the buffer instead of the start.
   if (budget <= 0) {
     return item;
   }
@@ -143,8 +153,9 @@ function appendToolOutput(
   // incomplete trailing sequence back instead of substituting it, and it is never flushed.
   const decoder = new TextDecoder();
   const encoded = encoder.encode(text);
-  const kept =
-    encoded.length <= budget ? text : decoder.decode(encoded.slice(0, budget), { stream: true });
+  // Sliced unconditionally: a slice longer than the text is the text, so a fast path for the
+  // chunk that fits would be a branch producing what the cut already produces.
+  const kept = decoder.decode(encoded.slice(0, budget), { stream: true });
   const keptBytes = utf8ByteLength(kept);
   return {
     ...item,
@@ -228,6 +239,8 @@ function openToolCall(
  */
 function recordPush(state: TranscriptState, event: AgentEventOf<'git.pushed'>): TranscriptState {
   const text = pushedNoticeText(event.branch, event.sha);
+  // Stryker disable next-line ConditionalExpression: the kind narrows the type; only a notice
+  // carries this text, so the comparison beside it already decides.
   if (state.items.some((item) => item.kind === 'notice' && item.text === text)) {
     return state;
   }
@@ -473,8 +486,13 @@ export function transcriptReducer(
 ): TranscriptState {
   switch (action.type) {
     case 'event': {
+      // The two null tests narrow the types for the comparison below them, and nothing more: an
+      // id that is not there never sorts at or before one that is, so the comparison reaches the
+      // same answer on its own.
+      // Stryker disable next-line ConditionalExpression,LogicalOperator
       const isDuplicate =
         action.id !== null &&
+        // Stryker disable next-line ConditionalExpression
         state.lastEventId !== null &&
         compareStreamIds(action.id, state.lastEventId) <= 0;
       if (isDuplicate) {

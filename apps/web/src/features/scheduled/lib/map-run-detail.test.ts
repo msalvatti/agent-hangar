@@ -92,7 +92,9 @@ describe('mapRunDetail', () => {
   /** With a job given, the prompt appears as the first item. */
   it('includes the prompt when a job is given', () => {
     const result = mapRunDetail(detail(), job);
-    expect(result.items[0]).toMatchObject({ kind: 'user', text: 'Run the suite.' });
+    // The whole row, id included: the transcript keys items by id, so two rows sharing one would
+    // collapse into a single line as React reconciled them.
+    expect(result.items[0]).toStrictEqual({ kind: 'user', id: 'prompt', text: 'Run the suite.' });
   });
 
   /** With no job, there is no prompt item. */
@@ -145,9 +147,55 @@ describe('mapRunDetail', () => {
   /** Tool calls map to tool items in order. */
   it('maps tool calls to tool items', () => {
     const result = mapRunDetail(detail({}, [toolCall]));
-    expect(result.items).toContainEqual(
-      expect.objectContaining({ kind: 'tool', callId: 'call-1', status: 'succeeded' }),
+    expect(result.items).toContainEqual({
+      kind: 'tool',
+      id: 'tool-1',
+      callId: 'call-1',
+      name: 'run_shell',
+      args: { command: 'pnpm test' },
+      seq: 0,
+      status: 'succeeded',
+      stdout: 'All good.',
+      // A persisted row has one result field, and the transcript's split into two streams is a
+      // live-stream distinction: everything stored reads as standard output, and inventing a
+      // standard-error half would show the reader a stream the run never wrote.
+      stderr: '',
+      shownBytes: 9,
+      totalBytes: 9,
+      exitCode: 0,
+      durationMs: 5000,
+      startedAt: Date.parse('2026-08-19T10:00:00.000Z'),
+    });
+  });
+
+  /**
+   * Each contract status has its own name in the transcript's vocabulary. A tool that failed and
+   * one that ran out of time are told apart on the row itself, and a status the row cannot read is
+   * one it cannot colour.
+   */
+  it.each([
+    ['RUNNING', 'running'],
+    ['SUCCEEDED', 'succeeded'],
+    ['FAILED', 'failed'],
+    ['TIMED_OUT', 'timed_out'],
+  ] as const)('maps the %s tool status to %s', (contractStatus, status) => {
+    const result = mapRunDetail(detail({}, [{ ...toolCall, status: contractStatus }]));
+    expect(result.items.find((item) => item.kind === 'tool')?.status).toBe(status);
+  });
+
+  /**
+   * A tool call whose head was never stored shows nothing rather than the string "null", and
+   * reports nothing as shown — which is what lets the row say the whole result is still on disk.
+   */
+  it('shows an empty result for a call with no stored head', () => {
+    const result = mapRunDetail(
+      detail({}, [{ ...toolCall, resultHead: null, resultBytes: 4_096 }]),
     );
+    expect(result.items.find((item) => item.kind === 'tool')).toMatchObject({
+      stdout: '',
+      shownBytes: 0,
+      totalBytes: 4_096,
+    });
   });
 
   /**
@@ -188,25 +236,45 @@ describe('mapRunDetail', () => {
   /** A non-null output maps to a finalized assistant item. */
   it('maps output to an assistant item', () => {
     const result = mapRunDetail({ ...detail(), output: 'Done.' });
-    expect(result.items).toContainEqual(
-      expect.objectContaining({ kind: 'assistant', text: 'Done.', streaming: false }),
-    );
+    expect(result.items).toContainEqual({
+      kind: 'assistant',
+      id: 'output',
+      text: 'Done.',
+      streaming: false,
+    });
+  });
+
+  /**
+   * A run that produced no final answer shows none. An assistant row built from a missing output
+   * is an empty bubble the reader takes for a model that replied with nothing.
+   */
+  it('shows no assistant item for a run with no output', () => {
+    const result = mapRunDetail(detail({}, [toolCall]), job);
+    expect(result.items.some((item) => item.kind === 'assistant')).toBe(false);
   });
 
   /** A non-overlap error maps to an error item. */
   it('maps a run error to an error item', () => {
     const result = mapRunDetail(detail({ status: 'FAILED', error: 'boom' }));
-    expect(result.items).toContainEqual(
-      expect.objectContaining({ kind: 'error', message: 'boom' }),
-    );
+    expect(result.items).toContainEqual({
+      kind: 'error',
+      id: 'run-error',
+      code: 'RUN_FAILED',
+      message: 'boom',
+    });
   });
 
   /** The overlap-skip error maps to a warning notice, not an error item. */
   it('maps the overlap error to a warning notice', () => {
     const result = mapRunDetail(detail({ status: 'FAILED', error: 'previous run still running' }));
-    expect(result.items).toContainEqual(
-      expect.objectContaining({ kind: 'notice', tone: 'warning' }),
-    );
+    // Written out: the reader is told nothing ran and why, in the words that say so. "Skipped"
+    // without the reason reads as the scheduler having dropped the run for no stated cause.
+    expect(result.items).toContainEqual({
+      kind: 'notice',
+      id: 'run-error',
+      tone: 'warning',
+      text: 'Skipped: previous run still running',
+    });
     expect(result.items.some((item) => item.kind === 'error')).toBe(false);
   });
 

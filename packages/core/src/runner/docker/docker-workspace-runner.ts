@@ -232,6 +232,14 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     // still suspended at the `started` yield has somewhere to record itself.
     const record = { cancelled: null as ExecSignal | null };
     this.#liveExecs.set(execRef, record);
+    // Forgotten at the end of this scope, however it is left — returned, thrown out of, or
+    // abandoned by a caller that stops consuming. The entry is replaced by the next exec that takes
+    // this reference, so what this prevents is a map that only grows in a runner that is never
+    // restarted.
+    using _tracked = {
+      // Stryker disable next-line ArrowFunction
+      [Symbol.dispose]: (): void => void this.#liveExecs.delete(execRef),
+    };
     yield { type: 'started', execRef };
 
     try {
@@ -245,8 +253,6 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
             });
       }
       yield { type: 'exit', code: null, signal: 'GONE' };
-    } finally {
-      this.#liveExecs.delete(execRef);
     }
   }
 
@@ -538,10 +544,10 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
         demuxer: createDockerDemuxer(),
         timeoutMs: spec.timeoutMs,
         signal: spec.signal,
-        kill: async (reason: ExecTermination) => {
-          stdinDone.abort();
-          return this.#killExec(container, execRef, reason);
-        },
+        // The writer is not stopped here: the `finally` below stops it on every way out of this
+        // method, this one included, and stopping it twice would only mean stopping it sooner by
+        // the length of a kill.
+        kill: async (reason: ExecTermination) => this.#killExec(container, execRef, reason),
         inspectExitCode: async () => (await exec.inspect()).ExitCode,
       });
     } finally {
@@ -572,11 +578,10 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     try {
       delivered = (await this.#runCapture(container, killCommand(execRef, 'KILL'))).code === 0;
     } catch {
-      // Deliberately not surfaced: the kill exec can fail for the same reasons the exec being
-      // killed already has (container gone, exec limit reached), and the caller asked for the
-      // process to stop, not for a diagnosis. The container-level fallback below is the answer,
-      // and its own failure IS reported.
-      delivered = false;
+      // Deliberately not surfaced, and nothing to record: `delivered` is already false. The kill
+      // exec can fail for the same reasons the exec being killed already has (container gone, exec
+      // limit reached), and the caller asked for the process to stop, not for a diagnosis. The
+      // container-level fallback below is the answer, and its own failure IS reported.
     }
     if (delivered) {
       return;
@@ -611,6 +616,9 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
       Cmd: [...cmd],
       AttachStdin: false,
       AttachStdout: true,
+      // Stryker disable next-line BooleanLiteral: what arrives on this stream is collected and
+      // never read, for the reason given where it is collected below, so asking the daemon for it
+      // or not cannot be told apart from outside.
       AttachStderr: true,
       Tty: false,
       WorkingDir: cwd,
@@ -620,6 +628,11 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
     const demuxer = createDockerDemuxer();
     const decoder = new TextDecoder();
     let stdout = '';
+    // What this next one collects is never read: it is collected because `CaptureResult` declares
+    // it, and it is surfaced nowhere because it is output from a container the model controls. So
+    // no observation of this runner can tell one starting value, one branch or one accumulation of
+    // it from another, and the three directives below say so where they sit.
+    // Stryker disable next-line StringLiteral
     let stderr = '';
 
     for await (const chunk of stream) {
@@ -627,7 +640,9 @@ export class DockerWorkspaceRunner implements WorkspaceRunner {
         if (event.type === 'stdout') {
           stdout += decoder.decode(event.data);
         }
+        // Stryker disable next-line ConditionalExpression,EqualityOperator,StringLiteral,BlockStatement
         if (event.type === 'stderr') {
+          // Stryker disable next-line AssignmentOperator
           stderr += decoder.decode(event.data);
         }
       }

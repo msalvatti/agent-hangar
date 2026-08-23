@@ -79,6 +79,9 @@ describe('assertDatabaseReachable', () => {
     const client = { $queryRaw: vi.fn().mockResolvedValue([{ '?column?': 1 }]) };
     await expect(assertDatabaseReachable(client)).resolves.toBeUndefined();
     expect(client.$queryRaw).toHaveBeenCalledTimes(1);
+    // The statement itself, because a probe that asks the database nothing answers instantly and
+    // reports every unreachable database as healthy.
+    expect((client.$queryRaw.mock.calls[0]?.[0] as string[]).join('')).toBe('SELECT 1');
   });
 
   /**

@@ -17,6 +17,14 @@ import { makeTempDir, removeTempDir } from '../testing/temp-dir.js';
 
 import { displayPath, PathEscapeError, resolveInsideWorkspace } from './paths.js';
 
+/**
+ * Longest chain of dangling symbolic links the resolver is required to follow.
+ *
+ * Written here rather than imported: it is the limit the workspace is promised, so a change to the
+ * number in the module has to be a deliberate change to this expectation too.
+ */
+const PERMITTED_SYMLINK_HOPS = 32;
+
 let root: string;
 let outside: string;
 
@@ -78,7 +86,13 @@ describe('resolveInsideWorkspace', () => {
     ['an absolute path elsewhere', '/etc/passwd'],
     ['parent segments in the middle', 'src/../../escape'],
   ])('rejects %s', async (_name, candidate) => {
-    await expect(resolveInsideWorkspace(root, candidate)).rejects.toBeInstanceOf(PathEscapeError);
+    const promise = resolveInsideWorkspace(root, candidate);
+    await expect(promise).rejects.toBeInstanceOf(PathEscapeError);
+    // The whole message, because both refusals raise the same class and only the wording says
+    // which check caught it. A lexical escape that slipped past this one is still refused further
+    // down, by the symbolic-link check — so a test that reads the class alone cannot tell a
+    // working lexical check from one that has stopped running.
+    await expect(promise).rejects.toThrow(`path escapes the workspace: ${candidate}`);
   });
 
   /** The lexical check passes here; only resolving the link exposes the escape. */
@@ -140,6 +154,37 @@ describe('resolveInsideWorkspace', () => {
   /** The tools branch on this to distinguish an escape from an ordinary I/O failure. */
   it('carries a stable code so callers do not match on the message', () => {
     expect(new PathEscapeError('nope').code).toBe('path_escape');
+    // And a name, so an escape is recognisable in a log among the runtime's other failures.
+    expect(new PathEscapeError('nope').name).toBe('PathEscapeError');
+  });
+
+  /**
+   * The hop limit is a ceiling on work, not a rule about how many links a legitimate path may use,
+   * so a chain that reaches exactly the limit still has to be followed to its end. Measured at the
+   * limit and one link past it: a limit written one step off passes every test built from a chain
+   * of two or three, and this one is what stands between a turn and a link farm that never
+   * terminates.
+   *
+   * The links are dangling on purpose. `realpath` follows a chain that ends somewhere real in a
+   * single call, so nothing would be counted; only a chain whose end is missing is walked link by
+   * link, which is the walk the limit governs.
+   */
+  it.each([
+    ['a chain of exactly the permitted length', PERMITTED_SYMLINK_HOPS, true],
+    ['a chain one link longer than that', PERMITTED_SYMLINK_HOPS + 1, false],
+  ])('follows %s: %s', async (_name, links, followed) => {
+    const hop = (index: number): string => path.join(root, `hop-${String(index)}`);
+    await symlink(path.join(root, 'hop-end'), hop(links));
+    for (let index = links - 1; index >= 1; index -= 1) {
+      await symlink(hop(index + 1), hop(index));
+    }
+
+    const promise = resolveInsideWorkspace(root, 'hop-1');
+    if (followed) {
+      await expect(promise).resolves.toBe(hop(1));
+    } else {
+      await expect(promise).rejects.toThrow('too many symbolic links');
+    }
   });
 });
 

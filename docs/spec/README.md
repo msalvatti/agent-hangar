@@ -17,7 +17,10 @@ Technical specification for **Agent Hangar**, a local-first web application wher
 
 Status: **Approved** — 2026-08-19. Execution plan: [../plan.md](../plan.md).
 
-Revision: 2026-08-20 — 01 stack table verified against the installed tree; 05 corrected against
+Revision: 2026-08-23 — 01's S7 and 06 §5 restated against the mutation work that was actually done:
+the score is 100 rather than 80, the scope is every package plus `infra/scripts/lib` rather than a
+list of directories in `packages/core`, and the sweep is a local one rather than a CI job. 07's
+phase 4 records that its mutation gate moved to a wave of its own. 2026-08-20 — 01 stack table verified against the installed tree; 05 corrected against
 `infra/scripts/*` and `packages/core/src/config/schema.ts` (setup steps, script list, environment
 table, workspace image); 06 corrected against `.github/workflows/ci.yml` and the Vitest configs
 (job list, and the coverage/mutation success criteria themselves, raised from the tiered numbers

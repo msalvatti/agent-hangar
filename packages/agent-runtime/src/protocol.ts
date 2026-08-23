@@ -83,12 +83,16 @@ export function createEventWriter(
   const writeLine = (event: AgentEvent): Promise<void> =>
     new Promise<void>((resolve, reject) => {
       stdout.write(encodeLine(redactor.redactEvent(event)), (error) => {
-        if (error === undefined || error === null) {
-          lastAt = now();
-          resolve();
+        // Asked of the failure rather than of the two spellings of its absence. A stream reports a
+        // successful write by calling this back with `null`, never with nothing, so a check for
+        // `undefined` describes a call that cannot arrive — and a branch no run can take is a
+        // branch no test can hold to account.
+        if (error instanceof Error) {
+          reject(error);
           return;
         }
-        reject(error);
+        lastAt = now();
+        resolve();
       });
     });
 

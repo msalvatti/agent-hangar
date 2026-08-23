@@ -104,6 +104,22 @@ describe('createTurnEventPublisher', () => {
   });
 
   /**
+   * Each slot of the reply is accounted for on its own. The array is wire data from a driver, and
+   * a reply whose first tuple is missing while the second is there is as unusable as one that is
+   * short: the entry id would be read off nothing, and the caller would be handed a stream
+   * position for an event that may never have been appended.
+   */
+  it('rejects when the reply is missing the entry it answered first', async () => {
+    const redis = new FakeRedisClient({
+      execReplies: [undefined as unknown as [Error | null, unknown], [null, 1]],
+    });
+
+    await expect(createTurnEventPublisher(redis).publish('turn-1', event)).rejects.toThrow(
+      /no reply/,
+    );
+  });
+
+  /**
    * An aborted transaction resolves with `null`; that is a lost event too, not a silent success.
    */
   it('rejects when the transaction was aborted', async () => {

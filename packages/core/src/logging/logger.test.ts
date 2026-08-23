@@ -12,7 +12,7 @@ import { Writable } from 'node:stream';
 
 import { describe, expect, it } from 'vitest';
 
-import { createRedactor } from '../redaction/redactor.ts';
+import { createRedactor, CIRCULAR_TOKEN } from '../redaction/redactor.ts';
 import { REDACTED_TOKEN } from '../secrets/types.ts';
 import {
   assertNoCanary,
@@ -381,7 +381,50 @@ describe('createLogger', () => {
     sink.logger.info({ items: [{ id: 1 }, { Authorization: OPAQUE_CREDENTIAL }] }, 'batch');
 
     expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
-    expect((sink.records()[0]?.items as Record<string, unknown>[])[0]?.id).toBe(1);
+    // Still a list, and still in order. Rebuilt as a record instead, an array becomes an object
+    // keyed by its indices — the credential is gone either way, and every consumer of the line
+    // now reads a shape that is not the one that was logged.
+    expect(sink.records()[0]?.items).toStrictEqual([{ id: 1 }, { Authorization: REDACTED_TOKEN }]);
+  });
+
+  /**
+   * Two references to the same object are not a cycle. The walk remembers what is on the path it
+   * is currently following and has to forget it on the way back out; a record that only ever grows
+   * reports the second sibling as circular, and a reader is told a value was recursive when it was
+   * merely repeated.
+   */
+  it('renders the same object twice when it appears twice side by side', () => {
+    const sink = capture();
+    const shared = { id: 7 };
+
+    sink.logger.info({ left: shared, right: shared }, 'twice');
+
+    expect(sink.records()[0]?.left).toStrictEqual({ id: 7 });
+    expect(sink.records()[0]?.right).toStrictEqual({ id: 7 });
+  });
+
+  /**
+   * The same on the array path, which keeps its own book of what it has entered: a list holding
+   * one object twice is a list of two readable entries.
+   */
+  it('renders the same object twice when a list holds it twice', () => {
+    const sink = capture();
+    const shared = { id: 7 };
+
+    sink.logger.info({ items: [shared, shared] }, 'twice');
+
+    expect(sink.records()[0]?.items).toStrictEqual([{ id: 7 }, { id: 7 }]);
+  });
+
+  /** A list that contains itself has to terminate on the array path as it does on the record one. */
+  it('terminates on a list that contains itself', () => {
+    const sink = capture();
+    const items: unknown[] = [{ id: 1 }];
+    items.push(items);
+
+    sink.logger.info({ items }, 'cyclic list');
+
+    expect(sink.records()[0]?.items).toStrictEqual([{ id: 1 }, CIRCULAR_TOKEN]);
   });
 
   /**
@@ -391,9 +434,12 @@ describe('createLogger', () => {
   it('blanks a protected field inside a null-prototype record', () => {
     const sink = capture();
     const bag: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
-    bag.Authorization = OPAQUE_CREDENTIAL;
+    // An object rather than a string, and two levels down: the scrub of the finished line replaces
+    // string values and pino's own paths reach one level, so walking the bag is the only thing
+    // that can reach this. Mistaken for a class instance it is returned as it came in.
+    bag.Authorization = { raw: OPAQUE_CREDENTIAL };
 
-    sink.logger.info({ headers: bag }, 'req');
+    sink.logger.info({ outer: { bag } }, 'req');
 
     expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
   });
@@ -488,6 +534,93 @@ describe('createLogger', () => {
 
     expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
     expect(sink.records()[0]?.name).toBe('root');
+  });
+
+  /**
+   * A list inside a list is still a list. The walk keeps its own book of what it has entered on
+   * the array path as well as the record one, and the same list logged twice side by side is two
+   * readable entries rather than one and a note that the second was circular.
+   */
+  it('renders the same list twice when it appears twice side by side', () => {
+    const sink = capture();
+    const shared = [{ id: 7 }];
+
+    sink.logger.info({ left: shared, right: shared }, 'twice');
+
+    expect(sink.records()[0]?.left).toStrictEqual([{ id: 7 }]);
+    expect(sink.records()[0]?.right).toStrictEqual([{ id: 7 }]);
+  });
+
+  /**
+   * A credential under a protected name inside a list element, deep enough that pino's own paths
+   * do not name it and shaped so the scrub of the finished line cannot reach it either — that
+   * scrub replaces string values, and this one is an object. Only walking the list finds it, and a
+   * walk that does not recognise a list hands it back exactly as it arrived.
+   */
+  it('blanks a protected field inside a list element the other passes cannot reach', () => {
+    const sink = capture();
+
+    sink.logger.info({ outer: { items: [{ token: { raw: OPAQUE_CREDENTIAL } }] } }, 'batch');
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+  });
+
+  /**
+   * A record may carry a field that is explicitly nothing, and the walk has to answer for it
+   * before it asks anything about its prototype — there is nothing there to ask.
+   */
+  it('logs a record carrying an explicitly absent field', () => {
+    const sink = capture();
+
+    sink.logger.info({ present: 1, absent: undefined }, 'note');
+
+    expect(sink.records()[0]?.present).toBe(1);
+  });
+
+  /**
+   * A rejection reason that is a list is not an error record, and pino hands it back untouched
+   * rather than rebuilding it. Read as one anyway it is copied entry by entry into a plain object,
+   * and what the reader is shown is a list turned into a record keyed by its own indices.
+   */
+  it('keeps a list logged as err a list', () => {
+    const sink = capture();
+
+    sink.logger.error({ err: ['first', 'second'] }, 'failed');
+
+    expect(sink.records()[0]?.err).toStrictEqual(['first', 'second']);
+  });
+
+  /**
+   * A bare record — `Object.create(null)` is the usual way to build a header bag — is still a
+   * record and has to be walked rather than mistaken for something with a class behind it. Proved
+   * through the base bindings because they are scrubbed exactly once: on the way through a logging
+   * call the record is walked, serialised and walked again, and the serialisation alone gives it
+   * an ordinary prototype, so the second walk covers for the first however the first behaved.
+   */
+  it('walks a bare record in the base bindings rather than handing it back', () => {
+    const bag: Record<string, unknown> = Object.create(null) as Record<string, unknown>;
+    // An object, so the scrub of the finished line cannot stand in for the walk: that pass
+    // replaces string values and would blank a credential here whatever the walk did.
+    bag.Authorization = { raw: OPAQUE_CREDENTIAL };
+    const sink = capture({ base: { outer: { bag } } });
+
+    sink.logger.info('note');
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
+  });
+
+  /**
+   * The base bindings are the one record the logging hook never sees: they are handed to the
+   * factory rather than to a call, so the bindings formatter is the only thing in front of them.
+   * Deep enough that pino's own paths do not name it, and an object so the finished-line scrub
+   * cannot reach it either.
+   */
+  it('blanks a protected field in the base bindings', () => {
+    const sink = capture({ base: { deep: { inner: { token: { raw: OPAQUE_CREDENTIAL } } } } });
+
+    sink.logger.info('note');
+
+    expect(sink.text()).not.toContain(OPAQUE_CREDENTIAL);
   });
 
   /**
@@ -613,5 +746,117 @@ describe('createLogger', () => {
     for (const path of LOG_REDACT_PATHS.filter((entry) => !entry.startsWith('*.'))) {
       expect(LOG_REDACT_PATHS).toContain(`*.${path}`);
     }
+  });
+
+  /**
+   * Written out here rather than read from the module, which is the whole point: every other check
+   * in this file walks these two lists to build its cases, so a list that had lost its entries
+   * would produce no cases at all and every one of those checks would pass by having nothing left
+   * to do. Stated independently, an entry that goes missing is a difference between two lists.
+   */
+  it('protects exactly these paths and these field names', () => {
+    expect(LOG_REDACT_PATHS).toStrictEqual([
+      'env.GITHUB_TOKEN',
+      'env.OPENAI_API_KEY',
+      '*.env.GITHUB_TOKEN',
+      '*.env.OPENAI_API_KEY',
+      'headers.authorization',
+      '*.headers.authorization',
+      'secret',
+      '*.secret',
+      'plaintext',
+      '*.plaintext',
+      'apiKey',
+      '*.apiKey',
+      'token',
+      '*.token',
+    ]);
+    expect(SENSITIVE_FIELD_NAMES).toStrictEqual([
+      'GITHUB_TOKEN',
+      'OPENAI_API_KEY',
+      'authorization',
+      'secret',
+      'plaintext',
+      'apiKey',
+      'token',
+    ]);
+  });
+
+  /**
+   * One case per protected name, spelt out rather than generated from the list, so a name that
+   * disappears from the module leaves a case behind that fails instead of a case that is never
+   * built.
+   */
+  it.each([
+    ['GITHUB_TOKEN'],
+    ['OPENAI_API_KEY'],
+    ['authorization'],
+    ['secret'],
+    ['plaintext'],
+    ['apiKey'],
+    ['token'],
+  ])('blanks a field named %s wherever it sits', (field) => {
+    const { logger, lines } = capture();
+
+    logger.info({ deep: { [field]: 'a value nobody may read' } }, 'note');
+
+    const line = lines()[0] ?? '';
+    expect(line).not.toContain('a value nobody may read');
+    expect(line).toContain(REDACTED_TOKEN);
+  });
+
+  /**
+   * The one case the last-resort scrub of the finished line is the only net for. The structural
+   * pass rebuilds plain objects and leaves a class instance as it found it; pino's own paths reach
+   * one level below the root and this sits two levels down; so the credential arrives in the line
+   * as an ordinary string field and nothing before this has touched it. pino writes its records
+   * with no space after the colon, which is why the pattern allows none — one that demands a
+   * space matches nothing it was written for.
+   */
+  it.each([
+    ['GITHUB_TOKEN'],
+    ['OPENAI_API_KEY'],
+    ['authorization'],
+    ['secret'],
+    ['plaintext'],
+    ['apiKey'],
+    ['token'],
+  ])('blanks %s when the structural pass and the redact paths both miss it', (field) => {
+    // A prototype of its own, so the structural pass returns it as it found it, and two levels
+    // down, so pino's one-level paths do not name it. The value is several characters long because
+    // a pattern that stops after one would leave the rest of the credential in the line.
+    const carrier: Record<string, unknown> = Object.create({ kind: 'request-context' }) as Record<
+      string,
+      unknown
+    >;
+    carrier[field] = 'a value nobody may read';
+    const { logger, records } = capture();
+
+    logger.info({ outer: { ctx: carrier } }, 'note');
+
+    // Read as the value of that field rather than as text absent from the line: a pattern that
+    // stops after one character leaves the rest of the credential where it was, and a line that no
+    // longer contains the whole value looks scrubbed while still carrying nearly all of it.
+    const outer = records()[0]?.outer as { ctx: Record<string, unknown> } | undefined;
+    expect(outer?.ctx[field]).toBe(REDACTED_TOKEN);
+  });
+
+  /**
+   * The structural pass rebuilds plain objects and arrays and leaves anything else alone, because
+   * rebuilding a class instance would lose what it is. pino's own path redaction is what reaches
+   * inside one, and it is the only layer that can: the finished-line scrub replaces string values
+   * and this credential is an object.
+   */
+  it('blanks a protected field inside a value the structural pass will not rebuild', () => {
+    class RequestContext {
+      readonly token = { header: 'a value nobody may read' };
+    }
+    const { logger, lines } = capture();
+
+    logger.info({ ctx: new RequestContext() }, 'note');
+
+    const line = lines()[0] ?? '';
+    expect(line).not.toContain('a value nobody may read');
+    expect(line).toContain(REDACTED_TOKEN);
   });
 });

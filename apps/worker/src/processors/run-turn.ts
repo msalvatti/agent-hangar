@@ -340,6 +340,11 @@ function makeTurnSink(
             headSha: event.headSha,
           });
           break;
+        // Written out for a reader, not to decide anything: this group is the sink saying it keeps
+        // nothing for these events, and an event whose label did not match would leave the switch
+        // having kept nothing either. The two answers are the same, which is why the labels carry a
+        // directive — there is no outcome a test could hold them to.
+        // Stryker disable StringLiteral,ConditionalExpression
         case 'prepare.progress':
         case 'assistant.delta':
         case 'assistant.message':
@@ -351,6 +356,12 @@ function makeTurnSink(
           // answer. Keeping them would also cost the model a line of history per turn, since a
           // stored SYSTEM message is part of the window a later turn carries.
           break;
+        // Stryker restore StringLiteral,ConditionalExpression
+        // No `default`. Every event of the protocol is named above, either because it is written
+        // down or because it deliberately is not, and nothing can arrive that is not: the stream is
+        // parsed against that same union, so a line outside it reaches here as a `protocol.error`.
+        // A clause for the unreachable case would be a branch no run can take and no test can hold
+        // to account — the compiler's exhaustiveness check is not worth buying at that price.
       }
     },
   };
@@ -448,15 +459,17 @@ async function finalizeTurn(
  * @param workspaceId - The workspace it ran in.
  */
 async function settleTurn(deps: ProcessorDeps, turnId: string, workspaceId: string): Promise<void> {
-  const turn = await deps.repos.turns.get(turnId);
-  if (turn !== null && !isTerminalRunStatus(turn.status)) {
-    await deps.repos.turns.finish(
-      turnId,
-      'FAILED',
-      NO_USAGE,
-      `${WORKER_ERROR_PREFIX}: the worker stopped before the turn finished`,
-    );
-  }
+  // Offered unconditionally, because refusing it is the repository's job and it does that in the
+  // write itself: `finish` applies only to a turn that is still live, so a turn that already
+  // recorded its own outcome — or one that is no longer there — is left exactly as it is. Reading
+  // the row first and deciding here would be the same answer arrived at a moment earlier, over a
+  // row a second writer can still move in between.
+  await deps.repos.turns.finish(
+    turnId,
+    'FAILED',
+    NO_USAGE,
+    `${WORKER_ERROR_PREFIX}: the worker stopped before the turn finished`,
+  );
   const workspace = await deps.repos.workspaces.get(workspaceId);
   if (workspace !== null && workspace.status === 'BUSY') {
     await deps.repos.workspaces.setStatus(workspaceId, 'READY');

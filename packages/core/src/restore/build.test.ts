@@ -486,3 +486,69 @@ describe('credential containment', () => {
     }
   });
 });
+
+describe('what the restoration notice is decided from', () => {
+  /**
+   * The question is whether the last SYSTEM message is a restoration notice — not whether the last
+   * message is. A chat whose newest message is an assistant reply that happens to begin with the
+   * notice prefix would otherwise be read as already carrying one, and the model would be rebuilt
+   * without ever being told its workspace had been recreated.
+   */
+  it.each([
+    [
+      'the newest system message is an ordinary one',
+      [
+        { seq: 1, role: 'SYSTEM' as const, content: `${RESTORATION_NOTICE_PREFIX} an older one` },
+        { seq: 2, role: 'SYSTEM' as const, content: 'an ordinary system message' },
+      ],
+      2,
+    ],
+    [
+      'the newest message is not a system message at all',
+      [
+        { seq: 1, role: 'SYSTEM' as const, content: `${RESTORATION_NOTICE_PREFIX} an older one` },
+        { seq: 2, role: 'ASSISTANT' as const, content: 'a reply' },
+      ],
+      1,
+    ],
+  ])('appends a notice when %s', (_case, messages, expected) => {
+    const request = buildTurnRequest({
+      turnId: 'turn-1',
+      model: 'gpt-5',
+      instructions: 'be careful',
+      chat: PUSHED_CHAT,
+      messages,
+      decision: createDecision(PUSHED_CHAT, messages),
+    });
+
+    expect(
+      request.items.filter((item) => JSON.stringify(item).includes(RESTORATION_NOTICE_PREFIX))
+        .length,
+    ).toBe(expected);
+  });
+
+  /**
+   * A request the contract refuses is reported with every field that failed, separated. Run
+   * together the paths become one unreadable token, and whoever reads the failure sees a name that
+   * matches no field of the request.
+   */
+  it('separates the fields of a request the protocol schema refuses', () => {
+    const failure = (() => {
+      try {
+        buildTurnRequest({
+          turnId: '',
+          model: '',
+          instructions: 'be careful',
+          chat: PUSHED_CHAT,
+          messages: MESSAGES,
+          decision: REUSE,
+        });
+      } catch (error) {
+        return error;
+      }
+      return undefined;
+    })();
+
+    expect((failure as Error).message).toContain('; ');
+  });
+});

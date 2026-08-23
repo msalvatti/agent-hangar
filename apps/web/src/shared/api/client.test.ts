@@ -9,7 +9,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { apiFetch, ApiClientError, createEventSource } from './client';
+import { apiFetch, ApiClientError, createEventSource, toQueryString } from './client';
 
 const now = '2026-08-19T10:00:00.000Z';
 
@@ -122,6 +122,31 @@ describe('apiFetch', () => {
   });
 
   /**
+   * Numbers and booleans are sent as their text, like strings: a query value dropped for its type
+   * is a filter the server never sees, and the caller has no way to tell that from a server that
+   * ignored it. Only values of no other kind are left out.
+   */
+  it('sends every scalar the caller put in the query', async () => {
+    const fetchMock = fetchReturning(() => jsonResponse({ repos: [] }));
+
+    await apiFetch('listRepos', {
+      query: { query: 'widgets' },
+      fetch: fetchMock,
+    });
+
+    const url = new URL(String(fetchMock.mock.calls[0]?.[0]), 'http://127.0.0.1:3000');
+    expect(url.searchParams.get('query')).toBe('widgets');
+
+    // Numbers and booleans reach the wire as their text, exactly as strings do: a value dropped
+    // for its type is a parameter the server never sees, and the caller cannot tell that from a
+    // server that ignored it. Anything with no agreed spelling is left out instead of being sent
+    // as `[object Object]`.
+    expect(toQueryString({ text: 'x', count: 2, flag: false })).toBe('?text=x&count=2&flag=false');
+    expect(toQueryString({ kept: 1, dropped: { nested: true } })).toBe('?kept=1');
+    expect(toQueryString(undefined)).toBe('');
+  });
+
+  /**
    * A 2xx response that violates the response schema is an `ApiClientError` with
    * `INVALID_RESPONSE`, as is a non-JSON body.
    */
@@ -133,7 +158,14 @@ describe('apiFetch', () => {
       apiFetch('listChats', {
         fetch: fetchReturning(() => new Response('not json', { status: 200 })),
       }),
-    ).rejects.toMatchObject({ code: 'INVALID_RESPONSE', status: 200 });
+      // The three ways a 2xx can fail to satisfy an operation are told apart by their wording:
+      // a body that is not JSON, a body where none was declared, and none where one was.
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      status: 200,
+      message: 'Response body is not JSON',
+      name: 'ApiClientError',
+    });
   });
 
   /**
@@ -238,7 +270,11 @@ describe('apiFetch no-content operations', () => {
     const fetchMock = fetchReturning(() => jsonResponse({ ok: true }));
     await expect(
       apiFetch('deleteChat', { params: { id: 'c1' }, fetch: fetchMock }),
-    ).rejects.toMatchObject({ code: 'INVALID_RESPONSE', status: 200 });
+    ).rejects.toMatchObject({
+      code: 'INVALID_RESPONSE',
+      status: 200,
+      message: 'Response carries a body but the operation declares none',
+    });
   });
 
   /**
@@ -261,6 +297,7 @@ describe('apiFetch no-content operations', () => {
     await expect(apiFetch('listChats', { fetch: fetchMock })).rejects.toMatchObject({
       code: 'INVALID_RESPONSE',
       status: 204,
+      message: 'Response carries no body but the operation declares one',
     });
   });
 });

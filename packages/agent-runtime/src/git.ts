@@ -88,6 +88,8 @@ function collectCapped(source: Readable | null): () => string {
   const parts: string[] = [];
   let kept = 0;
   // Setting the encoding lets the stream carry a multi-byte character across a chunk boundary.
+  // Stryker disable next-line StringLiteral: an encoding the decoder does not recognise falls back
+  // to UTF-8 rather than being refused, so an empty name decodes the same bytes into the same text.
   source?.setEncoding('utf8');
   source?.on('data', (chunk: string) => {
     if (kept >= MAX_GIT_OUTPUT_BYTES) {
@@ -172,6 +174,8 @@ export async function gitOrThrow(
   const result = await git.run(args, options);
   if (result.code !== 0) {
     throw new GitError(
+      // Stryker disable next-line StringLiteral: the split is limited to one piece, so the array
+      // being joined holds a single line and the text placed between pieces is never reached.
       `git ${args[0]} failed: ${result.stderr.split('\n', 1).join('')}`,
       result.code,
       result.stderr.slice(0, MAX_STDERR_CHARS),

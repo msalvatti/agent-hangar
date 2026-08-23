@@ -281,6 +281,9 @@ describe('mapChatDetail', () => {
     );
     expect(mapped.items.map((item) => item.kind)).toEqual(['user', 'assistant', 'notice']);
     expect(mapped.lastPrompt).toBe('question');
+    // A rebuilt answer is finished text. Marked as streaming it would render with the caret the
+    // live transcript shows while a reply is still arriving, on a chat where nothing is running.
+    expect(mapped.items[1]).toMatchObject({ streaming: false });
   });
 
   /** Compaction summaries are model-facing and never rendered. */
@@ -498,6 +501,26 @@ describe('mapChatDetail', () => {
     expect(mapped.items[1]).toMatchObject({ kind: 'tool', name: null });
   });
 
+  /**
+   * The stderr rule is about tools known not to stream, so a tool this build cannot name is not one
+   * of them: nothing here knows how its runtime wrote the text, and moving it to stderr on a guess
+   * would put a destructive border on a row whose stream is simply unknown.
+   */
+  it('leaves the head of a failed unknown tool on stdout', () => {
+    const mapped = mapChatDetail(
+      detailWith({
+        toolCalls: [
+          {
+            ...toolCall({ id: 't1', seq: 0, toolName: 'invented_tool', status: 'FAILED' }),
+            resultHead: 'it did not work',
+          },
+        ],
+      }),
+    );
+
+    expect(mapped.items[0]).toMatchObject({ stdout: 'it did not work', stderr: '' });
+  });
+
   /** Every persisted turn status has a phase, and only live ones keep the stream open. */
   it.each([
     ['QUEUED', 'queued', 'turn-1'],
@@ -523,11 +546,58 @@ describe('mapChatDetail', () => {
   /** A failed turn contributes an error row so the failure is visible in the transcript itself. */
   it('appends an error item for a failed turn', () => {
     const mapped = mapChatDetail(detailWith({ turns: [turn('FAILED', { error: 'boom' })] }));
-    expect(mapped.items.at(-1)).toMatchObject({
+    // The id is derived from the turn — the transcript keys rows by id, and one shared id would
+    // collapse two turns' failures into a single row. The code is the one every rebuilt failure
+    // carries: a persisted turn keeps the message and no code of its own.
+    expect(mapped.items.at(-1)).toStrictEqual({
       kind: 'error',
+      id: 'turn-1-error',
+      code: 'TURN_FAILED',
       message: 'boom',
       turnId: 'turn-1',
     });
+  });
+
+  /**
+   * A turn recorded as failed with nothing written in `error` has nothing to report. A row built
+   * anyway shows the reader an empty failure — a red block asserting something went wrong and
+   * declining to say what.
+   */
+  it('shows no failure row for a failed turn that recorded no error', () => {
+    const mapped = mapChatDetail(detailWith({ turns: [turn('FAILED')] }));
+    expect(mapped.items).toStrictEqual([]);
+  });
+
+  /**
+   * A failure whose turn was never stamped as finished still has a place in the order, and
+   * `queuedAt` is the instant that always exists. Without it the row sorts on a value that is not
+   * a number and lands wherever the concatenation happened to put it — after prompts that came
+   * later, which reads as a reply to the wrong message.
+   */
+  it('places a failure with no finish stamp at the instant its turn was queued', () => {
+    const mapped = mapChatDetail(
+      detailWith({
+        messages: [
+          {
+            id: 'm1',
+            turnId: null,
+            seq: 1,
+            role: 'USER',
+            content: 'asked again',
+            createdAt: '2026-08-19T10:05:00.000Z',
+          },
+        ],
+        turns: [
+          {
+            ...turn('FAILED', { error: 'rate limited' }),
+            queuedAt: '2026-08-19T10:00:00.000Z',
+            finishedAt: null,
+          },
+        ],
+      }),
+    );
+
+    expect(mapped.items.map((item) => item.kind)).toEqual(['error', 'user']);
   });
 
   /**
@@ -682,6 +752,17 @@ describe('mapChatDetail', () => {
   });
 
   /**
+   * A turn that is queued but has not started has no start instant, and saying so is the point: the
+   * header pill counts up from this value, and a turn whose start cannot be read would otherwise
+   * hand it a number that is not one and show an elapsed time of `NaN`.
+   */
+  it('reports no start time for a turn that has not started', () => {
+    const mapped = mapChatDetail(detailWith({ turns: [turn('QUEUED')] }));
+
+    expect(mapped.startedAt).toBeNull();
+  });
+
+  /**
    * Everything else in a turn survives a reload; the preparation used to be the one thing that did
    * not, because it is an event and events are not kept. It is now recorded on the turn, and the
    * notice is spelled by the same builder the live stream uses so the two cannot say it
@@ -750,10 +831,31 @@ describe('mapChatDetail', () => {
         },
       ],
     });
-    const notice = mapped.items.find(
-      (item) => item.kind === 'notice' && item.text.startsWith('Prepared '),
-    );
-    expect(notice).toBeDefined();
+    // Asserted by where it lands, not merely by existing: the queued instant is what puts the
+    // preparation before the answer of the turn it prepared. Sorting on a value that is not a
+    // number leaves the row wherever the lists happened to be concatenated, which is last.
+    expect(mapped.items.map((item) => item.kind).indexOf('notice')).toBe(1);
+    expect(mapped.items[1]).toMatchObject({ text: 'Prepared agent/aaa at 1111111' });
+  });
+
+  /**
+   * Both halves are needed to say anything: the notice names a branch *and* the commit it started
+   * from, and a turn that recorded only one of them cannot be described without inventing the
+   * other.
+   */
+  it.each([
+    ['a branch but no commit', 'agent/aaa', null],
+    ['a commit but no branch', null, '1111111abcdef'],
+  ])('says nothing about a turn that recorded %s', (_label, preparedBranch, preparedSha) => {
+    const turns = twoTurnTurns();
+    const [first] = turns;
+    const mapped = mapChatDetail({
+      ...twoTurnChat(),
+      turns: [{ ...first!, preparedBranch, preparedSha }],
+    });
+
+    const texts = mapped.items.filter((item) => item.kind === 'notice').map((n) => n.text);
+    expect(texts.some((text) => text.startsWith('Prepared '))).toBe(false);
   });
 
   /**

@@ -257,6 +257,335 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+/** The records the container collected, parsed back from the lines pino wrote. */
+function records(logs: string[]): Record<string, unknown>[] {
+  return logs.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+/** One stdout frame carrying an agent event. */
+function frame(event: AgentEvent): ExecEvent {
+  return { type: 'stdout', data: new TextEncoder().encode(encodeLine(event)) };
+}
+
+describe('what the executor makes of an exec that reported no outcome', () => {
+  /**
+   * An ordinary turn produces no invalid lines and says nothing about any. The count is what a
+   * reader takes as "the runtime and this worker disagree about the protocol", and raised for
+   * every well-formed event it would say that of every turn ever run.
+   */
+  it('counts no invalid line for a turn that produced none', async () => {
+    const container = createTestContainer({
+      runner: new ScriptedExecRunner([
+        frame({ type: 'prepare.progress', message: 'Cloning…' }),
+        frame({
+          type: 'turn.completed',
+          usage: { inputTokens: 1, outputTokens: 1 },
+          steps: 1,
+          finalMessage: 'done',
+        }),
+        { type: 'exit', code: 0 },
+      ]),
+    });
+
+    const outcome = await execute(container, recordingSink().sink);
+
+    expect(outcome.protocolErrors).toBe(0);
+    expect(container.logs.join('')).not.toContain('runtime produced an invalid line');
+  });
+
+  /**
+   * A terminal event is not unsaid by whatever the runtime prints afterwards. A runtime that
+   * reports it is done and then emits one more heartbeat has still reported an outcome, and a turn
+   * that forgot it would be recorded as one that simply stopped.
+   */
+  it('keeps the outcome a runtime reported before its last words', async () => {
+    const container = createTestContainer({
+      runner: new ScriptedExecRunner([
+        frame({
+          type: 'turn.completed',
+          usage: { inputTokens: 1, outputTokens: 1 },
+          steps: 1,
+          finalMessage: 'done',
+        }),
+        frame({ type: 'heartbeat', at: '2026-01-01T00:00:01.000Z' }),
+        { type: 'exit', code: 0 },
+      ]),
+    });
+
+    const outcome = await execute(container, recordingSink().sink);
+
+    expect(outcome).toMatchObject({ terminal: 'completed', reportedByRuntime: true });
+  });
+
+  /**
+   * And the failure a runtime described is not unsaid by a later terminal event either. A runtime
+   * that reports a failure and is then cancelled has still said why it failed, and that reason is
+   * what the user is shown — a cancellation carries none of its own.
+   */
+  it('keeps the reason a failed turn gave when a cancellation follows it', async () => {
+    const container = createTestContainer({
+      runner: new ScriptedExecRunner([
+        frame({
+          type: 'turn.failed',
+          error: { code: 'model_refused', message: 'the model refused the request' },
+        }),
+        frame({ type: 'turn.cancelled' }),
+        { type: 'exit', code: 0 },
+      ]),
+    });
+
+    const outcome = await execute(container, recordingSink().sink);
+
+    expect(outcome).toMatchObject({
+      terminal: 'cancelled',
+      reportedByRuntime: true,
+      error: { code: 'model_refused', message: 'the model refused the request' },
+    });
+  });
+
+  /**
+   * The escalation is disarmed when the turn ends, and this is the case that proves it: the
+   * runtime never acknowledged the Stop, so nothing in the state says the turn is over — only the
+   * exec ending does. A timer left armed fires into a chat whose container outlives the turn, and
+   * sends a `SIGKILL` against an exec reference the next turn may already be using.
+   */
+  it('disarms the escalation when a turn ends without acknowledging the stop', async () => {
+    vi.useFakeTimers();
+    const runner = new DrivenRunner([{ type: 'prepare.progress', message: 'Cloning…' }]);
+    const container = createTestContainer({ runner });
+    const pending = execute(container, recordingSink().sink);
+    await vi.advanceTimersByTimeAsync(0);
+
+    container.commands.emitCancel(REQUEST.turnId);
+    await vi.advanceTimersByTimeAsync(0);
+    runner.end(0);
+    const outcome = await pending;
+
+    expect(outcome).toMatchObject({ terminal: 'cancelled', reportedByRuntime: false });
+    expect(runner.signals).toEqual(['INT']);
+
+    await vi.advanceTimersByTimeAsync(CANCEL_GRACE_MS * 4);
+    expect(runner.signals).toEqual(['INT']);
+  });
+
+  /**
+   * The escalation timer never holds the process open. A worker that has finished its jobs and been
+   * asked to stop must exit, and a referenced timer would keep the event loop alive for the whole
+   * cancellation grace after the turn it belonged to was over.
+   */
+  it('leaves the escalation timer unreferenced', async () => {
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    const runner = new DrivenRunner();
+    const container = createTestContainer({ runner });
+    const watch = await openCancellationWatch(container, REQUEST.turnId);
+    const running = executeRuntimeTurn(container, {
+      handle: HANDLE,
+      request: REQUEST,
+      sink: recordingSink().sink,
+      watch,
+    });
+    await Promise.resolve();
+    container.commands.emitCancel(REQUEST.turnId);
+    runner.end(0);
+    await running;
+    await watch.close();
+
+    const armed = timers.mock.results.map((result) => result.value as NodeJS.Timeout);
+    expect(armed).not.toHaveLength(0);
+    expect(armed.map((timer) => timer.hasRef())).toStrictEqual(armed.map(() => false));
+  });
+
+  /**
+   * Each ending is a different thing to tell the user, and the four are told apart by evidence the
+   * runtime did not give: the runner's own `TIMEOUT` signal, a Stop this worker sent, and the exit
+   * code. Collapsed into one, a turn the user stopped would be recorded as a runtime that died and
+   * a turn that ran out of time as one that ended for no reason.
+   */
+  it.each([
+    [
+      'the runner enforced the wall clock',
+      { type: 'exit' as const, code: null, signal: 'TIMEOUT' as const },
+      { terminal: 'timeout', code: 'turn_timeout', message: 'turn timed out' },
+    ],
+    [
+      'the runtime exited cleanly without saying anything',
+      { type: 'exit' as const, code: 0 },
+      {
+        terminal: 'exited',
+        code: 'runtime_exit',
+        message: 'runtime ended without a terminal event',
+      },
+    ],
+    [
+      'the runtime was killed and left no code',
+      { type: 'exit' as const, code: null },
+      {
+        terminal: 'exited',
+        code: 'runtime_exit',
+        message: 'runtime ended without a terminal event',
+      },
+    ],
+    [
+      'the runtime exited nonzero',
+      { type: 'exit' as const, code: 3 },
+      { terminal: 'exited', code: 'runtime_exit', message: 'runtime exited with code 3' },
+    ],
+  ])('records %s', async (_case, exit, expected) => {
+    const container = createTestContainer({ runner: new ScriptedExecRunner([exit]) });
+
+    const outcome = await execute(container, recordingSink().sink);
+
+    expect(outcome).toMatchObject({
+      terminal: expected.terminal,
+      reportedByRuntime: false,
+      error: { code: expected.code, message: expected.message },
+    });
+  });
+
+  /**
+   * A turn this worker stopped is a cancellation even when the runtime never acknowledged it: the
+   * user asked, the exec is over, and recording it as a runtime that died would blame the tool for
+   * something the user did.
+   */
+  it('records a turn it stopped as cancelled', async () => {
+    const container = createTestContainer({ runner: new DrivenRunner() });
+    const runner = container.runner as DrivenRunner;
+    const watch = await openCancellationWatch(container, REQUEST.turnId);
+    const running = executeRuntimeTurn(container, {
+      handle: HANDLE,
+      request: REQUEST,
+      sink: recordingSink().sink,
+      watch,
+    });
+    await Promise.resolve();
+    container.commands.emitCancel(REQUEST.turnId);
+    runner.end(0);
+
+    const outcome = await running;
+    await watch.close();
+
+    expect(outcome).toMatchObject({
+      terminal: 'cancelled',
+      reportedByRuntime: false,
+      error: { code: 'runtime_exit', message: 'turn cancelled' },
+    });
+  });
+
+  /**
+   * The three terminal events are mapped one to one, and the failure the runtime described is kept
+   * with the outcome rather than replaced by one this worker invents.
+   */
+  it.each([
+    ['turn.completed', 'completed'],
+    ['turn.cancelled', 'cancelled'],
+  ])('takes %s at its word', async (type, terminal) => {
+    const event =
+      type === 'turn.completed'
+        ? ({
+            type: 'turn.completed',
+            usage: { inputTokens: 1, outputTokens: 1 },
+            steps: 1,
+            finalMessage: 'done',
+          } as AgentEvent)
+        : ({ type: 'turn.cancelled' } as AgentEvent);
+    const container = createTestContainer({
+      runner: new ScriptedExecRunner([frame(event), { type: 'exit', code: 0 }]),
+    });
+
+    const outcome = await execute(container, recordingSink().sink);
+
+    expect(outcome).toMatchObject({ terminal, reportedByRuntime: true });
+  });
+
+  /**
+   * And a failure the runtime described keeps its own code and message: that is what the user is
+   * shown, and a turn recorded as "the runtime ended" would throw away the diagnosis it gave.
+   */
+  it('keeps the failure a turn.failed carried', async () => {
+    const container = createTestContainer({
+      runner: new ScriptedExecRunner([
+        frame({
+          type: 'turn.failed',
+          error: { code: 'model_refused', message: 'the model refused the request' },
+        }),
+        { type: 'exit', code: 0 },
+      ]),
+    });
+
+    const outcome = await execute(container, recordingSink().sink);
+
+    expect(outcome).toMatchObject({
+      terminal: 'failed',
+      reportedByRuntime: true,
+      error: { code: 'model_refused', message: 'the model refused the request' },
+    });
+  });
+
+  /**
+   * A completed turn carries no `error` key at all. Present but empty, every consumer that tests
+   * for one — the row's `error` column, the UI's failure banner — would report a failure on a turn
+   * that succeeded.
+   */
+  it('leaves no error on an outcome that has none', async () => {
+    const container = createTestContainer({
+      runner: new ScriptedExecRunner([
+        frame({
+          type: 'turn.completed',
+          usage: { inputTokens: 1, outputTokens: 1 },
+          steps: 1,
+          finalMessage: 'done',
+        }),
+        { type: 'exit', code: 0 },
+      ]),
+    });
+
+    const outcome = await execute(container, recordingSink().sink);
+
+    expect(Object.hasOwn(outcome, 'error')).toBe(false);
+  });
+
+  /**
+   * Lines the runtime produced that are not protocol are counted and reported one by one. The
+   * count is what tells a reader whether a turn was noisy or broken, and it only ever goes up.
+   */
+  it('counts and reports every line that was not protocol', async () => {
+    const container = createTestContainer({
+      runner: new ScriptedExecRunner([
+        { type: 'stdout', data: new TextEncoder().encode('not json at all\n') },
+        { type: 'stdout', data: new TextEncoder().encode('{"type":"nope"}\n') },
+        { type: 'exit', code: 0 },
+      ]),
+    });
+
+    const outcome = await execute(container, recordingSink().sink);
+
+    expect(outcome.protocolErrors).toBe(2);
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'runtime produced an invalid line',
+        reason: 'invalid-json',
+        length: 15,
+      }),
+    );
+  });
+
+  /**
+   * The exec is given the turn's own limit plus a grace, so the runner's timeout is a backstop
+   * behind the runtime's rather than in front of it. Subtracted instead, the backstop fires first
+   * and every long turn is reported as a transport timeout.
+   */
+  it('asks for a wall clock later than the deadline the turn carries', async () => {
+    const container = createTestContainer({
+      runner: new ScriptedExecRunner([{ type: 'exit', code: 0 }]),
+    });
+
+    await execute(container, recordingSink().sink);
+
+    expect(lastExecSpec(container).timeoutMs).toBe(REQUEST.limits.maxTurnMs + 60_000);
+    expect(lastExecSpec(container).timeoutMs).toBeGreaterThan(REQUEST.limits.maxTurnMs);
+  });
+});
+
 describe('executeRuntimeTurn and the credentials of the turn', () => {
   /**
    * The credentials belong to this execution and to nothing else. A container serves every turn of
@@ -493,6 +822,12 @@ describe('executeRuntimeTurn', () => {
     runner.end();
     const outcome = await pending;
     expect(outcome).toMatchObject({ terminal: 'cancelled', reportedByRuntime: true });
+
+    // And the escalation is disarmed on the way out. A timer left armed fires into a turn that is
+    // over — against an exec reference the next turn of this chat may already be using, since a
+    // chat's container outlives the turn that created it.
+    await vi.advanceTimersByTimeAsync(CANCEL_GRACE_MS * 4);
+    expect(runner.signals).toEqual(['INT']);
   });
 
   /**
@@ -538,7 +873,16 @@ describe('executeRuntimeTurn', () => {
     await pending;
     await Promise.resolve();
 
-    expect(container.logs.join('')).toContain('delivering a cancellation signal failed');
+    // Which signal could not be delivered, and what the runner said: an `INT` that failed leaves a
+    // turn running that the user asked to stop, and a `KILL` that failed leaves a container the
+    // collector will have to reap.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'delivering a cancellation signal failed',
+        signal: 'INT',
+        err: expect.objectContaining({ message: 'exec is gone' }) as unknown,
+      }),
+    );
   });
 
   /**
@@ -573,9 +917,12 @@ describe('executeRuntimeTurn', () => {
 
     await execute(container, sink);
 
-    const logged = container.logs.join('');
-    expect(logged).toContain('runtime stderr');
-    expect(logged).not.toContain(GITHUB_CANARY);
+    // The diagnostic itself is on the line, scrubbed. A record that carried no line at all is a
+    // record of the fact that the runtime said something, which is nothing an operator can use.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({ msg: 'runtime stderr', line: 'fatal: [REDACTED] rejected\n' }),
+    );
+    expect(container.logs.join('')).not.toContain(GITHUB_CANARY);
   });
 
   /**
@@ -600,8 +947,12 @@ describe('executeRuntimeTurn', () => {
     expect(outcome).toMatchObject({
       terminal: 'client-error',
       reportedByRuntime: false,
-      error: { code: CLIENT_ERROR_CODE, message: 'unknown' },
+      // The code is written out as well as read from the export: the web app matches on this word
+      // to tell a turn that failed because of this worker's own infrastructure from one the model
+      // or the runtime failed.
+      error: { code: 'client_error', message: 'unknown' },
     });
+    expect(CLIENT_ERROR_CODE).toBe('client_error');
     expect(JSON.stringify(outcome)).not.toContain('database is down');
     expect(container.commands.subscriptions).toBe(0);
   });
@@ -664,7 +1015,15 @@ describe('executeRuntimeTurn', () => {
 
     expect(outcome).toMatchObject({ terminal: 'completed', reportedByRuntime: true });
     expect(seen).toEqual([completed]);
-    expect(container.logs.join('')).toContain('after the turn had reported its outcome');
+    // Classified, never quoted: what broke may be the publisher or a repository, whose message is
+    // built from the connection string it was configured with. A line naming nothing at all would
+    // leave an operator with a warning they cannot act on.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'the exec stream failed after the turn had reported its outcome',
+        failure: 'ECONNREFUSED',
+      }),
+    );
   });
 
   /**

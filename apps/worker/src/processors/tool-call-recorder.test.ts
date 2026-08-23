@@ -55,6 +55,17 @@ describe('appendWithinBudget', () => {
     expect(appendWithinBudget('', 'aé', 2)).toBe('a');
     expect(appendWithinBudget('', 'aé', 3)).toBe('aé');
   });
+
+  /**
+   * A chunk that fills the budget exactly is kept whole. This is the boundary the cap turns on:
+   * one byte stricter and the last character of every full chunk is dropped, one byte looser and
+   * the head this worker holds in memory is not the cap it advertises.
+   */
+  it('keeps a chunk that fills the budget exactly', () => {
+    expect(appendWithinBudget('ab', 'cd', 4)).toBe('abcd');
+    expect(appendWithinBudget('ab', 'cde', 4)).toBe('abcd');
+    expect(appendWithinBudget('', 'é', 2)).toBe('é');
+  });
 });
 
 describe('createToolCallRecorder', () => {
@@ -147,13 +158,21 @@ describe('createToolCallRecorder', () => {
     const container = createTestContainer();
     const recorder = createToolCallRecorder(container, { workspaceId: 'ws-1', turnId: 'turn-1' });
 
-    await recorder.start(call('call-2', 2));
+    // Distinguishable on purpose: two calls summarised identically would agree with any order at
+    // all, so the check would hold for a recorder that sorted backwards or not at all.
+    await recorder.start({
+      type: 'tool.call',
+      callId: 'call-2',
+      name: 'read_file',
+      args: { path: 'NOTES.md' },
+      seq: 2,
+    });
     await recorder.start(call('call-1', 1));
     await recorder.start(call('call-3', 3));
     await recorder.finish(result('call-2'));
     await recorder.finish(result('call-1'));
 
-    expect(recorder.summaries()).toEqual(['ran `ls` → exit 0 (2 s)', 'ran `ls` → exit 0 (2 s)']);
+    expect(recorder.summaries()).toEqual(['ran `ls` → exit 0 (2 s)', 'read NOTES.md']);
     expect((await container.repos.toolCalls.listByTurn('turn-1')).at(-1)?.status).toBe('RUNNING');
   });
 
@@ -168,7 +187,38 @@ describe('createToolCallRecorder', () => {
     recorder.append({ type: 'tool.output.delta', callId: 'ghost', stream: 'stdout', text: 'x' });
     await recorder.finish(result('ghost'));
 
-    expect(container.logs.join('')).toContain('tool event for an unknown call');
+    // The line names the call and which event arrived for it: a turn makes many calls, and a
+    // report that says only "an event" leaves nobody able to find the one that slipped.
+    expect(container.logs.map((line) => JSON.parse(line) as Record<string, unknown>)).toStrictEqual(
+      [
+        expect.objectContaining({
+          msg: 'tool event for an unknown call',
+          callId: 'ghost',
+          event: 'tool.output.delta',
+        }),
+        expect.objectContaining({
+          msg: 'tool event for an unknown call',
+          callId: 'ghost',
+          event: 'tool.result',
+        }),
+      ],
+    );
     expect(await container.repos.toolCalls.listByTurn('turn-1')).toHaveLength(0);
+  });
+
+  /**
+   * And a call that *was* started is never reported as unknown. The warning is what an operator
+   * reads as "the runtime and the recorder disagree"; raised for every ordinary chunk of every
+   * ordinary call, it would say that of every turn the worker has ever run.
+   */
+  it('says nothing about a call it started', async () => {
+    const container = createTestContainer();
+    const recorder = createToolCallRecorder(container, { workspaceId: 'ws-1', turnId: 'turn-1' });
+
+    await recorder.start(call('call-1', 1));
+    recorder.append({ type: 'tool.output.delta', callId: 'call-1', stream: 'stdout', text: 'x' });
+    await recorder.finish(result('call-1'));
+
+    expect(container.logs).toHaveLength(0);
   });
 });

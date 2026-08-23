@@ -60,13 +60,19 @@ describe('resolveDockerSocket', () => {
    * resolution must fail instead.
    */
   it.each(['1', 'true', 'yes', '0'])('rejects DOCKER_TLS_VERIFY=%s', (value) => {
-    expect(() =>
+    const resolve = (): unknown =>
       resolveDockerSocket({
         env: { DOCKER_HOST: 'tcp://docker.internal:2376', DOCKER_TLS_VERIFY: value },
         homedir: () => HOME,
         exists: () => false,
-      }),
-    ).toThrow(DockerRunnerError);
+      });
+
+    expect(resolve).toThrow(DockerRunnerError);
+    // The message is the whole of the remedy: an operator who set this variable deliberately has
+    // to be told which two transports this runner does speak.
+    expect(resolve).toThrow(
+      'DOCKER_TLS_VERIFY is not supported by this runner; use a unix socket or plain tcp',
+    );
   });
 
   /**
@@ -100,14 +106,39 @@ describe('resolveDockerSocket', () => {
     ['tcp port without a host', 'tcp://:2375'],
     ['empty unix path', 'unix://'],
     ['bare path', '/var/run/docker.sock'],
+    // Zero is not a port, and a check that only refuses negatives lets it through to a connection
+    // that can never be made.
+    ['zero tcp port', 'tcp://docker.internal:0'],
+    // A scheme this runner does not speak, written with a port: read as a tcp authority it parses
+    // perfectly well, and the runner would then talk plain HTTP to an ssh endpoint.
+    ['unknown scheme with a port', 'ssh://build-host:22'],
   ])('throws a typed error for a DOCKER_HOST with a %s', (_case, value) => {
-    expect(() =>
+    const resolve = (): unknown =>
       resolveDockerSocket({
         env: { DOCKER_HOST: value },
         homedir: () => HOME,
         exists: () => false,
-      }),
-    ).toThrow(DockerRunnerError);
+      });
+
+    expect(resolve).toThrow(DockerRunnerError);
+    // Naming the value, because this is configuration and the operator has to see which spelling
+    // of it was refused.
+    expect(resolve).toThrow(`unsupported DOCKER_HOST "${value}"`);
+  });
+
+  /**
+   * The highest port there is, accepted: the ceiling is the last usable number rather than the
+   * first refused one, and a check written one short of it refuses a daemon an operator can
+   * legitimately be running.
+   */
+  it('accepts the highest tcp port', () => {
+    expect(
+      resolveDockerSocket({
+        env: { DOCKER_HOST: 'tcp://docker.internal:65535' },
+        homedir: () => HOME,
+        exists: () => false,
+      }).options,
+    ).toStrictEqual({ host: 'docker.internal', port: 65_535, protocol: 'http' });
   });
 
   /**

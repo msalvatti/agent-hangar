@@ -14,6 +14,14 @@ import { pushRecentRepo } from '@/shared/repo-picker';
 
 import { createChat } from '../services/chats-api';
 
+/**
+ * Key prefix both sidebar lists are registered under, so a new chat appears in the active one.
+ *
+ * Held here rather than written inside the callback below, whose dependency list carries a
+ * directive that would otherwise cover this literal too.
+ */
+const CHATS_KEY = ['chats'];
+
 /** Input of {@link UseCreateChatResult.create}. */
 export interface CreateChatInput {
   /**
@@ -49,6 +57,10 @@ export function useCreateChat(): UseCreateChatResult {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>(undefined);
 
+  // The router object Next hands back is stable for the life of the page, and `reset` reads nothing
+  // that changes between renders, so both lists are constant — anything added to either would be
+  // constant too.
+  // Stryker disable ArrayDeclaration
   const create = useCallback(
     async ({ repo, branch, prompt }: CreateChatInput) => {
       setBusy(true);
@@ -60,7 +72,7 @@ export function useCreateChat(): UseCreateChatResult {
           prompt,
         });
         pushRecentRepo(repo.fullName);
-        invalidateQueries(['chats']);
+        invalidateQueries(CHATS_KEY);
         router.push(`/chats/${chatId}`);
       } catch (reason) {
         setError(reason instanceof Error ? reason.message : String(reason));
@@ -74,6 +86,7 @@ export function useCreateChat(): UseCreateChatResult {
   const reset = useCallback(() => {
     setError(undefined);
   }, []);
+  // Stryker restore ArrayDeclaration
 
   return { create, busy, error, reset };
 }

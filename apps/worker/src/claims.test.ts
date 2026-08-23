@@ -9,7 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 
-import { chatClaimKey, createWorkspaceClaims, workspaceClaimKey } from './claims.js';
+import { chatClaimKey, createWorkspaceClaims, turnClaimKey, workspaceClaimKey } from './claims.js';
 
 describe('createWorkspaceClaims', () => {
   /**
@@ -57,6 +57,21 @@ describe('createWorkspaceClaims', () => {
     claims.release('chat:c1');
 
     expect(claims.claim('chat:c1')).toBe(true);
+  });
+});
+
+describe('the shape of a claim key', () => {
+  /**
+   * The three prefixes are what keep the namespaces apart, and they are written out here rather
+   * than compared with one another: a chat, a workspace and a turn are contended for by different
+   * parts of the worker at the same moment, and two of them sharing a prefix would let a chat's
+   * turn take the key its own workspace collector is waiting on. Compared only against each other,
+   * all three could lose their prefix at once and every comparison would still hold.
+   */
+  it('names the chat, the workspace and the turn namespaces', () => {
+    expect(chatClaimKey('c1')).toBe('chat:c1');
+    expect(workspaceClaimKey({ id: 'ws-1', chatId: null })).toBe('workspace:ws-1');
+    expect(turnClaimKey('t1')).toBe('turn:t1');
   });
 });
 

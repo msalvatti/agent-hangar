@@ -215,3 +215,47 @@ describe('PrismaToolCallLogRepository', () => {
     });
   });
 });
+
+describe('what the tool-call log refuses and reports', () => {
+  /**
+   * A tool call hangs off exactly one parent — a turn or a scheduled run — and the message says
+   * which field to fix. Emptied, the caller is told a mapping failed and nothing about what.
+   */
+  it.each([
+    ['neither parent', {}],
+    ['both parents', { turnId: 'turn-1', jobRunId: 'run-1' }],
+  ])('refuses a start with %s, saying which fields it means', async (_case, parents) => {
+    const { client } = fakePrisma();
+    const repo = new PrismaToolCallLogRepository(client, fakeRedactor);
+
+    await expect(
+      repo.start({
+        workspaceId: 'ws-1',
+        callId: 'c1',
+        seq: 0,
+        toolName: 'run_shell',
+        args: {},
+        ...parents,
+      }),
+    ).rejects.toThrow('StartToolCallInput must set exactly one of turnId or jobRunId.');
+  });
+
+  /** A finish that finds no row names the entity whose row was missing. */
+  it('names the entity of a row it could not finish', async () => {
+    const { client } = fakePrisma({ update: vi.fn(() => Promise.reject(p2025())) });
+    const repo = new PrismaToolCallLogRepository(client, fakeRedactor);
+
+    const failure = await repo
+      .finish('log-1', {
+        status: 'SUCCEEDED',
+        exitCode: 0,
+        resultHead: null,
+        resultBytes: 0,
+        durationMs: 5,
+      })
+      .catch((error: unknown) => error);
+
+    expect(failure).toBeInstanceOf(NotFoundError);
+    expect((failure as NotFoundError).entity).toBe('ToolCallLog');
+  });
+});

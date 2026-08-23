@@ -18,6 +18,11 @@ import type { TestContainer } from '../testing/index.js';
 
 import { countDirtyEntries, formatTeardownNote, teardownWorkspace } from './teardown-workspace.js';
 
+/** The records the container collected, parsed back from the lines pino wrote. */
+function records(logs: string[]): Record<string, unknown>[] {
+  return logs.map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
 /** A runner whose snapshots always fail. */
 class BlindRunner extends FakeWorkspaceRunner {
   override async snapshot(): Promise<WorkspaceSnapshot> {
@@ -90,6 +95,18 @@ describe('countDirtyEntries', () => {
   it('counts nothing in an empty summary', () => {
     expect(countDirtyEntries(snapshot({}))).toBe(0);
   });
+
+  /**
+   * The two status characters count only at the start of a line. A path in the diff stat can carry
+   * the same shape — two of those characters and a space — anywhere along it, and a count that
+   * matched wherever it appeared would report changes for a workspace that has none, and tell the
+   * model it lost work it never had.
+   */
+  it('counts nothing for a diff-stat line whose path looks like an entry', () => {
+    const summary = [' M src/index.ts', ' docs/ M x.md | 2 +-', ' 1 file changed'].join('\n');
+
+    expect(countDirtyEntries({ ...snapshot({}), summary })).toBe(1);
+  });
 });
 
 describe('formatTeardownNote', () => {
@@ -151,8 +168,84 @@ describe('teardownWorkspace', () => {
       lastPushedSha: 'deadbee',
     });
     const messages = await container.repos.messages.listByChat(chatId);
-    expect(messages.at(-1)?.content).toContain('1 uncommitted change discarded');
+    expect(messages.at(-1)).toMatchObject({
+      content: expect.stringContaining('1 uncommitted change discarded') as unknown,
+      // Written as the system, not as the user: the transcript replays roles to the model, and a
+      // note about a lost filesystem attributed to the user is a sentence the user never wrote.
+      role: 'SYSTEM',
+    });
     expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('DESTROYED');
+    // Both container calls name the reference the row recorded. Asked with anything else — an
+    // empty string, or the reference of nothing — the daemon is being told about a container that
+    // is not this workspace's.
+    expect(container.runner.calls.filter((call) => call.method === 'destroy')).toStrictEqual([
+      { method: 'destroy', args: [{ workspaceId: workspace.id, runnerRef: 'ref-1' }] },
+    ]);
+    vi.restoreAllMocks();
+  });
+
+  /**
+   * The snapshot is asked for by the same reference, before anything is destroyed.
+   */
+  it('snapshots the container the row recorded', async () => {
+    const container = createTestContainer();
+    const { workspace } = await seedChatWorkspace(container);
+
+    await teardownWorkspace(container, workspace, { reason: 'archive' });
+
+    expect(container.runner.calls.filter((call) => call.method === 'snapshot')).toStrictEqual([
+      { method: 'snapshot', args: [{ workspaceId: workspace.id, runnerRef: 'ref-1' }] },
+    ]);
+  });
+
+  /**
+   * A row whose container reference was never recorded still names itself. There is nothing to
+   * pass for the reference, so what goes is empty rather than absent: the runner is being asked
+   * about a workspace it may still be able to find by id, and a value invented here would send it
+   * looking for a container nobody created.
+   */
+  it('asks with an empty reference for a workspace that never recorded one', async () => {
+    const container = createTestContainer();
+    const chat = await container.repos.chats.create({
+      title: 'Task',
+      repoUrl: 'https://github.com/octocat/Hello-World',
+      baseBranch: 'main',
+    });
+    const created = await container.repos.workspaces.create({
+      kind: 'CHAT',
+      chatId: chat.id,
+      runnerKind: 'fake',
+      image: 'image',
+      repoUrl: 'https://github.com/octocat/Hello-World',
+      branch: 'main',
+    });
+    const workspace = await container.repos.workspaces.setStatus(created.id, 'READY');
+
+    await teardownWorkspace(container, workspace, { reason: 'archive' });
+
+    expect(container.runner.calls.map((call) => call.args[0])).toStrictEqual([
+      { workspaceId: workspace.id, runnerRef: '' },
+      { workspaceId: workspace.id, runnerRef: '' },
+    ]);
+  });
+
+  /**
+   * A snapshot with no branch has no branch to advertise, and its commit is not one either: hints
+   * written from half of it would point a later turn at a `null` branch carrying a real sha.
+   */
+  it('writes no hints for a snapshot with no branch', async () => {
+    const container = createTestContainer();
+    const { workspace, chatId } = await seedChatWorkspace(container);
+    vi.spyOn(container.runner, 'snapshot').mockResolvedValue(
+      snapshot({ branch: null, headSha: 'deadbee', ahead: 0 }),
+    );
+
+    await teardownWorkspace(container, workspace, { reason: 'archive' });
+
+    expect(await container.repos.chats.getById(chatId)).toMatchObject({
+      workBranch: null,
+      lastPushedSha: null,
+    });
     vi.restoreAllMocks();
   });
 
@@ -187,7 +280,15 @@ describe('teardownWorkspace', () => {
     const outcome = await teardownWorkspace(container, workspace, { reason: 'archive' });
 
     expect(outcome).toBe('destroyed');
-    expect(container.logs.join('')).toContain('could not snapshot a workspace');
+    // Which workspace could not be read, and what it said: the collector sweeps many at once, and
+    // a line naming none of them cannot be matched to a container still on the host.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'could not snapshot a workspace before destroying it',
+        workspaceId: workspace.id,
+        err: expect.objectContaining({ message: 'container is not responding' }) as unknown,
+      }),
+    );
     const messages = await container.repos.messages.listByChat(chatId);
     expect(messages.at(-1)?.content).toBe('Workspace archived; no uncommitted changes.');
     expect(await container.repos.chats.getById(chatId)).toMatchObject({ workBranch: null });
@@ -212,6 +313,15 @@ describe('teardownWorkspace', () => {
       status: 'FAILED',
       failureReason: 'remove refused for [REDACTED]',
     });
+    // The container that is still on the host is named, and so is what the daemon said about it —
+    // that pair is what an operator takes to `docker ps`.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'destroying a workspace failed',
+        workspaceId: workspace.id,
+        err: expect.objectContaining({ message: 'remove refused for [REDACTED]' }) as unknown,
+      }),
+    );
     expect(container.logs.join('')).not.toContain(GITHUB_CANARY);
     vi.restoreAllMocks();
   });
@@ -254,7 +364,16 @@ describe('teardownWorkspace', () => {
     expect(outcome).toBe('failed');
     expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('READY');
     expect(container.runner.calls.some((call) => call.method === 'destroy')).toBe(false);
-    expect(container.logs.join('')).toContain('recording what a chat needs');
+    // Named down to the workspace, and classified rather than quoted: a repository failure carries
+    // the connection string in its own message, and the operator still needs to know which row was
+    // left behind for a later pass.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'recording what a chat needs before its workspace is destroyed failed',
+        workspaceId: workspace.id,
+        failure: 'unknown',
+      }),
+    );
 
     append.mockRestore();
     const retried = await teardownWorkspace(container, workspace, {
@@ -314,7 +433,16 @@ describe('teardownWorkspace', () => {
     expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('BUSY');
     expect(container.runner.calls.some((call) => call.method === 'destroy')).toBe(false);
     expect(await container.repos.messages.listByChat(chatId)).toHaveLength(0);
-    expect(container.logs.join('')).toContain('not free to stop');
+    // The status that was found is on the line beside the workspace. "Not free to stop" without it
+    // leaves an operator unable to tell a container a turn is using from one an earlier teardown
+    // abandoned half-way — the first resolves itself, the second never will.
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'workspace is not free to stop; left for a later pass',
+        workspaceId: workspace.id,
+        foundStatus: 'BUSY',
+      }),
+    );
   });
 
   /**
@@ -334,6 +462,36 @@ describe('teardownWorkspace', () => {
     expect([first, second]).toEqual(['skipped', 'skipped']);
     expect(container.runner.calls.filter((call) => call.method === 'destroy')).toHaveLength(0);
     expect((await container.repos.workspaces.get(workspace.id))?.status).toBe('STOPPING');
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'workspace is not free to stop; left for a later pass',
+        workspaceId: workspace.id,
+        foundStatus: 'STOPPING',
+      }),
+    );
+  });
+
+  /**
+   * A workspace taken between the read and the claim is left alone, and the line says which one:
+   * this is the race the claim exists for — the record was already written for a container a turn
+   * is now executing in — and an operator seeing it repeatedly is seeing a collector fighting live
+   * work rather than a stuck row.
+   */
+  it('names the workspace a writer took while its record was being written', async () => {
+    const container = createTestContainer();
+    const { workspace } = await seedChatWorkspace(container);
+    vi.spyOn(container.repos.workspaces, 'claimStatus').mockResolvedValue(null);
+
+    const outcome = await teardownWorkspace(container, workspace, { reason: 'archive' });
+
+    expect(outcome).toBe('skipped');
+    expect(records(container.logs)).toContainEqual(
+      expect.objectContaining({
+        msg: 'workspace was taken while its record was written; left for a later pass',
+        workspaceId: workspace.id,
+      }),
+    );
+    vi.restoreAllMocks();
   });
 
   /**

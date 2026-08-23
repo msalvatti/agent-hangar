@@ -28,7 +28,7 @@ afterEach(() => {
 describe('listJobs', () => {
   /** Returns the seeded jobs array. */
   it('returns the jobs array', async () => {
-    const jobs = await listJobs();
+    const jobs = await listJobs(new AbortController().signal);
     expect(jobs.length).toBe(3);
   });
 
@@ -82,7 +82,7 @@ describe('runJob', () => {
 describe('listRuns', () => {
   /** Lists the runs of a job. */
   it('returns the job runs', async () => {
-    const runs = await listRuns('job-changelog');
+    const runs = await listRuns('job-changelog', new AbortController().signal);
     expect(runs.length).toBeGreaterThan(0);
   });
 
@@ -97,7 +97,7 @@ describe('listRuns', () => {
 describe('getRun', () => {
   /** Fetches a run's detail. */
   it('returns the run detail', async () => {
-    const detail = await getRun('run-nightly-success');
+    const detail = await getRun('run-nightly-success', new AbortController().signal);
     expect(detail.run.id).toBe('run-nightly-success');
   });
 

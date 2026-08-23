@@ -12,6 +12,7 @@ import { toast } from 'sonner';
 import { ApiClientError } from '@/shared/api/client';
 import { invalidateQueries } from '@/shared/api/use-api-query';
 
+import { JOBS_KEY, jobKey, runsKey } from '../lib/query-keys';
 import { deleteJob, runJob, updateJob } from '../services/scheduled-api';
 
 /** Result of {@link useJobActions}. */
@@ -76,13 +77,16 @@ export function useJobActions(): UseJobActionsResult {
   const [pending, setPending] = useState<Record<string, boolean>>({});
   const [overrides, setOverrides] = useState<Record<string, EnabledOverride>>({});
 
+  // Nothing these callbacks read changes between renders, so their dependency lists are empty —
+  // and anything constant added to one would never change either.
+  // Stryker disable ArrayDeclaration
   const toggleEnabled = useCallback(async (job: JobSummary, enabled: boolean) => {
     setOverrides((prev) => ({ ...prev, [job.id]: { enabled, appliedTo: job.updatedAt } }));
     setPending((prev) => withEntry(prev, job.id, true));
     try {
       await updateJob(job.id, { enabled });
-      invalidateQueries(['jobs']);
-      invalidateQueries(['job', job.id]);
+      invalidateQueries(JOBS_KEY);
+      invalidateQueries(jobKey(job.id));
     } catch {
       setOverrides((prev) => withoutEntry(prev, job.id));
       toast.error('Could not update job');
@@ -96,7 +100,7 @@ export function useJobActions(): UseJobActionsResult {
     try {
       await runJob(job.id);
       toast.success('Run started');
-      invalidateQueries(['runs', job.id]);
+      invalidateQueries(runsKey(job.id));
     } catch (error) {
       if (error instanceof ApiClientError && error.status === 409) {
         toast.error('Skipped: previous run still running');
@@ -113,7 +117,7 @@ export function useJobActions(): UseJobActionsResult {
     try {
       await deleteJob(job.id);
       toast.success('Job deleted');
-      invalidateQueries(['jobs']);
+      invalidateQueries(JOBS_KEY);
       return true;
     } catch {
       toast.error('Could not delete job');
@@ -122,6 +126,8 @@ export function useJobActions(): UseJobActionsResult {
       setPending((prev) => withoutEntry(prev, job.id));
     }
   }, []);
+
+  // Stryker restore ArrayDeclaration
 
   return { toggleEnabled, runNow, remove, pending, overrides };
 }

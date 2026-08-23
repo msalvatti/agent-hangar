@@ -264,6 +264,9 @@ async function streamAttempt(deps: LoopDeps, state: LoopState): Promise<AttemptO
       case 'tool_call':
         toolCalls.push({ callId: event.callId, name: event.name, arguments: event.arguments });
         break;
+      // Stryker disable next-line StringLiteral: an event whose type matches no case is ignored,
+      // which is what this case does, so emptying the name it matches changes nothing. The case is
+      // written out because a reader looking for this event should find it answered here.
       case 'tool_call.arguments.delta':
         // Providers emit these for live UIs; the runtime waits for the complete call.
         break;
@@ -280,6 +283,9 @@ async function streamAttempt(deps: LoopDeps, state: LoopState): Promise<AttemptO
   if (usage === undefined) {
     return { kind: 'error', code: 'unknown', message: 'model stream ended without response.done' };
   }
+  // Stryker disable next-line StringLiteral: this discriminant is the one the callers never read
+  // - they ask whether the step was cancelled or failed and treat everything else as the answer -
+  // so the name it carries is for the reader of the type rather than for any branch.
   return { kind: 'ok', text, toolCalls, usage };
 }
 
@@ -319,16 +325,16 @@ async function runModelStep(deps: LoopDeps, state: LoopState): Promise<StepOutco
 /**
  * Emits `git.pushed` when a shell command turned out to be a successful push.
  *
+ * Asked of the result rather than of the tool's name: `run_shell` is the only tool that reports the
+ * command it ran, so a result carrying one and a result from that tool are the same set. Naming the
+ * tool as well would be a second spelling of the same question, and one no test could tell apart
+ * from the first.
+ *
  * @param deps - Loop dependencies.
- * @param name - Tool that ran.
- * @param result - What it produced.
+ * @param result - What the tool produced.
  */
-async function maybeEmitGitPushed(
-  deps: LoopDeps,
-  name: string,
-  result: ToolExecutionResult,
-): Promise<void> {
-  if (result.command === undefined || name !== 'run_shell') {
+async function maybeEmitGitPushed(deps: LoopDeps, result: ToolExecutionResult): Promise<void> {
+  if (result.command === undefined) {
     return;
   }
   const pushed = looksLikeGitPush({
@@ -411,7 +417,7 @@ async function runToolCall(
     // it is the one consumer the event writer does not sit in front of.
     { type: 'tool_result', callId: call.callId, output: deps.redactText(result.output) },
   );
-  await maybeEmitGitPushed(deps, call.name, result);
+  await maybeEmitGitPushed(deps, result);
 }
 
 /**
@@ -430,8 +436,10 @@ async function runToolCalls(
   clock: LoopClock,
 ): Promise<boolean> {
   for (const call of calls) {
+    // Leaves by the same door as a run that finishes its calls, so the answer to "was this turn
+    // cancelled" is read from the signal in one place rather than asserted twice.
     if (deps.signal.aborted) {
-      return true;
+      break;
     }
     await runToolCall(deps, state, call, clock);
   }
