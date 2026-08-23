@@ -41,7 +41,7 @@ describe('what every chat route refuses before it does anything', () => {
    * as same-origin and lets an attacking page read it — so every export refuses it, reads
    * included. The state-changing ones refuse a foreign origin as well, before the body is read.
    */
-  const params = { params: Promise.resolve({ id: 'chat-1' }) };
+  const params = { id: 'chat-1' };
   const routes: [string, (container: ServerContainer, request: Request) => Promise<Response>][] = [
     ['POST /api/chats', (container, request) => createChat(container, request)],
     ['GET /api/chats', (container, request) => listChats(container, request)],

@@ -141,7 +141,11 @@ export function useChatStream(
   const followTurn = useCallback((turnId: string) => {
     expiredRef.current = false;
     setActiveTurnId(turnId);
+    // Nothing this callback reads changes between renders, so its dependency list is empty — and
+    // anything constant added to it would never change either.
+    // Stryker disable ArrayDeclaration
   }, []);
+  // Stryker restore ArrayDeclaration
 
   return { ...events, activeTurnId, followTurn };
 }

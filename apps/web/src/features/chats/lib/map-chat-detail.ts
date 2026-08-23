@@ -260,16 +260,19 @@ export function mapChatDetail(detail: ChatDetail): MappedChat {
   const messages = [...detail.messages].sort((left, right) => left.seq - right.seq);
   const items: TranscriptItem[] = timedItems(messages, detail).map((entry) => entry.item);
 
-  const latest = detail.turns.at(-1);
-  const phase = latest === undefined ? 'idle' : PHASE_BY_TURN_STATUS[latest.status];
   const lastPrompt = messages.filter((message) => message.role === 'USER').at(-1)?.content ?? null;
-  const startedAtIso = latest?.startedAt ?? null;
 
+  const latest = detail.turns.at(-1);
+  if (latest === undefined) {
+    return { items, phase: 'idle', activeTurnId: null, startedAt: null, lastPrompt };
+  }
+
+  const phase = PHASE_BY_TURN_STATUS[latest.status];
   return {
     items,
     phase,
-    activeTurnId: latest !== undefined && LIVE_PHASES.has(phase) ? latest.id : null,
-    startedAt: startedAtIso === null ? null : Date.parse(startedAtIso),
+    activeTurnId: LIVE_PHASES.has(phase) ? latest.id : null,
+    startedAt: latest.startedAt === null ? null : Date.parse(latest.startedAt),
     lastPrompt,
   };
 }

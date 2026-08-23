@@ -63,7 +63,11 @@ export function useSecretMutations(): UseSecretMutationsResult {
 
   const clearError = useCallback((key: SecretKey) => {
     setErrors((prev) => withoutKey(prev, key));
+    // Nothing these callbacks read changes between renders, so their dependency lists are empty —
+    // and anything constant added to one would never change either.
+    // Stryker disable ArrayDeclaration
   }, []);
+  // Stryker restore ArrayDeclaration
 
   const save = useCallback(async (key: SecretKey, value: string) => {
     setPending((prev) => ({ ...prev, [key]: 'saving' }));
@@ -80,7 +84,9 @@ export function useSecretMutations(): UseSecretMutationsResult {
     } finally {
       setPending((prev) => withoutKey(prev, key));
     }
+    // Stryker disable ArrayDeclaration
   }, []);
+  // Stryker restore ArrayDeclaration
 
   const remove = useCallback(async (key: SecretKey) => {
     setPending((prev) => ({ ...prev, [key]: 'removing' }));
@@ -95,7 +101,9 @@ export function useSecretMutations(): UseSecretMutationsResult {
     } finally {
       setPending((prev) => withoutKey(prev, key));
     }
+    // Stryker disable ArrayDeclaration
   }, []);
+  // Stryker restore ArrayDeclaration
 
   return { save, remove, pending, errors, clearError };
 }

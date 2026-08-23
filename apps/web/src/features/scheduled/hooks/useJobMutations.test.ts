@@ -7,12 +7,14 @@
  * Mocks: MSW node server serving `src/mocks/scheduled.ts`, with a `server.use` override for the
  * failure case.
  */
-import { act, renderHook } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { HttpResponse, http } from 'msw';
-import { afterEach, describe, expect, it } from 'vitest';
+import { toast } from 'sonner';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { resetScheduledStore } from '@/mocks/scheduled';
 import { server } from '@/mocks/server';
+import { useApiQuery } from '@/shared/api/use-api-query';
 
 import type { JobFormValues } from '../lib/job-form';
 
@@ -20,7 +22,34 @@ import { useJobMutations } from './useJobMutations';
 
 afterEach(() => {
   resetScheduledStore();
+  vi.restoreAllMocks();
 });
+
+/**
+ * Mounts the hook alongside the two listings a save is expected to refresh, so what each one is
+ * asked to reload — and what it is not — is observable.
+ *
+ * @param jobId - Id of the job whose own view is mounted next to the listing.
+ * @returns The hook's result plus a loader-call count per listing.
+ */
+function renderWithListings(jobId: string): {
+  result: { current: ReturnType<typeof useJobMutations> };
+  jobs: () => number;
+  one: () => number;
+} {
+  const jobsLoader = vi.fn(() => Promise.resolve('jobs'));
+  const oneLoader = vi.fn(() => Promise.resolve('one'));
+  const { result } = renderHook(() => {
+    useApiQuery(['jobs'], jobsLoader);
+    useApiQuery(['job', jobId], oneLoader);
+    return useJobMutations();
+  });
+  return {
+    result,
+    jobs: () => jobsLoader.mock.calls.length,
+    one: () => oneLoader.mock.calls.length,
+  };
+}
 
 const validValues: JobFormValues = {
   name: 'Weekly report',
@@ -35,23 +64,139 @@ const validValues: JobFormValues = {
 describe('useJobMutations', () => {
   /** Saving with no jobId creates a job and returns it. */
   it('creates a job', async () => {
-    const { result } = renderHook(() => useJobMutations());
+    const success = vi.spyOn(toast, 'success').mockImplementation(() => '');
+    const { result, jobs, one } = renderWithListings('job-dep-audit');
+    await waitFor(() => {
+      expect(jobs()).toBe(1);
+      expect(one()).toBe(1);
+    });
+
     let saved;
     await act(async () => {
       saved = await result.current.save(validValues);
     });
+
     expect(saved).toMatchObject({ name: 'Weekly report' });
+    expect(result.current.error).toBeNull();
+    expect(success).toHaveBeenCalledWith('Job saved');
+    // The listing reloads so the new row appears. No single job's view is touched: there is no
+    // job this save is about yet, and refreshing an unrelated one spends a request on nothing.
+    await waitFor(() => {
+      expect(jobs()).toBe(2);
+    });
+    expect(one()).toBe(1);
+  });
+
+  /**
+   * `busy` is what disables the dialog's save button, so it has to be true for as long as the
+   * request is in flight and false again afterwards — in both directions. Stuck on, the dialog
+   * can never be saved again; never on, a second click sends a second create.
+   */
+  it('reports itself busy only while the request is in flight', async () => {
+    let release = (): void => {
+      throw new Error('The request was released before it was made');
+    };
+    server.use(
+      http.post('/api/jobs', async ({ request }) => {
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+        return HttpResponse.json(await request.json(), { status: 201 });
+      }),
+    );
+    const { result } = renderHook(() => useJobMutations());
+    expect(result.current.busy).toBe(false);
+
+    let pending: Promise<unknown> = Promise.resolve(null);
+    act(() => {
+      pending = result.current.save(validValues);
+    });
+    await waitFor(() => {
+      expect(result.current.busy).toBe(true);
+    });
+
+    await act(async () => {
+      release();
+      await pending;
+    });
+    expect(result.current.busy).toBe(false);
+  });
+
+  /**
+   * And it is cleared on the failing path too — the one that returns early.
+   */
+  it('stops reporting itself busy after a failure', async () => {
+    server.use(
+      http.post('/api/jobs', () =>
+        HttpResponse.json({ error: { code: 'SERVER_ERROR', message: 'boom' } }, { status: 500 }),
+      ),
+    );
+    const { result } = renderHook(() => useJobMutations());
+    await act(async () => {
+      await result.current.save(validValues);
+    });
+    expect(result.current.busy).toBe(false);
+  });
+
+  /**
+   * A retry starts from a clean slate: the message from the attempt before is dropped when the
+   * next one begins, rather than sitting under a field the user has just corrected.
+   */
+  it('clears a previous error when a save is retried', async () => {
+    server.use(
+      http.post('/api/jobs', () =>
+        HttpResponse.json({ error: { code: 'SERVER_ERROR', message: 'boom' } }, { status: 500 }),
+      ),
+    );
+    const { result } = renderHook(() => useJobMutations());
+    await act(async () => {
+      await result.current.save(validValues);
+    });
+    expect(result.current.error).toBe('boom');
+
+    server.resetHandlers();
+    await act(async () => {
+      await result.current.save(validValues);
+    });
     expect(result.current.error).toBeNull();
   });
 
   /** Saving with a jobId updates that job and returns it. */
   it('updates a job', async () => {
-    const { result } = renderHook(() => useJobMutations());
+    const { result, jobs, one } = renderWithListings('job-dep-audit');
+    await waitFor(() => {
+      expect(jobs()).toBe(1);
+      expect(one()).toBe(1);
+    });
+
     let saved;
     await act(async () => {
       saved = await result.current.save({ ...validValues, name: 'Renamed' }, 'job-dep-audit');
     });
+
     expect(saved).toMatchObject({ id: 'job-dep-audit', name: 'Renamed' });
+    // Both the listing and the job's own view are stale now, and the dialog is usually open over
+    // the second of the two.
+    await waitFor(() => {
+      expect(jobs()).toBe(2);
+      expect(one()).toBe(2);
+    });
+  });
+
+  /**
+   * The refreshed view is the job that was saved, not whichever job happens to be open elsewhere.
+   */
+  it('leaves another job untouched', async () => {
+    const { result, one } = renderWithListings('job-nightly-tests');
+    await waitFor(() => {
+      expect(one()).toBe(1);
+    });
+
+    await act(async () => {
+      await result.current.save({ ...validValues, name: 'Renamed' }, 'job-dep-audit');
+    });
+
+    expect(one()).toBe(1);
   });
 
   /** A server error surfaces its message and the save resolves to null. */

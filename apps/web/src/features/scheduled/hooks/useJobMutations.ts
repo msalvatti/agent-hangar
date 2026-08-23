@@ -55,11 +55,17 @@ export function useJobMutations(): UseJobMutationsResult {
     }
     setBusy(false);
     return job;
+    // Nothing this callback reads changes between renders, so its dependency list is empty — and
+    // anything constant added to it would never change either.
+    // Stryker disable ArrayDeclaration
   }, []);
+  // Stryker restore ArrayDeclaration
 
   const clearError = useCallback(() => {
     setError(null);
+    // Stryker disable ArrayDeclaration
   }, []);
+  // Stryker restore ArrayDeclaration
 
   return { save, busy, error, clearError };
 }

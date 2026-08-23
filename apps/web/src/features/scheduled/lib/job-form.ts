@@ -118,6 +118,9 @@ export function pickedRepoDefault(repo: RepoSummary | null): PickedRepoDefault |
  * @returns The short form, or `null` when no repository is chosen.
  */
 export function repoDisplayName(repoUrl: string | null): string | null {
+  // Stryker disable next-line ConditionalExpression: the guard is what keeps a value the label
+  // helper is not typed for away from it; handing it nothing happens to come back as nothing too,
+  // so no observable behaviour distinguishes the two.
   return repoUrl === null ? null : repoLabel(repoUrl);
 }
 

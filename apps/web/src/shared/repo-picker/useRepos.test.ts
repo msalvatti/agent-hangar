@@ -99,4 +99,49 @@ describe('useRepos', () => {
     // Settled, so the request list is final: nothing else can issue one.
     expect(seenQueries).toEqual(['a', 'acme']);
   });
+
+  /**
+   * A keystroke that is superseded before its window closes is dropped, not merely overtaken. The
+   * timer of the abandoned query has to be cancelled: left to fire, every intermediate spelling
+   * still reaches the forge one window later — which is the rate-limit spend the debounce exists to
+   * avoid, and it briefly shows the user results for a word they have finished typing over.
+   *
+   * Real timers throughout, and the pauses are on either side of the debounce window rather than
+   * inside one tick: timers armed in the same tick fire in the same batch, and a batch is exactly
+   * the case where forgetting to cancel is invisible.
+   */
+  it('cancels the search of a query that was typed over', async () => {
+    const seenQueries: string[] = [];
+    server.use(
+      http.get(routes.repos, ({ request }) => {
+        seenQueries.push(new URL(request.url).searchParams.get('query') ?? '');
+        return HttpResponse.json({ repos: [] });
+      }),
+    );
+    const { rerender } = renderHook(({ query }: { query: string }) => useRepos(query), {
+      initialProps: { query: '' },
+    });
+    await waitFor(() => {
+      expect(seenQueries).toEqual(['']);
+    });
+
+    rerender({ query: 'a' });
+    // Long enough to be well inside the window, short enough to leave it open.
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    });
+    rerender({ query: 'ab' });
+
+    await waitFor(
+      () => {
+        expect(seenQueries).toContain('ab');
+      },
+      { timeout: 2_000 },
+    );
+    await act(async () => {
+      await new Promise((resolve) => setTimeout(resolve, 300));
+    });
+
+    expect(seenQueries).toEqual(['', 'ab']);
+  });
 });
