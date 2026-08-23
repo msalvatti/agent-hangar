@@ -37,6 +37,8 @@ export function buildRunLoader(runId: string | null): (signal: AbortSignal) => P
  * because a key is a string list and there is no run to name. Written out rather than empty so it
  * cannot collide with a real run's key.
  */
+// Stryker disable next-line StringLiteral: the query is disabled under this key, so nothing is
+// ever registered or fetched under it and no spelling that is not a run id behaves differently.
 const NO_RUN = 'none';
 
 /**

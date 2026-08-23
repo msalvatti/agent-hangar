@@ -66,11 +66,19 @@ describe('useKeyboardShortcuts', () => {
     expect(first).not.toHaveBeenCalled();
   });
 
-  // A key without the command modifier keeps its normal meaning.
+  /**
+   * A key without the command modifier keeps its normal meaning — and the browser keeps it: the
+   * handler runs on every keystroke the page sees, so a press it does not claim has to leave the
+   * event alone as well as leave the handlers uncalled. Swallowing the default is how a plain `k`
+   * stops reaching whatever the user was typing into.
+   */
   it('ignores an unmodified key', () => {
     const { handlers } = renderShortcuts();
-    press({ key: 'k' });
+
+    const event = press({ key: 'k' });
+
     expect(handlers.onSearch).not.toHaveBeenCalled();
+    expect(event.defaultPrevented).toBe(false);
   });
 
   // The shortcut still works while a field has focus, because it carries a modifier.
