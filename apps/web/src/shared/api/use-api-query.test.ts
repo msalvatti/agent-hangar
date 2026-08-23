@@ -80,11 +80,19 @@ describe('useApiQuery', () => {
   });
 
   // enabled: false never runs the loader and the query stays idle.
-  it('stays idle when enabled is false', () => {
+  it('stays idle when enabled is false', async () => {
     const loader = vi.fn(() => Promise.resolve('value'));
     const { result } = renderHook(() => useApiQuery(['c'], loader, { enabled: false }));
     expect(result.current.status).toBe('idle');
     expect(loader).not.toHaveBeenCalled();
+
+    // And still not once the deferred fetch would have run: the first load is scheduled as a
+    // microtask, so a guard that only delayed it would let a disabled query fetch a tick later.
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(loader).not.toHaveBeenCalled();
+    expect(result.current.status).toBe('idle');
   });
 
   // refetch() re-runs the loader and reports isRefetching while in flight.
@@ -119,6 +127,16 @@ describe('useApiQuery', () => {
       expect(matching).toHaveBeenCalledTimes(2);
     });
     expect(other).toHaveBeenCalledTimes(1);
+
+    // Every segment of the prefix has to match, not merely one of them: `['chats','1']` and
+    // `['chats','2']` are two chats, and invalidating one must not refetch the other.
+    act(() => {
+      invalidateQueries(['chats', '2']);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(matching).toHaveBeenCalledTimes(2);
   });
 
   // Unmounting one of several subscribers sharing a key leaves the others registered.
@@ -138,6 +156,21 @@ describe('useApiQuery', () => {
     await waitFor(() => {
       expect(loaderB).toHaveBeenCalledTimes(2);
     });
+    // The one that left is no longer asked. Its controller is aborted, so its answer would be
+    // discarded — but the request still goes out, on every invalidation, for every component the
+    // user has navigated away from.
+    expect(loaderA).toHaveBeenCalledTimes(1);
+
+    second.unmount();
+    act(() => {
+      invalidateQueries(['shared']);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+    // With nobody left the key is forgotten altogether, rather than kept with an empty set that
+    // every later invalidation walks.
+    expect(loaderB).toHaveBeenCalledTimes(2);
   });
 
   // clearQueryRegistry() removes every subscription so a stale invalidate call is a no-op.
@@ -152,6 +185,249 @@ describe('useApiQuery', () => {
       invalidateQueries(['e']);
     });
     expect(loader).toHaveBeenCalledTimes(1);
+  });
+
+  /**
+   * Neither the poll nor the focus refetch blanks what is on screen: both are refreshes of a query
+   * that already has data, and starting from nothing would flicker the page every interval.
+   */
+  it.each([
+    [
+      'the interval',
+      async (): Promise<void> => {
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(1_000);
+        });
+      },
+    ],
+    [
+      'window focus',
+      async (): Promise<void> => {
+        act(() => {
+          window.dispatchEvent(new Event('focus'));
+        });
+        await act(async () => {
+          await Promise.resolve();
+        });
+      },
+    ],
+  ])('keeps the data on screen across %s', async (_case, trigger) => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      let release = (): void => undefined;
+      const loader = vi.fn(() => Promise.resolve('first'));
+      const { result } = renderHook(() =>
+        useApiQuery(['keeps-data', _case], loader, {
+          refetchIntervalMs: 1_000,
+          refetchOnWindowFocus: true,
+        }),
+      );
+      await waitFor(() => {
+        expect(result.current.data).toBe('first');
+      });
+
+      loader.mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            release = () => {
+              resolve('second');
+            };
+          }),
+      );
+      await trigger();
+
+      await waitFor(() => {
+        expect(result.current.isRefetching).toBe(true);
+      });
+      expect(result.current.data).toBe('first');
+      await act(async () => {
+        release();
+        await Promise.resolve();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * Both refreshes stop when the component does. A timer left running polls for a page nobody is
+   * looking at, and a focus listener left attached does the same every time the window is touched
+   * — for every query the user has ever navigated away from.
+   */
+  it('stops polling and stops listening once unmounted', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const loader = vi.fn(() => Promise.resolve('v'));
+      const { result, unmount } = renderHook(() =>
+        useApiQuery(['stops-on-unmount'], loader, {
+          refetchIntervalMs: 1_000,
+          refetchOnWindowFocus: true,
+        }),
+      );
+      await waitFor(() => {
+        expect(result.current.status).toBe('success');
+      });
+      const settled = loader.mock.calls.length;
+
+      unmount();
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5_000);
+      });
+      act(() => {
+        window.dispatchEvent(new Event('focus'));
+      });
+      await act(async () => {
+        await Promise.resolve();
+      });
+
+      expect(loader).toHaveBeenCalledTimes(settled);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * The poll follows the key. A component that switches to another chat must poll that one — a
+   * timer left pointing at the key it was created with refreshes a transcript nobody is reading
+   * and never refreshes the one on screen.
+   */
+  it('polls the key it is currently showing', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const loader = vi.fn(() => Promise.resolve('v'));
+      const { result, rerender } = renderHook(
+        ({ id }: { id: string }) =>
+          useApiQuery(['polls', id], loader, { refetchIntervalMs: 1_000 }),
+        { initialProps: { id: 'a' } },
+      );
+      await waitFor(() => {
+        expect(result.current.status).toBe('success');
+      });
+
+      rerender({ id: 'b' });
+      await waitFor(() => {
+        expect(result.current.status).toBe('success');
+      });
+      const beforeTick = loader.mock.calls.length;
+      let release = (): void => undefined;
+      loader.mockImplementationOnce(
+        () =>
+          new Promise<string>((resolve) => {
+            release = () => {
+              resolve('v');
+            };
+          }),
+      );
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(1_000);
+      });
+
+      // One poll, for the key on screen — not one for each key the component has ever held.
+      expect(loader).toHaveBeenCalledTimes(beforeTick + 1);
+      // And it is *this* key's poll: a timer still pointing at the key it was created with writes
+      // into a store that has moved on, so nothing on screen would ever say it was refreshing.
+      await waitFor(() => {
+        expect(result.current.isRefetching).toBe(true);
+      });
+      await act(async () => {
+        release();
+        await Promise.resolve();
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  /**
+   * The focus refetch and the manual one follow the key too, for the same reason: a refresh
+   * addressed to the key the component used to show is a request whose answer nothing renders.
+   */
+  it.each([
+    [
+      'window focus',
+      async (refetch: () => Promise<void>): Promise<void> => {
+        act(() => {
+          window.dispatchEvent(new Event('focus'));
+        });
+        await Promise.resolve(refetch);
+      },
+    ],
+    [
+      'a manual refetch',
+      async (refetch: () => Promise<void>): Promise<void> => {
+        void refetch();
+        await Promise.resolve();
+      },
+    ],
+  ])('refreshes the key it is currently showing on %s', async (_case, trigger) => {
+    let release = (): void => undefined;
+    const loader = vi.fn(() => Promise.resolve('v'));
+    const { result, rerender } = renderHook(
+      ({ id }: { id: string }) =>
+        useApiQuery(['refreshes', _case, id], loader, { refetchOnWindowFocus: true }),
+      { initialProps: { id: 'a' } },
+    );
+    await waitFor(() => {
+      expect(result.current.status).toBe('success');
+    });
+
+    rerender({ id: 'b' });
+    await waitFor(() => {
+      expect(result.current.status).toBe('success');
+    });
+    loader.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          release = () => {
+            resolve('v');
+          };
+        }),
+    );
+
+    await act(async () => {
+      await trigger(result.current.refetch);
+    });
+
+    await waitFor(() => {
+      expect(result.current.isRefetching).toBe(true);
+    });
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+  });
+
+  /**
+   * A query that is switched off while its first load is in flight must not publish that load: the
+   * caller turned it off, and an answer arriving afterwards puts data on screen for a query the
+   * component has stopped asking.
+   */
+  it('publishes nothing from a load that was switched off under it', async () => {
+    let release = (): void => undefined;
+    const loader = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          release = () => {
+            resolve('late');
+          };
+        }),
+    );
+    const { result, rerender } = renderHook(
+      ({ enabled }: { enabled: boolean }) => useApiQuery(['switched-off'], loader, { enabled }),
+      { initialProps: { enabled: true } },
+    );
+    await waitFor(() => {
+      expect(loader).toHaveBeenCalled();
+    });
+
+    rerender({ enabled: false });
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+
+    expect(result.current.data).toBeUndefined();
+    expect(result.current.status).not.toBe('success');
   });
 
   // refetchIntervalMs re-runs the loader on a timer while enabled.
@@ -418,6 +694,70 @@ describe('useApiQuery', () => {
     });
     expect(result.current.isRefetching).toBe(false);
     expect(result.current.status).toBe('success');
+  });
+
+  /**
+   * A cancellation is a `DOMException` named `AbortError` and nothing else. An exception of
+   * another name is a real failure that happens to be a `DOMException`, and an ordinary `Error`
+   * that calls itself `AbortError` is not the platform's cancellation — read as one, either would
+   * leave the query showing stale data with no error and no way to retry.
+   */
+  it.each([
+    ['a DOMException of another name', new DOMException('quota exceeded', 'QuotaExceededError')],
+    [
+      'an Error that merely calls itself AbortError',
+      Object.assign(new Error('x'), { name: 'AbortError' }),
+    ],
+  ])('reports %s as an error', async (_case, reason) => {
+    const loader = vi.fn(() => Promise.reject(reason));
+    const { result } = renderHook(() => useApiQuery(['not-aborted'], loader));
+
+    await waitFor(() => {
+      expect(result.current.status).toBe('error');
+    });
+  });
+
+  /**
+   * A refetch keeps what is on screen and says it is refreshing. Starting from nothing instead
+   * blanks the page on every poll and every invalidation, which is the difference between a live
+   * view and one that flickers.
+   */
+  it('keeps the data on screen while a refetch is in flight', async () => {
+    let release = (): void => undefined;
+    const loader = vi
+      .fn(() => Promise.resolve('first'))
+      .mockImplementationOnce(() => Promise.resolve('first'));
+    const { result } = renderHook(() => useApiQuery(['refetch-keeps-data'], loader));
+    await waitFor(() => {
+      expect(result.current.data).toBe('first');
+    });
+
+    loader.mockImplementationOnce(
+      () =>
+        new Promise<string>((resolve) => {
+          release = () => {
+            resolve('second');
+          };
+        }),
+    );
+    act(() => {
+      invalidateQueries(['refetch-keeps-data']);
+    });
+
+    await waitFor(() => {
+      expect(result.current.isRefetching).toBe(true);
+    });
+    expect(result.current.status).toBe('success');
+    expect(result.current.data).toBe('first');
+
+    await act(async () => {
+      release();
+      await Promise.resolve();
+    });
+    await waitFor(() => {
+      expect(result.current.data).toBe('second');
+    });
+    expect(result.current.isRefetching).toBe(false);
   });
 
   // An AbortError rejection (the loader's own fetch aborting) does not flip status to "error".

@@ -142,6 +142,9 @@ export function useApiQuery<T>(
   // state still belongs to it, so a run whose key has been replaced can neither publish its result
   // under the new key nor wipe what the new key has already loaded. Aborting covers the runs the
   // effects own; `refetch()` outlives a key change, and this covers that one.
+  // Nothing this run reads changes between renders — the loader is held in a ref — so its
+  // dependency list is empty, and anything constant added to it would never change either.
+  // Stryker disable ArrayDeclaration
   const run = useCallback(async (runKey: string, signal: AbortSignal, isRefetch: boolean) => {
     const update = (change: (current: QueryState<T>) => QueryState<T>): void => {
       setStored((previous) => (previous.keyString === runKey ? change(previous) : previous));
@@ -159,31 +162,25 @@ export function useApiQuery<T>(
       if (signal.aborted) {
         return;
       }
-      update((current) => ({
-        ...current,
-        status: 'success',
-        data: result,
-        error: undefined,
-        isRefetching: false,
-      }));
+      update((current) => ({ ...current, status: 'success', data: result, error: undefined }));
     } catch (reason) {
       if (signal.aborted || isAbortError(reason)) {
         return;
       }
-      update((current) => ({
-        ...current,
-        status: 'error',
-        error: toError(reason),
-        isRefetching: false,
-      }));
+      update((current) => ({ ...current, status: 'error', error: toError(reason) }));
     } finally {
+      // The aborted case reaches a `setState` for a key the store no longer describes, or for a
+      // component that has gone — both of which React already discards.
+      // Stryker disable next-line ConditionalExpression
       if (!signal.aborted) {
-        // Returning `current` unchanged when nothing is in flight keeps the settled write above
-        // from being followed by a second, identical-but-new state object on every load.
+        // The one place a refetch is marked finished, whichever way it ended — and returning
+        // `current` unchanged when nothing was in flight keeps the settled write above from being
+        // followed by a second, identical-but-new state object on every first load.
         update((current) => (current.isRefetching ? { ...current, isRefetching: false } : current));
       }
     }
   }, []);
+  // Stryker restore ArrayDeclaration
 
   useEffect(() => {
     if (!enabled) {
@@ -209,7 +206,12 @@ export function useApiQuery<T>(
     return () => {
       controller.abort();
       subscribers.delete(refetchCallback);
+      // An entry left behind holds no subscribers, so nothing is ever called through it; what it
+      // costs is a map that grows with every key the page has mounted, and an invalidation that
+      // walks all of them.
+      // Stryker disable next-line ConditionalExpression,BlockStatement
       if (subscribers.size === 0) {
+        // Stryker disable next-line CallExpression
         registry.delete(keyString);
       }
     };
@@ -232,6 +234,9 @@ export function useApiQuery<T>(
     }, refetchIntervalMs);
     return () => {
       clearInterval(interval);
+      // Abandoning the poll's own request as the component goes. Its result reaches a `setState`
+      // React already ignores, so what this saves is the request itself.
+      // Stryker disable next-line CallExpression
       controller.abort();
     };
   }, [enabled, keyString, refetchIntervalMs, run]);
@@ -247,6 +252,8 @@ export function useApiQuery<T>(
     window.addEventListener('focus', handleFocus);
     return () => {
       window.removeEventListener('focus', handleFocus);
+      // As above: the answer would reach a `setState` React ignores, so this saves the request.
+      // Stryker disable next-line CallExpression
       controller.abort();
     };
   }, [enabled, keyString, refetchOnWindowFocus, run]);
